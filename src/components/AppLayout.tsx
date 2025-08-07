@@ -20,7 +20,7 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
     setShowListingModal, 
     listingDraft, 
     isGeneratingListing, 
-    lastAnalysisResult 
+    lastAnalysisResult, 
     isScanning, 
     setIsScanning
   } = useAppContext();
