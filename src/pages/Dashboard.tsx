@@ -1,6 +1,6 @@
 import React from 'react';
 import PrivateDashboard from '@/components/PrivateDashboard';
-import ContinuousScanner from '@/components/ContinuousScanner';
+import DualScanner from '@/components/DualScanner'; // Updated import
 import { useAppContext } from '@/contexts/AppContext';
 
 export default function Dashboard() {
@@ -9,7 +9,7 @@ export default function Dashboard() {
   return (
     <>
       <PrivateDashboard />
-      <ContinuousScanner 
+      <DualScanner 
         isOpen={isScanning} 
         onClose={() => setIsScanning(false)} 
       />
