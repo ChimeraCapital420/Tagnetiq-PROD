@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { BarcodeReader } from 'react-zxing';
+import { useZxing } from 'react-zxing';
 import { Camera, Scan, Image as ImageIcon, X, RotateCcw, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -25,6 +25,21 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   
   const { setLastAnalysisResult, setIsAnalyzing, setShowListingModal } = useAppContext();
   const { user } = useAuth();
+
+  // React-zxing barcode scanner
+  const { ref: barcodeRef } = useZxing({
+    onDecodeResult(result) {
+      handleBarcodeResult(result);
+    },
+    onError(error) {
+      console.error('Barcode scanning error:', error);
+    },
+    constraints: {
+      video: {
+        facingMode: 'environment'
+      }
+    }
+  });
 
   // Handle barcode scan result
   const handleBarcodeResult = useCallback(async (result: any) => {
@@ -173,6 +188,32 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     }
   }, []);
 
+  // Start camera for image mode
+  const startCamera = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }
+      });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (error) {
+      console.error('Camera access error:', error);
+      toast({
+        title: "Camera Error",
+        description: "Unable to access camera. Please check permissions.",
+        variant: "destructive"
+      });
+    }
+  }, []);
+
+  // Effect to start camera when switching to image mode
+  React.useEffect(() => {
+    if (scanMode === 'image' && !capturedImage && isOpen) {
+      startCamera();
+    }
+  }, [scanMode, capturedImage, isOpen, startCamera]);
+
   if (!isOpen) return null;
 
   return (
@@ -218,15 +259,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                   Amazon Arbitrage Mode
                 </Badge>
                 <div className="rounded-lg overflow-hidden bg-black">
-                  <BarcodeReader
-                    onResult={handleBarcodeResult}
-                    onError={(error) => console.error('Barcode error:', error)}
-                    constraints={{
-                      facingMode: 'environment'
-                    }}
-                    containerStyle={{
+                  <video
+                    ref={barcodeRef}
+                    style={{
                       width: '100%',
-                      height: '300px'
+                      height: '300px',
+                      objectFit: 'cover'
                     }}
                   />
                 </div>
@@ -251,17 +289,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                         playsInline
                         muted
                         className="w-full h-64 object-cover"
-                        onLoadedMetadata={() => {
-                          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                            navigator.mediaDevices.getUserMedia({
-                              video: { facingMode: 'environment' }
-                            }).then(stream => {
-                              if (videoRef.current) {
-                                videoRef.current.srcObject = stream;
-                              }
-                            }).catch(console.error);
-                          }
-                        }}
                       />
                     </div>
                     
