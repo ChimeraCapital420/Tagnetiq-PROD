@@ -144,7 +144,12 @@ export default function SignUp() {
         
         <ScreenNameModal 
           isOpen={showScreenNameModal}
-          onComplete={handleScreenNameComplete}
+          onClose={() => setShowScreenNameModal(false)}
+          onSave={(screenName) => {
+            // Handle saving screen name here
+            console.log('Screen name saved:', screenName);
+            handleScreenNameComplete();
+          }}
         />
       </div>
     </div>
