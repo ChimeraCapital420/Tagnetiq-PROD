@@ -3,7 +3,7 @@ import MarketingNavigation from './MarketingNavigation';
 import AppNavigation from './AppNavigation';
 import NewMarketingPage from './NewMarketingPage';
 import Dashboard from './Dashboard';
-import BarcodeScanner from './BarcodeScanner';
+import DualScanner from './DualScanner';
 import ListingDraftModal from './ListingDraftModal';
 import DeviceConnectionModal from './DeviceConnectionModal';
 import CleanRoomModal from './CleanRoomModal';
@@ -21,6 +21,8 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
     listingDraft, 
     isGeneratingListing, 
     lastAnalysisResult 
+    isScanning, 
+    setIsScanning
   } = useAppContext();
   
   const { user } = useAuth();
@@ -83,7 +85,10 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
         <main className="pt-16">
           {children ? children : <Dashboard />}
         </main>
-        <BarcodeScanner />
+        <DualScanner 
+  isOpen={isScanning} 
+  onClose={() => setIsScanning(false)} 
+/>
         
         <ListingDraftModal
           isOpen={showListingModal}
