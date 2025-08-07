@@ -1,5 +1,31 @@
 import { createClient } from '@supabase/supabase-js';
 
+// Debug logging
+console.log('=== SUPABASE DEBUG ===');
+console.log('Environment:', process.env.NODE_ENV);
+console.log('NEXT_PUBLIC_SUPABASE_URL exists:', !!process.env.NEXT_PUBLIC_SUPABASE_URL);
+console.log('NEXT_PUBLIC_SUPABASE_URL value:', process.env.NEXT_PUBLIC_SUPABASE_URL);
+console.log('NEXT_PUBLIC_SUPABASE_ANON_token exists:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_token);
+console.log('All env vars starting with NEXT_PUBLIC:', 
+  Object.keys(process.env).filter(key => key.startsWith('NEXT_PUBLIC')));
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_token;
+
+if (!supabaseUrl) {
+  console.error('❌ NEXT_PUBLIC_SUPABASE_URL is missing or empty');
+  throw new Error('supabaseUrl is required');
+}
+
+if (!supabaseAnonKey) {
+  console.error('❌ NEXT_PUBLIC_SUPABASE_ANON_token is missing or empty');
+  throw new Error('supabaseAnonKey is required');
+}
+
+console.log('✅ Supabase config loaded successfully');
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import { createClient } from '@supabase/supabase-js';
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_token!;
 
