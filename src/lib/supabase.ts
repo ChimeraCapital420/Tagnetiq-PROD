@@ -18,16 +18,11 @@ if (!supabaseUrl) {
 }
 
 if (!supabaseAnonKey) {
-  console.error('❌ NEXT_PUBLIC_SUPABASE_ANON_token is missing or empty');
+  console.error('❌ NEXT_PUBLIC_SUPABASE_ANON_token is missing or empty');  
   throw new Error('supabaseAnonKey is required');
 }
 
 console.log('✅ Supabase config loaded successfully');
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_token!;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
@@ -207,7 +202,6 @@ export const DatabaseHelper = {
   },
 
   // Get watchlist
-// Get watchlist
   async getWatchlist(userId: string): Promise<Watchlist[]> {
     const { data, error } = await supabase
       .from('watchlist')
