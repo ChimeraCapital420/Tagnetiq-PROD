@@ -1,35 +1,12 @@
-// Replace your current supabase.ts with:
 import { createClient } from '@supabase/supabase-js';
 
+// HARDCODED VALUES - Replace with your actual Supabase credentials
 const supabaseUrl = 'https://vxdtmdpxgepwnmxoxejm.supabase.co';
 const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4ZHRtZHB4Z2Vwd25teG94ZWptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MzA5NzEsImV4cCI6MjA2OTUwNjk3MX0.tqEumdRzXEPeuPxF_bTNxxmZN8-hRPCNiWlgIHnLfOI';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-// ... rest of your existing code
-
-// Debug logging
-console.log('=== SUPABASE DEBUG ===');
-console.log('Environment:', process.env.NODE_ENV);
-console.log('NEXT_PUBLIC_SUPABASE_URL exists:', !!process.env.NEXT_PUBLIC_SUPABASE_URL);
-console.log('NEXT_PUBLIC_SUPABASE_URL value:', process.env.NEXT_PUBLIC_SUPABASE_URL);
-console.log('NEXT_PUBLIC_SUPABASE_ANON_token exists:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_token);
-console.log('All env vars starting with NEXT_PUBLIC:', 
-  Object.keys(process.env).filter(key => key.startsWith('NEXT_PUBLIC')));
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_token;
-
-if (!supabaseUrl) {
-  console.error('❌ NEXT_PUBLIC_SUPABASE_URL is missing or empty');
-  throw new Error('supabaseUrl is required');
-}
-
-if (!supabaseAnonKey) {
-  console.error('❌ NEXT_PUBLIC_SUPABASE_ANON_token is missing or empty');  
-  throw new Error('supabaseAnonKey is required');
-}
-
-console.log('✅ Supabase config loaded successfully');
+console.log('🚀 HARDCODED SUPABASE CONFIG LOADED');
+console.log('URL:', supabaseUrl);
+console.log('Key length:', supabaseAnonKey.length);
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
