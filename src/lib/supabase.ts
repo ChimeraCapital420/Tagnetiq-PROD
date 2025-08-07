@@ -180,4 +180,101 @@ export const DatabaseHelper = {
     return true;
   },
 
-  // Get watch
+  // Get watchlist
+// Get watchlist
+  async getWatchlist(userId: string): Promise<Watchlist[]> {
+    const { data, error } = await supabase
+      .from('watchlist')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('Error fetching watchlist:', error);
+      return [];
+    }
+    
+    return data || [];
+  },
+
+  // Add to watchlist
+  async addToWatchlist(watchlistItem: Omit<Watchlist, 'id' | 'created_at'>): Promise<string | null> {
+    const { data, error } = await supabase
+      .from('watchlist')
+      .insert(watchlistItem)
+      .select('id')
+      .single();
+    
+    if (error) {
+      console.error('Error adding to watchlist:', error);
+      return null;
+    }
+    
+    return data.id;
+  },
+
+  // Remove from watchlist
+  async removeFromWatchlist(itemId: string): Promise<boolean> {
+    const { error } = await supabase
+      .from('watchlist')
+      .delete()
+      .eq('id', itemId);
+    
+    if (error) {
+      console.error('Error removing from watchlist:', error);
+      return false;
+    }
+    
+    return true;
+  },
+
+  // Get user statistics
+  async getUserStats(userId: string): Promise<{
+    totalScans: number;
+    successfulFinds: number;
+    totalProfit: number;
+    recentScans: ScanHistory[];
+  }> {
+    const profile = await this.getProfile(userId);
+    const recentScans = await this.getScanHistory(userId, 10);
+    
+    return {
+      totalScans: profile?.total_scans || 0,
+      successfulFinds: profile?.successful_finds || 0,
+      totalProfit: profile?.total_profit || 0,
+      recentScans
+    };
+  },
+
+  // Update profit tracking
+  async updateProfitTracking(userId: string, scanId: string, profitMade: number): Promise<boolean> {
+    // Update scan history
+    const { error: scanError } = await supabase
+      .from('scan_history')
+      .update({ 
+        profit_made: profitMade,
+        item_sold: true,
+        sale_date: new Date().toISOString()
+      })
+      .eq('id', scanId);
+
+    if (scanError) {
+      console.error('Error updating scan profit:', scanError);
+      return false;
+    }
+
+    // Update user profile totals
+    const { error: profileError } = await supabase
+      .rpc('increment_profit', {
+        user_id: userId,
+        profit_amount: profitMade
+      });
+
+    if (profileError) {
+      console.error('Error updating profile totals:', profileError);
+      return false;
+    }
+
+    return true;
+  }
+};
