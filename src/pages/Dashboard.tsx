@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { useAppContext } from '@/contexts/AppContext';
 import { getThemeConfig } from '@/lib/themes';
 import { getCategoryColors } from '@/lib/categoryColors';
-import { toast } from '@/components/ui/use-toast';
+import { toast } from 'sonner'; // Corrected toast import
 import { Car, Blocks, Zap, Palette, Book, Star, ShoppingCart, Trophy, Home, XCircle } from 'lucide-react';
 import AnalysisResult from '@/components/AnalysisResult';
 import SubCategoryModal from '@/components/SubCategoryModal';
@@ -40,11 +40,18 @@ const Dashboard: React.FC = () => {
 
   const handleCategorySelect = (categoryId: string, categoryName: string) => {
     setSelectedCategory(categoryId);
+    toast.success(`AI Primed for ${categoryName} analysis.`);
     setSelectedCategoryData({ id: categoryId, name: categoryName });
     setModalOpen(true);
   };
 
   const handleStartScanning = () => {
+    if (!selectedCategory) {
+        toast.error("No Category Selected", {
+            description: "Please select an AI category before starting a scan.",
+        });
+        return;
+    }
     setIsScanning(true);
   };
 

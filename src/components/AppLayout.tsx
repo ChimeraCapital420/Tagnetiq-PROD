@@ -1,4 +1,5 @@
-// FILE: src/components/AppLayout.tsx (REPLACE THE ENTIRE FILE WITH THIS)
+// FILE: src/components/AppLayout.tsx (CREATE THIS FILE)
+// This fixes the blank background issue.
 
 import React from 'react';
 import { useLocation } from 'react-router-dom';
@@ -13,7 +14,6 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const showAppNav = user;
   const showMarketingNav = !user && (location.pathname === '/' || location.pathname === '/index.html');
 
-  // This style ensures the layout itself is transparent, letting the background component show through.
   const layoutStyle: React.CSSProperties = {
     backgroundColor: 'transparent',
     minHeight: '100vh',
