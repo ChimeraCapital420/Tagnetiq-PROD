@@ -1,30 +1,54 @@
-# React + TypeScript + Vite
+# TagnetIQ - v9.0.2
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
-# TagnetIQ
+Welcome to the TagnetIQ monorepo. This project is a Vite-powered React application designed to be the "Bloomberg Terminal for Physical Assets," providing AI-driven analysis and market insights.
 
-**TagnetIQ** is an AI-powered resale assistant designed for smart glasses and mobile platforms. This repo contains the core frontend files for the TagnetIQ prototype.
+## Core Stack
 
-## 📄 Files Overview
+- **Frontend:** React, TypeScript, Vite
+- **Styling:** Tailwind CSS with shadcn/ui components
+- **Backend:** Supabase (Auth, Postgres, Storage)
+- **API Layer:** Serverless functions deployed via Vercel
 
-- `index.html`: Main structure of the web app
-- `style.css`: Visual styling and layout
-- `main.js`: Core logic and interactivity
-- `assets/`: Icons, images, and other media
+## Getting Started
 
-## 🧠 Claude Instructions
+### Prerequisites
 
-Please analyze `index.html` for structure and logic. Focus on:
-- How the UI is laid out
-- Any embedded scripts or data flows
-- Integration points for AI agents or APIs
+- Node.js (v18 or higher)
+- npm or yarn
+- Supabase account and project created
 
-## 🔗 Live Preview (Optional)
+### Local Development Setup
 
-If hosted, include:
-[Live Demo](https://your-preview-link.com)
+1.  **Clone the repository:**
+    ```bash
+    git clone <your-repository-url>
+    cd tagnetiq-final-review
+    ```
 
-## 🛠️ Tech Stack
+2.  **Install dependencies:**
+    ```bash
+    npm install
+    ```
 
-- HTML, CSS, JavaScript
-- Designed for wearable tech integration
+3.  **Configure Environment Variables:**
+    -   Create a new file named `.env` in the root of the project.
+    -   Copy the contents of `.env.example.txt` into your new `.env` file.
+    -   Fill in the required values for your Supabase project and any other API keys (like `ATTOM_API_KEY`).
+
+4.  **Run the Development Server:**
+    ```bash
+    npm run dev
+    ```
+    The application will be available at `http://localhost:5173`.
+
+### Key Features
+
+- **Dynamic Theming:** 8 distinct visual themes with a seasonal branding overlay, configurable from the settings menu.
+- **Investor Suite:** A secure, read-only portal for investors with KPI dashboards and a data room.
+- **Beta Tester Suite:** A comprehensive system for managing beta testers, including invites, feedback submission, missions, and referrals.
+- **Admin Consoles:** Dedicated dashboards for managing the Investor and Beta Tester programs.
+- **AI-Powered Analysis:** A modular system for analyzing various asset categories, starting with a live Real Estate module.
+
+### Admin Access
+
+To gain admin privileges locally, you can use the built-in "Developer Shortcut" in `src/contexts/AuthContext.tsx` or add your Supabase user's email to the `ADMIN_EMAILS` list in the same file and use the standard login flow.

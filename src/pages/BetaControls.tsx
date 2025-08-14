@@ -1,46 +1,47 @@
-// FILE: src/pages/BetaControls.tsx (CREATE THIS NEW FILE)
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { useBeta, FeatureFlags } from '@/contexts/BetaContext';
+import { useFeatureFlags, FeatureFlag } from '@/lib/featureFlags'; // Import our new hook
 
 const BetaControls: React.FC = () => {
-  const { flags, setFlag, loading } = useBeta();
+  const { flags, loading, updateFlag } = useFeatureFlags();
 
   if (loading) {
-    return <div>Loading beta controls...</div>;
+    return <div className="container mx-auto p-8">Loading feature flags...</div>;
   }
-
-  const handleToggle = (flag: keyof FeatureFlags) => {
-    setFlag(flag, !flags[flag]);
-  };
 
   return (
     <div className="container mx-auto px-4 py-8">
       <Card className="max-w-2xl mx-auto">
         <CardHeader>
           <CardTitle>Beta Feature Controls</CardTitle>
-          <CardDescription>Toggle experimental features on and off.</CardDescription>
+          <CardDescription>Toggle experimental features on and off for all beta testers.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {Object.keys(flags).map((key) => {
-            const flagKey = key as keyof FeatureFlags;
-            return (
-              <div key={flagKey} className="flex items-center justify-between rounded-lg border p-3 shadow-sm">
-                <div className="space-y-0.5">
-                  <Label htmlFor={flagKey} className="text-base">
-                    {flagKey.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase())}
-                  </Label>
-                </div>
-                <Switch
-                  id={flagKey}
-                  checked={flags[flagKey]}
-                  onCheckedChange={() => handleToggle(flagKey)}
-                />
+          {flags.map((flag: FeatureFlag) => (
+            <div key={flag.key} className="flex items-center justify-between rounded-lg border p-3 shadow-sm">
+              <div className="space-y-0.5">
+                <Label htmlFor={flag.key} className="text-base">
+                  {flag.key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                </Label>
               </div>
-            );
-          })}
+              <Switch
+                id={flag.key}
+                checked={flag.enabled}
+                onCheckedChange={(isChecked) => updateFlag(flag.key, isChecked)}
+              />
+            </div>
+          ))}
+          {/* Stress Test Mode - Placeholder */}
+           <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm bg-muted/50">
+              <div className="space-y-0.5">
+                <Label htmlFor="stress-test" className="text-base text-muted-foreground">
+                  Stress Test Mode
+                </Label>
+              </div>
+              <Switch id="stress-test" disabled />
+            </div>
         </CardContent>
       </Card>
     </div>

@@ -6,7 +6,6 @@
   :root {
     --background: 210 40% 98%;
     --foreground: 222.2 84% 4.9%;
-    /* ... other theme variables ... */
     --card: 0 0% 100%;
     --card-foreground: 222.2 84% 4.9%;
     --popover: 0 0% 100%;
@@ -30,7 +29,6 @@
   .dark {
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
-    /* ... other dark theme variables ... */
     --card: 222.2 84% 4.9%;
     --card-foreground: 210 40% 98%;
     --popover: 222.2 84% 4.9%;
@@ -56,12 +54,12 @@
     @apply border-border;
   }
   
-  /* THIS IS THE CRITICAL FIX */
   html, body, #root {
     height: 100%;
   }
 
+  /* This is the critical change. The body will no longer have an opaque background. */
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
   }
 }
