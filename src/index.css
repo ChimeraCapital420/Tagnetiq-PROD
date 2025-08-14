@@ -6,6 +6,7 @@
   :root {
     --background: 210 40% 98%;
     --foreground: 222.2 84% 4.9%;
+    /* ... other theme variables ... */
     --card: 0 0% 100%;
     --card-foreground: 222.2 84% 4.9%;
     --popover: 0 0% 100%;
@@ -29,6 +30,7 @@
   .dark {
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
+    /* ... other dark theme variables ... */
     --card: 222.2 84% 4.9%;
     --card-foreground: 210 40% 98%;
     --popover: 222.2 84% 4.9%;
@@ -52,58 +54,14 @@
 @layer base {
   * {
     @apply border-border;
-    -webkit-tap-highlight-color: transparent;
-    -webkit-touch-callout: none;
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
-    user-select: none;
   }
-
-  html, body {
+  
+  /* THIS IS THE CRITICAL FIX */
+  html, body, #root {
     height: 100%;
-    overflow-x: hidden;
-    -webkit-overflow-scrolling: touch;
-    touch-action: manipulation;
   }
 
   body {
-    @apply text-foreground font-sans;
-    background: transparent;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-    position: fixed;
-    width: 100%;
-  }
-
-  body::-webkit-scrollbar {
-    display: none;
-  }
-
-  #root {
-    height: 100vh;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-
-  #root::-webkit-scrollbar {
-    display: none;
-  }
-
-  .safe-area-inset {
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
-  }
-
-  .touch-manipulation {
-    touch-action: manipulation;
-  }
-
-  .overscroll-none {
-    overscroll-behavior: none;
+    @apply bg-background text-foreground;
   }
 }

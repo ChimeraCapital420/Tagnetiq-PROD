@@ -1,23 +1,22 @@
-// FILE: src/contexts/AppContext.tsx (REPLACE THE ENTIRE FILE WITH THIS)
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { toast } from '@/components/ui/use-toast';
 
 type Theme = 'executive' | 'matrix' | 'safari' | 'darkKnight' | 'cyberpunk' | 'ocean' | 'forest' | 'sunset';
 type ThemeMode = 'light' | 'dark';
+type SeasonalMode = 'winter' | 'spring' | 'summer' | 'fall' | 'off';
 
-interface AnalysisResult {
-  decision: string;
-  item: string;
-  marketValue: string;
-  code: string;
+export interface AnalysisResult {
+  id: string; decision: 'BUY' | 'PASS'; itemName: string; estimatedValue: string;
+  confidence: 'high' | 'medium' | 'low'; reasoning: string;
+  analysisCount?: number; consensusRatio?: string; code?: string;
 }
 
 interface AppContextType {
   theme: Theme;
   themeMode: ThemeMode;
+  seasonalMode: SeasonalMode; // New state for seasonal branding
   setTheme: (theme: Theme) => void;
   setThemeMode: (mode: ThemeMode) => void;
+  setSeasonalMode: (mode: SeasonalMode) => void; // New setter
   lastAnalysisResult: AnalysisResult | null;
   setLastAnalysisResult: (result: AnalysisResult | null) => void;
   isScanning: boolean;
@@ -26,15 +25,17 @@ interface AppContextType {
   setIsAnalyzing: (analyzing: boolean) => void;
   selectedCategory: string | null;
   setSelectedCategory: (category: string | null) => void;
-  isWatermarkVisible: boolean;
-  toggleWatermark: () => void;
+  isFeedbackModalOpen: boolean;
+  setIsFeedbackModalOpen: (isOpen: boolean) => void;
 }
 
 const defaultAppContext: AppContextType = {
   theme: 'darkKnight',
   themeMode: 'dark',
+  seasonalMode: 'off', // Default to off
   setTheme: () => {},
   setThemeMode: () => {},
+  setSeasonalMode: () => {}, // Default setter
   lastAnalysisResult: null,
   setLastAnalysisResult: () => {},
   isScanning: false,
@@ -43,47 +44,50 @@ const defaultAppContext: AppContextType = {
   setIsAnalyzing: () => {},
   selectedCategory: null,
   setSelectedCategory: () => {},
-  isWatermarkVisible: true,
-  toggleWatermark: () => {},
+  isFeedbackModalOpen: false,
+  setIsFeedbackModalOpen: () => {},
 };
 
 const AppContext = createContext<AppContextType>(defaultAppContext);
 export const useAppContext = () => useContext(AppContext);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [theme, setTheme] = useState<Theme>('darkKnight');
-  const [themeMode, setThemeMode] = useState<ThemeMode>('dark');
+  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('tagnetiq-theme') as Theme) || 'darkKnight');
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => (localStorage.getItem('tagnetiq-theme-mode') as ThemeMode) || 'dark');
+  const [seasonalMode, setSeasonalModeState] = useState<SeasonalMode>(() => (localStorage.getItem('tagnetiq-seasonal-mode') as SeasonalMode) || 'off');
+  
   const [lastAnalysisResult, setLastAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [isWatermarkVisible, setWatermarkVisible] = useState(true);
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
 
   useEffect(() => {
     const root = window.document.documentElement;
     root.classList.remove('light', 'dark');
     root.classList.add(themeMode);
+    localStorage.setItem('tagnetiq-theme-mode', themeMode);
   }, [themeMode]);
 
-  const toggleWatermark = () => {
-    setWatermarkVisible(prev => !prev);
-  };
+  const handleSetTheme = (newTheme: Theme) => {
+      setTheme(newTheme);
+      localStorage.setItem('tagnetiq-theme', newTheme);
+  }
+
+  const setSeasonalMode = (mode: SeasonalMode) => {
+      setSeasonalModeState(mode);
+      localStorage.setItem('tagnetiq-seasonal-mode', mode);
+  }
 
   const value = {
-    theme,
-    themeMode,
-    setTheme,
-    setThemeMode,
-    lastAnalysisResult,
-    setLastAnalysisResult,
-    isScanning,
-    setIsScanning,
-    isAnalyzing,
-    setIsAnalyzing,
-    selectedCategory,
-    setSelectedCategory,
-    isWatermarkVisible,
-    toggleWatermark,
+    theme, themeMode, seasonalMode,
+    setTheme: handleSetTheme,
+    setThemeMode, setSeasonalMode,
+    lastAnalysisResult, setLastAnalysisResult,
+    isScanning, setIsScanning,
+    isAnalyzing, setIsAnalyzing,
+    selectedCategory, setSelectedCategory,
+    isFeedbackModalOpen, setIsFeedbackModalOpen,
   };
 
   return (

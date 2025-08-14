@@ -1,46 +1,64 @@
-// FILE: src/App.tsx (REPLACE THE ENTIRE FILE WITH THIS)
-
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { AppProvider } from '@/contexts/AppContext';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { AppProvider, useAppContext } from '@/contexts/AppContext';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
-import { ThemeProvider } from '@/components/theme-provider'; // Corrected Path
-import { Toaster } from '@/components/ui/toaster';
-import GlobalThemeBackground from '@/components/GlobalThemeBackground';
+import { BetaProvider } from '@/contexts/BetaContext';
+import { ThemeProvider } from '@/components/theme-provider';
+import { Toaster as SonnerToaster } from '@/components/ui/sonner';
 import AppLayout from '@/components/AppLayout';
-import { MobileOptimized } from '@/components/MobileOptimized';
+import AppShell from '@/components/AppShell'; // New Import
+import ProtectedRoute from '@/routes/ProtectedRoute';
+
+// Pages and Components...
 import Index from '@/pages/Index';
 import Login from '@/pages/Login';
 import SignUp from '@/pages/SignUp';
 import Dashboard from '@/pages/Dashboard';
-import Settings from '@/pages/Settings';
-import Feedback from '@/pages/Feedback';
 import NotFound from '@/pages/NotFound';
-import Demo from '@/pages/Demo';
-import DemoDashboard from '@/pages/DemoDashboard';
-import DemoSettings from '@/pages/DemoSettings';
+import BetaControls from '@/pages/BetaControls';
+import Investor from '@/pages/Investor';
+import InvestorPortal from '@/pages/investor/Portal';
+import BetaWelcome from '@/pages/beta/Welcome';
+import BetaMissions from '@/pages/beta/Missions';
+import BetaReferrals from '@/pages/beta/Referrals';
+import BetaConsole from '@/pages/admin/BetaConsole';
+import MapConsole from '@/pages/admin/MapConsole';
+import { FeedbackModal } from '@/components/beta/FeedbackModal';
+
+const AppRoutes: React.FC = () => {
+    const { user, isAdmin } = useAuth();
+    // ... routes remain the same
+    return (
+        <Routes>
+            <Route path="/" element={<Index />} />
+            <Route path="/login" element={!user ? <Login /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/signup" element={!user ? <SignUp /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<ProtectedRoute isAllowed={!!user} to="/login"><Dashboard /></ProtectedRoute>} />
+            <Route path="/beta/welcome" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaWelcome /></ProtectedRoute>} />
+            <Route path="/beta/missions" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaMissions /></ProtectedRoute>} />
+            <Route path="/beta/referrals" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaReferrals /></ProtectedRoute>} />
+            <Route path="/beta-controls" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><BetaControls /></ProtectedRoute>} />
+            <Route path="/admin/investors" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><Investor /></ProtectedRoute>} />
+            <Route path="/admin/beta" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><BetaConsole /></ProtectedRoute>} />
+            <Route path="/admin/map" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><MapConsole /></ProtectedRoute>} />
+            <Route path="/investor" element={<InvestorPortal />} /> 
+            <Route path="*" element={<NotFound />} />
+        </Routes>
+    );
+};
 
 const AppContent: React.FC = () => {
-  const { user, loading } = useAuth();
+  const { loading } = useAuth();
+  const { isFeedbackModalOpen, setIsFeedbackModalOpen } = useAppContext();
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+    return <div className="fixed inset-0 flex items-center justify-center bg-background"><p>Loading session...</p></div>;
   }
 
   return (
     <AppLayout>
-      <Routes>
-        <Route path="/" element={user ? <Dashboard /> : <Index />} />
-        <Route path="/login" element={!user ? <Login /> : <Dashboard />} />
-        <Route path="/signup" element={!user ? <SignUp /> : <Dashboard />} />
-        <Route path="/dashboard" element={user ? <Dashboard /> : <Login />} />
-        <Route path="/settings" element={user ? <Settings /> : <Login />} />
-        <Route path="/feedback" element={user ? <Feedback /> : <Login />} />
-        <Route path="/demo" element={<Demo />} />
-        <Route path="/demo-dashboard" element={<DemoDashboard />} />
-        <Route path="/demo-settings" element={<DemoSettings />} />
-        <Route path="*" element={<NotFound />} />
-      </Routes>
+      <AppRoutes />
+      <FeedbackModal isOpen={isFeedbackModalOpen} onClose={() => setIsFeedbackModalOpen(false)} />
     </AppLayout>
   );
 };
@@ -50,13 +68,14 @@ function App() {
     <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
       <AuthProvider>
         <AppProvider>
-          <Router>
-            <MobileOptimized>
-              <GlobalThemeBackground />
-              <AppContent />
-              <Toaster />
-            </MobileOptimized>
-          </Router>
+          <BetaProvider>
+            <Router>
+                <AppShell> {/* Use the new AppShell here */}
+                    <AppContent />
+                    <SonnerToaster />
+                </AppShell>
+            </Router>
+          </BetaProvider>
         </AppProvider>
       </AuthProvider>
     </ThemeProvider>

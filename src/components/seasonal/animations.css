@@ -1,0 +1,67 @@
+.particles {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: -1;
+}
+
+.particle {
+    position: absolute;
+    top: -20px;
+    animation: fall 10s linear infinite;
+}
+
+@keyframes fall {
+    to {
+        transform: translateY(105vh);
+    }
+}
+
+/* Winter Snow */
+.snow {
+    background: white;
+    border-radius: 50%;
+    width: 5px;
+    height: 5px;
+    opacity: 0.7;
+}
+
+/* Spring Flowers & Fall Leaves */
+.flower, .leaf {
+    font-size: 20px;
+    opacity: 0.8;
+}
+
+/* --- Positioning & Delays for Randomness --- */
+.particle:nth-child(10n) { animation-duration: 12s; }
+.particle:nth-child(10n+1) { left: 10%; animation-delay: 1s; }
+.particle:nth-child(10n+2) { left: 20%; animation-delay: 3s; }
+.particle:nth-child(10n+3) { left: 30%; animation-delay: 5s; }
+.particle:nth-child(10n+4) { left: 40%; animation-delay: 2s; animation-duration: 8s; }
+.particle:nth-child(10n+5) { left: 50%; animation-delay: 8s; }
+.particle:nth-child(10n+6) { left: 60%; animation-delay: 9s; }
+.particle:nth-child(10n+7) { left: 70%; animation-delay: 6s; }
+.particle:nth-child(10n+8) { left: 80%; animation-delay: 4s; animation-duration: 15s; }
+.particle:nth-child(10n+9) { left: 90%; animation-delay: 7s; }
+
+
+/* --- Summer Sun Rays --- */
+.sun-rays {
+    position: fixed;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle at center, rgba(255, 235, 59, 0.2) 0%, rgba(255, 235, 59, 0) 60%);
+    animation: spin 60s linear infinite;
+    z-index: -1;
+    pointer-events: none;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}

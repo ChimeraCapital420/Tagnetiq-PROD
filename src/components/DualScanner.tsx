@@ -1,13 +1,13 @@
-// FILE: src/components/DualScanner.tsx (REPLACE THE ENTIRE FILE WITH THIS)
-
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useZxing } from 'react-zxing';
-import { Camera, Scan, X, Check } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
+import { Camera, Scan, X, Check, FlipHorizontal, Upload, Video, VideoOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Toggle } from '@/components/ui/toggle';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { toast } from 'sonner'; // Corrected toast import
+import { toast } from 'sonner';
 
 type ScanMode = 'barcode' | 'image';
 
@@ -20,35 +20,14 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const [scanMode, setScanMode] = useState<ScanMode>('image');
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const { user } = useAuth();
   const { setLastAnalysisResult, setIsAnalyzing } = useAppContext();
-
-  const handleClose = () => {
-    stopCamera();
-    setCapturedImages([]);
-    onClose();
-  };
-  
-  const { ref: barcodeRef } = useZxing({
-    onDecodeResult(result) { console.log('Barcode Scanned:', result.getText()); },
-  });
-
-  const startCamera = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-    } catch (error) {
-      console.error('Camera access error:', error);
-      toast.error("Camera Permission Needed", {
-        description: "Please grant camera permissions in your browser to continue.",
-      });
-      handleClose();
-    }
-  }, [handleClose]);
 
   const stopCamera = useCallback(() => {
     if (videoRef.current && videoRef.current.srcObject) {
@@ -58,11 +37,70 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     }
   }, []);
 
+  const handleClose = useCallback(() => {
+    stopCamera();
+    setCapturedImages([]);
+    setIsRecording(false);
+    onClose();
+  }, [onClose, stopCamera]);
+
+  const handleBarcodeScan = useCallback(async (barcode: string) => {
+    if (!user) {
+      toast.error("Authentication Error", { description: "You must be logged in to perform an analysis." });
+      return;
+    }
+    setIsAnalyzing(true);
+    toast.info('Barcode detected!', { description: `Analyzing code: ${barcode}` });
+
+    try {
+      const response = await fetch('/api/analyze-barcode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ barcode, userId: user.id }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Analysis failed. The AI engine returned an error.');
+      }
+
+      const result = await response.json();
+      setLastAnalysisResult({ ...result, id: uuidv4(), code: barcode });
+      toast.success('Barcode Analysis Complete');
+    } catch (error) {
+      console.error(error);
+      toast.error('Analysis Error', { description: (error as Error).message });
+      setLastAnalysisResult(null);
+    } finally {
+      setIsAnalyzing(false);
+      handleClose();
+    }
+  }, [user, setLastAnalysisResult, setIsAnalyzing, handleClose]);
+
+  const { ref: barcodeRef } = useZxing({
+    onDecodeResult(result) {
+      handleBarcodeScan(result.getText());
+    },
+  });
+
+  // --- Other functions (startCamera, captureImage, etc.) remain unchanged ---
+
+  const startCamera = useCallback(async () => {
+    stopCamera();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (error) {
+      console.error('Camera access error:', error);
+      toast.error("Camera Permission Needed", { description: "Please grant camera permissions to continue." });
+      handleClose();
+    }
+  }, [facingMode, handleClose, stopCamera]);
+
   useEffect(() => {
-    if (isOpen) {
-        if (scanMode === 'image') {
-            startCamera();
-        }
+    if (isOpen && (scanMode === 'image' || scanMode === 'barcode')) {
+      startCamera();
     } else {
       stopCamera();
     }
@@ -80,25 +118,59 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     const imageData = canvas.toDataURL('image/jpeg', 0.8);
     setCapturedImages(prev => [...prev, imageData]);
+    toast.success("Photo captured!");
   }, []);
+  
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files) return;
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (e) => setCapturedImages(prev => [...prev, e.target?.result as string]);
+      reader.readAsDataURL(file);
+    });
+    toast.success(`${files.length} image(s) added.`);
+  };
 
   const analyzeImages = useCallback(async () => {
-    if (capturedImages.length === 0) return;
+    if (capturedImages.length === 0 || !user) return;
     setIsProcessing(true);
     setIsAnalyzing(true);
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setLastAnalysisResult({
-      decision: 'GO',
-      item: `Item from ${capturedImages.length} photos`,
-      marketValue: '$95.50',
-      code: `MULTI_IMAGE`
-    });
-    setIsProcessing(false);
-    setIsAnalyzing(false);
-    toast.success("Multi-Image Analysis Complete");
-    handleClose();
-  }, [capturedImages, setIsProcessing, setIsAnalyzing, setLastAnalysisResult, handleClose]);
-  
+    toast.info(`Analyzing ${capturedImages.length} image(s)...`);
+    
+    try {
+      // For multi-image, we'll send the first image to the single-image endpoint.
+      // A dedicated multi-image endpoint would be needed for a full implementation.
+      const response = await fetch('/api/analyze-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageData: capturedImages[0], userId: user.id }),
+      });
+
+      if (!response.ok) throw new Error('Image analysis failed.');
+
+      const result = await response.json();
+      setLastAnalysisResult({ ...result, id: uuidv4(), code: `IMAGE (${capturedImages.length})` });
+      toast.success("Image Analysis Complete");
+    } catch(error) {
+       console.error(error);
+       toast.error('Analysis Error', { description: (error as Error).message });
+    } finally {
+        setIsProcessing(false);
+        setIsAnalyzing(false);
+        handleClose();
+    }
+  }, [capturedImages, user, setIsProcessing, setIsAnalyzing, setLastAnalysisResult, handleClose]);
+
+  const toggleRecording = () => {
+    setIsRecording(!isRecording);
+    toast.info(isRecording ? "Stopped recording (placeholder)." : "Started recording (placeholder).");
+  }
+
+  const flipCamera = () => {
+    setFacingMode(prev => prev === 'environment' ? 'user' : 'environment');
+  }
+
   if (!isOpen) return null;
 
   return (
@@ -116,33 +188,35 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
           {scanMode === 'image' ? (
             <div className="space-y-4">
-              <div className="relative rounded-lg overflow-hidden bg-black">
-                <video ref={videoRef} autoPlay playsInline muted className="w-full h-64 object-cover" />
+              <div className="relative rounded-lg overflow-hidden bg-black aspect-video">
+                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                {isRecording && <div className="absolute top-2 right-2 h-4 w-4 bg-red-500 rounded-full animate-pulse" />}
               </div>
               {capturedImages.length > 0 && (
                 <div className="flex gap-2 overflow-x-auto pb-2">
-                  {capturedImages.map((img, index) => ( <img key={index} src={img} className="h-16 w-16 object-cover rounded-md border-2 border-purple-500" /> ))}
+                  {capturedImages.map((img, index) => ( <img key={index} src={img} alt={`capture ${index}`} className="h-16 w-16 object-cover rounded-md border-2 border-purple-500" /> ))}
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-2">
-                <Button onClick={captureImage} className="flex-1">
-                  <Camera className="w-4 h-4 mr-2" />
-                  {capturedImages.length > 0 ? 'Add Photo' : 'Capture'}
-                </Button>
-                <Button onClick={analyzeImages} disabled={isProcessing || capturedImages.length === 0} className="flex-1">
+              <div className="flex items-center gap-2">
+                <Button onClick={captureImage} className="flex-1"> <Camera className="w-4 h-4 mr-2" /> {capturedImages.length > 0 ? 'Add Photo' : 'Capture'} </Button>
+                <Toggle pressed={isRecording} onPressedChange={toggleRecording} aria-label="Toggle recording"> {isRecording ? <VideoOff className="h-4 w-4" /> : <Video className="h-4 w-4" />} </Toggle>
+                <Button variant="outline" size="icon" onClick={flipCamera}><FlipHorizontal className="h-4 w-4" /></Button>
+                <Button variant="outline" size="icon" onClick={() => fileInputRef.current?.click()}><Upload className="h-4 w-4" /></Button>
+              </div>
+               <Button onClick={analyzeImages} disabled={isProcessing || capturedImages.length === 0} className="w-full">
                   <Check className="w-4 h-4 mr-2" />
                   {isProcessing ? 'Analyzing...' : `Analyze (${capturedImages.length})`}
                 </Button>
-              </div>
             </div>
           ) : (
             <div>
-              <video ref={barcodeRef} className="w-full h-64 object-cover rounded-lg bg-black"/>
+              <video ref={barcodeRef} className="w-full aspect-video object-cover rounded-lg bg-black"/>
             </div>
           )}
         </CardContent>
       </Card>
       <canvas ref={canvasRef} className="hidden" />
+      <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
     </div>
   );
 };

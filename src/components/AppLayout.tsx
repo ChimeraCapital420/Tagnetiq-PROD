@@ -1,34 +1,29 @@
-// FILE: src/components/AppLayout.tsx (CREATE THIS FILE)
-// This fixes the blank background issue.
-
 import React from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import ResponsiveNavigation from './ResponsiveNavigation';
 import NewMarketingNavigation from './NewMarketingNavigation';
+import GlobalThemeBackground from './GlobalThemeBackground';
 
 const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const location = useLocation();
 
+  const isHomePage = location.pathname === '/';
   const showAppNav = user;
-  const showMarketingNav = !user && (location.pathname === '/' || location.pathname === '/index.html');
-
-  const layoutStyle: React.CSSProperties = {
-    backgroundColor: 'transparent',
-    minHeight: '100vh',
-    position: 'relative',
-    zIndex: 1,
-  };
-
+  const showMarketingNav = !user && isHomePage;
+  
   return (
-    <div style={layoutStyle}>
-      {showAppNav && <ResponsiveNavigation />}
-      {showMarketingNav && <NewMarketingNavigation />}
-      <div className={showAppNav ? "pt-16" : ""}>
-        {children}
+    <>
+      <GlobalThemeBackground />
+      <div className="relative z-10 min-h-screen">
+        {showAppNav && <ResponsiveNavigation />}
+        {showMarketingNav && <NewMarketingNavigation />}
+        <main className={showAppNav ? "pt-16" : ""}>
+          {children}
+        </main>
       </div>
-    </div>
+    </>
   );
 };
 
