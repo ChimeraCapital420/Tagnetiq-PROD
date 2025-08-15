@@ -1,5 +1,6 @@
 import React from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+// CORRECTED: Changed the import path to use the '@' alias for consistency and reliability.
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from './ui/button';
 import { APP_VERSION } from '@/lib/constants';
 

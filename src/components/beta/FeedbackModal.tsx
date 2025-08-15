@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useAuth } from '@/contexts/AuthContext';
 import { submitFeedback } from '@/lib/feedback';
 import { useLocation } from 'react-router-dom';
+import { toast } from 'sonner'; // ADDED: Missing import for the toast notification library.
 
 interface FeedbackModalProps {
   isOpen: boolean;
