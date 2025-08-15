@@ -1,11 +1,10 @@
 import React from 'react';
-import { useAppContext } from '@/contexts/AppContext';
-import { useBeta } from '@/contexts/BetaContext'; // Assuming flags are in BetaContext
+import { useBeta } from '@/contexts/BetaContext'; // Corrected: Use useBeta context for feature flags
 
 const WatermarkOverlay: React.FC = () => {
-  const { isWatermarkVisible } = useAppContext(); // Using AppContext for visibility toggle
-  
-  if (!isWatermarkVisible) {
+  const { flags } = useBeta(); // Corrected: Get flags from useBeta
+
+  if (!flags.isWatermarkVisible) {
     return null;
   }
 

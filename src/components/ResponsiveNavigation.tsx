@@ -6,9 +6,9 @@ const ResponsiveNavigation: React.FC = () => {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-md border-b">
       <div className="container mx-auto flex h-16 items-center justify-between px-4">
-        <Link to="/" className="flex items-center gap-2">
-          <img src="/logo.jpg" alt="TagnetIQ Logo" className="h-8 w-8 rounded-full" />
-          <span className="text-lg font-bold">TagnetIQ</span>
+        {/* CONFIRMED: This correctly links to the dashboard for verified members. */}
+        <Link to="/dashboard" className="flex items-center">
+          <img src="/images/logo-main.jpg" alt="TagnetIQ Logo" className="h-10 w-auto" />
         </Link>
         <div className="flex items-center gap-2">
           <SettingsDropdown />

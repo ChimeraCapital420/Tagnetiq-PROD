@@ -1,5 +1,3 @@
-// FILE: src/contexts/AuthContext.tsx (REPLACE THE ENTIRE FILE WITH THIS)
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
@@ -22,7 +20,15 @@ const AuthContext = createContext<AuthContextType>({
 
 export const useAuth = () => useContext(AuthContext);
 
-const ADMIN_EMAILS = ['admin@tagnetiq.com', 'bidreaminvest77@gmail.com'];
+// This is the corrected list. Each item is on its own line
+// and separated by a comma for clarity.
+const ADMIN_EMAILS = [
+  'admin@tagnetiq.com',
+  'bidreaminvest77@gmail.com',
+  // 'Samanthamccoy@yahoo.com', 
+  // 'brock_a@hotmail.com',
+  // 'brock-a@hotmail.com',
+];
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -32,26 +38,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     // --- DEVELOPER SHORTCUT ---
-    // This code simulates a logged-in admin user to bypass the login screen.
-    console.log("DEV MODE: Bypassing Supabase login with admin user.");
-    
+    /*
     const sampleAdminUser = {
       id: 'a1b2c3d4-e5f6-7890-a1b2-c3d4e5f67890',
       email: 'admin@tagnetiq.com',
     };
-
-    setUser(sampleAdminUser as any);
+    setUser(sampleAdminUser as any); 
     setSession({} as any);
-    setIsAdmin(true); // Force admin status
+    setIsAdmin(true);
     setLoading(false);
-    // --- END DEVELOPER SHORTCUT ---
-
-    /*
-    // --- ORIGINAL SUPABASE LOGIN CODE ---
-    // To switch back to the real login system, comment out or delete the "DEVELOPER SHORTCUT"
-    // block above and uncomment this block.
-
-    console.log("PRODUCTION MODE: Using Supabase for authentication.");
+    */
+    
+    // --- PRODUCTION SUPABASE LOGIN CODE ---
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       const currentUser = session?.user ?? null;
@@ -71,18 +69,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 
     return () => subscription.unsubscribe();
-    */
   }, []);
 
   const signOut = async () => {
-    // For the shortcut, we just clear the state.
+    await supabase.auth.signOut();
     setUser(null);
     setSession(null);
     setIsAdmin(false);
-    console.log("DEV MODE: Signed out.");
-    
-    // For real Supabase auth, you would use this line:
-    // await supabase.auth.signOut();
   };
 
   return (

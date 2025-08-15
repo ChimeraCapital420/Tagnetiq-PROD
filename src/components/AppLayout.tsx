@@ -10,11 +10,14 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
 
   const isHomePage = location.pathname === '/';
-  const showAppNav = user;
-  const showMarketingNav = !user && isHomePage;
+  
+  // CORRECTED LOGIC: 
+  // - Show the main app navigation (with settings) only when the user is logged in AND not on the homepage.
+  const showAppNav = user && !isHomePage;
+  // - Show the marketing navigation (no settings) if the user is NOT logged in, OR if they are on the homepage.
+  const showMarketingNav = !user || isHomePage;
   
   return (
-    // This wrapper ensures all content appears on top of backgrounds and animations.
     <div className="relative z-10">
       {showAppNav && <ResponsiveNavigation />}
       {showMarketingNav && <NewMarketingNavigation />}
