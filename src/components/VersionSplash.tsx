@@ -1,7 +1,7 @@
 import React from 'react';
-// CORRECTED: Changed the import path to use the '@' alias for consistency and reliability.
+// CORRECTED: All imports now use the standard project alias for consistency.
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from './ui/button';
+import { Button } from '@/components/ui/button';
 import { APP_VERSION } from '@/lib/constants';
 
 interface VersionSplashProps {

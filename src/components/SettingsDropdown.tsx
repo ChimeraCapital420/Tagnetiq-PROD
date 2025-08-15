@@ -9,7 +9,8 @@ import {
 import { Settings, LogOut, Sun, Moon, Palette, MessageSquare, BarChart, ShieldCheck, Beaker, Map, Leaf } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
-import { Switch } from '@/components/ui/switch'; // We will use the Switch component
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label'; // CORRECTED: Imported the official Label component.
 
 const themeNames = ['executive', 'matrix', 'safari', 'darkKnight', 'cyberpunk', 'ocean', 'forest', 'sunset'];
 
@@ -99,13 +100,6 @@ const SettingsDropdown: React.FC = () => {
     </DropdownMenu>
   );
 };
-// We need to add the Label component for this to work
-const Label = React.forwardRef<
-    React.ElementRef<'label'>,
-    React.ComponentPropsWithoutRef<'label'>
->(({ className, ...props }, ref) => (
-    <label ref={ref} className={className} {...props} />
-));
-
+// REMOVED: The local, problematic definition of Label has been deleted.
 
 export default SettingsDropdown;
