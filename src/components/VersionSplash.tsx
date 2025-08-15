@@ -1,5 +1,5 @@
 import React from 'react';
-// CORRECTED: All imports now use the standard project alias for consistency and reliability.
+// CORRECTED: All imports now use the standard project alias for consistency.
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { APP_VERSION } from '@/lib/constants';
