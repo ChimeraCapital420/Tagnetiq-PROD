@@ -1,7 +1,7 @@
 // FILE: src/lib/storage.ts
 // Helper for creating pre-signed URLs for secure file uploads (e.g., screenshots).
 
-import { supaAdmin } from './supaAdmin';
+import { supaAdmin } from '../../api/_lib/supaAdmin';
 
 const BUCKET_NAME = 'feedback-screenshots';
 
