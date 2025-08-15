@@ -1,4 +1,3 @@
-// FILE: vercel.json
 {
   "rewrites": [
     {
