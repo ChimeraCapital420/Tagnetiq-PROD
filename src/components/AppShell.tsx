@@ -1,3 +1,4 @@
+// src/components/AppShell.tsx
 import React from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -21,13 +22,13 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     };
 
     const themeImageMap: { [key: string]: string } = {
-      darkKnight: '/dark-knight-bg.jpg',
-      executive: '/executive-bg.jpg',
-      forest: '/forest-bg.jpg',
-      sunset: '/sunset-bg.jpg',
-      cyberpunk: '/cyberpunk-bg.jpg',
-      safari: '/safari-bg.jpg',
-      ocean: '/ocean-bg.jpg',
+      darkKnight: '/images/dark-knight-bg.jpg',
+      executive: '/images/executive-bg.jpg',
+      forest: '/images/forest-bg.jpg',
+      sunset: '/images/sunset-bg.jpg',
+      cyberpunk: '/images/cyberpunk-bg.jpg',
+      safari: '/images/safari-bg.jpg',
+      ocean: '/images/ocean-bg.jpg',
     };
     
     let imageUrl = '';
@@ -36,12 +37,12 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const isInvestorPage = location.pathname === '/investor' || location.pathname === '/admin/investors';
 
     if (isHomePage) {
-        imageUrl = '/welcome-artwork.jpg';
+        imageUrl = '/images/welcome-artwork.jpg';
     } else if (isAuthPage) {
-        imageUrl = '/auth-background.jpg';
+        imageUrl = '/images/auth-background.jpg';
     } else if (isInvestorPage) {
-        imageUrl = '/investor-splash.jpg';
-    } else if (themeMode === 'dark') {
+        imageUrl = '/images/investor-splash.jpg';
+    } else if (themeMode === 'dark') { // This logic limits backgrounds to dark mode
         imageUrl = themeImageMap[theme] || '';
     }
     

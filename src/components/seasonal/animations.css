@@ -1,3 +1,4 @@
+/* src/components/seasonal/animations.css */
 .particles {
     position: fixed;
     top: 0;
@@ -5,7 +6,7 @@
     width: 100%;
     height: 100%;
     pointer-events: none;
-    z-index: -1;
+    z-index: 0; /* Changed from -1 to 0 */
 }
 
 .particle {
@@ -57,7 +58,7 @@
     height: 200%;
     background: radial-gradient(circle at center, rgba(255, 235, 59, 0.2) 0%, rgba(255, 235, 59, 0) 60%);
     animation: spin 60s linear infinite;
-    z-index: -1;
+    z-index: 0; /* Changed from -1 to 0 */
     pointer-events: none;
 }
 

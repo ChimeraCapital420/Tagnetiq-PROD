@@ -1,28 +1,32 @@
 import React from 'react';
-import './animations.css';
 
 const MatrixBackground: React.FC = () => {
-  const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  const streamCount = 150;
-
   return (
-    <div className="matrix-rain-bg">
-      {[...Array(streamCount)].map((_, i) => {
-        const stream = Array.from({ length: Math.floor(Math.random() * 20) + 10 }, () => 
-          characters[Math.floor(Math.random() * characters.length)]
-        ).join('');
-        
-        return (
-          <p key={i} className="matrix-stream" style={{
-            left: `${Math.random() * 100}vw`,
-            animationDuration: `${Math.random() * 5 + 3}s`,
-            animationDelay: `${Math.random() * 5}s`,
-          }}>
-            {stream}
-          </p>
-        );
-      })}
-    </div>
+    <>
+      <style>{`
+        @keyframes fall {
+          to { transform: translateY(105vh); }
+        }
+        .matrix-stream {
+          writing-mode: vertical-rl; text-orientation: upright; white-space: nowrap;
+          user-select: none; text-shadow: 0 0 8px rgba(32, 194, 14, 0.8);
+          position: absolute; top: -100%; animation: fall linear infinite; pointer-events: none;
+        }
+      `}</style>
+      <div className="fixed inset-0 z-0" style={{ background: '#000', color: '#20c20e' }}>
+        {[...Array(100)].map((_, i) => {
+          const streamText = Math.random() < 0.05 ? 'TAGNETIQ' : '日ﾊﾐﾋｰｳｼﾅﾓﾆｻﾜﾂｵﾘｱﾎﾃﾏｹﾒｴｶｷﾑﾕﾗｾﾈｽﾀﾇﾍ0123456789Z';
+          return (
+            <div key={i} className="matrix-stream" style={{
+              left: `${Math.random() * 100}vw`, fontSize: `${Math.random() * 12 + 12}px`,
+              animationDuration: `${Math.random() * 8 + 4}s`, animationDelay: `${Math.random() * 5}s`,
+            }}>
+              {streamText}
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 };
 

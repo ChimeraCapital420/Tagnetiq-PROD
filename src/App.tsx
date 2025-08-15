@@ -1,3 +1,4 @@
+// src/App.tsx
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useAppContext } from '@/contexts/AppContext';
@@ -8,8 +9,10 @@ import { Toaster as SonnerToaster } from '@/components/ui/sonner';
 import AppLayout from '@/components/AppLayout';
 import AppShell from '@/components/AppShell';
 import ProtectedRoute from '@/routes/ProtectedRoute';
+import SeasonalManager from '@/components/SeasonalManager'; 
+import ThemeAnimationManager from '@/components/ThemeAnimationManager'; // Import the new manager
 
-// Pages and Components
+// Pages and Components...
 import Index from '@/pages/Index';
 import Login from '@/pages/Login';
 import SignUp from '@/pages/SignUp';
@@ -26,19 +29,21 @@ import MapConsole from '@/pages/admin/MapConsole';
 import { FeedbackModal } from '@/components/beta/FeedbackModal';
 
 const AppRoutes: React.FC = () => {
+    const { user, isAdmin } = useAuth();
+    // ... routes remain the same
     return (
         <Routes>
             <Route path="/" element={<Index />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<SignUp />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/beta/welcome" element={<BetaWelcome />} />
-            <Route path="/beta/missions" element={<BetaMissions />} />
-            <Route path="/beta/referrals" element={<BetaReferrals />} />
-            <Route path="/beta-controls" element={<BetaControls />} />
-            <Route path="/admin/investors" element={<Investor />} />
-            <Route path="/admin/beta" element={<BetaConsole />} />
-            <Route path="/admin/map" element={<MapConsole />} />
+            <Route path="/login" element={!user ? <Login /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/signup" element={!user ? <SignUp /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<ProtectedRoute isAllowed={!!user} to="/login"><Dashboard /></ProtectedRoute>} />
+            <Route path="/beta/welcome" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaWelcome /></ProtectedRoute>} />
+            <Route path="/beta/missions" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaMissions /></ProtectedRoute>} />
+            <Route path="/beta/referrals" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaReferrals /></ProtectedRoute>} />
+            <Route path="/beta-controls" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><BetaControls /></ProtectedRoute>} />
+            <Route path="/admin/investors" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><Investor /></ProtectedRoute>} />
+            <Route path="/admin/beta" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><BetaConsole /></ProtectedRoute>} />
+            <Route path="/admin/map" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><MapConsole /></ProtectedRoute>} />
             <Route path="/investor" element={<InvestorPortal />} /> 
             <Route path="*" element={<NotFound />} />
         </Routes>
@@ -50,7 +55,7 @@ const AppContent: React.FC = () => {
   const { isFeedbackModalOpen, setIsFeedbackModalOpen } = useAppContext();
 
   if (loading) {
-    return <div className="fixed inset-0 flex items-center justify-center"><p>Loading...</p></div>;
+    return <div className="fixed inset-0 flex items-center justify-center bg-background"><p>Loading session...</p></div>;
   }
 
   return (
@@ -61,6 +66,7 @@ const AppContent: React.FC = () => {
   );
 };
 
+
 function App() {
   return (
     <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
@@ -69,6 +75,8 @@ function App() {
           <BetaProvider>
             <Router>
                 <AppShell>
+                    <ThemeAnimationManager /> {/* Add the new manager HERE */}
+                    <SeasonalManager />
                     <AppContent />
                     <SonnerToaster />
                 </AppShell>

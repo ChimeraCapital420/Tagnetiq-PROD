@@ -9,8 +9,8 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
 
   const isHomePage = location.pathname === '/';
-  const showAppNav = user;
-  const showMarketingNav = !user && isHomePage;
+  const showAppNav = user; // Shows ResponsiveNavigation with settings cog
+  const showMarketingNav = !user && isHomePage; // Shows NewMarketingNavigation without settings cog
   
   return (
     <div className="relative z-10">
