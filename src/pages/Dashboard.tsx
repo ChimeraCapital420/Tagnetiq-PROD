@@ -8,7 +8,6 @@ import { CATEGORIES } from '@/lib/constants';
 import AnalysisResult from '@/components/AnalysisResult';
 import MarketComps from '@/components/MarketComps';
 import SubCategoryModal from '@/components/SubCategoryModal';
-import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
 const Dashboard: React.FC = () => {
@@ -16,30 +15,34 @@ const Dashboard: React.FC = () => {
   const {
     selectedCategory,
     setSelectedCategory,
-    isScanning,
-    setIsScanning,
     lastAnalysisResult,
-    setLastAnalysisResult, // Ensure this is available from context if you plan to clear results
+    setLastAnalysisResult,
   } = useAppContext();
   const [isSubCategoryModalOpen, setIsSubCategoryModalOpen] = React.useState(false);
+  const [activeCategoryForModal, setActiveCategoryForModal] = React.useState('');
 
   const getCategoryDisplayName = () => {
     if (!selectedCategory) return 'General';
-    // Find the base category for display if a sub-category is selected
     const baseCategoryId = selectedCategory.split('-')[0];
-    const category = CATEGORIES.find(c => c.id.startsWith(baseCategoryId));
+    const category = CATEGORIES.find(c => c.id === baseCategoryId);
     return category?.name || 'General';
   };
 
   const handleCategorySelect = (categoryId: string) => {
     const category = CATEGORIES.find(c => c.id === categoryId);
     if (category) {
+      setLastAnalysisResult(null); // Clear previous results immediately
       setSelectedCategory(categoryId);
-      // Open the sub-category modal only if there are sub-categories
-      setIsSubCategoryModalOpen(true);
-      toast.success(`AI Mode set to ${category.name}`);
-      // Clear previous analysis result when changing category
-      setLastAnalysisResult(null);
+      setActiveCategoryForModal(categoryId); // Set which category's modal to show
+      setIsSubCategoryModalOpen(true); // Always attempt to open the modal
+      
+      // The subcategory modal itself will handle whether to show or auto-close.
+      // This simplifies the logic here.
+      if (category.id !== 'amazon') { 
+        toast.info(`Refining AI for ${category.name}...`);
+      } else {
+        toast.success(`AI Mode set to ${category.name}`);
+      }
     }
   };
 
@@ -47,15 +50,16 @@ const Dashboard: React.FC = () => {
     if (lastAnalysisResult) {
       return <AnalysisResult />;
     }
-    if (selectedCategory && selectedCategory.startsWith('real-estate')) {
+    // Only show MarketComps if a real-estate sub-category has been chosen and there's no analysis result
+    if (selectedCategory === 'real-estate-comps') {
       return <MarketComps />;
     }
-    // Default view: The category selection grid
+    // Default View: The category selection grid. This is the "General search" state.
     return (
       <Card>
         <CardHeader>
           <CardTitle>Select Analysis Mode</CardTitle>
-          <CardDescription>Choose an AI specialty to begin.</CardDescription>
+          <CardDescription>Choose an AI specialty to begin. When no specialty is selected, the AI operates in a general mode.</CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
           {CATEGORIES.map((cat) => (
@@ -68,7 +72,7 @@ const Dashboard: React.FC = () => {
               <Card className="h-full group-hover:border-primary transition-colors">
                 <CardHeader>
                   <div className="flex items-start gap-4">
-                    <cat.icon className="h-6 w-6 text-primary shrink-0" />
+                    <cat.icon className="h-6 w-6 text-primary shrink-0 mt-1" />
                     <div>
                       <CardTitle className="text-base">{cat.name}</CardTitle>
                       <CardDescription className="mt-1 text-xs">{cat.description}</CardDescription>
@@ -107,12 +111,12 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
       
-      {selectedCategory && (
+      {activeCategoryForModal && (
         <SubCategoryModal
             isOpen={isSubCategoryModalOpen}
             onClose={() => setIsSubCategoryModalOpen(false)}
-            categoryId={selectedCategory}
-            categoryName={getCategoryDisplayName()}
+            categoryId={activeCategoryForModal}
+            categoryName={CATEGORIES.find(c => c.id === activeCategoryForModal)?.name || ''}
         />
       )}
     </>

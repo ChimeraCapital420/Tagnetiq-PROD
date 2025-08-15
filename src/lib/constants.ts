@@ -1,22 +1,16 @@
-// FILE: src/lib/constants.ts (This is the content for your new file)
+// FILE: src/lib/constants.ts
 
-import { Home, Zap, Gem, Car, Bot, Package } from 'lucide-react';
+import { Home, Zap, Gem, Car, Bot, Package, Star, Book, Palette } from 'lucide-react';
 
 export const APP_VERSION = "V9.0.2 Beta";
 
+// CORRECTED: Restored all 9 categories to ensure they appear on the dashboard.
 export const CATEGORIES = [
     {
         id: 'real-estate',
         name: 'Real Estate',
         icon: Home,
         description: 'Analyze properties, find deals, and get market comps.',
-        status: 'Active',
-    },
-    {
-        id: 'collectibles',
-        name: 'Collectibles',
-        icon: Gem,
-        description: 'Value trading cards, coins, stamps, and other rare items.',
         status: 'Active',
     },
     {
@@ -27,24 +21,52 @@ export const CATEGORIES = [
         status: 'Beta',
     },
     {
-        id: 'luxury-goods',
-        name: 'Luxury Goods',
-        icon: Package,
-        description: 'Authenticate and value watches, handbags, and fine art.',
-        status: 'Beta',
-    },
-    {
-        id: 'continuous-scan',
-        name: 'Continuous Scanner',
-        icon: Zap,
-        description: 'Run the AI continuously to evaluate items in real-time.',
+        id: 'lego',
+        name: 'Lego',
+        icon: Gem,
+        description: 'Identify sets, parts, and minifigures.',
         status: 'Active',
     },
     {
-        id: 'multi-image',
-        name: 'Multi-Image Analyzer',
-        icon: Bot,
-        description: 'Upload and evaluate a batch of assets at once.',
-        status: 'Beta',
+        id: 'starwars',
+        name: 'Star Wars',
+        icon: Star,
+        description: 'Value figures, vehicles, and collectibles.',
+        status: 'Active',
+    },
+    {
+        id: 'art',
+        name: 'Art & Furniture',
+        icon: Palette,
+        description: 'Analyze paintings, sculptures, and furniture.',
+        status: 'Active',
+    },
+    {
+        id: 'books',
+        name: 'Books & Comics',
+        icon: Book,
+        description: 'Identify first editions and graded comics.',
+        status: 'Active',
+    },
+    {
+        id: 'collectibles',
+        name: 'Collectibles',
+        icon: Gem,
+        description: 'Value trading cards, coins, stamps, and other rare items.',
+        status: 'Active',
+    },
+    {
+        id: 'sports',
+        name: 'Sports Memorabilia',
+        icon: Zap,
+        description: 'Grade cards, jerseys, and autographs.',
+        status: 'Active',
+    },
+    {
+        id: 'amazon',
+        name: 'Amazon Arbitrage',
+        icon: Package,
+        description: 'Scan barcodes for direct Amazon resale analysis.',
+        status: 'Active',
     },
 ];
