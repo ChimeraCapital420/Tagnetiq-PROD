@@ -1,5 +1,5 @@
+// src/pages/Investor.tsx
 import React, { useState, useEffect } from 'react';
-// CORRECTED: Added the missing import for Card and its sub-components.
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Printer } from 'lucide-react';

@@ -1,8 +1,41 @@
 // src/pages/Dashboard.tsx
-// ... imports
+import React from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useAppContext } from '@/contexts/AppContext';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { CATEGORIES } from '@/lib/constants';
+import AnalysisResult from '@/components/AnalysisResult';
+import MarketComps from '@/components/MarketComps';
+import SubCategoryModal from '@/components/SubCategoryModal';
+import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 
 const Dashboard: React.FC = () => {
-  // ... component logic
+  const { user } = useAuth();
+  const {
+    selectedCategory,
+    setSelectedCategory,
+    isScanning,
+    setIsScanning,
+    lastAnalysisResult,
+  } = useAppContext();
+  const [isSubCategoryModalOpen, setIsSubCategoryModalOpen] = React.useState(false);
+
+  const getCategoryDisplayName = () => {
+    if (!selectedCategory) return 'General';
+    const category = CATEGORIES.find(c => c.id === selectedCategory) 
+      || { name: selectedCategory.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ') };
+    return category?.name || 'General';
+  };
+  
+  const handleCategorySelect = (categoryId: string) => {
+    const category = CATEGORIES.find(c => c.id === categoryId);
+    if (category) {
+      setSelectedCategory(categoryId);
+      setIsSubCategoryModalOpen(true);
+      toast.success(`AI Mode set to ${category.name}`);
+    }
+  };
 
   return (
     <>
@@ -18,16 +51,24 @@ const Dashboard: React.FC = () => {
                 </p>
               </div>
               <div className="h-48 md:h-full w-full">
-                {/* CORRECTED: The path now correctly includes the /images/ directory. */}
                 <img src="/images/dashboard-welcome.jpg" alt="Futuristic asset analysis" className="h-full w-full object-cover"/>
               </div>
             </div>
           </Card>
           
-          {/* ... rest of the component */}
+          {lastAnalysisResult ? <AnalysisResult /> : <MarketComps />}
+
         </div>
       </div>
-      {/* ... rest of the component */}
+      
+      {selectedCategory && (
+        <SubCategoryModal
+            isOpen={isSubCategoryModalOpen}
+            onClose={() => setIsSubCategoryModalOpen(false)}
+            categoryId={selectedCategory}
+            categoryName={getCategoryDisplayName()}
+        />
+      )}
     </>
   );
 };
