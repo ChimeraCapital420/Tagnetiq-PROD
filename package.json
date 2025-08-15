@@ -43,6 +43,7 @@
     "@tanstack/react-query": "^5.56.2",
     "@types/js-cookie": "^3.0.6",
     "@types/uuid": "^10.0.0",
+    "@vercel/node": "^5.3.12",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.0.0",
