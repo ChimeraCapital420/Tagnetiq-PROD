@@ -4,13 +4,13 @@ import { Button } from '@/components/ui/button';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent,
-  DropdownMenuSubTrigger, DropdownMenuTrigger,
+  DropdownMenuSubTrigger, DropdownMenuTrigger, // CORRECTED: Added DropdownMenuTrigger here
 } from '@/components/ui/dropdown-menu';
 import { Settings, LogOut, Sun, Moon, Palette, MessageSquare, BarChart, ShieldCheck, Beaker, Map, Leaf } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label'; // CORRECTED: Imported the official Label component.
+import { Label } from '@/components/ui/label';
 
 const themeNames = ['executive', 'matrix', 'safari', 'darkKnight', 'cyberpunk', 'ocean', 'forest', 'sunset'];
 
@@ -80,9 +80,9 @@ const SettingsDropdown: React.FC = () => {
           <>
             <DropdownMenuSeparator />
             <DropdownMenuLabel className="text-xs text-muted-foreground">Admin Tools</DropdownMenuLabel>
+            <DropdownMenuItem asChild><Link to="/investor-suite"><BarChart className="mr-2 h-4 w-4" /><span>Investor Suite</span></Link></DropdownMenuItem>
             <DropdownMenuItem asChild><Link to="/admin/map"><Map className="mr-2 h-4 w-4" /><span>Global Map</span></Link></DropdownMenuItem>
             <DropdownMenuItem asChild><Link to="/admin/beta"><Beaker className="mr-2 h-4 w-4" /><span>Beta Console</span></Link></DropdownMenuItem>
-            <DropdownMenuItem asChild><Link to="/admin/investors"><BarChart className="mr-2 h-4 w-4" /><span>Investor Suite</span></Link></DropdownMenuItem>
             <DropdownMenuItem asChild><Link to="/beta-controls"><ShieldCheck className="mr-2 h-4 w-4" /><span>Beta Flags</span></Link></DropdownMenuItem>
           </>
         )}
@@ -96,6 +96,5 @@ const SettingsDropdown: React.FC = () => {
     </DropdownMenu>
   );
 };
-// REMOVED: The local, problematic definition of Label has been deleted.
 
 export default SettingsDropdown;
