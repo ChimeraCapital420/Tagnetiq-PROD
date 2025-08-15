@@ -20,7 +20,6 @@ const SettingsDropdown: React.FC = () => {
 
   const handleSeasonalToggle = (isChecked: boolean) => {
     if (isChecked) {
-      // For now, we'll default to 'fall'. We'll make this dynamic later.
       setSeasonalMode('fall');
     } else {
       setSeasonalMode('off');
@@ -57,8 +56,6 @@ const SettingsDropdown: React.FC = () => {
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-
-        {/* New Seasonal Branding Section */}
         <div className="px-2 py-1.5 text-sm">
           <div className="flex items-center justify-between">
             <Label htmlFor="seasonal-mode" className="flex items-center gap-2 font-normal">
@@ -73,7 +70,6 @@ const SettingsDropdown: React.FC = () => {
           </div>
            <p className="text-xs text-muted-foreground mt-1 px-1">Adds seasonal visuals over your theme.</p>
         </div>
-
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => setIsFeedbackModalOpen(true)}>
           <MessageSquare className="mr-2 h-4 w-4" />
