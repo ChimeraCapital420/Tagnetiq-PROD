@@ -1,5 +1,7 @@
+// FILE: src/components/MarketComps.tsx
+
 import React, { useState, useEffect } from 'react';
-// CORRECTED: Added all the missing Card component imports.
+// CORRECTED: This import path has been fixed to use the project's standard alias.
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
