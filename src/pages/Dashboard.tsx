@@ -1,8 +1,9 @@
-// src/pages/Dashboard.tsx
+// FILE: src/pages/Dashboard.tsx
+
 import React from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { CATEGORIES } from '@/lib/constants';
 import AnalysisResult from '@/components/AnalysisResult';
 import MarketComps from '@/components/MarketComps';
@@ -18,23 +19,68 @@ const Dashboard: React.FC = () => {
     isScanning,
     setIsScanning,
     lastAnalysisResult,
+    setLastAnalysisResult, // Ensure this is available from context if you plan to clear results
   } = useAppContext();
   const [isSubCategoryModalOpen, setIsSubCategoryModalOpen] = React.useState(false);
 
   const getCategoryDisplayName = () => {
     if (!selectedCategory) return 'General';
-    const category = CATEGORIES.find(c => c.id === selectedCategory) 
-      || { name: selectedCategory.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ') };
+    // Find the base category for display if a sub-category is selected
+    const baseCategoryId = selectedCategory.split('-')[0];
+    const category = CATEGORIES.find(c => c.id.startsWith(baseCategoryId));
     return category?.name || 'General';
   };
-  
+
   const handleCategorySelect = (categoryId: string) => {
     const category = CATEGORIES.find(c => c.id === categoryId);
     if (category) {
       setSelectedCategory(categoryId);
+      // Open the sub-category modal only if there are sub-categories
       setIsSubCategoryModalOpen(true);
       toast.success(`AI Mode set to ${category.name}`);
+      // Clear previous analysis result when changing category
+      setLastAnalysisResult(null);
     }
+  };
+
+  const renderContent = () => {
+    if (lastAnalysisResult) {
+      return <AnalysisResult />;
+    }
+    if (selectedCategory && selectedCategory.startsWith('real-estate')) {
+      return <MarketComps />;
+    }
+    // Default view: The category selection grid
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Select Analysis Mode</CardTitle>
+          <CardDescription>Choose an AI specialty to begin.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+          {CATEGORIES.map((cat) => (
+            <button
+              key={cat.id}
+              onClick={() => handleCategorySelect(cat.id)}
+              disabled={cat.status !== 'Active'}
+              className="text-left disabled:opacity-50 disabled:cursor-not-allowed group"
+            >
+              <Card className="h-full group-hover:border-primary transition-colors">
+                <CardHeader>
+                  <div className="flex items-start gap-4">
+                    <cat.icon className="h-6 w-6 text-primary shrink-0" />
+                    <div>
+                      <CardTitle className="text-base">{cat.name}</CardTitle>
+                      <CardDescription className="mt-1 text-xs">{cat.description}</CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+              </Card>
+            </button>
+          ))}
+        </CardContent>
+      </Card>
+    );
   };
 
   return (
@@ -56,7 +102,7 @@ const Dashboard: React.FC = () => {
             </div>
           </Card>
           
-          {lastAnalysisResult ? <AnalysisResult /> : <MarketComps />}
+          {renderContent()}
 
         </div>
       </div>
