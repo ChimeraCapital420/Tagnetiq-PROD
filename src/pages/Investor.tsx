@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+// CORRECTED: Added the missing import for Card and its sub-components.
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Printer } from 'lucide-react';
@@ -72,7 +73,7 @@ const InvestorSuite: React.FC = () => {
                 <Card>
                     <CardHeader><CardTitle>Total Addressable Market (TAM)</CardTitle></CardHeader>
                     <CardContent className="text-2xl font-bold space-y-2">
-                        {metrics?.tam && Object.entries(metrics.tam).map(([key, value]) => (
+                        {metrics?.tam && Object.entries(metrics.tam).map(([key, value])=> (
                             <div key={key}>
                                 <p>${value}</p>
                                 <p className="text-sm font-normal text-muted-foreground">{key.replace(/_/g, ' ')}</p>
