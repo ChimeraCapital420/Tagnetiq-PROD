@@ -1,12 +1,14 @@
+// FILE: src/components/AnalysisResult.tsx (IMPROVED)
+
 import React, { useState } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ThumbsUp, ThumbsDown, CheckCircle, XCircle } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, CheckCircle, XCircle, ScanLine } from 'lucide-react'; // ScanLine imported
 import { toast } from 'sonner';
 
 const AnalysisResult: React.FC = () => {
-  const { lastAnalysisResult } = useAppContext();
+  const { lastAnalysisResult, setLastAnalysisResult, setIsScanning } = useAppContext(); // Added setIsScanning
   const [feedbackSent, setFeedbackSent] = useState(false);
 
   if (!lastAnalysisResult) {
@@ -16,15 +18,21 @@ const AnalysisResult: React.FC = () => {
   const handleFeedback = (isGood: boolean) => {
     console.log(`Feedback for analysis ID ${lastAnalysisResult.id}: ${isGood ? 'Good' : 'Bad'}`);
     setFeedbackSent(true);
-    toast.success("Feedback submitted!", {
-      description: "Your input helps our AI get smarter.",
+    toast.success("Thank you!", {
+      description: "Your feedback helps our AI improve.",
     });
+  };
+
+  // NEW FUNCTION: Implements the continuous scanning flow
+  const handleScanNext = () => {
+    setLastAnalysisResult(null); // Clear the current result
+    setIsScanning(true);       // Immediately open the scanner
   };
   
   const isBuy = lastAnalysisResult.decision === 'BUY';
 
   return (
-    <Card className="w-full max-w-md mx-auto text-left shadow-lg">
+    <Card className="w-full max-w-md mx-auto text-left shadow-lg mt-8">
       <CardHeader>
         <div className="flex justify-between items-start">
           <div>
@@ -40,7 +48,7 @@ const AnalysisResult: React.FC = () => {
       <CardContent className="space-y-3">
         <div>
           <p className="text-sm text-muted-foreground">Estimated Value</p>
-          <p className="text-2xl font-bold">${lastAnalysisResult.estimatedValue}</p>
+          <p className="text-2xl font-bold">{lastAnalysisResult.estimatedValue}</p>
         </div>
         <div>
           <p className="text-sm text-muted-foreground">Reasoning</p>
@@ -52,15 +60,19 @@ const AnalysisResult: React.FC = () => {
         </div>
       </CardContent>
       <CardFooter className="flex justify-between bg-muted/50 px-6 py-3">
-        <p className="text-xs text-muted-foreground">Was this result helpful?</p>
         <div className="flex gap-2">
-          <Button variant="outline" size="icon" onClick={() => handleFeedback(true)} disabled={feedbackSent}>
-            <ThumbsUp className="h-4 w-4" />
+           <Button variant="outline" size="sm" onClick={() => handleFeedback(true)} disabled={feedbackSent}>
+            <ThumbsUp className="h-4 w-4 mr-2" /> Good
           </Button>
-          <Button variant="outline" size="icon" onClick={() => handleFeedback(false)} disabled={feedbackSent}>
-            <ThumbsDown className="h-4 w-4" />
+          <Button variant="outline" size="sm" onClick={() => handleFeedback(false)} disabled={feedbackSent}>
+            <ThumbsDown className="h-4 w-4 mr-2" /> Bad
           </Button>
         </div>
+        {/* NEW BUTTON for continuous scanning */}
+        <Button onClick={handleScanNext}>
+            <ScanLine className="h-4 w-4 mr-2" />
+            Scan Next Item
+        </Button>
       </CardFooter>
     </Card>
   );

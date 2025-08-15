@@ -1,17 +1,17 @@
-// FILE: src/pages/Dashboard.tsx
+// FILE: src/pages/Dashboard.tsx (CORRECTED)
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'; // CardDescription removed as it's not used
 import { CATEGORIES } from '@/lib/constants';
+import { subCategories } from '@/lib/subcategories'; // IMPORTED SUBCATEGORIES
 import AnalysisResult from '@/components/AnalysisResult';
-import MarketComps from '@/components/MarketComps';
 import SubCategoryModal from '@/components/SubCategoryModal';
-import DualScanner from '@/components/DualScanner';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { ScanLine, X } from 'lucide-react'; // Import necessary icons
+import { ScanLine } from 'lucide-react';
+import DualScanner from '@/components/DualScanner';
 
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
@@ -21,126 +21,95 @@ const Dashboard: React.FC = () => {
     isScanning,
     setIsScanning,
     lastAnalysisResult,
-    setLastAnalysisResult,
   } = useAppContext();
-  const [isSubCategoryModalOpen, setIsSubCategoryModalOpen] = useState(false);
-  const [activeCategoryForModal, setActiveCategoryForModal] = useState('');
+  const [isSubCategoryModalOpen, setIsSubCategoryModalOpen] = React.useState(false);
+
+  const getCategoryDisplayName = () => {
+    if (!selectedCategory) return 'General';
+    // Find in main categories first
+    let cat = CATEGORIES.find(c => c.id === selectedCategory);
+    if (cat) return cat.name;
+
+    // If not found, it might be a subcategory, so we find its parent
+    for (const parentId in subCategories) {
+        const subCat = subCategories[parentId].find(sc => sc.id === selectedCategory);
+        if (subCat) return subCat.name;
+    }
+
+    return 'General';
+  };
 
   const handleCategorySelect = (categoryId: string) => {
     const category = CATEGORIES.find(c => c.id === categoryId);
     if (category) {
-      setLastAnalysisResult(null); 
       setSelectedCategory(categoryId);
-      setActiveCategoryForModal(categoryId);
-      setIsSubCategoryModalOpen(true);
-      toast.info(`AI Mode set to ${category.name}. You can scan now or refine your search.`);
+      // ** THIS IS THE CORRECTED LOGIC **
+      // It now checks the imported subCategories object for entries matching the categoryId
+      const relatedSubCats = subCategories[categoryId] || [];
+      
+      if (relatedSubCats.length > 0) {
+        setIsSubCategoryModalOpen(true); // Open sub-category modal
+      } else {
+        setIsScanning(true); // Directly open scanner if no sub-categories
+      }
+      toast.success(`AI Mode set to ${category.name}`);
     }
-  };
-
-  const clearCategory = () => {
-    setSelectedCategory(null);
-    setLastAnalysisResult(null);
-    toast.success("AI Mode reset to General Search.");
-  };
-
-  const getCategoryDisplayName = () => {
-    if (!selectedCategory) return 'General';
-    const baseCategoryId = selectedCategory.split('-')[0];
-    const category = CATEGORIES.find(c => c.id === baseCategoryId);
-    const subCategory = subCategories[baseCategoryId]?.find(sc => sc.id === selectedCategory);
-    return subCategory ? `${category?.name} / ${subCategory.name}` : category?.name || 'General';
-  };
-  
-  const renderContent = () => {
-    if (lastAnalysisResult) return <AnalysisResult />;
-    if (selectedCategory === 'real-estate-comps') return <MarketComps />;
-
-    // Default View: The category selection grid for specialty selection.
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Select Analysis Mode</CardTitle>
-          <CardDescription>Choose an AI specialty to refine your search, or use the scan button for a general analysis.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-          {CATEGORIES.map((cat) => (
-            <button
-              key={cat.id}
-              onClick={() => handleCategorySelect(cat.id)}
-              disabled={cat.status !== 'Active'}
-              className="text-left disabled:opacity-50 disabled:cursor-not-allowed group"
-            >
-              <Card className={`h-full transition-colors ${selectedCategory?.startsWith(cat.id) ? 'border-primary' : 'group-hover:border-primary'}`}>
-                <CardHeader>
-                  <div className="flex items-start gap-4">
-                    <cat.icon className={`h-6 w-6 shrink-0 mt-1 ${selectedCategory?.startsWith(cat.id) ? 'text-primary' : 'text-muted-foreground'}`} />
-                    <div>
-                      <CardTitle className="text-base">{cat.name}</CardTitle>
-                      <CardDescription className="mt-1 text-xs">{cat.description}</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-              </Card>
-            </button>
-          ))}
-        </CardContent>
-      </Card>
-    );
   };
 
   return (
     <>
-      <div className="relative z-10 p-4 sm:p-8 pb-24"> {/* Added padding-bottom for FAB */}
+      <div className="relative z-10 p-4 sm:p-8">
         <div className="max-w-4xl mx-auto space-y-8">
+
           <Card className="overflow-hidden border-border/50 bg-background/50 backdrop-blur-sm">
-            <div className="grid grid-cols-1 md:grid-cols-2 items-center">
-              <div className="p-8">
-                <h1 className="text-3xl font-bold tracking-tight">Welcome, {user?.email || 'Tester'}!</h1>
-                <div className="mt-2 text-muted-foreground flex items-center gap-2">
-                  <span>Current Mode:</span>
-                  <span className="font-semibold text-primary">{getCategoryDisplayName()}</span>
-                  {selectedCategory && (
-                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={clearCategory}>
-                      <X className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-              </div>
-              <div className="h-48 md:h-full w-full">
-                <img src="/images/dashboard-welcome.jpg" alt="Futuristic asset analysis" className="h-full w-full object-cover"/>
-              </div>
+            <div className="p-8">
+              <h1 className="text-3xl font-bold tracking-tight">Welcome, {user?.email || 'Tester'}!</h1>
+              <p className="mt-2 text-muted-foreground">
+                Current Mode: <span className="font-semibold text-primary">{getCategoryDisplayName()}</span>
+              </p>
             </div>
           </Card>
           
-          {renderContent()}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {CATEGORIES.map((cat) => (
+              <Card
+                key={cat.id}
+                onClick={() => handleCategorySelect(cat.id)}
+                className="cursor-pointer hover:bg-primary/10 transition-colors flex flex-col justify-between"
+              >
+                <CardHeader>
+                  <cat.icon className="h-6 w-6 mb-2 text-primary" />
+                  <CardTitle>{cat.name}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground">{cat.description}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {lastAnalysisResult && <AnalysisResult />}
         </div>
       </div>
 
-      {/* RESTORED: Floating Action Button for Scanning */}
-      <div className="fixed bottom-8 right-8 z-50">
+      <div className="fixed bottom-6 right-6 z-50">
         <Button size="lg" className="rounded-full h-16 w-16 shadow-lg" onClick={() => setIsScanning(true)}>
           <ScanLine className="h-8 w-8" />
         </Button>
       </div>
-      
-      <DualScanner 
-        isOpen={isScanning} 
-        onClose={() => setIsScanning(false)} 
-      />
 
-      {activeCategoryForModal && (
+      {selectedCategory && (
         <SubCategoryModal
             isOpen={isSubCategoryModalOpen}
             onClose={() => setIsSubCategoryModalOpen(false)}
-            categoryId={activeCategoryForModal}
-            categoryName={CATEGORIES.find(c => c.id === activeCategoryForModal)?.name || ''}
+            categoryId={selectedCategory}
+            categoryName={CATEGORIES.find(c => c.id === selectedCategory)?.name || 'Specialty'}
         />
       )}
+
+      <DualScanner isOpen={isScanning} onClose={() => setIsScanning(false)} />
     </>
   );
 };
-
-// You need to import subCategories to use it in getCategoryDisplayName
-import { subCategories } from '@/lib/subcategories'; 
 
 export default Dashboard;
