@@ -1,3 +1,5 @@
+// FILE: src/pages/SignUp.tsx
+
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,8 +13,8 @@ const SignUp: React.FC = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   return (
-    <div className="flex items-center justify-center min-h-screen p-4">
-      <Card className="w-full max-w-sm bg-background/80 backdrop-blur-sm">
+    <div className="min-h-screen flex items-center justify-end p-4 md:p-8">
+      <Card className="w-full max-w-sm bg-background/80 backdrop-blur-sm mr-0 md:mr-16">
         <CardHeader>
           <CardTitle>Sign Up</CardTitle>
           <CardDescription>Create an account to get started.</CardDescription>

@@ -9,8 +9,6 @@ import { Toaster as SonnerToaster } from '@/components/ui/sonner';
 import AppLayout from '@/components/AppLayout';
 import AppShell from '@/components/AppShell';
 import ProtectedRoute from '@/routes/ProtectedRoute';
-import SeasonalManager from '@/components/SeasonalManager'; 
-import ThemeAnimationManager from '@/components/ThemeAnimationManager'; // Import the new manager
 
 // Pages and Components...
 import Index from '@/pages/Index';
@@ -30,7 +28,6 @@ import { FeedbackModal } from '@/components/beta/FeedbackModal';
 
 const AppRoutes: React.FC = () => {
     const { user, isAdmin } = useAuth();
-    // ... routes remain the same
     return (
         <Routes>
             <Route path="/" element={<Index />} />
@@ -66,7 +63,6 @@ const AppContent: React.FC = () => {
   );
 };
 
-
 function App() {
   return (
     <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
@@ -75,8 +71,6 @@ function App() {
           <BetaProvider>
             <Router>
                 <AppShell>
-                    <ThemeAnimationManager /> {/* Add the new manager HERE */}
-                    <SeasonalManager />
                     <AppContent />
                     <SonnerToaster />
                 </AppShell>
