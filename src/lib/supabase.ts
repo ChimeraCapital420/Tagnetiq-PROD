@@ -6,7 +6,8 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.error('CRITICAL ERROR: Supabase keys not found. Create a .env.local file in your project root and add your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+  // This error is the cause of the white screen.
+  throw new Error('CRITICAL ERROR: Supabase keys not found. Create a .env.local file in your project root and add your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -17,7 +18,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   }
 });
 
-// --- Database type definitions and helpers remain the same ---
+// --- Your existing Database type definitions and helpers go below this line ---
 
 export interface Profile {
   id: string;
