@@ -1,4 +1,5 @@
-// src/App.tsx
+// FILE: src/App.tsx
+
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useAppContext } from '@/contexts/AppContext';
@@ -25,7 +26,9 @@ import BetaReferrals from '@/pages/beta/Referrals';
 import BetaConsole from '@/pages/admin/BetaConsole';
 import MapConsole from '@/pages/admin/MapConsole';
 import { FeedbackModal } from '@/components/beta/FeedbackModal';
-import InvestorSuite from './pages/InvestorSuite'; // ADDED: Import the new Investor Suite page
+
+// --- NEW AEGIS IMPORT ---
+import VaultPage from '@/pages/Vault'; // Import the new Vault page
 
 const AppRoutes: React.FC = () => {
     const { user, isAdmin } = useAuth();
@@ -34,13 +37,19 @@ const AppRoutes: React.FC = () => {
             <Route path="/" element={<Index />} />
             <Route path="/login" element={!user ? <Login /> : <Navigate to="/dashboard" replace />} />
             <Route path="/signup" element={!user ? <SignUp /> : <Navigate to="/dashboard" replace />} />
+            
+            {/* --- CORE AUTHENTICATED ROUTES --- */}
             <Route path="/dashboard" element={<ProtectedRoute isAllowed={!!user} to="/login"><Dashboard /></ProtectedRoute>} />
+            
+            {/* --- NEW AEGIS VAULT ROUTE --- */}
+            <Route path="/vault" element={<ProtectedRoute isAllowed={!!user} to="/login"><VaultPage /></ProtectedRoute>} />
+
+            {/* Beta Program Routes */}
             <Route path="/beta/welcome" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaWelcome /></ProtectedRoute>} />
             <Route path="/beta/missions" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaMissions /></ProtectedRoute>} />
             <Route path="/beta/referrals" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaReferrals /></ProtectedRoute>} />
             
             {/* Admin Routes */}
-            <Route path="/investor-suite" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><InvestorSuite /></ProtectedRoute>} />
             <Route path="/beta-controls" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><BetaControls /></ProtectedRoute>} />
             <Route path="/admin/investors" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><Investor /></ProtectedRoute>} />
             <Route path="/admin/beta" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><BetaConsole /></ProtectedRoute>} />
@@ -48,7 +57,7 @@ const AppRoutes: React.FC = () => {
             
             {/* Public Investor Portal */}
             <Route path="/investor" element={<InvestorPortal />} /> 
-
+            
             <Route path="*" element={<NotFound />} />
         </Routes>
     );
