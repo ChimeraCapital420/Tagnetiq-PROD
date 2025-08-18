@@ -2,45 +2,85 @@
 
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Rss } from 'lucide-react';
+import { toast } from 'sonner';
+import { Zap, UserPlus, MessageSquare, ScanLine } from 'lucide-react';
 
-const sampleEvents = [
-  "New user signed up from: San Francisco, CA",
-  "Scan [Real Estate] completed in: Miami, FL",
-  "Scan [Collectibles] completed in: Tokyo, JP",
-  "Positive AI evaluation [BUY] on: Vintage Toy",
-  "Feedback submission [UI/UX] received.",
-  "New user signed up from: London, UK",
-  "Scan [Vehicles] completed in: Dallas, TX",
-  "Positive AI evaluation [BUY] on: Sports Memorabilia",
-];
+interface FeedEvent {
+  type: 'signup' | 'scan' | 'feedback';
+  description: string;
+  timeAgo: string;
+}
+
+// Helper to get an icon based on the event type
+const getEventIcon = (type: FeedEvent['type']) => {
+  switch (type) {
+    case 'signup':
+      return <UserPlus className="h-5 w-5 text-blue-500" />;
+    case 'scan':
+      return <ScanLine className="h-5 w-5 text-green-500" />;
+    case 'feedback':
+      return <MessageSquare className="h-5 w-5 text-purple-500" />;
+    default:
+      return <Zap className="h-5 w-5 text-gray-500" />;
+  }
+};
 
 export const LiveFeed: React.FC = () => {
-    const [eventIndex, setEventIndex] = useState(0);
+  const [events, setEvents] = useState<FeedEvent[]>([]);
+  const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        const interval = setInterval(() => {
-            setEventIndex(prevIndex => (prevIndex + 1) % sampleEvents.length);
-        }, 3500); // Change event every 3.5 seconds
+  useEffect(() => {
+    const fetchFeed = async () => {
+      try {
+        const response = await fetch('/api/investor/live-feed');
+        if (!response.ok) {
+          // Don't show an error for this, as it's a non-critical component
+          console.error('Failed to fetch live feed data.');
+          return;
+        }
+        const data = await response.json();
+        setEvents(data);
+      } catch (error) {
+        // Silently fail is okay for this component
+        console.error((error as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-        return () => clearInterval(interval);
-    }, []);
+    fetchFeed(); // Fetch immediately on mount
+    const interval = setInterval(fetchFeed, 15000); // And then every 15 seconds
 
-    return (
-        <Card className="overflow-hidden">
-            <CardHeader>
-                <CardTitle>Live Activity Feed</CardTitle>
-            </CardHeader>
-            <CardContent>
-                <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-                    <Rss className="h-6 w-6 text-primary" />
-                    <div className="overflow-hidden">
-                        <p className="whitespace-nowrap animate-fade-in">
-                            {sampleEvents[eventIndex]}
-                        </p>
-                    </div>
+    return () => clearInterval(interval); // Cleanup on unmount
+  }, []);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Live Activity Feed</CardTitle>
+        <CardDescription>A real-time ticker of recent platform events.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="text-center text-sm text-muted-foreground py-4">Loading Feed...</div>
+        ) : events.length > 0 ? (
+          <div className="space-y-3 h-64 overflow-y-auto pr-2">
+            {events.map((event, index) => (
+              <div key={index} className="flex items-center gap-3 animate-fade-in">
+                <div>{getEventIcon(event.type)}</div>
+                <div className="flex-grow">
+                  <p className="text-sm font-medium">{event.description}</p>
                 </div>
-            </CardContent>
-        </Card>
-    );
+                <div className="text-xs text-muted-foreground whitespace-nowrap">{event.timeAgo}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center text-sm text-muted-foreground py-4">
+            No recent activity in the last 24 hours.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 };

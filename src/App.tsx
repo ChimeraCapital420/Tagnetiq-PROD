@@ -1,8 +1,8 @@
-// FILE: src/App.tsx (REPLACE THE ENTIRE FILE WITH THIS)
+// FILE: src/App.tsx
 
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AppProvider } from '@/contexts/AppContext';
+import { AppProvider, useAppContext } from '@/contexts/AppContext'; // Corrected: Import useAppContext
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { BetaProvider } from '@/contexts/BetaContext';
 import { ThemeProvider } from '@/components/theme-provider';
@@ -27,7 +27,7 @@ import BetaConsole from '@/pages/admin/BetaConsole';
 import MapConsole from '@/pages/admin/MapConsole';
 import { FeedbackModal } from '@/components/beta/FeedbackModal';
 import InvestorSuite from './pages/InvestorSuite';
-import OnboardingPage from './pages/Onboarding'; // Import the new Onboarding page
+import OnboardingPage from './pages/Onboarding';
 
 const AppRoutes: React.FC = () => {
     const { user, profile, isAdmin } = useAuth();
@@ -39,10 +39,8 @@ const AppRoutes: React.FC = () => {
             <Route path="/login" element={!user ? <Login /> : <Navigate to="/dashboard" replace />} />
             <Route path="/signup" element={!user ? <SignUp /> : <Navigate to="/dashboard" replace />} />
             
-            {/* New Onboarding Route */}
             <Route path="/onboarding" element={<ProtectedRoute isAllowed={!!user && !hasCompletedOnboarding} to="/dashboard"><OnboardingPage /></ProtectedRoute>} />
 
-            {/* Core Dashboard Route - Now requires onboarding to be complete */}
             <Route path="/dashboard" element={<ProtectedRoute isAllowed={!!user && hasCompletedOnboarding} to={user ? "/onboarding" : "/login"}><Dashboard /></ProtectedRoute>} />
             
             <Route path="/beta/welcome" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaWelcome /></ProtectedRoute>} />
@@ -56,7 +54,6 @@ const AppRoutes: React.FC = () => {
             <Route path="/admin/beta" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><BetaConsole /></ProtectedRoute>} />
             <Route path="/admin/map" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><MapConsole /></ProtectedRoute>} />
             
-            {/* Public Investor Portal */}
             <Route path="/investor" element={<InvestorPortal />} /> 
 
             <Route path="*" element={<NotFound />} />
@@ -65,7 +62,7 @@ const AppRoutes: React.FC = () => {
 };
 
 const AppContent: React.FC = () => {
-  const { loading, user } = useAuth(); // Add user here to prevent flash of content
+  const { loading, user } = useAuth();
   const { isFeedbackModalOpen, setIsFeedbackModalOpen } = useAppContext();
 
   if (loading) {

@@ -1,117 +1,111 @@
-// FILE: src/components/investor/InvestorMap.tsx
+// FILE: src/components/investor/InvestorMap.tsx (REPLACE ENTIRE FILE)
 
-import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
+import React, { useState, useEffect, useRef } from 'react';
+import { MapContainer, TileLayer } from 'react-leaflet';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
+import 'leaflet/dist/leaflet.css';
+import HeatmapLayer from '@/components/HeatmapLayer'; // <-- Import our new custom component
+import { Maximize, Minimize } from 'lucide-react';
 
-// Fix for default icon issue
-import icon from 'leaflet/dist/images/marker-icon.png';
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
-
-let DefaultIcon = L.icon({
-    iconUrl: icon,
-    shadowUrl: iconShadow,
-    iconSize: [25, 41],
-    iconAnchor: [12, 41]
-});
-L.Marker.prototype.options.icon = DefaultIcon;
-
-type Metric = 'total_users' | 'beta_testers' | 'high_value_scans';
-type GeoPoint = {
-    id: string;
-    email: string;
-    lat: number;
-    lon: number;
-    last_sign_in_at: string;
-};
-
-const MapController: React.FC<{ points: GeoPoint[] }> = ({ points }) => {
-    const map = useMap();
-    useEffect(() => {
-        if (points.length > 0) {
-            const bounds = L.latLngBounds(points.map(p => [p.lat, p.lon]));
-            map.fitBounds(bounds, { padding: [50, 50] });
-        } else {
-            map.setView([20, 0], 2);
-        }
-    }, [points, map]);
-    return null;
-};
-
+type GeoData = [number, number, number];
 
 const InvestorMap: React.FC = () => {
-    const [metric, setMetric] = useState<Metric>('total_users');
-    const [dataPoints, setDataPoints] = useState<GeoPoint[]>([]);
-    const [loading, setLoading] = useState(true);
+  const [mapData, setMapData] = useState<GeoData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [metric, setMetric] = useState<'total_users' | 'new_signups' | 'beta_testers'>('total_users');
+  const [mapKey, setMapKey] = useState(Date.now());
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const mapCardRef = useRef<HTMLDivElement>(null);
 
-    useEffect(() => {
-        const fetchData = async () => {
-            if (metric === 'high_value_scans') {
-                toast.info("Data for 'High-Value Scans' is not yet available.");
-                setDataPoints([]);
-                setLoading(false);
-                return;
-            }
+  useEffect(() => {
+    const fetchMapData = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch(`/api/map/data?metric=${metric}`);
+        if (!response.ok) throw new Error('Failed to fetch map data');
+        const data = await response.json();
+        setMapData(data);
+        setMapKey(Date.now());
+      } catch (error) {
+        toast.error("Map Data Error", { description: (error as Error).message });
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchMapData();
+  }, [metric]);
 
-            setLoading(true);
-            try {
-                const response = await fetch(`/api/map/data?metric=${metric}`);
-                if (!response.ok) throw new Error('Failed to fetch map data.');
-                const data = await response.json();
-                setDataPoints(data);
-            } catch (error) {
-                toast.error("Error loading map data", { description: (error as Error).message });
-                setDataPoints([]);
-            } finally {
-                setLoading(false);
-            }
-        };
+  const toggleFullscreen = () => {
+    if (!mapCardRef.current) return;
+    if (!document.fullscreenElement) {
+      mapCardRef.current.requestFullscreen().catch(err => {
+        toast.error("Could not enter fullscreen mode", { description: err.message });
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  };
 
-        fetchData();
-    }, [metric]);
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
 
-    return (
-        <Card>
-            <CardHeader>
-                <CardTitle>Market Heatmap</CardTitle>
-                <CardDescription>Real-time visualization of user engagement hotspots.</CardDescription>
-                <div className="flex flex-wrap gap-2 pt-2">
-                    <Button variant={metric === 'total_users' ? 'default' : 'secondary'} size="sm" onClick={() => setMetric('total_users')}>General Users</Button>
-                    <Button variant={metric === 'beta_testers' ? 'default' : 'secondary'} size="sm" onClick={() => setMetric('beta_testers')}>Beta Testers</Button>
-                    <Button variant={metric === 'high_value_scans' ? 'default' : 'secondary'} size="sm" onClick={() => setMetric('high_value_scans')} disabled>High-Value Scans</Button>
-                </div>
-            </CardHeader>
-            <CardContent>
-                <div className="h-[450px] w-full rounded-lg overflow-hidden border">
-                    {loading ? (
-                        <div className="flex items-center justify-center h-full bg-muted">
-                            <p>Loading Map Data...</p>
-                        </div>
-                    ) : (
-                        <MapContainer center={[20, 0]} zoom={2} style={{ height: '100%', width: '100%', backgroundColor: '#1a1a1a' }}>
-                            <TileLayer
-                                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                            />
-                            {dataPoints.map(point => (
-                                <Marker key={point.id} position={[point.lat, point.lon]}>
-                                    <Popup>
-                                        <strong>User:</strong> {point.email}<br/>
-                                        <strong>Last Seen:</strong> {new Date(point.last_sign_in_at).toLocaleString()}
-                                    </Popup>
-                                </Marker>
-                            ))}
-                            <MapController points={dataPoints} />
-                        </MapContainer>
-                    )}
-                </div>
-            </CardContent>
-        </Card>
-    );
+  return (
+    <Card ref={mapCardRef} className="transition-all duration-300 bg-card">
+      <CardHeader>
+        <div className="flex justify-between items-center">
+          <div>
+            <CardTitle>Market Footprint</CardTitle>
+            <CardDescription>Live heatmap of user activity.</CardDescription>
+          </div>
+          <div className="flex items-center gap-1 no-print">
+            {!isFullscreen && (
+              <>
+                <Button size="sm" variant={metric === 'total_users' ? 'default' : 'outline'} onClick={() => setMetric('total_users')}>Total</Button>
+                <Button size="sm" variant={metric === 'new_signups' ? 'default' : 'outline'} onClick={() => setMetric('new_signups')}>New</Button>
+                <Button size="sm" variant={metric === 'beta_testers' ? 'default' : 'outline'} onClick={() => setMetric('beta_testers')}>Beta</Button>
+              </>
+            )}
+            <Button size="icon" variant="outline" onClick={toggleFullscreen}>
+              {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className={`w-full p-0 ${isFullscreen ? 'h-[90vh]' : 'h-96'}`}>
+        {loading ? (
+          <div className="flex items-center justify-center h-full text-muted-foreground">Loading Map...</div>
+        ) : (
+          <MapContainer
+            key={mapKey}
+            center={[39.8283, -98.5795]}
+            zoom={isFullscreen ? 5 : 4}
+            style={{ height: '100%', width: '100%', backgroundColor: '#1C1C1C' }}
+            scrollWheelZoom={true}
+          >
+            <TileLayer
+              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+            />
+            {mapData.length > 0 && (
+              <HeatmapLayer
+                points={mapData}
+                radius={25}
+                blur={20}
+                max={1.0}
+              />
+            )}
+          </MapContainer>
+        )}
+      </CardContent>
+    </Card>
+  );
 };
 
 export default InvestorMap;

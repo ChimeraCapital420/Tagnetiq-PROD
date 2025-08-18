@@ -1,17 +1,41 @@
-// api/analyze.ts
-import { dataSources } from '../src/lib/datasources';
+// FILE: api/analyze.ts (The New, Unified Hydra Engine)
+// This single file replaces analyze.ts, analyze-barcode.ts, and analyze-image.ts
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export const config = {
-  runtime: 'edge'
+  runtime: 'edge',
+  maxDuration: 45, // Set a longer timeout for potentially complex multi-AI analysis
 };
 
+// --- SDK INITIALIZATION ---
+// Initialize SDKs once outside the handler for performance and reuse.
+const openai = new OpenAI({ apiKey: process.env.OPENAI_TOKEN });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_SECRET });
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_TOKEN as string);
+
+// OpenAI-compatible SDKs for DeepSeek and Grok
+const deepseek = new OpenAI({
+  apiKey: process.env.DEEPSEEK_TOKEN,
+  baseURL: 'https://api.deepseek.com/v1',
+});
+
+const grok = new OpenAI({
+  apiKey: process.env.XAI_SECRET,
+  baseURL: 'https://api.xai.com/v1',
+});
+
+
+// --- INTERFACES ---
 interface AnalysisRequest {
+  scanType: 'barcode' | 'image' | 'vin';
+  data: string; // This can be a barcode, base64 image data, VIN, etc.
+  userId: string;
   category_id: string;
   subcategory_id: string;
-  scanType: 'barcode' | 'image' | 'vin';
-  data: string; // This can be a barcode, image data, VIN, etc.
-  userId: string;
 }
 
 interface HydraResponse {
@@ -24,141 +48,167 @@ interface HydraResponse {
   reasoning: string;
 }
 
-// Hydra Consensus Engine
-class HydraConsensusEngine {
-  // Store API keys in Vercel environment variables
-  private ANTHROPIC_SECRET = process.env.ANTHROPIC_SECRET;
-  private OPENAI_TOKEN = process.env.OPENAI_TOKEN;
-  private GOOGLE_AI_TOKEN = process.env.GOOGLE_AI_TOKEN;
-  private DEEPSEEK_TOKEN = process.env.DEEPSEEK_TOKEN;
-  private XAI_SECRET = process.env.XAI_SECRET;
-  
-  // Tier 1 Data Source Keys
-  private ATTOM_API_KEY = process.env.ATTOM_API_KEY;
-  
-  // Tier 2 Data Source Keys
-  private HOUSE_CANARY_API_KEY = process.env.HOUSE_CANARY_API_KEY;
 
-  async analyze(request: AnalysisRequest): Promise<HydraResponse> {
-    console.log(`🚀 Starting Hydra analysis for: ${request.category_id}/${request.subcategory_id}`);
+// --- HYDRA ENGINE CLASS ---
+class HydraEngine {
+    // A simple placeholder for product lookup via barcode.
+    private async identifyProductByBarcode(barcode: string): Promise<any> {
+        console.log(`🔍 Looking up barcode: ${barcode}`);
+        // In a real implementation, this would query external databases.
+        return { title: `Product ${barcode}`, brand: 'Unknown', category: 'General Goods', upc: barcode };
+    }
     
-    // 1. Get Data Sources
-    const sources = this.getSources(request.category_id, request.subcategory_id);
-    if (!sources) {
-      throw new Error('Invalid category or subcategory');
+    // --- SDK-BASED ANALYSIS METHODS ---
+    
+    private async runTextAnalysis(productData: any, prompt: string): Promise<any[]> {
+        const analysisPromises = [
+            // Claude
+            anthropic.messages.create({
+                model: 'claude-3-haiku-20240307', max_tokens: 1024,
+                messages: [{ role: 'user', content: `${prompt} ${JSON.stringify(productData)}` }]
+            }).then(res => res.content[0].text),
+
+            // OpenAI
+            openai.chat.completions.create({
+                model: 'gpt-4-turbo', response_format: { type: "json_object" },
+                messages: [{ role: 'user', content: `${prompt} ${JSON.stringify(productData)}` }]
+            }).then(res => res.choices[0].message.content),
+
+            // Gemini
+            genAI.getGenerativeModel({ model: "gemini-pro" }).generateContent(`${prompt} ${JSON.stringify(productData)}`)
+                  .then(res => res.response.text()),
+                  
+            // DeepSeek
+            deepseek.chat.completions.create({
+                model: 'deepseek-chat', response_format: { type: "json_object" },
+                messages: [{ role: 'user', content: `${prompt} ${JSON.stringify(productData)}` }]
+            }).then(res => res.choices[0].message.content),
+            
+            // Grok
+            grok.chat.completions.create({
+                model: 'grok-1', response_format: { type: "json_object" },
+                messages: [{ role: 'user', content: `${prompt} ${JSON.stringify(productData)}` }]
+            }).then(res => res.choices[0].message.content),
+        ];
+
+        return await this.processAnalysisResults(analysisPromises);
     }
 
-    // 2. Parallel API Calls to Tier 1 and Tier 2
-    const apiPromises = [
-        ...sources.tier_1_sources.map(s => this.querySource(s, request.data)),
-        ...sources.tier_2_sources.map(s => this.querySource(s, request.data))
-    ];
-
-    const results = await Promise.allSettled(apiPromises);
-
-    // 3. Build Consensus
-    return this.buildConsensus(results, request.data);
-  }
-
-  private getSources(categoryId: string, subcategoryId: string) {
-    return dataSources.find(ds => ds.category_id === categoryId && ds.subcategory_id === subcategoryId);
-  }
-
-  private async querySource(source: any, data: string): Promise<any> {
-    console.log(`⚡ Querying ${source.name}...`);
-    // This is a placeholder for actual API calls.
-    // In a real implementation, this would contain the logic to call each API.
-    // For now, we will return a mock response.
+    private async runImageAnalysis(imageData: string, prompt: string): Promise<any[]> {
+        const analysisPromises = [
+            // Claude Vision
+            anthropic.messages.create({
+                model: 'claude-3-haiku-20240307', max_tokens: 1024,
+                messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageData.replace(/^data:image\/[a-z]+;base64,/, '') } }, { type: 'text', text: prompt }] }]
+            }).then(res => res.content[0].text),
+            
+            // OpenAI Vision
+            openai.chat.completions.create({
+                model: 'gpt-4-vision-preview', max_tokens: 800,
+                messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: imageData } }] }]
+            }).then(res => res.choices[0].message.content),
+            
+            // Gemini Vision
+            genAI.getGenerativeModel({ model: "gemini-pro-vision" }).generateContent([prompt, { inlineData: { data: imageData.replace(/^data:image\/[a-z]+;base64,/, ''), mimeType: "image/jpeg" } }])
+                  .then(res => res.response.text()),
+        ];
+        
+        return await this.processAnalysisResults(analysisPromises);
+    }
     
-    // Simulate API call latency
-    await new Promise(resolve => setTimeout(resolve, Math.random() * 500));
-    
-    return {
-      source: source.name,
-      decision: Math.random() > 0.5 ? 'BUY' : 'PASS',
-      estimatedValue: (Math.random() * 100).toFixed(2)
-    };
-  }
+    private async processAnalysisResults(promises: Promise<string | null | undefined>[]): Promise<any[]> {
+        const results = await Promise.allSettled(promises);
+        const validAnalyses: any[] = [];
 
-  private buildConsensus(results: PromiseSettledResult<any>[], data: any): HydraResponse {
-    const validAnalyses = results
-      .filter(result => result.status === 'fulfilled' && result.value)
-      .map(result => (result as PromiseFulfilledResult<any>).value);
-
-    if (validAnalyses.length === 0) {
-      return {
-        itemName: `Item ${data}`,
-        estimatedValue: '0.00',
-        decision: 'PASS',
-        confidence: 'low',
-        analysisCount: 0,
-        consensusRatio: '0/0',
-        reasoning: 'No data sources returned a valid analysis.'
-      };
+        results.forEach((result, i) => {
+            if (result.status === 'fulfilled' && result.value) {
+                try {
+                    const jsonMatch = result.value.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                        validAnalyses.push(JSON.parse(jsonMatch[0]));
+                    }
+                } catch (e) {
+                    console.error(`Error parsing JSON from AI service ${i}:`, e);
+                }
+            } else if (result.status === 'rejected') {
+                 console.error(`API call failed for AI service ${i}:`, result.reason);
+            }
+        });
+        
+        return validAnalyses;
     }
 
-    const buyVotes = validAnalyses.filter(a => a.decision === 'BUY').length;
-    const totalVotes = validAnalyses.length;
-    
-    const values = validAnalyses
-      .map(a => parseFloat(a.estimatedValue) || 0)
-      .filter(v => v > 0);
-    
-    const avgValue = values.length > 0 
-      ? values.reduce((sum, val) => sum + val, 0) / values.length 
-      : 0;
+    private buildConsensus(analyses: any[], itemName: string): HydraResponse {
+        if (analyses.length === 0) {
+            return { itemName, estimatedValue: '0.00', decision: 'PASS', confidence: 'low', analysisCount: 0, consensusRatio: '0/0', reasoning: 'No AI models were able to provide a valid analysis.' };
+        }
 
-    let confidence: 'high' | 'medium' | 'low' = 'low';
-    if (totalVotes >= 3) {
-      const agreementRatio = buyVotes / totalVotes;
-      if (agreementRatio >= 0.8 || agreementRatio <= 0.2) {
-        confidence = 'high';
-      } else if (agreementRatio >= 0.6 || agreementRatio <= 0.4) {
-        confidence = 'medium';
-      }
+        const buyVotes = analyses.filter(a => a.decision === 'BUY').length;
+        const totalVotes = analyses.length;
+        const values = analyses.map(a => parseFloat(a.estimatedValue) || 0).filter(v => v > 0);
+        const avgValue = values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : 0;
+        
+        let confidence: 'high' | 'medium' | 'low' = 'low';
+        if (totalVotes >= 3) {
+            const ratio = buyVotes / totalVotes;
+            if (ratio >= 0.8 || ratio <= 0.2) confidence = 'high';
+            else if (ratio >= 0.6 || ratio <= 0.4) confidence = 'medium';
+        } else if (totalVotes > 0) {
+            confidence = 'medium';
+        }
+
+        const decision = buyVotes > totalVotes / 2 ? 'BUY' : 'PASS';
+        const reasoning = `Synthesized from ${totalVotes} AI models. ${analyses[0]?.reasoning || ''}`;
+
+        return { itemName, estimatedValue: avgValue.toFixed(2), decision, confidence, analysisCount: totalVotes, consensusRatio: `${buyVotes}/${totalVotes}`, reasoning };
     }
 
-    const decision = buyVotes > totalVotes / 2 ? 'BUY' : 'PASS';
+    // --- MAIN PUBLIC METHOD ---
+    public async analyze(request: AnalysisRequest): Promise<HydraResponse> {
+        const jsonPrompt = `Respond in JSON format only: {"itemName": "specific item name", "estimatedValue": "25.99", "decision": "BUY", "reasoning": "brief explanation"}`;
+        
+        let analyses: any[] = [];
+        let itemName = "Analysis";
 
-    return {
-      itemName: `Item ${data}`,
-      estimatedValue: avgValue.toFixed(2),
-      decision,
-      confidence,
-      analysisCount: totalVotes,
-      consensusRatio: `${buyVotes}/${totalVotes}`,
-      reasoning: `Synthesized from ${totalVotes} data sources.`
-    };
-  }
+        if (request.scanType === 'image') {
+            console.log('🖼️  Initiating Hydra image analysis...');
+            const prompt = `You are an expert appraiser. Analyze this image of a collectible item. Identify it, estimate its resale value, and provide a BUY/PASS recommendation. ${jsonPrompt}`;
+            analyses = await this.runImageAnalysis(request.data, prompt);
+            itemName = analyses[0]?.itemName || "Image Analysis";
+
+        } else if (request.scanType === 'barcode') {
+            console.log('║█║ Initiating Hydra barcode analysis...');
+            const productData = await this.identifyProductByBarcode(request.data);
+            itemName = productData.title;
+            const prompt = `You are an expert reseller. Analyze this product for arbitrage potential based on its data. ${jsonPrompt}`;
+            analyses = await this.runTextAnalysis(productData, prompt);
+        }
+        // Future scan types like 'vin' would be added here as another else if block.
+        
+        console.log(`🤖 Consensus built from ${analyses.length} successful AI analyses.`);
+        return this.buildConsensus(analyses, itemName);
+    }
 }
 
+// --- API ROUTE HANDLER ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
     try {
-        const body: AnalysisRequest = req.body;
-        const { category_id, subcategory_id, scanType, data, userId } = body;
-
-        if (!category_id || !subcategory_id || !scanType || !data || !userId) {
-            return res.status(400).json({ error: 'Missing required fields' });
+        const body = req.body as AnalysisRequest;
+        if (!body.scanType || !body.data || !body.userId || !body.category_id) {
+            return res.status(400).json({ error: 'Missing required fields in analysis request.' });
         }
 
-        const hydra = new HydraConsensusEngine();
-        const analysis = await hydra.analyze(body);
+        const hydra = new HydraEngine();
+        const analysisResult = await hydra.analyze(body);
 
-        return res.status(200).json(analysis);
-
+        return res.status(200).json(analysisResult);
     } catch (error) {
-        console.error('❌ Analysis error:', error);
-        return res.status(500).json({ 
-            error: 'Analysis failed',
-            itemName: 'Analysis Error',
-            estimatedValue: '0.00',
-            decision: 'PASS',
-            confidence: 'low',
-            reasoning: 'An error occurred during analysis'
-        });
+        console.error('❌ Top-level analysis error:', error);
+        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        return res.status(500).json({ error: 'Hydra engine failed.', details: message });
     }
 }

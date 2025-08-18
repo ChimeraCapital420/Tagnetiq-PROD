@@ -15,7 +15,9 @@ import { KeyDifferentiators } from '@/components/investor/KeyDifferentiators';
 import { ProductDemos } from '@/components/investor/ProductDemos';
 import { LiveFeed } from '@/components/investor/LiveFeed';
 import { CallToAction } from '@/components/investor/CallToAction';
+import { HighlightQuote } from '@/components/investor/HighlightQuote';
 
+// Expanded Metrics interface to include new beta stats
 interface Metrics {
   totalUsers: number;
   dau: number;
@@ -25,16 +27,22 @@ interface Metrics {
   growthData: { date: string; users: number; scans: number; }[];
   tam: { [key: string]: string };
   projections: { [key: string]: string };
+  totalBetaInvites: number;
+  totalBetaTesters: number;
+  betaConversionRate: number;
 }
 
 const InvestorSuite: React.FC = () => {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState<number>(30);
+
 
   useEffect(() => {
     const fetchMetrics = async () => {
+      setLoading(true);
       try {
-        const response = await fetch('/api/investor/metrics');
+        const response = await fetch(`/api/investor/metrics?days=${days}`);
         if (!response.ok) {
           throw new Error('Failed to load investor metrics.');
         }
@@ -47,7 +55,24 @@ const InvestorSuite: React.FC = () => {
       }
     };
     fetchMetrics();
-  }, []);
+  }, [days]);
+
+  // --- MODIFICATION START: Prepare data for the Funnel Chart ---
+  const funnelData = metrics ? [
+    { name: 'Invited', value: metrics.totalBetaInvites, fill: '#8884d8' },
+    { name: 'Activated', value: metrics.totalBetaTesters, fill: '#82ca9d' },
+  ] : [];
+  // --- MODIFICATION END ---
+
+  const growthChartActions = (
+    <div className="flex gap-1">
+        {[7, 30, 90].map(d => (
+            <Button key={d} variant={days === d ? 'default' : 'outline'} size="sm" onClick={() => setDays(d)}>
+                {d}D
+            </Button>
+        ))}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-background text-foreground p-4 md:p-8 investor-suite-page">
@@ -73,6 +98,8 @@ const InvestorSuite: React.FC = () => {
           </div>
         </div>
 
+        <HighlightQuote />
+
         {loading ? (
             <div className="text-center p-8 text-muted-foreground">Loading Metrics...</div>
         ) : (
@@ -82,12 +109,13 @@ const InvestorSuite: React.FC = () => {
                 <div className="grid gap-8 lg:grid-cols-3">
                     <div className="lg:col-span-2 space-y-8">
                         <InvestorMap />
-                        {metrics?.growthData && <GrowthChart data={metrics.growthData} />}
+                        {metrics?.growthData && <GrowthChart data={metrics.growthData} actions={growthChartActions} />}
                         <LiveFeed />
                     </div>
                     <div className="space-y-8">
+                        {/* Pass the live metrics to both components */}
                         <BetaInsights data={metrics} />
-                        <FunnelChart />
+                        <FunnelChart data={funnelData} />
                         <DocsShelf />
                     </div>
                 </div>

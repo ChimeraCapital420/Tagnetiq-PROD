@@ -1,37 +1,41 @@
+// FILE: src/components/investor/FunnelChart.tsx
+
 import React from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { ResponsiveContainer, FunnelChart as RechartsFunnelChart, Funnel, Tooltip, LabelList } from 'recharts';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
-// A simple, visual representation of the user acquisition funnel.
-export const FunnelChart: React.FC = () => {
-    // In a real app, this data would come from the API
-    const funnelData = [
-        { stage: 'Portal Visits', value: 100, color: 'bg-blue-500' },
-        { stage: 'Sign-ups', value: 45, color: 'bg-purple-500' },
-        { stage: 'Activated Users', value: 32, color: 'bg-green-500' },
-        { stage: 'D7 Retained', value: 25, color: 'bg-yellow-500' },
-    ];
+// Define the shape of the data we expect
+interface FunnelChartProps {
+  data: {
+    name: string;
+    value: number;
+    fill: string;
+  }[];
+}
 
-    return (
-        <Card className="bg-white/5 border-white/10 text-white backdrop-blur-sm">
-            <CardHeader>
-                <CardTitle>Acquisition Funnel</CardTitle>
-                <CardDescription className="text-white/70">From initial visit to 7-day retention.</CardDescription>
-            </CardHeader>
-            <CardContent>
-                <div className="space-y-2">
-                    {funnelData.map(item => (
-                        <div key={item.stage}>
-                            <div className="flex justify-between text-sm mb-1">
-                                <span>{item.stage}</span>
-                                <span>{item.value}%</span>
-                            </div>
-                            <div className="w-full bg-white/10 rounded-full h-2.5">
-                                <div className={`${item.color} h-2.5 rounded-full`} style={{ width: `${item.value}%` }}></div>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </CardContent>
-        </Card>
-    );
+export const FunnelChart: React.FC<FunnelChartProps> = ({ data }) => {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Beta Conversion Funnel</CardTitle>
+        <CardDescription>From invite to active tester.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="w-full h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <RechartsFunnelChart>
+              <Tooltip />
+              <Funnel
+                dataKey="value"
+                data={data}
+                isAnimationActive
+              >
+                <LabelList position="right" fill="#fff" stroke="none" dataKey="name" />
+              </Funnel>
+            </RechartsFunnelChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
 };

@@ -10,14 +10,20 @@ interface GrowthChartProps {
     users: number;
     scans: number;
   }[];
+  // Add an optional 'actions' prop to accept our filter buttons
+  actions?: React.ReactNode; 
 }
 
-const GrowthChart: React.FC<GrowthChartProps> = ({ data }) => {
+const GrowthChart: React.FC<GrowthChartProps> = ({ data, actions }) => {
   return (
     <Card>
-        <CardHeader>
-            <CardTitle>Growth Timeline</CardTitle>
-            <CardDescription>User acquisition and scan activity over the last 30 days.</CardDescription>
+        {/* Update the CardHeader to conditionally render the actions */}
+        <CardHeader className="flex flex-row justify-between items-center">
+            <div>
+                <CardTitle>Growth Timeline</CardTitle>
+                <CardDescription>User acquisition and scan activity.</CardDescription>
+            </div>
+            {actions && <div className="no-print">{actions}</div>}
         </CardHeader>
         <CardContent>
             <div className="h-64 w-full">

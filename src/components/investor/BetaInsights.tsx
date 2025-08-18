@@ -2,56 +2,70 @@
 
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { CheckCircle, MessageSquare, Users } from 'lucide-react';
-import AnimatedCounter from './AnimatedCounter';
+import { Users, Mail, CheckCircle } from 'lucide-react';
+import AnimatedCounter from './AnimatedCounter'; // Corrected: Import without curly braces for a default export
+import { SentimentChart } from './SentimentChart';
+import { Separator } from '@/components/ui/separator';
+import { TopFeatures } from './TopFeatures';
 
 interface BetaInsightsProps {
   data: {
-    totalUsers: number;
+    totalBetaTesters: number;
     feedbackVolume: number;
-    positiveAiEvaluations: number;
+    betaConversionRate: number;
+    totalBetaInvites: number;
   } | null;
 }
 
-const InsightItem: React.FC<{ title: string; value: number; icon: React.ReactNode }> = ({ title, value, icon }) => (
-    <div className="flex items-start gap-4">
-        <div className="bg-muted rounded-lg p-3">
-            {icon}
-        </div>
-        <div>
-            <p className="text-2xl font-bold">
-                <AnimatedCounter value={value} />
-            </p>
-            <p className="text-sm text-muted-foreground">{title}</p>
-        </div>
-    </div>
-);
-
-
 export const BetaInsights: React.FC<BetaInsightsProps> = ({ data }) => {
+  const testers = data?.totalBetaTesters ?? 0;
+  const feedback = data?.feedbackVolume ?? 0;
+  const conversionRate = data?.betaConversionRate ?? 0;
+  const engagementRate = testers > 0 ? (feedback / testers) * 100 : 0;
+
   return (
     <Card>
-        <CardHeader>
-            <CardTitle>Beta Program Insights</CardTitle>
-            <CardDescription>Key metrics demonstrating tester engagement and product validation.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-           <InsightItem
-                title="Active Beta Testers"
-                value={data?.totalUsers ?? 0}
-                icon={<Users className="h-6 w-6 text-primary" />}
-            />
-            <InsightItem
-                title="Feedback Submissions"
-                value={data?.feedbackVolume ?? 0}
-                icon={<MessageSquare className="h-6 w-6 text-primary" />}
-            />
-            <InsightItem
-                title="Positive AI Evaluations"
-                value={data?.positiveAiEvaluations ?? 0}
-                icon={<CheckCircle className="h-6 w-6 text-primary" />}
-            />
-        </CardContent>
+      <CardHeader>
+        <CardTitle>Beta Program Insights</CardTitle>
+        <CardDescription>Key metrics & insights from the ongoing beta test.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 gap-4 text-center">
+          <div>
+            <Users className="mx-auto h-6 w-6 text-primary" />
+            <p className="text-2xl font-bold"><AnimatedCounter value={testers} /></p>
+            <p className="text-xs text-muted-foreground">Active Testers</p>
+          </div>
+          <div>
+            <Mail className="mx-auto h-6 w-6 text-primary" />
+            <p className="text-2xl font-bold"><AnimatedCounter value={data?.totalBetaInvites ?? 0} /></p>
+            <p className="text-xs text-muted-foreground">Invites Sent</p>
+          </div>
+          <div>
+            <CheckCircle className="mx-auto h-6 w-6 text-green-500" />
+            <p className="text-2xl font-bold"><AnimatedCounter value={parseFloat(conversionRate.toFixed(1))} />%</p>
+            <p className="text-xs text-muted-foreground">Conversion Rate</p>
+          </div>
+          <div>
+            <CheckCircle className="mx-auto h-6 w-6 text-green-500" />
+            <p className="text-2xl font-bold"><AnimatedCounter value={parseFloat(engagementRate.toFixed(1))} />%</p>
+            <p className="text-xs text-muted-foreground">Engagement Rate</p>
+          </div>
+        </div>
+
+        <Separator />
+        <div>
+          <h4 className="text-sm font-medium text-center mb-2">Feedback Sentiment</h4>
+          <SentimentChart />
+        </div>
+
+        <Separator />
+        <div>
+          <h4 className="text-sm font-medium text-center mb-2">Top Requested Features</h4>
+          <TopFeatures />
+        </div>
+
+      </CardContent>
     </Card>
   );
 };

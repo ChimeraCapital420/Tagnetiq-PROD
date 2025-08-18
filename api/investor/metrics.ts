@@ -5,25 +5,53 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    // Existing queries for KPIs - these remain unchanged
-    const { count: totalUsers, error: usersError } = await supaAdmin.from('users').select('*', { count: 'exact', head: true });
-    if (usersError) throw usersError;
+    const days = req.query.days ? parseInt(req.query.days as string, 10) : 30;
 
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { count: dau, error: dauError } = await supaAdmin.from('users').select('*', { count: 'exact', head: true }).gte('last_sign_in_at', twentyFourHoursAgo);
-    if (dauError) throw dauError;
+    // --- Batch all Supabase queries to run in parallel ---
+    const [
+      totalUsersResult,
+      dauResult,
+      totalScansResult,
+      feedbackVolumeResult,
+      growthDataResult,
+      betaInvitesResult, // <-- NEW
+      betaTestersResult  // <-- NEW
+    ] = await Promise.all([
+      supaAdmin.from('users').select('*', { count: 'exact', head: true }),
+      supaAdmin.from('users').select('*', { count: 'exact', head: true }).gte('last_sign_in_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+      supaAdmin.from('scan_history').select('*', { count: 'exact', head: true }),
+      supaAdmin.from('feedback').select('*', { count: 'exact', head: true }),
+      supaAdmin.rpc('get_daily_growth_metrics', { days_range: days }),
+      supaAdmin.from('beta_invites').select('*', { count: 'exact', head: true }),
+      supaAdmin.from('beta_testers').select('*', { count: 'exact', head: true })
+    ]);
 
-    const { count: totalScans, error: scansError } = await supaAdmin.from('scan_history').select('*', { count: 'exact', head: true });
-    if (scansError) throw scansError;
+    // --- Process results and handle errors ---
+    if (totalUsersResult.error) throw totalUsersResult.error;
+    const totalUsers = totalUsersResult.count;
+
+    if (dauResult.error) throw dauResult.error;
+    const dau = dauResult.count;
+
+    if (totalScansResult.error) throw totalScansResult.error;
+    const totalScans = totalScansResult.count;
+
+    if (feedbackVolumeResult.error) throw feedbackVolumeResult.error;
+    const feedbackVolume = feedbackVolumeResult.count;
+
+    if (growthDataResult.error) throw growthDataResult.error;
+    const growthData = growthDataResult.data;
     
-    const { count: feedbackVolume, error: feedbackError } = await supaAdmin.from('feedback').select('*', { count: 'exact', head: true });
-    if (feedbackError) throw feedbackError;
+    // --- MODIFICATION START: Calculate Beta Conversion Rate ---
+    if (betaInvitesResult.error) throw betaInvitesResult.error;
+    const totalBetaInvites = betaInvitesResult.count || 0;
 
-    // --- MODIFICATION START ---
-    // Replace the mock data generation with a call to the new Supabase RPC
-    const { data: growthData, error: growthError } = await supaAdmin.rpc('get_daily_growth_metrics');
-    if (growthError) throw growthError;
+    if (betaTestersResult.error) throw betaTestersResult.error;
+    const totalBetaTesters = betaTestersResult.count || 0;
+
+    const betaConversionRate = totalBetaInvites > 0 ? (totalBetaTesters / totalBetaInvites) * 100 : 0;
     // --- MODIFICATION END ---
+
 
     const staticMetrics = {
         tam: { collectibles: '25B', real_estate_flipping: '100B', used_vehicles: '1.2T' },
@@ -36,7 +64,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       dau: dau || 0,
       totalScans: totalScans || 0,
       feedbackVolume: feedbackVolume || 0,
-      growthData: growthData || [], // Use the data from the RPC, fallback to empty array
+      growthData: growthData || [],
+      totalBetaInvites,      // <-- Add to response
+      totalBetaTesters,      // <-- Add to response
+      betaConversionRate,    // <-- Add to response
       ...staticMetrics
     };
 
