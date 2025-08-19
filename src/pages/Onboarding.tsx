@@ -1,4 +1,4 @@
-// FILE: src/pages/Onboarding.tsx (CREATE THIS NEW FILE)
+// FILE: src/pages/Onboarding.tsx (REVISED TO USE REFRESH)
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -13,7 +13,7 @@ import { CATEGORIES } from '@/lib/constants';
 import { Toggle } from '@/components/ui/toggle';
 
 const OnboardingPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, refreshProfile } = useAuth(); // GET THE REFRESH FUNCTION
   const navigate = useNavigate();
   const [screenName, setScreenName] = useState('');
   const [location, setLocation] = useState('');
@@ -41,23 +41,23 @@ const OnboardingPage: React.FC = () => {
     setIsLoading(true);
 
     try {
-      // In a real app, we would geocode the location string to lat/lon coordinates here.
-      // For now, we'll store the string and simulate coordinates for the map later.
       const { error } = await supabase
         .from('profiles')
         .update({
           screen_name: screenName,
-          location_text: location, // Store the user-provided location text
+          location_text: location,
           interests: selectedInterests,
-          onboarding_complete: true, // Set the flag to true
+          onboarding_complete: true,
           updated_at: new Date().toISOString(),
         })
         .eq('id', user.id);
 
       if (error) throw error;
+      
+      await refreshProfile(); // MANUALLY REFRESH THE PROFILE IN THE APP STATE
 
       toast.success('Profile setup complete! Welcome to TagnetIQ.');
-      navigate('/dashboard'); // Redirect to the main dashboard
+      navigate('/dashboard'); // This will now work correctly
 
     } catch (error) {
       toast.error('Failed to save profile.', { description: (error as Error).message });

@@ -1,48 +1,62 @@
-// FILE: src/pages/admin/ApiHealthCheck.tsx (CREATE THIS NEW FILE)
+// FILE: src/pages/admin/ApiHealthCheck.tsx (REVISED AND CONSOLIDATED)
 
 import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { CheckCircle, XCircle, Loader, Server } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext'; // Import useAuth to get the token
 
 type ApiStatus = 'idle' | 'loading' | 'success' | 'error';
 
 interface ApiCheck {
   name: string;
-  endpoint: string;
+  service: string; // A key to identify the service in the backend
 }
 
 const apiChecks: ApiCheck[] = [
-    // This is a placeholder. We will create this API endpoint later.
-  { name: 'Anthropic (Claude)', endpoint: '/api/health/anthropic' }, 
-  // Add other API health checks here as we build them.
+  { name: 'OpenAI (GPT-4)', service: 'openai' },
+  { name: 'Anthropic (Claude)', service: 'anthropic' },
+  { name: 'Google (Gemini)', service: 'google' },
+  // Add other checks for DeepSeek, Grok, etc. as needed
 ];
 
 const ApiHealthCheck: React.FC = () => {
+  const { session } = useAuth(); // Get the session for the auth token
   const [statuses, setStatuses] = useState<Record<string, ApiStatus>>(
     apiChecks.reduce((acc, check) => ({ ...acc, [check.name]: 'idle' }), {})
   );
 
   const handleCheck = async (api: ApiCheck) => {
-    setStatuses(prev => ({ ...prev, [api.name]: 'loading' }));
+    if (!session) {
+        toast.error("Authentication Error", { description: "You must be logged in to perform health checks." });
+        return;
+    }
     
-    // NOTE: This will fail until we create the backend API endpoint.
-    // This is expected for now.
-    toast.info(`Pinging ${api.name}...`, { description: "This will fail until the health endpoint is built."});
+    setStatuses(prev => ({ ...prev, [api.name]: 'loading' }));
+    toast.info(`Pinging ${api.name}...`);
 
     try {
-      const response = await fetch(api.endpoint);
+      const response = await fetch(`/api/admin/health-check?service=${api.service}`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+
       if (!response.ok) {
-        const { error } = await response.json();
-        throw new Error(error || 'Health check failed.');
+        const { message } = await response.json();
+        throw new Error(message || 'Health check failed with a non-200 status.');
       }
+      
       const result = await response.json();
-      if (!result.success) {
+
+      if (result.status !== 'success') {
         throw new Error(result.message || 'API reported an issue.');
       }
+
       setStatuses(prev => ({ ...prev, [api.name]: 'success' }));
       toast.success(`${api.name} connection is healthy.`);
+
     } catch (error) {
       setStatuses(prev => ({ ...prev, [api.name]: 'error' }));
       toast.error(`Health check for ${api.name} failed.`, {
@@ -92,9 +106,6 @@ const ApiHealthCheck: React.FC = () => {
               </Button>
             </div>
           ))}
-           <p className="text-xs text-muted-foreground pt-4">
-            Note: The check buttons will show an error until the corresponding backend health endpoints are created during the Hydra Engine SDK upgrade.
-          </p>
         </CardContent>
       </Card>
     </div>

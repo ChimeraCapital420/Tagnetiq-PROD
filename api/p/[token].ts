@@ -1,7 +1,7 @@
 // FILE: api/p/[token].ts
 // Public redirector that logs link clicks.
 
-import { supaAdmin } from '../../src/lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { supaAdmin } from '../../src/lib/supaAdmin'; // Using our admin client to potentially fetch user data
+import { supaAdmin } from '../_lib/supaAdmin'; // Using our admin client to potentially fetch user data
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // In a real application, you would get the user's ID from their session token.

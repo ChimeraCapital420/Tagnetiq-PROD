@@ -1,41 +1,31 @@
-// FILE: api/analyze.ts (The New, Unified Hydra Engine)
+// FILE: api/analyze.ts (REVISED FOR SECURITY)
 // This single file replaces analyze.ts, analyze-barcode.ts, and analyze-image.ts
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { createClient, User } from '@supabase/supabase-js';
 
 export const config = {
   runtime: 'edge',
-  maxDuration: 45, // Set a longer timeout for potentially complex multi-AI analysis
+  maxDuration: 45,
 };
 
 // --- SDK INITIALIZATION ---
-// Initialize SDKs once outside the handler for performance and reuse.
 const openai = new OpenAI({ apiKey: process.env.OPENAI_TOKEN });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_SECRET });
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_TOKEN as string);
-
-// OpenAI-compatible SDKs for DeepSeek and Grok
-const deepseek = new OpenAI({
-  apiKey: process.env.DEEPSEEK_TOKEN,
-  baseURL: 'https://api.deepseek.com/v1',
-});
-
-const grok = new OpenAI({
-  apiKey: process.env.XAI_SECRET,
-  baseURL: 'https://api.xai.com/v1',
-});
-
+const deepseek = new OpenAI({ apiKey: process.env.DEEPSEEK_TOKEN, baseURL: 'https://api.deepseek.com/v1' });
+const grok = new OpenAI({ apiKey: process.env.XAI_SECRET, baseURL: 'https://api.xai.com/v1' });
 
 // --- INTERFACES ---
 interface AnalysisRequest {
   scanType: 'barcode' | 'image' | 'vin';
-  data: string; // This can be a barcode, base64 image data, VIN, etc.
-  userId: string;
+  data: string;
   category_id: string;
   subcategory_id: string;
+  // SECURITY: userId is removed from here. It will be derived from the token.
 }
 
 interface HydraResponse {
@@ -48,43 +38,50 @@ interface HydraResponse {
   reasoning: string;
 }
 
+// --- SECURITY HELPER ---
+async function getAuthenticatedUser(req: VercelRequest): Promise<User> {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+        throw new Error('Authentication token is required.');
+    }
+    // Use the public URL and anon key, but the user's token for auth
+    const supabase = createClient(process.env.VITE_SUPABASE_URL!, process.env.VITE_SUPABASE_ANON_KEY!);
+    const { data: { user }, error } = await supabase.auth.getUser(token);
 
-// --- HYDRA ENGINE CLASS ---
+    if (error || !user) {
+        throw new Error('Authentication error: Invalid token.');
+    }
+    return user;
+}
+
+
+// --- HYDRA ENGINE CLASS (remains the same) ---
 class HydraEngine {
-    // A simple placeholder for product lookup via barcode.
     private async identifyProductByBarcode(barcode: string): Promise<any> {
         console.log(`🔍 Looking up barcode: ${barcode}`);
-        // In a real implementation, this would query external databases.
         return { title: `Product ${barcode}`, brand: 'Unknown', category: 'General Goods', upc: barcode };
     }
     
-    // --- SDK-BASED ANALYSIS METHODS ---
-    
     private async runTextAnalysis(productData: any, prompt: string): Promise<any[]> {
         const analysisPromises = [
-            // Claude
             anthropic.messages.create({
                 model: 'claude-3-haiku-20240307', max_tokens: 1024,
                 messages: [{ role: 'user', content: `${prompt} ${JSON.stringify(productData)}` }]
             }).then(res => res.content[0].text),
 
-            // OpenAI
             openai.chat.completions.create({
                 model: 'gpt-4-turbo', response_format: { type: "json_object" },
                 messages: [{ role: 'user', content: `${prompt} ${JSON.stringify(productData)}` }]
             }).then(res => res.choices[0].message.content),
 
-            // Gemini
             genAI.getGenerativeModel({ model: "gemini-pro" }).generateContent(`${prompt} ${JSON.stringify(productData)}`)
                   .then(res => res.response.text()),
                   
-            // DeepSeek
             deepseek.chat.completions.create({
                 model: 'deepseek-chat', response_format: { type: "json_object" },
                 messages: [{ role: 'user', content: `${prompt} ${JSON.stringify(productData)}` }]
             }).then(res => res.choices[0].message.content),
             
-            // Grok
             grok.chat.completions.create({
                 model: 'grok-1', response_format: { type: "json_object" },
                 messages: [{ role: 'user', content: `${prompt} ${JSON.stringify(productData)}` }]
@@ -96,19 +93,16 @@ class HydraEngine {
 
     private async runImageAnalysis(imageData: string, prompt: string): Promise<any[]> {
         const analysisPromises = [
-            // Claude Vision
             anthropic.messages.create({
                 model: 'claude-3-haiku-20240307', max_tokens: 1024,
                 messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageData.replace(/^data:image\/[a-z]+;base64,/, '') } }, { type: 'text', text: prompt }] }]
             }).then(res => res.content[0].text),
             
-            // OpenAI Vision
             openai.chat.completions.create({
                 model: 'gpt-4-vision-preview', max_tokens: 800,
                 messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: imageData } }] }]
             }).then(res => res.choices[0].message.content),
             
-            // Gemini Vision
             genAI.getGenerativeModel({ model: "gemini-pro-vision" }).generateContent([prompt, { inlineData: { data: imageData.replace(/^data:image\/[a-z]+;base64,/, ''), mimeType: "image/jpeg" } }])
                   .then(res => res.response.text()),
         ];
@@ -127,9 +121,7 @@ class HydraEngine {
                     if (jsonMatch) {
                         validAnalyses.push(JSON.parse(jsonMatch[0]));
                     }
-                } catch (e) {
-                    console.error(`Error parsing JSON from AI service ${i}:`, e);
-                }
+                } catch (e) { console.error(`Error parsing JSON from AI service ${i}:`, e); }
             } else if (result.status === 'rejected') {
                  console.error(`API call failed for AI service ${i}:`, result.reason);
             }
@@ -163,10 +155,8 @@ class HydraEngine {
         return { itemName, estimatedValue: avgValue.toFixed(2), decision, confidence, analysisCount: totalVotes, consensusRatio: `${buyVotes}/${totalVotes}`, reasoning };
     }
 
-    // --- MAIN PUBLIC METHOD ---
     public async analyze(request: AnalysisRequest): Promise<HydraResponse> {
         const jsonPrompt = `Respond in JSON format only: {"itemName": "specific item name", "estimatedValue": "25.99", "decision": "BUY", "reasoning": "brief explanation"}`;
-        
         let analyses: any[] = [];
         let itemName = "Analysis";
 
@@ -175,7 +165,6 @@ class HydraEngine {
             const prompt = `You are an expert appraiser. Analyze this image of a collectible item. Identify it, estimate its resale value, and provide a BUY/PASS recommendation. ${jsonPrompt}`;
             analyses = await this.runImageAnalysis(request.data, prompt);
             itemName = analyses[0]?.itemName || "Image Analysis";
-
         } else if (request.scanType === 'barcode') {
             console.log('║█║ Initiating Hydra barcode analysis...');
             const productData = await this.identifyProductByBarcode(request.data);
@@ -183,7 +172,6 @@ class HydraEngine {
             const prompt = `You are an expert reseller. Analyze this product for arbitrage potential based on its data. ${jsonPrompt}`;
             analyses = await this.runTextAnalysis(productData, prompt);
         }
-        // Future scan types like 'vin' would be added here as another else if block.
         
         console.log(`🤖 Consensus built from ${analyses.length} successful AI analyses.`);
         return this.buildConsensus(analyses, itemName);
@@ -197,18 +185,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
+        // SECURITY: Get the authenticated user from the token. This also authenticates the request.
+        const user = await getAuthenticatedUser(req);
+        console.log(`Analysis request received for user: ${user.id}`);
+        
         const body = req.body as AnalysisRequest;
-        if (!body.scanType || !body.data || !body.userId || !body.category_id) {
+        if (!body.scanType || !body.data || !body.category_id) {
             return res.status(400).json({ error: 'Missing required fields in analysis request.' });
         }
 
         const hydra = new HydraEngine();
+        // SECURITY: The request passed to the engine no longer contains a user-provided userId.
         const analysisResult = await hydra.analyze(body);
 
         return res.status(200).json(analysisResult);
     } catch (error) {
         console.error('❌ Top-level analysis error:', error);
         const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        // SECURITY: Return a 401 Unauthorized status for authentication errors.
+        if (message.includes('Authentication')) {
+            return res.status(401).json({ error: message });
+        }
         return res.status(500).json({ error: 'Hydra engine failed.', details: message });
     }
 }

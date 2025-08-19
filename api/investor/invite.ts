@@ -1,7 +1,7 @@
 // FILE: api/investors/invite.ts
 
-import { supaAdmin } from '../../src/lib/supaAdmin';
-import { createSignature } from '../../src/lib/crypto';
+import { supaAdmin } from '../_lib/supaAdmin';
+import { createSignature } from '../_lib/crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import QRCode from 'qrcode'; // Import the new library
 

@@ -1,34 +1,41 @@
-// FILE: api/beta/invite.ts
-// Admin-only endpoint to create a new beta tester invite.
+// FILE: api/beta/invite.ts (REVISED FOR SECURITY)
 
-import { supaAdmin } from '../../src/lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { verifyUserIsAdmin } from '../_lib/security';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-  // TODO: Add robust admin auth check here.
-
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email is required.' });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  }
 
   try {
-    const token = `tq-beta-${crypto.randomUUID()}`;
-    const expires_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
+    // SECURITY: Verify the user is an admin before proceeding
+    await verifyUserIsAdmin(req);
 
-    const { data: invite, error } = await supaAdmin
-      .from('beta_invites')
-      .insert({ email, token, expires_at })
-      .select('id, token')
-      .single();
-    
-    if (error) throw error;
+    const { email } = req.body;
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({ error: 'A valid email is required.' });
+    }
 
-    const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:5173';
-    const acceptUrl = `${baseUrl}/api/beta/accept/${invite.token}`;
+    const { data, error } = await supaAdmin.auth.admin.inviteUserByEmail(email);
 
-    return res.status(200).json({ success: true, acceptUrl });
+    if (error) {
+      if (error.message.includes('unique constraint')) {
+        return res.status(409).json({ error: 'A user with this email already exists in the project.' });
+      }
+      throw error;
+    }
+
+    return res.status(200).json({ success: true, message: `Invite successfully sent to ${email}.` });
 
   } catch (error) {
-    return res.status(500).json({ error: (error as Error).message });
+    const message = error instanceof Error ? error.message : 'An unexpected error occurred.';
+    // SECURITY: Return 401 for auth errors, 500 for others
+    if (message.includes('Authentication') || message.includes('Authorization')) {
+      return res.status(401).json({ error: message });
+    }
+    console.error('Error sending Supabase invite:', message);
+    return res.status(500).json({ error: message });
   }
 }

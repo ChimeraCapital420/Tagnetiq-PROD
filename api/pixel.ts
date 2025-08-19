@@ -1,8 +1,8 @@
 // FILE: api/pixel.ts
 // 1x1 tracking pixel for email opens.
 
-import { supaAdmin } from '../../src/lib/supaAdmin';
-import { verifySignature } from '../../src/lib/crypto';
+import { supaAdmin } from '../_lib/supaAdmin';
+import { verifySignature } from '../_lib/crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

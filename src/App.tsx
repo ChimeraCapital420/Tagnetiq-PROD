@@ -1,8 +1,9 @@
-// FILE: src/App.tsx
+// FILE: src/App.tsx (FINAL CORRECTION)
 
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AppProvider, useAppContext } from '@/contexts/AppContext'; // Corrected: Import useAppContext
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AppProvider, useAppContext } from '@/contexts/AppContext';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { BetaProvider } from '@/contexts/BetaContext';
 import { ThemeProvider } from '@/components/theme-provider';
@@ -26,8 +27,13 @@ import BetaReferrals from '@/pages/beta/Referrals';
 import BetaConsole from '@/pages/admin/BetaConsole';
 import MapConsole from '@/pages/admin/MapConsole';
 import { FeedbackModal } from '@/components/beta/FeedbackModal';
-import InvestorSuite from './pages/InvestorSuite';
-import OnboardingPage from './pages/Onboarding';
+import InvestorSuite from '@/pages/InvestorSuite';
+import OnboardingPage from '@/pages/Onboarding';
+import ApiHealthCheck from '@/pages/admin/ApiHealthCheck'; // Corrected import
+import VaultPage from '@/pages/Vault';
+
+// Create a client
+const queryClient = new QueryClient();
 
 const AppRoutes: React.FC = () => {
     const { user, profile, isAdmin } = useAuth();
@@ -42,6 +48,7 @@ const AppRoutes: React.FC = () => {
             <Route path="/onboarding" element={<ProtectedRoute isAllowed={!!user && !hasCompletedOnboarding} to="/dashboard"><OnboardingPage /></ProtectedRoute>} />
 
             <Route path="/dashboard" element={<ProtectedRoute isAllowed={!!user && hasCompletedOnboarding} to={user ? "/onboarding" : "/login"}><Dashboard /></ProtectedRoute>} />
+            <Route path="/vault" element={<ProtectedRoute isAllowed={!!user && hasCompletedOnboarding} to={user ? "/onboarding" : "/login"}><VaultPage /></ProtectedRoute>} />
             
             <Route path="/beta/welcome" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaWelcome /></ProtectedRoute>} />
             <Route path="/beta/missions" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaMissions /></ProtectedRoute>} />
@@ -53,6 +60,9 @@ const AppRoutes: React.FC = () => {
             <Route path="/admin/investors" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><Investor /></ProtectedRoute>} />
             <Route path="/admin/beta" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><BetaConsole /></ProtectedRoute>} />
             <Route path="/admin/map" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><MapConsole /></ProtectedRoute>} />
+            
+            {/* CORRECTED: The route for ApiHealthCheck was missing */}
+            <Route path="/admin/health" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><ApiHealthCheck /></ProtectedRoute>} />
             
             <Route path="/investor" element={<InvestorPortal />} /> 
 
@@ -79,20 +89,22 @@ const AppContent: React.FC = () => {
 
 function App() {
   return (
-    <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-      <AuthProvider>
-        <AppProvider>
-          <BetaProvider>
-            <Router>
-                <AppShell>
-                    <AppContent />
-                    <SonnerToaster />
-                </AppShell>
-            </Router>
-          </BetaProvider>
-        </AppProvider>
-      </AuthProvider>
-    </ThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+        <AuthProvider>
+          <AppProvider>
+            <BetaProvider>
+              <Router>
+                  <AppShell>
+                      <AppContent />
+                      <SonnerToaster />
+                  </AppShell>
+              </Router>
+            </BetaProvider>
+          </AppProvider>
+        </AuthProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
   );
 }
 
