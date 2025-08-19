@@ -1,9 +1,9 @@
-// FILE: src/pages/Onboarding.tsx (REVISED TO USE REFRESH)
+// FILE: src/pages/Onboarding.tsx (REVISED FOR STATE SYNC)
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { supabase, Profile } from '@/lib/supabase';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,7 +13,7 @@ import { CATEGORIES } from '@/lib/constants';
 import { Toggle } from '@/components/ui/toggle';
 
 const OnboardingPage: React.FC = () => {
-  const { user, refreshProfile } = useAuth(); // GET THE REFRESH FUNCTION
+  const { user, setProfile } = useAuth(); // GET THE setProfile FUNCTION
   const navigate = useNavigate();
   const [screenName, setScreenName] = useState('');
   const [location, setLocation] = useState('');
@@ -41,7 +41,7 @@ const OnboardingPage: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
         .update({
           screen_name: screenName,
@@ -50,14 +50,19 @@ const OnboardingPage: React.FC = () => {
           onboarding_complete: true,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', user.id);
+        .eq('id', user.id)
+        .select() // Ask Supabase to return the updated row
+        .single(); // Expect only one row
 
       if (error) throw error;
-      
-      await refreshProfile(); // MANUALLY REFRESH THE PROFILE IN THE APP STATE
+
+      // Manually update the profile in the app's global state
+      if (data) {
+        setProfile(data as Profile);
+      }
 
       toast.success('Profile setup complete! Welcome to TagnetIQ.');
-      navigate('/dashboard'); // This will now work correctly
+      navigate('/dashboard', { replace: true }); // This will now work
 
     } catch (error) {
       toast.error('Failed to save profile.', { description: (error as Error).message });

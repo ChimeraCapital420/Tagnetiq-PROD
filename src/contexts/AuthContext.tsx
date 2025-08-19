@@ -1,4 +1,4 @@
-// FILE: src/contexts/AuthContext.tsx (REVISED TO EXPOSE PROFILE REFRESH)
+// FILE: src/contexts/AuthContext.tsx (REVISED TO EXPOSE setProfile)
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, Session } from '@supabase/supabase-js';
@@ -11,7 +11,7 @@ interface AuthContextType {
   loading: boolean;
   signOut: () => Promise<void>;
   isAdmin: boolean;
-  refreshProfile: () => Promise<void>; // EXPOSED FUNCTION
+  setProfile: React.Dispatch<React.SetStateAction<Profile | null>>; // EXPOSED SETTER
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -21,7 +21,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   signOut: async () => {},
   isAdmin: false,
-  refreshProfile: async () => {}, // DEFAULT FUNCTION
+  setProfile: () => {}, // DEFAULT SETTER
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -35,53 +35,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  const fetchProfile = useCallback(async (currentUser: User | null) => {
-    if (currentUser) {
-      const { data: userProfile, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', currentUser.id)
-        .single();
-
-      if (error) {
-        console.error("Error fetching profile:", error);
-      }
-      setProfile(userProfile);
-    } else {
-      setProfile(null);
-    }
-  }, []);
-
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+    const fetchProfile = async (currentUser: User | null) => {
+      if (currentUser) {
+        const { data: userProfile, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', currentUser.id)
+          .single();
+
+        if (error) console.error("Error fetching profile:", error);
+        setProfile(userProfile);
+      } else {
+        setProfile(null);
+      }
+      setLoading(false);
+    };
+    
+    // Initial session fetch
+    supabase.auth.getSession().then(({ data: { session } }) => {
         setSession(session);
         const currentUser = session?.user ?? null;
         setUser(currentUser);
         setIsAdmin(currentUser ? ADMIN_EMAILS.includes(currentUser.email || '') : false);
-        await fetchProfile(currentUser);
-        setLoading(false);
+        fetchProfile(currentUser);
+    });
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        setSession(session);
+        const currentUser = session?.user ?? null;
+        setUser(currentUser);
+        setIsAdmin(currentUser ? ADMIN_EMAILS.includes(currentUser.email || '') : false);
+        fetchProfile(currentUser);
       }
     );
 
     return () => subscription.unsubscribe();
-  }, [fetchProfile]);
+  }, []);
 
   const signOut = async () => {
     await supabase.auth.signOut();
-    setUser(null);
-    setProfile(null);
   };
-  
-  // NEW FUNCTION TO MANUALLY RE-FETCH PROFILE
-  const refreshProfile = async () => {
-      if (user) {
-          await fetchProfile(user);
-      }
-  }
 
   return (
-    <AuthContext.Provider value={{ user, profile, session, loading, signOut, isAdmin, refreshProfile }}>
+    <AuthContext.Provider value={{ user, profile, session, loading, signOut, isAdmin, setProfile }}>
       {children}
     </AuthContext.Provider>
   );
