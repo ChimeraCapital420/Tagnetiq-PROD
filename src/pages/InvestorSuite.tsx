@@ -16,6 +16,8 @@ import { ProductDemos } from '@/components/investor/ProductDemos';
 import { LiveFeed } from '@/components/investor/LiveFeed';
 import { CallToAction } from '@/components/investor/CallToAction';
 import { HighlightQuote } from '@/components/investor/HighlightQuote';
+import { ArenaGrowthMetrics } from '@/components/investor/ArenaGrowthMetrics'; // --- MODIFICATION: Import the new component ---
+import { Separator } from '@/components/ui/separator';
 
 // Expanded Metrics interface to include new beta stats
 interface Metrics {
@@ -57,12 +59,10 @@ const InvestorSuite: React.FC = () => {
     fetchMetrics();
   }, [days]);
 
-  // --- MODIFICATION START: Prepare data for the Funnel Chart ---
   const funnelData = metrics ? [
     { name: 'Invited', value: metrics.totalBetaInvites, fill: '#8884d8' },
     { name: 'Activated', value: metrics.totalBetaTesters, fill: '#82ca9d' },
   ] : [];
-  // --- MODIFICATION END ---
 
   const growthChartActions = (
     <div className="flex gap-1">
@@ -106,6 +106,12 @@ const InvestorSuite: React.FC = () => {
             <>
                 <KpiCards data={metrics} />
 
+                {/* --- MODIFICATION START: Add the new Arena component --- */}
+                <Separator />
+                <ArenaGrowthMetrics />
+                <Separator />
+                {/* --- MODIFICATION END --- */}
+
                 <div className="grid gap-8 lg:grid-cols-3">
                     <div className="lg:col-span-2 space-y-8">
                         <InvestorMap />
@@ -113,7 +119,6 @@ const InvestorSuite: React.FC = () => {
                         <LiveFeed />
                     </div>
                     <div className="space-y-8">
-                        {/* Pass the live metrics to both components */}
                         <BetaInsights data={metrics} />
                         <FunnelChart data={funnelData} />
                         <DocsShelf />
