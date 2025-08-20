@@ -13,10 +13,10 @@ export interface AnalysisResult {
 interface AppContextType {
   theme: Theme;
   themeMode: ThemeMode;
-  seasonalMode: SeasonalMode; // New state for seasonal branding
+  seasonalMode: SeasonalMode;
   setTheme: (theme: Theme) => void;
   setThemeMode: (mode: ThemeMode) => void;
-  setSeasonalMode: (mode: SeasonalMode) => void; // New setter
+  setSeasonalMode: (mode: SeasonalMode) => void;
   lastAnalysisResult: AnalysisResult | null;
   setLastAnalysisResult: (result: AnalysisResult | null) => void;
   isScanning: boolean;
@@ -27,15 +27,17 @@ interface AppContextType {
   setSelectedCategory: (category: string | null) => void;
   isFeedbackModalOpen: boolean;
   setIsFeedbackModalOpen: (isOpen: boolean) => void;
+  isArenaWelcomeOpen: boolean; // New state for the welcome alert
+  setIsArenaWelcomeOpen: (isOpen: boolean) => void; // New setter
 }
 
 const defaultAppContext: AppContextType = {
   theme: 'darkKnight',
   themeMode: 'dark',
-  seasonalMode: 'off', // Default to off
+  seasonalMode: 'off',
   setTheme: () => {},
   setThemeMode: () => {},
-  setSeasonalMode: () => {}, // Default setter
+  setSeasonalMode: () => {},
   lastAnalysisResult: null,
   setLastAnalysisResult: () => {},
   isScanning: false,
@@ -46,6 +48,8 @@ const defaultAppContext: AppContextType = {
   setSelectedCategory: () => {},
   isFeedbackModalOpen: false,
   setIsFeedbackModalOpen: () => {},
+  isArenaWelcomeOpen: false, // Default value
+  setIsArenaWelcomeOpen: () => {}, // Default setter
 };
 
 const AppContext = createContext<AppContextType>(defaultAppContext);
@@ -61,6 +65,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
+  const [isArenaWelcomeOpen, setIsArenaWelcomeOpen] = useState(false); // Add state
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -88,6 +93,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     isAnalyzing, setIsAnalyzing,
     selectedCategory, setSelectedCategory,
     isFeedbackModalOpen, setIsFeedbackModalOpen,
+    isArenaWelcomeOpen, setIsArenaWelcomeOpen, // Provide state and setter
   };
 
   return (

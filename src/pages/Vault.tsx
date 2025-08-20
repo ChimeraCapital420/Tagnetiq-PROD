@@ -5,7 +5,8 @@ import { supabase } from '@/lib/supabase';
 import { useMfa } from '@/contexts/MfaContext';
 import { VaultItemCard } from '@/components/vault/VaultItemCard';
 import { ItemDetailModal } from '@/components/vault/ItemDetailModal';
-import { PdfDownloadButton } from '@/components/vault/PdfDownloadButton'; // Import the new button
+import { PdfDownloadButton } from '@/components/vault/PdfDownloadButton';
+import { ChallengeConfirmationModal } from '@/components/arena/ChallengeConfirmationModal';
 import { Loader2, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -31,11 +32,11 @@ const VaultPage: React.FC = () => {
   const [items, setItems] = useState<VaultItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
   const [selectedItem, setSelectedItem] = useState<VaultItem | null>(null);
+  const [challengeItem, setChallengeItem] = useState<VaultItem | null>(null);
 
   useEffect(() => {
     const fetchVaultItems = async () => {
       if (!isVaultUnlocked) {
-        // Set loading to false if the vault is locked, as we are not fetching.
         setLoadingItems(false);
         return;
       };
@@ -66,6 +67,42 @@ const VaultPage: React.FC = () => {
   const handleItemUpdate = (updatedItem: VaultItem) => {
     setItems(prevItems => prevItems.map(item => item.id === updatedItem.id ? updatedItem : item));
     toast.success(`${updatedItem.asset_name} has been updated.`);
+  };
+
+  const handleConfirmChallenge = async (askingPrice: number) => {
+    if (!challengeItem) return;
+
+    toast.info(`Starting ROI Challenge for ${challengeItem.asset_name}...`);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Not authenticated");
+
+      const response = await fetch('/api/arena/challenge', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          vault_item_id: challengeItem.id,
+          asking_price: askingPrice,
+        }),
+      });
+
+      if (!response.ok) {
+        const { error } = await response.json();
+        throw new Error(error || 'Failed to start challenge.');
+      }
+
+      toast.success("Challenge Started!", {
+        description: `${challengeItem.asset_name} is now live in the Arena Marketplace.`,
+      });
+    } catch (error) {
+      toast.error("Failed to Start Challenge", { description: (error as Error).message });
+    } finally {
+      setChallengeItem(null);
+    }
   };
 
   if (isMfaLoading) {
@@ -110,7 +147,6 @@ const VaultPage: React.FC = () => {
     );
   }
 
-  // Render the actual vault content if unlocked
   return (
     <div className="container mx-auto p-4 md:p-8">
       <div className="flex justify-between items-center mb-6">
@@ -118,7 +154,6 @@ const VaultPage: React.FC = () => {
           <h1 className="text-3xl font-bold">Digital Vault</h1>
           <p className="text-muted-foreground">Your secure inventory of valued assets.</p>
         </div>
-        {/* --- INTEGRATE THE NEW BUTTON --- */}
         <PdfDownloadButton items={items} />
       </div>
 
@@ -132,7 +167,12 @@ const VaultPage: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
           {items.map(item => (
-            <VaultItemCard key={item.id} item={item} onSelect={() => setSelectedItem(item)} />
+            <VaultItemCard 
+              key={item.id} 
+              item={item} 
+              onSelect={() => setSelectedItem(item)}
+              onStartChallenge={() => setChallengeItem(item)}
+            />
           ))}
         </div>
       )}
@@ -142,6 +182,15 @@ const VaultPage: React.FC = () => {
           item={selectedItem} 
           onClose={() => setSelectedItem(null)}
           onUpdate={handleItemUpdate}
+        />
+      )}
+
+      {challengeItem && (
+        <ChallengeConfirmationModal
+          item={challengeItem}
+          isOpen={!!challengeItem}
+          onClose={() => setChallengeItem(null)}
+          onConfirm={handleConfirmChallenge}
         />
       )}
     </div>

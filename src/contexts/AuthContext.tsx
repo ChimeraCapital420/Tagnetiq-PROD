@@ -1,4 +1,4 @@
-// FILE: src/contexts/AuthContext.tsx (REVISED TO EXPOSE setProfile)
+// FILE: src/contexts/AuthContext.tsx
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, Session } from '@supabase/supabase-js';
@@ -11,7 +11,7 @@ interface AuthContextType {
   loading: boolean;
   signOut: () => Promise<void>;
   isAdmin: boolean;
-  setProfile: React.Dispatch<React.SetStateAction<Profile | null>>; // EXPOSED SETTER
+  setProfile: React.Dispatch<React.SetStateAction<Profile | null>>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -21,7 +21,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   signOut: async () => {},
   isAdmin: false,
-  setProfile: () => {}, // DEFAULT SETTER
+  setProfile: () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -52,7 +52,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     };
     
-    // Initial session fetch
     supabase.auth.getSession().then(({ data: { session } }) => {
         setSession(session);
         const currentUser = session?.user ?? null;
@@ -61,14 +60,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         fetchProfile(currentUser);
     });
 
-    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         setSession(session);
         const currentUser = session?.user ?? null;
         setUser(currentUser);
         setIsAdmin(currentUser ? ADMIN_EMAILS.includes(currentUser.email || '') : false);
-        fetchProfile(currentUser);
+        if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+            fetchProfile(currentUser);
+        } else if (event === 'SIGNED_OUT') {
+            setProfile(null);
+        }
       }
     );
 
