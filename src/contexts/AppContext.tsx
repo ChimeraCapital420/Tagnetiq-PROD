@@ -7,7 +7,7 @@ type SeasonalMode = 'winter' | 'spring' | 'summer' | 'fall' | 'off';
 export interface AnalysisResult {
   id: string; decision: 'BUY' | 'PASS'; itemName: string; estimatedValue: string;
   confidence: 'high' | 'medium' | 'low'; reasoning: string;
-  analysisCount?: number; consensusRatio?: string; code?: string;
+  analysisCount?: number; consensusRatio?: string; code?: string; imageUrls?: string[];
 }
 
 interface AppContextType {
@@ -27,8 +27,10 @@ interface AppContextType {
   setSelectedCategory: (category: string | null) => void;
   isFeedbackModalOpen: boolean;
   setIsFeedbackModalOpen: (isOpen: boolean) => void;
-  isArenaWelcomeOpen: boolean; // New state for the welcome alert
-  setIsArenaWelcomeOpen: (isOpen: boolean) => void; // New setter
+  isArenaWelcomeOpen: boolean; 
+  setIsArenaWelcomeOpen: (isOpen: boolean) => void;
+  isScannerOpen: boolean; 
+  setIsScannerOpen: (isOpen: boolean) => void; 
 }
 
 const defaultAppContext: AppContextType = {
@@ -48,8 +50,10 @@ const defaultAppContext: AppContextType = {
   setSelectedCategory: () => {},
   isFeedbackModalOpen: false,
   setIsFeedbackModalOpen: () => {},
-  isArenaWelcomeOpen: false, // Default value
-  setIsArenaWelcomeOpen: () => {}, // Default setter
+  isArenaWelcomeOpen: false,
+  setIsArenaWelcomeOpen: () => {},
+  isScannerOpen: false, 
+  setIsScannerOpen: () => {}, 
 };
 
 const AppContext = createContext<AppContextType>(defaultAppContext);
@@ -65,7 +69,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
-  const [isArenaWelcomeOpen, setIsArenaWelcomeOpen] = useState(false); // Add state
+  const [isArenaWelcomeOpen, setIsArenaWelcomeOpen] = useState(false);
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -93,7 +98,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     isAnalyzing, setIsAnalyzing,
     selectedCategory, setSelectedCategory,
     isFeedbackModalOpen, setIsFeedbackModalOpen,
-    isArenaWelcomeOpen, setIsArenaWelcomeOpen, // Provide state and setter
+    isArenaWelcomeOpen, setIsArenaWelcomeOpen,
+    isScannerOpen, setIsScannerOpen,
   };
 
   return (

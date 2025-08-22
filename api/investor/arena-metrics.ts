@@ -1,4 +1,4 @@
-// FILE: api/investor/arena-metrics.ts (CREATE THIS NEW FILE)
+// FILE: api/investor/arena-metrics.ts
 
 import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -8,14 +8,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  // In a real app, you would add admin role-based access control here.
-
   try {
     const now = new Date();
     const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Batch all database queries to run in parallel for performance
     const [
       { count: dau, error: dauError },
       { count: mau, error: mauError },
@@ -25,45 +22,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       { count: alertsTriggered, error: alertsTriggeredError },
       { count: totalActiveChallenges, error: totalActiveChallengesError },
     ] = await Promise.all([
-      // User Engagement
       supaAdmin.from('users').select('*', { count: 'exact', head: true }).gte('last_sign_in_at', twentyFourHoursAgo),
       supaAdmin.from('users').select('*', { count: 'exact', head: true }).gte('last_sign_in_at', thirtyDaysAgo),
-      // Content Velocity (daily)
       supaAdmin.from('arena_challenges').select('*', { count: 'exact', head: true }).gte('created_at', twentyFourHoursAgo),
       supaAdmin.from('marketplace_listings').select('*', { count: 'exact', head: true }).gte('created_at', twentyFourHoursAgo),
-      // Social Interaction (daily)
       supaAdmin.from('secure_messages').select('*', { count: 'exact', head: true }).gte('created_at', twentyFourHoursAgo),
       supaAdmin.from('watchlist_alerts').select('*', { count: 'exact', head: true }).gte('triggered_at', twentyFourHoursAgo),
-      // Ecosystem Health
       supaAdmin.from('arena_challenges').select('*', { count: 'exact', head: true }).eq('is_active', true),
     ]);
 
-    // Error handling for all queries
-    if (dauError) throw new Error(`DAU Error: ${dauError.message}`);
-    if (mauError) throw new Error(`MAU Error: ${mauError.message}`);
-    if (newChallengesError) throw new Error(`New Challenges Error: ${newChallengesError.message}`);
-    if (newListingsError) throw new Error(`New Listings Error: ${newListingsError.message}`);
-    if (newConversationsError) throw new Error(`New Conversations Error: ${newConversationsError.message}`);
-    if (alertsTriggeredError) throw new Error(`Alerts Error: ${alertsTriggeredError.message}`);
-    if (totalActiveChallengesError) throw new Error(`Total Active Challenges Error: ${totalActiveChallengesError.message}`);
+    if (dauError || mauError || newChallengesError || newListingsError || newConversationsError || alertsTriggeredError || totalActiveChallengesError) {
+        console.error({dauError, mauError, newChallengesError, newListingsError, newConversationsError, alertsTriggeredError, totalActiveChallengesError});
+        throw new Error('Failed to fetch one or more Arena metrics.');
+    }
 
-    // Construct the final metrics object
     const arenaMetrics = {
-      userEngagement: {
-        dau: dau ?? 0,
-        mau: mau ?? 0,
-      },
-      contentVelocity: {
-        newChallengesToday: newChallenges ?? 0,
-        newListingsToday: newListings ?? 0,
-      },
-      socialInteraction: {
-        newConversationsToday: newConversations ?? 0,
-        alertsTriggeredToday: alertsTriggered ?? 0,
-      },
-      ecosystemHealth: {
-        totalActiveChallenges: totalActiveChallenges ?? 0,
-      },
+      userEngagement: { dau: dau ?? 0, mau: mau ?? 0 },
+      contentVelocity: { newChallengesToday: newChallenges ?? 0, newListingsToday: newListings ?? 0 },
+      socialInteraction: { newConversationsToday: newConversations ?? 0, alertsTriggeredToday: alertsTriggered ?? 0 },
+      ecosystemHealth: { totalActiveChallenges: totalActiveChallenges ?? 0 },
     };
 
     return res.status(200).json(arenaMetrics);

@@ -1,4 +1,4 @@
-// FILE: src/pages/Dashboard.tsx
+// FILE: src/pages/Dashboard.tsx (FIXED TYPO)
 
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -9,39 +9,42 @@ import AnalysisResult from '@/components/AnalysisResult';
 import SubCategoryModal from '@/components/SubCategoryModal';
 import { ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-
+import { toast } from 'sonner';
+import { subCategories } from '@/lib/subcategories';
 
 const Dashboard: React.FC = () => {
-  const { lastAnalysisResult, setLastAnalysisResult, selectedCategory, setSelectedCategory } = useAppContext();
+  const { lastAnalysisResult, selectedCategory, setSelectedCategory } = useAppContext();
   const [isSubCategoryModalOpen, setIsSubCategoryModalOpen] = useState(false);
-  const [currentCategory, setCurrentCategory] = useState<any>(null);
+  const [currentCategory, setCurrentCategory] = useState<{ id: string; name: string } | null>(null);
   const { user } = useAuth();
 
+  const handleCategorySelect = (category: { id: string; name: string; }) => {
+    // Immediately set the main category for general analysis
+    setSelectedCategory(category.id);
+    toast.info(`AI mode set to ${category.name}.`);
 
-  const handleCategorySelect = (category: any) => {
-    // Logic to open sub-category modal if needed
-    if (category.id !== 'continuous-scan' && category.id !== 'multi-image') {
+    const availableSubCategories = subCategories[category.id] || [];
+    
+    // If sub-categories exist, open the modal for refinement
+    if (availableSubCategories.length > 0) {
         setCurrentCategory(category);
         setIsSubCategoryModalOpen(true);
-    } else {
-        setSelectedCategory(category.id);
-        toast.info(`Switched to ${category.name} mode.`);
     }
   };
   
   const getCategoryDisplayName = () => {
     if (!selectedCategory) return 'General';
-    // Find category or subcategory name
+    
+    // This function now correctly finds both parent and sub-category names
     for (const cat of CATEGORIES) {
-        if (cat.id === selectedCategory) return cat.name;
-        if (cat.subcategories) {
-            const sub = cat.subcategories.find(s => s.id === selectedCategory);
-            if (sub) return sub.name;
-        }
+      if (cat.id === selectedCategory) return cat.name;
+      const sub = subCategories[cat.id]?.find(s => s.id === selectedCategory);
+      if (sub) return `${cat.name}: ${sub.name}`;
     }
-    return 'General';
-  };
 
+    const parentCategory = CATEGORIES.find(c => selectedCategory.startsWith(c.id));
+    return parentCategory?.name || 'General';
+  };
 
   return (
     <>
@@ -62,7 +65,6 @@ const Dashboard: React.FC = () => {
             </div>
           </Card>
 
-          {/* --- AEGIS ENTRY POINT CARD --- */}
           <Link to="/vault">
             <Card className="overflow-hidden border-border/50 bg-background/50 backdrop-blur-sm hover:border-primary transition-all group cursor-pointer">
               <div className="p-6">

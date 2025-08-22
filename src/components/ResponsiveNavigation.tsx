@@ -1,5 +1,3 @@
-// FILE: src/components/ResponsiveNavigation.tsx
-
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import SettingsDropdown from './SettingsDropdown';
@@ -12,10 +10,11 @@ import AlertsDropdown from '@/components/arena/AlertsDropdown';
 const ResponsiveNavigation: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, profile } = useAuth();
-  const { setIsArenaWelcomeOpen } = useAppContext();
+  const { profile } = useAuth();
+  const { setIsArenaWelcomeOpen, setIsScannerOpen } = useAppContext(); 
   const isVaultActive = location.pathname.startsWith('/vault');
   const isArenaActive = location.pathname.startsWith('/arena');
+  const isDashboardActive = location.pathname.startsWith('/dashboard');
 
   const handleArenaClick = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -25,10 +24,6 @@ const ResponsiveNavigation: React.FC = () => {
         navigate('/arena/marketplace');
     }
   };
-
-  if (!user) {
-    return null;
-  }
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -46,11 +41,14 @@ const ResponsiveNavigation: React.FC = () => {
                 </Link>
             </div>
             <nav className="flex items-center gap-2">
-                <Button asChild variant={!isVaultActive && !isArenaActive ? 'secondary' : 'ghost'} size="sm">
+                <Button asChild variant={isDashboardActive ? 'secondary' : 'ghost'} size="sm">
                     <Link to="/dashboard">
-                    <Scan className="h-4 w-4" />
-                    <span className="hidden sm:inline-block sm:ml-2">Scanner</span>
+                    <span className="hidden sm:inline-block">Dashboard</span>
                     </Link>
+                </Button>
+                <Button onClick={() => setIsScannerOpen(true)} size="sm">
+                    <Scan className="h-4 w-4" />
+                    <span className="hidden sm:inline-block sm:ml-2">Scan</span>
                 </Button>
                 <Button asChild variant={isArenaActive ? 'secondary' : 'ghost'} size="sm">
                     <Link to="/arena/marketplace" onClick={handleArenaClick}>

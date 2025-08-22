@@ -1,86 +1,73 @@
 // FILE: src/components/investor/LiveFeed.tsx
 
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { toast } from 'sonner';
-import { Zap, UserPlus, MessageSquare, ScanLine } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { AnimatePresence, motion } from 'framer-motion';
+import { UserPlus, ShieldCheck, Trophy, Landmark, DollarSign } from 'lucide-react';
 
-interface FeedEvent {
-  type: 'signup' | 'scan' | 'feedback';
-  description: string;
-  timeAgo: string;
-}
+const eventIcons = {
+    USER_SIGNUP: <UserPlus className="h-4 w-4 text-blue-400" />,
+    ASSET_VAULTED: <ShieldCheck className="h-4 w-4 text-green-400" />,
+    CHALLENGE_COMPLETED: <Trophy className="h-4 w-4 text-yellow-400" />,
+    HIGH_VALUE_SCAN: <Landmark className="h-4 w-4 text-purple-400" />,
+    ARENA_SALE: <DollarSign className="h-4 w-4 text-pink-400" />,
+};
 
-// Helper to get an icon based on the event type
-const getEventIcon = (type: FeedEvent['type']) => {
-  switch (type) {
-    case 'signup':
-      return <UserPlus className="h-5 w-5 text-blue-500" />;
-    case 'scan':
-      return <ScanLine className="h-5 w-5 text-green-500" />;
-    case 'feedback':
-      return <MessageSquare className="h-5 w-5 text-purple-500" />;
-    default:
-      return <Zap className="h-5 w-5 text-gray-500" />;
-  }
+const formatEvent = (event: any) => {
+    switch (event.type) {
+        case 'USER_SIGNUP': return `New user joined from ${event.location}`;
+        case 'ASSET_VAULTED': return `Asset Vaulted: ${event.asset}`;
+        case 'CHALLENGE_COMPLETED': return `Challenge Completed: ${event.challenge}`;
+        case 'HIGH_VALUE_SCAN': return `High-value scan in ${event.location}`;
+        case 'ARENA_SALE': return `Arena Sale Completed: ${event.value}`;
+        default: return 'New platform event';
+    }
 };
 
 export const LiveFeed: React.FC = () => {
-  const [events, setEvents] = useState<FeedEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+    const [feed, setFeed] = useState<any[]>([]);
+    useEffect(() => {
+        const fetchEvent = async () => {
+            try {
+                const response = await fetch('/api/investor/live-feed');
+                if (!response.ok) return;
+                const newEvent = await response.json();
+                setFeed(prevFeed => [newEvent, ...prevFeed.slice(0, 4)]);
+            } catch (error) {}
+        };
+        fetchEvent();
+        const interval = setInterval(fetchEvent, 4000);
+        return () => clearInterval(interval);
+    }, []);
 
-  useEffect(() => {
-    const fetchFeed = async () => {
-      try {
-        const response = await fetch('/api/investor/live-feed');
-        if (!response.ok) {
-          // Don't show an error for this, as it's a non-critical component
-          console.error('Failed to fetch live feed data.');
-          return;
-        }
-        const data = await response.json();
-        setEvents(data);
-      } catch (error) {
-        // Silently fail is okay for this component
-        console.error((error as Error).message);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchFeed(); // Fetch immediately on mount
-    const interval = setInterval(fetchFeed, 15000); // And then every 15 seconds
-
-    return () => clearInterval(interval); // Cleanup on unmount
-  }, []);
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Live Activity Feed</CardTitle>
-        <CardDescription>A real-time ticker of recent platform events.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {loading ? (
-          <div className="text-center text-sm text-muted-foreground py-4">Loading Feed...</div>
-        ) : events.length > 0 ? (
-          <div className="space-y-3 h-64 overflow-y-auto pr-2">
-            {events.map((event, index) => (
-              <div key={index} className="flex items-center gap-3 animate-fade-in">
-                <div>{getEventIcon(event.type)}</div>
-                <div className="flex-grow">
-                  <p className="text-sm font-medium">{event.description}</p>
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle>Platform Live Feed</CardTitle>
+                <CardDescription>Real-time stream of key platform events.</CardDescription>
+            </CardHeader>
+            <CardContent>
+                <div className="space-y-3 h-48 overflow-hidden">
+                    <AnimatePresence>
+                        {feed.map((event) => (
+                            <motion.div
+                                key={event.timestamp}
+                                layout
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, x: -20 }}
+                                transition={{ duration: 0.5 }}
+                                className="flex items-center gap-3"
+                            >
+                                <div className="p-2 bg-muted/50 rounded-full">
+                                    {eventIcons[event.type as keyof typeof eventIcons]}
+                                </div>
+                                <p className="text-sm text-muted-foreground">{formatEvent(event)}</p>
+                            </motion.div>
+                        ))}
+                    </AnimatePresence>
                 </div>
-                <div className="text-xs text-muted-foreground whitespace-nowrap">{event.timeAgo}</div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center text-sm text-muted-foreground py-4">
-            No recent activity in the last 24 hours.
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
+            </CardContent>
+        </Card>
+    );
 };

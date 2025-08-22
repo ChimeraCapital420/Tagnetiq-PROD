@@ -1,10 +1,12 @@
+// FILE: src/components/SettingsDropdown.tsx
+
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent,
-  DropdownMenuSubTrigger, DropdownMenuTrigger, // CORRECTED: Added DropdownMenuTrigger here
+  DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Settings, LogOut, Sun, Moon, Palette, MessageSquare, BarChart, ShieldCheck, Beaker, Map, Leaf } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -56,6 +58,7 @@ const SettingsDropdown: React.FC = () => {
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
+
         <div className="px-2 py-1.5 text-sm">
           <div className="flex items-center justify-between">
             <Label htmlFor="seasonal-mode" className="flex items-center gap-2 font-normal">
@@ -70,6 +73,7 @@ const SettingsDropdown: React.FC = () => {
           </div>
            <p className="text-xs text-muted-foreground mt-1 px-1">Adds seasonal visuals over your theme.</p>
         </div>
+
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => setIsFeedbackModalOpen(true)}>
           <MessageSquare className="mr-2 h-4 w-4" />
@@ -80,9 +84,9 @@ const SettingsDropdown: React.FC = () => {
           <>
             <DropdownMenuSeparator />
             <DropdownMenuLabel className="text-xs text-muted-foreground">Admin Tools</DropdownMenuLabel>
-            <DropdownMenuItem asChild><Link to="/investor-suite"><BarChart className="mr-2 h-4 w-4" /><span>Investor Suite</span></Link></DropdownMenuItem>
             <DropdownMenuItem asChild><Link to="/admin/map"><Map className="mr-2 h-4 w-4" /><span>Global Map</span></Link></DropdownMenuItem>
             <DropdownMenuItem asChild><Link to="/admin/beta"><Beaker className="mr-2 h-4 w-4" /><span>Beta Console</span></Link></DropdownMenuItem>
+            <DropdownMenuItem asChild><Link to="/admin/investors"><BarChart className="mr-2 h-4 w-4" /><span>Investor Suite</span></Link></DropdownMenuItem>
             <DropdownMenuItem asChild><Link to="/beta-controls"><ShieldCheck className="mr-2 h-4 w-4" /><span>Beta Flags</span></Link></DropdownMenuItem>
           </>
         )}
