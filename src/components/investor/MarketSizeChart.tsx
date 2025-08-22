@@ -1,4 +1,4 @@
-// FILE: src/components/investor/MarketSizeChart.tsx (CREATE THIS NEW FILE)
+// FILE: src/components/investor/MarketSizeChart.tsx (CREATE OR REPLACE)
 
 import React from 'react';
 

@@ -1,4 +1,4 @@
-// FILE: api/investor/arena-metrics.ts
+// FILE: api/investor/arena-metrics.ts (CREATE THIS NEW FILE)
 
 import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -31,16 +31,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       supaAdmin.from('arena_challenges').select('*', { count: 'exact', head: true }).eq('is_active', true),
     ]);
 
-    if (dauError || mauError || newChallengesError || newListingsError || newConversationsError || alertsTriggeredError || totalActiveChallengesError) {
-        console.error({dauError, mauError, newChallengesError, newListingsError, newConversationsError, alertsTriggeredError, totalActiveChallengesError});
-        throw new Error('Failed to fetch one or more Arena metrics.');
-    }
+    if (dauError) throw new Error(`DAU Error: ${dauError.message}`);
+    if (mauError) throw new Error(`MAU Error: ${mauError.message}`);
+    if (newChallengesError) throw new Error(`New Challenges Error: ${newChallengesError.message}`);
+    if (newListingsError) throw new Error(`New Listings Error: ${newListingsError.message}`);
+    if (newConversationsError) throw new Error(`New Conversations Error: ${newConversationsError.message}`);
+    if (alertsTriggeredError) throw new Error(`Alerts Error: ${alertsTriggeredError.message}`);
+    if (totalActiveChallengesError) throw new Error(`Total Active Challenges Error: ${totalActiveChallengesError.message}`);
 
     const arenaMetrics = {
-      userEngagement: { dau: dau ?? 0, mau: mau ?? 0 },
-      contentVelocity: { newChallengesToday: newChallenges ?? 0, newListingsToday: newListings ?? 0 },
-      socialInteraction: { newConversationsToday: newConversations ?? 0, alertsTriggeredToday: alertsTriggered ?? 0 },
-      ecosystemHealth: { totalActiveChallenges: totalActiveChallenges ?? 0 },
+      userEngagement: {
+        dau: dau ?? 0,
+        mau: mau ?? 0,
+      },
+      contentVelocity: {
+        newChallengesToday: newChallenges ?? 0,
+        newListingsToday: newListings ?? 0,
+      },
+      socialInteraction: {
+        newConversationsToday: newConversations ?? 0,
+        alertsTriggeredToday: alertsTriggered ?? 0,
+      },
+      ecosystemHealth: {
+        totalActiveChallenges: totalActiveChallenges ?? 0,
+      },
     };
 
     return res.status(200).json(arenaMetrics);

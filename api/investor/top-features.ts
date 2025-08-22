@@ -1,4 +1,4 @@
-// FILE: api/investor/top-features.ts (CREATE THIS NEW FILE)
+// FILE: api/investor/top-features.ts (REPLACE ENTIRE FILE)
 
 import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -10,7 +10,6 @@ let featuresCache = {
 };
 const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 
-// Function to perform feature request analysis using Anthropic's Claude
 async function getTopFeatures(feedbackItems: { id: number; content: string }[]) {
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_API_KEY) {
@@ -18,7 +17,6 @@ async function getTopFeatures(feedbackItems: { id: number; content: string }[]) 
   }
 
   const batchContent = feedbackItems.map(f => `[${f.id}] ${f.content}`).join('\n');
-
   const systemPrompt = `You are a product manager AI. Analyze the following user feedback. Identify the top 3-5 most frequently requested features or improvements. Group similar requests under a single category. Return ONLY a JSON array of objects, each with a "feature" name and a "count". Example: [{"feature":"Dark Mode","count":5},{"feature":"More Integrations","count":3}]`;
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -60,7 +58,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .not('content', 'is', null);
 
     if (error) throw error;
-    if (!feedback || feedback.length < 3) { // Require a minimum amount of feedback
+    if (!feedback || feedback.length < 3) {
       return res.status(200).json([]);
     }
 

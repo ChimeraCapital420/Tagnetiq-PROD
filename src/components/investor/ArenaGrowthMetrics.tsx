@@ -1,4 +1,4 @@
-// FILE: src/components/investor/ArenaGrowthMetrics.tsx (CREATE THIS NEW FILE)
+// FILE: src/components/investor/ArenaGrowthMetrics.tsx (CREATE OR REPLACE)
 
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -49,10 +49,9 @@ export const ArenaGrowthMetrics: React.FC = () => {
     };
 
     fetchArenaMetrics();
-    // Refresh the data every 30 seconds to keep it near real-time
     const interval = setInterval(fetchArenaMetrics, 30000); 
 
-    return () => clearInterval(interval); // Cleanup on unmount
+    return () => clearInterval(interval);
   }, []);
 
   if (loading) {
@@ -72,7 +71,7 @@ export const ArenaGrowthMetrics: React.FC = () => {
   }
 
   if (!metrics) {
-    return null; // Don't render the card if there was an error fetching data
+    return null;
   }
 
   return (
