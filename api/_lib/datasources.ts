@@ -1,4 +1,4 @@
-// FILE: src/lib/datasources.ts
+// FILE: api/_lib/datasources.ts
 
 export interface DataSource {
   name: string;
@@ -1005,4 +1005,300 @@ export const dataSources: CategoryData[] = [
         "name": "CDN Greysheet",
         "url": "https://www.greysheet.com/",
         "reason": "Professional dealer bid/ask pricing benchmarks with enterprise data feeds available.",
-        "api_
+        "api_available": true
+      },
+      {
+        "name": "Heritage Auctions Coins",
+        "url": "https://coins.ha.com/",
+        "reason": "World's largest numismatic auction house with extensive archives and realized price database.",
+        "api_available": true
+      }
+    ],
+    "tier_3_sources": [
+      {
+        "name": "Numista (World Coins) API",
+        "url": "https://api.numista.com",
+        "reason": "Global catalog with user-vetted data and public API for identification and pricing context.",
+        "api_available": true
+      },
+      {
+        "name": "U.S. Mint Official Data",
+        "url": "https://www.usmint.gov/",
+        "reason": "Authoritative source for mintages, specifications, and release documentation.",
+        "api_available": false
+      }
+    ],
+    "key_valuation_factors": [
+      "Professional grade and certification (PCGS/NGC) with population rarity",
+      "Mintage figures and survival rate estimates",
+      "Variety identification and error classification",
+      "Bullion content vs. numismatic premium analysis",
+      "Eye appeal factors (toning, strike quality, luster)"
+    ]
+  },
+  {
+    "category_id": "collectibles",
+    "subcategory_id": "collectibles-stamps",
+    "subcategory_name": "Stamps",
+    "tier_1_sources": [
+      {
+        "name": "Scott Catalogue Online",
+        "url": "https://www.amosadvantage.com/scott-catalogues",
+        "reason": "Global industry standard stamp catalog with comprehensive pricing and identification system.",
+        "api_available": true
+      },
+      {
+        "name": "Siegel Auction Archives",
+        "url": "https://www.siegelauctions.com/",
+        "reason": "Leading specialist stamp auction house with decades of detailed results and lot documentation.",
+        "api_available": true
+      }
+    ],
+    "tier_2_sources": [
+      {
+        "name": "Stanley Gibbons",
+        "url": "https://www.stanleygibbons.com/",
+        "reason": "Authoritative UK-centric catalog and valuations system, essential for British/Commonwealth issues.",
+        "api_available": false
+      },
+      {
+        "name": "Colnect Stamp Catalog & API",
+        "url": "https://colnect.com/en/help/api",
+        "reason": "Large community-maintained catalog with public API for identification and basic valuation.",
+        "api_available": true
+      }
+    ],
+    "tier_3_sources": [
+      {
+        "name": "Philatelic Foundation Certificates",
+        "url": "https://www.philatelicfoundation.org/certificates/",
+        "reason": "Authentication records and expertization database for high-value stamp provenance.",
+        "api_available": false
+      },
+      {
+        "name": "StampWorld Database",
+        "url": "https://www.stampworld.com/",
+        "reason": "Global online stamp catalog with visual identification tools and market activity.",
+        "api_available": false
+      }
+    ],
+    "key_valuation_factors": [
+      "Condition assessment (centering, gum, hinges) and professional certification",
+      "Rarity factors (printings, watermarks, perforation variations)",
+      "Error/variety identification and expertization documentation",
+      "Market demand analysis by country/era specialization"
+    ]
+  },
+  {
+    "category_id": "collectibles",
+    "subcategory_id": "collectibles-tradingcards",
+    "subcategory_name": "Trading Cards",
+    "tier_1_sources": [
+      {
+        "name": "PSA Price Guide/Population/Cert Verify",
+        "url": "https://www.psacard.com/cert",
+        "reason": "Industry-leading grading service with comprehensive population reports and certification verification system.",
+        "api_available": false
+      },
+      {
+        "name": "130point.com Sales",
+        "url": "https://130point.com/",
+        "reason": "Comprehensive eBay sales tracking including best offers for accurate market pricing data.",
+        "api_available": true
+      }
+    ],
+    "tier_2_sources": [
+      {
+        "name": "SGC (Certified Collectibles Group)",
+        "url": "https://gosgc.com/",
+        "reason": "Alternative professional grading service with population data and market coverage.",
+        "api_available": false
+      },
+      {
+        "name": "TCGplayer API (TCG segments)",
+        "url": "https://docs.tcgplayer.com/docs",
+        "reason": "Public API for Pokémon/MTG/TCG pricing with real-time liquidity signals.",
+        "api_available": true
+      }
+    ],
+    "tier_3_sources": [
+      {
+        "name": "Card Ladder",
+        "url": "https://www.cardladder.com/",
+        "reason": "Cross-marketplace sales aggregation and index analytics for trend analysis.",
+        "api_available": false
+      },
+      {
+        "name": "Beckett Price Guide",
+        "url": "https://www.beckett.com/",
+        "reason": "Long-established industry price reference with historical market data.",
+        "api_available": false
+      }
+    ],
+    "key_valuation_factors": [
+      "Professional grade (PSA/SGC/BGS) and population vs. demand analysis",
+      "Card variant identification (parallels, refractors, print runs)",
+      "Player performance correlation and hobby cycle timing",
+      "Authenticity verification of autographs/patches and pack provenance"
+    ]
+  },
+  {
+    "category_id": "sports",
+    "subcategory_id": "sports-cards",
+    "subcategory_name": "Trading Cards",
+    "tier_1_sources": [
+      {
+        "name": "PSA CardFacts/Cert/Population",
+        "url": "https://www.psacard.com/cert",
+        "reason": "Definitive graded sports card database with comprehensive population reports and market analytics.",
+        "api_available": false
+      },
+      {
+        "name": "Heritage Auctions Sports",
+        "url": "https://sports.ha.com/",
+        "reason": "Extensive realized prices and detailed lot documentation for vintage/modern sports cards.",
+        "api_available": false
+      }
+    ],
+    "tier_2_sources": [
+      {
+        "name": "SportsCardPro Market Movers",
+        "url": "https://www.sportscardpro.com/",
+        "reason": "Real-time pricing trends aggregated across multiple platforms with API access.",
+        "api_available": true
+      },
+      {
+        "name": "Card Ladder Analytics",
+        "url": "https://www.cardladder.com/",
+        "reason": "Cross-market comparison tracking and comprehensive index analysis for sports cards.",
+        "api_available": false
+      }
+    ],
+    "tier_3_sources": [
+      {
+        "name": "BGS (Beckett) Grading/Verification",
+        "url": "https://www.beckett-authentication.com/verify-certificate",
+        "reason": "Alternative grading service with certificate verification for cross-reference validation.",
+        "api_available": false
+      },
+      {
+        "name": "HobbyDB Sports Cards",
+        "url": "https://www.hobbydb.com/",
+        "reason": "Comprehensive checklist database with rarity indicators and market context.",
+        "api_available": false
+      }
+    ],
+    "key_valuation_factors": [
+      "Professional grade and population scarcity with eye appeal assessment",
+      "Rookie card status and set/era desirability factors",
+      "Parallel identification and numbering verification",
+      "Market momentum correlation (season/playoffs/awards timing)"
+    ]
+  },
+  {
+    "category_id": "sports",
+    "subcategory_id": "sports-jerseys",
+    "subcategory_name": "Jerseys",
+    "tier_1_sources": [
+      {
+        "name": "MeiGray Group Archive",
+        "url": "https://www.meigrayauctions.com/",
+        "reason": "Leading game-worn authentication specialist with comprehensive population reporting and NBA authentication databases.",
+        "api_available": false
+      },
+      {
+        "name": "Grey Flannel Auctions",
+        "url": "https://bid.greyflannelauctions.com/",
+        "reason": "Specialist auctioneer with photomatched jerseys and detailed provenance documentation.",
+        "api_available": false
+      }
+    ],
+    "tier_2_sources": [
+      {
+        "name": "Heritage Auctions Sports",
+        "url": "https://sports.ha.com/",
+        "reason": "Premier auction house with top-tier jersey results and marquee sales for benchmark comparables.",
+        "api_available": false
+      },
+      {
+        "name": "Legacy Collectibles",
+        "url": "https://www.legacycollectibles.com/",
+        "reason": "Specialized vintage jersey authentication with historical documentation expertise.",
+        "api_available": true
+      }
+    ],
+    "tier_3_sources": [
+      {
+        "name": "Resolution Photomatching",
+        "url": "https://sportscollectorsdigest.com/collecting-101/photo-matching-authentication",
+        "reason": "Independent photomatching service for validating game use and specific event dates.",
+        "api_available": false
+      },
+      {
+        "name": "SCP Auctions Past Results",
+        "url": "https://scpauctions.com/",
+        "reason": "Additional jersey comparables and provenance documentation examples.",
+        "api_available": false
+      }
+    ],
+    "key_valuation_factors": [
+      "Photomatching capability to specific games/seasons",
+      "Official team authentication programs and LOA documentation",
+      "Use characteristics assessment (repairs, tagging, wear patterns)",
+      "Player significance and milestone event association"
+    ]
+  },
+  {
+    "category_id": "sports",
+    "subcategory_id": "sports-autographs",
+    "subcategory_name": "Autographs",
+    "tier_1_sources": [
+      {
+        "name": "PSA/DNA Certification & AutographFacts",
+        "url": "https://www.psacard.com/cert",
+        "reason": "Industry-leading authentication service with comprehensive population data and signature exemplar database.",
+        "api_available": false
+      },
+      {
+        "name": "JSA (James Spence Authentication)",
+        "url": "https://www.spenceloa.com/verify-authenticity",
+        "reason": "Premier authentication service with broad category coverage and verification database.",
+        "api_available": false
+      }
+    ],
+    "tier_2_sources": [
+      {
+        "name": "Beckett Authentication Services (BAS)",
+        "url": "https://www.beckett-authentication.com/verify-certificate",
+        "reason": "Established authentication service with certificate verification for sports/entertainment autographs.",
+        "api_available": false
+      },
+      {
+        "name": "Heritage Auctions Sports/Entertainment",
+        "url": "https://sports.ha.com/",
+        "reason": "Comprehensive realized prices for authenticated autographs and multi-signed collectibles.",
+        "api_available": false
+      }
+    ],
+    "tier_3_sources": [
+      {
+        "name": "StarStock Signature Analysis",
+        "url": "https://www.starstock.com/",
+        "reason": "AI-assisted signature verification technology for authentication support.",
+        "api_available": false
+      },
+      {
+        "name": "Universal Autograph Collectors Club",
+        "url": "https://www.uacc.org/",
+        "reason": "Reference library for signature variations and authentication standards.",
+        "api_available": false
+      }
+    ],
+    "key_valuation_factors": [
+      "Third-party authentication (PSA/JSA/BAS) and LOA type verification",
+      "Medium assessment (jersey, ball, photo) and signature placement/contrast",
+      "Signature strength evaluation and personalization impact",
+      "Player/event significance and photomatching documentation"
+    ]
+  }
+]

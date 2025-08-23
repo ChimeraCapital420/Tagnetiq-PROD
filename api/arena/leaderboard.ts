@@ -2,7 +2,7 @@
 
 import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../_lib/security'; // CORRECTED: Use standard user verification
+import { verifyUser } from '../_lib/security';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {

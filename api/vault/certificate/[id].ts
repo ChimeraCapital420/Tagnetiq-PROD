@@ -1,6 +1,6 @@
 // FILE: api/vault/certificate/[id].ts
 
-import { supaAdmin } from '../../../_lib/supaAdmin';
+import { supaAdmin } from '../../_lib/supaAdmin';
 import { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -15,8 +15,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'A valid asset ID is required.' });
     }
 
-    // Use the admin client to fetch specific, non-sensitive details for the public certificate.
-    // This bypasses RLS for read-only public access.
     const { data, error } = await supaAdmin
       .from('vault_items')
       .select(`
@@ -38,8 +36,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw error;
     }
 
-    // We can choose to redact or simplify data here if needed.
-    // For now, we return the selected fields.
     return res.status(200).json(data);
 
   } catch (error: any) {

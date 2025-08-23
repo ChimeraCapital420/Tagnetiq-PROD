@@ -3,10 +3,9 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { createClient, User } from '@supabase/supabase-js';
+import { User } from '@supabase/supabase-js';
 import { verifyUser } from './_lib/security';
-import { dataSources, DataSource } from '../../src/lib/datasources';
-
+import { dataSources, DataSource } from './_lib/datasources';
 
 export const config = {
   runtime: 'edge',
@@ -14,11 +13,14 @@ export const config = {
 };
 
 // --- SDK INITIALIZATION ---
-const openai = new OpenAI({ apiKey: process.env.OPENAI_TOKEN });
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_SECRET });
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_TOKEN as string);
-const deepseek = new OpenAI({ apiKey: process.env.DEEPSEEK_TOKEN, baseURL: 'https://api.deepseek.com/v1' });
-const grok = new OpenAI({ apiKey: process.env.XAI_SECRET, baseURL: 'https://api.xai.com/v1' });
+// Tier 1 (High-Speed/Low-Cost)
+const anthropic = new Anthropic({ apiKey: process.env.TIER1_ANTHROPIC_SECRET });
+const genAI = new GoogleGenerativeAI(process.env.TIER1_GOOGLE_AI_TOKEN as string);
+
+// Tier 2 (High-Performance/High-Cost)
+const openai = new OpenAI({ apiKey: process.env.TIER2_OPENAI_TOKEN });
+const deepseek = new OpenAI({ apiKey: process.env.TIER2_DEEPSEEK_TOKEN, baseURL: 'https://api.deepseek.com/v1' });
+const grok = new OpenAI({ apiKey: process.env.TIER2_XAI_SECRET, baseURL: 'https://api.xai.com/v1' });
 
 // --- INTERFACES ---
 interface AnalysisRequest {
@@ -39,7 +41,7 @@ interface HydraResponse {
   resale_toolkit?: {
     sales_copy: string;
     recommended_marketplaces: DataSource[];
-    };
+  };
 }
 
 // --- HYDRA ENGINE CLASS ---
@@ -48,27 +50,25 @@ class HydraEngine {
         console.log(`🔍 Looking up barcode: ${barcode}`);
         return { title: `Product ${barcode}`, brand: 'Unknown', category: 'General Goods', upc: barcode };
     }
-    
+
     private async runTextAnalysis(productData: any, prompt: string): Promise<any[]> {
         const analysisPromises = [
+            // Tier 1
             anthropic.messages.create({
                 model: 'claude-3-haiku-20240307', max_tokens: 1024,
                 messages: [{ role: 'user', content: `${prompt} ${JSON.stringify(productData)}` }]
-            }).then(res => res.content[0].text),
-
+            }).then(res => (res.content[0].type === 'text' ? res.content[0].text : null)),
+            genAI.getGenerativeModel({ model: "gemini-pro" }).generateContent(`${prompt} ${JSON.stringify(productData)}`)
+                  .then(res => res.response.text()),
+            // Tier 2
             openai.chat.completions.create({
                 model: 'gpt-4-turbo', response_format: { type: "json_object" },
                 messages: [{ role: 'user', content: `${prompt} ${JSON.stringify(productData)}` }]
             }).then(res => res.choices[0].message.content),
-
-            genAI.getGenerativeModel({ model: "gemini-pro" }).generateContent(`${prompt} ${JSON.stringify(productData)}`)
-                  .then(res => res.response.text()),
-                  
             deepseek.chat.completions.create({
                 model: 'deepseek-chat', response_format: { type: "json_object" },
                 messages: [{ role: 'user', content: `${prompt} ${JSON.stringify(productData)}` }]
             }).then(res => res.choices[0].message.content),
-            
             grok.chat.completions.create({
                 model: 'grok-1', response_format: { type: "json_object" },
                 messages: [{ role: 'user', content: `${prompt} ${JSON.stringify(productData)}` }]
@@ -80,18 +80,18 @@ class HydraEngine {
 
     private async runImageAnalysis(imageData: string, prompt: string): Promise<any[]> {
         const analysisPromises = [
+             // Tier 1
             anthropic.messages.create({
                 model: 'claude-3-haiku-20240307', max_tokens: 1024,
                 messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageData.replace(/^data:image\/[a-z]+;base64,/, '') } }, { type: 'text', text: prompt }] }]
-            }).then(res => res.content[0].text),
-            
+            }).then(res => (res.content[0].type === 'text' ? res.content[0].text : null)),
+            genAI.getGenerativeModel({ model: "gemini-pro-vision" }).generateContent([prompt, { inlineData: { data: imageData.replace(/^data:image\/[a-z]+;base64,/, ''), mimeType: "image/jpeg" } }])
+                  .then(res => res.response.text()),
+            // Tier 2
             openai.chat.completions.create({
                 model: 'gpt-4-vision-preview', max_tokens: 800,
                 messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: imageData } }] }]
             }).then(res => res.choices[0].message.content),
-            
-            genAI.getGenerativeModel({ model: "gemini-pro-vision" }).generateContent([prompt, { inlineData: { data: imageData.replace(/^data:image\/[a-z]+;base64,/, ''), mimeType: "image/jpeg" } }])
-                  .then(res => res.response.text()),
         ];
         
         return await this.processAnalysisResults(analysisPromises);
@@ -141,13 +141,16 @@ class HydraEngine {
 
         return { itemName, estimatedValue: avgValue.toFixed(2), decision, confidence, analysisCount: totalVotes, consensusRatio: `${buyVotes}/${totalVotes}`, reasoning };
     }
+    
     private getMarketplaceRecommendations(category_id: string, subcategory_id: string): DataSource[] {
         const categoryData = dataSources.find(ds => ds.category_id === category_id && ds.subcategory_id === subcategory_id);
         if (!categoryData) {
             return [];
         }
     
-        return [...categoryData.tier_1_sources, ...categoryData.tier_2_sources, ...categoryData.tier_3_sources].filter(source => source.api_available);
+        return [...categoryData.tier_1_sources, ...categoryData.tier_2_sources, ...categoryData.tier_3_sources]
+            .filter(source => source.api_available && source.affiliate_link_template)
+            .slice(0, 5); // Return top 5
     }
     
     private async generateSalesCopy(analysisResult: HydraResponse): Promise<string> {
@@ -210,7 +213,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        const user = await verifyUser(req); // SECURITY: Verify user authentication
+        const user = await verifyUser(req);
         console.log(`Analysis request received for user: ${user.id}`);
         
         const body = req.body as AnalysisRequest;
