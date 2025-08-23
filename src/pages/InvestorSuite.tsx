@@ -18,6 +18,7 @@ import { CallToAction } from '@/components/investor/CallToAction';
 import { HighlightQuote } from '@/components/investor/HighlightQuote';
 import { ArenaGrowthMetrics } from '@/components/investor/ArenaGrowthMetrics';
 import { Separator } from '@/components/ui/separator';
+import { PartnershipFunnel } from '@/components/investor/PartnershipFunnel';
 
 // Expanded Metrics interface to include all necessary data points
 interface Metrics {
@@ -103,7 +104,7 @@ const InvestorSuite: React.FC = () => {
             <div className="text-center p-8 text-muted-foreground">Loading Core Metrics...</div>
         ) : (
             <>
-                <KpiCards data={metrics} />
+                <KpiCards />
 
                 <Separator />
                 <ArenaGrowthMetrics />
@@ -117,7 +118,8 @@ const InvestorSuite: React.FC = () => {
                     </div>
                     <div className="space-y-8">
                         <BetaInsights data={metrics} />
-                        <FunnelChart data={funnelData} />
+                        <PartnershipFunnel />
+                        <FunnelChart />
                         <DocsShelf />
                     </div>
                 </div>
