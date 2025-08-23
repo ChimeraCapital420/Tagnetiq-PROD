@@ -1,4 +1,4 @@
-// FILE: src/pages/Dashboard.tsx (FIXED TYPO)
+// FILE: src/pages/Dashboard.tsx
 
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -11,6 +11,7 @@ import { ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { subCategories } from '@/lib/subcategories';
+import SpotlightCarousel from '@/components/dashboard/SpotlightCarousel';
 
 const Dashboard: React.FC = () => {
   const { lastAnalysisResult, selectedCategory, setSelectedCategory } = useAppContext();
@@ -19,13 +20,11 @@ const Dashboard: React.FC = () => {
   const { user } = useAuth();
 
   const handleCategorySelect = (category: { id: string; name: string; }) => {
-    // Immediately set the main category for general analysis
     setSelectedCategory(category.id);
     toast.info(`AI mode set to ${category.name}.`);
 
     const availableSubCategories = subCategories[category.id] || [];
     
-    // If sub-categories exist, open the modal for refinement
     if (availableSubCategories.length > 0) {
         setCurrentCategory(category);
         setIsSubCategoryModalOpen(true);
@@ -35,7 +34,6 @@ const Dashboard: React.FC = () => {
   const getCategoryDisplayName = () => {
     if (!selectedCategory) return 'General';
     
-    // This function now correctly finds both parent and sub-category names
     for (const cat of CATEGORIES) {
       if (cat.id === selectedCategory) return cat.name;
       const sub = subCategories[cat.id]?.find(s => s.id === selectedCategory);
@@ -60,7 +58,7 @@ const Dashboard: React.FC = () => {
                 </p>
               </div>
               <div className="h-48 md:h-full w-full">
-                <img src="/images/dashboard-welcome.jpg" alt="Futuristic asset analysis" className="h-full w-full object-cover"/>
+                <SpotlightCarousel />
               </div>
             </div>
           </Card>

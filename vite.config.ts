@@ -5,12 +5,21 @@ import path from 'path'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  // This line explicitly tells Vite where to find your static assets.
-  // This is the crucial fix for the artwork issue.
-  publicDir: 'public', 
+  publicDir: 'public',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+    },
+  },
+  // THIS IS THE CRUCIAL ADDITION
+  server: {
+    proxy: {
+      // Proxying API requests to the Vercel dev server endpoint
+      '/api': {
+        target: 'http://localhost:3000', // Default port for Vercel CLI dev server
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 })
