@@ -11,7 +11,7 @@ import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { Upload, FileText, Trash2, Loader2 } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
-import { QrCodeGenerator } from './QrCodeGenerator'; // Import the QR Code component
+import { QrCodeGenerator } from './QrCodeGenerator';
 
 interface ItemDetailModalProps {
   item: VaultItem;
@@ -102,6 +102,7 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({ item, onClose,
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) throw new Error("Not authenticated");
 
+        // 1. Get a signed URL from the secure endpoint
         const uploadUrlResponse = await fetch('/api/vault/documents/upload', {
             method: 'POST',
             headers: {
@@ -115,16 +116,21 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({ item, onClose,
             }),
         });
 
-        if (!uploadUrlResponse.ok) throw new Error('Could not get secure upload link.');
-        const { token, signedURL, filePath } = await uploadUrlResponse.json();
+        if (!uploadUrlResponse.ok) {
+            const errorData = await uploadUrlResponse.json();
+            throw new Error(errorData.error || 'Could not get secure upload link.');
+        }
+        const { token, path } = await uploadUrlResponse.json();
 
+        // 2. Upload the file directly to Supabase Storage using the pre-signed URL
         const { error: uploadError } = await supabase.storage
             .from('aegis-documents')
-            .uploadToSignedUrl(filePath, token, file);
+            .uploadToSignedUrl(path, token, file);
 
         if (uploadError) throw uploadError;
 
-        const newDocuments = [...documents, filePath];
+        // 3. Update the vault item with the new document path
+        const newDocuments = [...documents, path];
         const { data: updatedItem, error: dbError } = await supabase
             .from('vault_items')
             .update({ provenance_documents: newDocuments })
@@ -222,7 +228,6 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({ item, onClose,
                 )}
             </div>
 
-            {/* --- NEW QR CODE GENERATOR INTEGRATION --- */}
             {!isEditing && (
               <QrCodeGenerator assetId={item.id} assetName={item.asset_name} />
             )}

@@ -2,9 +2,7 @@
 
 import { supaAdmin } from '../_lib/supaAdmin';
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUserIsAdmin } from '../_lib/security';
-
-const VERIFICATION_BUCKET = 'arena-verification-photos';
+import { verifyUser } from '../_lib/security'; // CORRECTED: Use standard user verification
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -12,7 +10,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const user = await verifyUserIsAdmin(req);
+    const user = await verifyUser(req); // SECURITY: Verify user authentication
     const { challengeId, fileName, fileType } = req.body;
 
     if (!challengeId || !fileName || !fileType) {
@@ -32,7 +30,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const filePath = `${user.id}/${challengeId}/${Date.now()}-${fileName}`;
 
     const { data, error } = await supaAdmin.storage
-      .from(VERIFICATION_BUCKET)
+      .from('arena-verification-photos')
       .createSignedUploadUrl(filePath);
 
     if (error) throw error;
@@ -40,7 +38,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ ...data, filePath });
 
   } catch (error: any) {
-    console.error('Error creating signed upload URL:', error);
-    return res.status(500).json({ error: error.message || 'An internal server error occurred.' });
+    const message = error.message || 'An internal server error occurred.';
+    if (message.includes('Authentication')) {
+        return res.status(401).json({ error: message });
+    }
+    console.error('Error creating signed upload URL:', message);
+    return res.status(500).json({ error: message });
   }
 }

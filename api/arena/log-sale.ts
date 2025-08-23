@@ -2,7 +2,14 @@
 
 import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUserIsAdmin } from '../_lib/security';
+import { verifyUser } from '../_lib/security';
+import { z } from 'zod';
+
+// Define the schema for input validation
+const logSaleSchema = z.object({
+  challengeId: z.string().uuid(),
+  salePrice: z.number().positive(),
+});
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -10,17 +17,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const user = await verifyUserIsAdmin(req);
-    const { challengeId, salePrice } = req.body;
+    const user = await verifyUser(req); // SECURITY: Verify user authentication
 
-    if (!challengeId || salePrice === undefined) {
-      return res.status(400).json({ error: 'challengeId and salePrice are required.' });
+    // VALIDATION: Parse and validate the request body
+    const validationResult = logSaleSchema.safeParse(req.body);
+    if (!validationResult.success) {
+      return res.status(400).json({ error: 'Invalid input.', details: validationResult.error.flatten() });
     }
-
-    const finalSalePrice = Number(salePrice);
-    if (isNaN(finalSalePrice)) {
-        return res.status(400).json({ error: 'Invalid salePrice.' });
-    }
+    const { challengeId, salePrice } = validationResult.data;
 
     // 1. Get the original challenge to calculate ROI
     const { data: challenge, error: challengeError } = await supaAdmin
@@ -35,14 +39,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 2. Calculate ROI
     const purchasePrice = Number(challenge.purchase_price);
-    const profit = finalSalePrice - purchasePrice;
+    const profit = salePrice - purchasePrice;
     const roi = purchasePrice > 0 ? (profit / purchasePrice) * 100 : 0;
 
     // 3. Update the challenge status and log sale details
     const { data: updatedChallenge, error: updateError } = await supaAdmin
       .from('arena_challenges')
       .update({
-        sale_price: finalSalePrice,
+        sale_price: salePrice,
         roi,
         status: 'completed',
         completed_at: new Date().toISOString()
@@ -54,14 +58,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (updateError) throw updateError;
     
     // 4. (Optional but recommended) Update the original vault item's sale price
-    await supaAdmin.from('vault_items').update({ actual_sale_price: finalSalePrice }).eq('id', updatedChallenge.vault_item_id);
+    await supaAdmin.from('vault_items').update({ actual_sale_price: salePrice }).eq('id', updatedChallenge.vault_item_id);
 
     // 5. Add an entry to the leaderboards table
     const { error: leaderboardError } = await supaAdmin.from('leaderboards').insert({
         user_id: user.id,
         challenge_id: challengeId,
         roi,
-        // Category and timeframe would be more dynamic in a V2
         category: 'all-time',
         timeframe: 'all-time',
     });
@@ -71,7 +74,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ success: true, roi: roi.toFixed(2) });
 
   } catch (error: any) {
-    const message = error instanceof Error ? error.message : 'An unexpected error occurred.';
+    const message = error.message || 'An unexpected error occurred.';
+    if (message.includes('Authentication')) {
+        return res.status(401).json({ error: message });
+    }
     console.error('Error logging sale:', message);
     return res.status(500).json({ error: message });
   }

@@ -2,7 +2,7 @@
 
 import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUserIsAdmin } from '../_lib/security';
+import { verifyUser } from '../_lib/security'; // CORRECTED: Use standard user verification
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -10,7 +10,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const user = await verifyUserIsAdmin(req);
+    const user = await verifyUser(req); // SECURITY: Verify user authentication
 
     const { error } = await supaAdmin
       .from('profiles')
@@ -22,7 +22,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ success: true });
 
   } catch (error: any) {
-    const message = error instanceof Error ? error.message : 'An unexpected error occurred.';
+    const message = error.message || 'An internal server error occurred.';
+    if (message.includes('Authentication')) {
+        return res.status(401).json({ error: message });
+    }
     console.error('Error marking intro as seen:', message);
     return res.status(500).json({ error: message });
   }

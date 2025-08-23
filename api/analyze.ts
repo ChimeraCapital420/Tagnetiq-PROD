@@ -1,11 +1,10 @@
-// FILE: api/analyze.ts (REVISED FOR SECURITY)
-// This single file replaces analyze.ts, analyze-barcode.ts, and analyze-image.ts
-
+// FILE: api/analyze.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient, User } from '@supabase/supabase-js';
+import { verifyUser } from './_lib/security';
 
 export const config = {
   runtime: 'edge',
@@ -25,7 +24,6 @@ interface AnalysisRequest {
   data: string;
   category_id: string;
   subcategory_id: string;
-  // SECURITY: userId is removed from here. It will be derived from the token.
 }
 
 interface HydraResponse {
@@ -38,24 +36,7 @@ interface HydraResponse {
   reasoning: string;
 }
 
-// --- SECURITY HELPER ---
-async function getAuthenticatedUser(req: VercelRequest): Promise<User> {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-        throw new Error('Authentication token is required.');
-    }
-    // Use the public URL and anon key, but the user's token for auth
-    const supabase = createClient(process.env.VITE_SUPABASE_URL!, process.env.VITE_SUPABASE_ANON_KEY!);
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-
-    if (error || !user) {
-        throw new Error('Authentication error: Invalid token.');
-    }
-    return user;
-}
-
-
-// --- HYDRA ENGINE CLASS (remains the same) ---
+// --- HYDRA ENGINE CLASS ---
 class HydraEngine {
     private async identifyProductByBarcode(barcode: string): Promise<any> {
         console.log(`🔍 Looking up barcode: ${barcode}`);
@@ -185,8 +166,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        // SECURITY: Get the authenticated user from the token. This also authenticates the request.
-        const user = await getAuthenticatedUser(req);
+        const user = await verifyUser(req); // SECURITY: Verify user authentication
         console.log(`Analysis request received for user: ${user.id}`);
         
         const body = req.body as AnalysisRequest;
@@ -195,14 +175,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const hydra = new HydraEngine();
-        // SECURITY: The request passed to the engine no longer contains a user-provided userId.
         const analysisResult = await hydra.analyze(body);
 
         return res.status(200).json(analysisResult);
-    } catch (error) {
-        console.error('❌ Top-level analysis error:', error);
-        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
-        // SECURITY: Return a 401 Unauthorized status for authentication errors.
+    } catch (error: any) {
+        const message = error.message || 'An unknown error occurred.';
         if (message.includes('Authentication')) {
             return res.status(401).json({ error: message });
         }

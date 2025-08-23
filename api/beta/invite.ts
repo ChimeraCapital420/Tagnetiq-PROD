@@ -1,4 +1,4 @@
-// FILE: api/beta/invite.ts (REVISED FOR SECURITY)
+// FILE: api/beta/invite.ts
 
 import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -29,8 +29,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json({ success: true, message: `Invite successfully sent to ${email}.` });
 
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'An unexpected error occurred.';
+  } catch (error: any) {
+    const message = error.message || 'An unexpected error occurred.';
     // SECURITY: Return 401 for auth errors, 500 for others
     if (message.includes('Authentication') || message.includes('Authorization')) {
       return res.status(401).json({ error: message });

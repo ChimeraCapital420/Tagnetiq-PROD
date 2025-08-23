@@ -82,7 +82,7 @@ const ChallengeDetail: React.FC = () => {
           });
           navigate('/arena/messages');
       } catch (error) {
-          toast.error("Error", { description: (error as Error).message });
+          toast.error("Error", { description: (error as any).message });
       }
   };
 
