@@ -1,7 +1,9 @@
 // FILE: src/components/AnalysisResult.tsx
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { useTts } from '@/hooks/useTts';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +14,24 @@ import { toast } from 'sonner';
 
 const AnalysisResult: React.FC = () => {
   const { lastAnalysisResult, setLastAnalysisResult, selectedCategory } = useAppContext();
+  const { profile } = useAuth();
+  const { speak } = useTts();
+
+  useEffect(() => {
+    if (lastAnalysisResult && profile?.settings?.tts_enabled) {
+      const { itemName, estimatedValue, resale_toolkit } = lastAnalysisResult;
+      
+      let marketplaces = '';
+      if (resale_toolkit?.recommended_marketplaces?.length > 0) {
+        const marketNames = resale_toolkit.recommended_marketplaces.map(m => m.name).slice(0, 2);
+        marketplaces = `Project Hermes recommends selling on ${marketNames.join(' and ')}.`;
+      }
+
+      const summary = `Analysis complete. Item identified as ${itemName}. Estimated value is around $${estimatedValue}. ${marketplaces}`;
+      
+      speak(summary, profile.settings.tts_voice_uri);
+    }
+  }, [lastAnalysisResult, profile, speak]);
 
   if (!lastAnalysisResult) {
     return null;

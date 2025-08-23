@@ -1,16 +1,19 @@
-// FILE: src/components/AppLayout.tsx (REPLACE THIS FILE)
+// FILE: src/components/AppLayout.tsx
 
 import React from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { useAppContext } from '@/contexts/AppContext'; // Import AppContext
+import { useAppContext } from '@/contexts/AppContext';
 import ResponsiveNavigation from './ResponsiveNavigation';
 import NewMarketingNavigation from './NewMarketingNavigation';
-import DualScanner from './DualScanner'; // Import the Scanner
+import DualScanner from './DualScanner';
+import GlobalVoiceControl from './GlobalVoiceControl';
+import { handleVoiceCommand } from '@/lib/command-handler';
 
 const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const { isScanning, setIsScanning } = useAppContext(); // Get scanner state
+  const appContext = useAppContext();
+  const navigate = useNavigate();
   const location = useLocation();
 
   const isHomePage = location.pathname === '/';
@@ -18,20 +21,29 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const showAppNav = user && !isHomePage;
   const showMarketingNav = !user || isHomePage;
   
+  const onVoiceCommand = (command: string, ttsContext: { speak: Function, voiceURI: string | null }) => {
+    // Prepare the full context for the command handler
+    const commandContext = {
+      ...appContext,
+      navigate,
+      speak: ttsContext.speak,
+      voiceURI: ttsContext.voiceURI,
+    };
+    handleVoiceCommand(command, commandContext);
+  };
+
   return (
     <div className="relative z-10">
       {showAppNav && <ResponsiveNavigation />}
       {showMarketingNav && <NewMarketingNavigation />}
       
-      {/* By placing the scanner here, it exists outside of any specific page's routes.
-        It can now be triggered from anywhere in the app (like the Vault MFA screen)
-        and will correctly display as an overlay.
-      */}
-      {user && <DualScanner isOpen={isScanning} onClose={() => setIsScanning(false)} />}
+      <DualScanner isOpen={appContext.isScannerOpen} onClose={() => appContext.setIsScannerOpen(false)} />
 
       <main className={showAppNav ? "pt-14" : ""}>
         {children}
       </main>
+
+      {user && <GlobalVoiceControl onCommand={onVoiceCommand} />}
     </div>
   );
 };

@@ -1,52 +1,145 @@
-// src/pages/Settings.tsx
+// FILE: src/pages/Settings.tsx
+
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAppContext } from '@/contexts/AppContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { useTts } from '@/hooks/useTts';
+import { supabase } from '@/lib/supabase';
+import { toast } from 'sonner';
 
 const Settings: React.FC = () => {
   const { theme, setTheme, themeMode, setThemeMode } = useAppContext();
+  const { profile, setProfile } = useAuth();
+  const { voices } = useTts();
+
+  const handleTtsEnabledChange = async (enabled: boolean) => {
+    if (!profile) return;
+    
+    const newSettings = { ...profile.settings, tts_enabled: enabled };
+    setProfile({ ...profile, settings: newSettings }); // Optimistic update
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ settings: newSettings })
+      .eq('id', profile.id);
+
+    if (error) {
+      toast.error('Failed to save setting.');
+      // Revert optimistic update on error
+      const revertedSettings = { ...profile.settings, tts_enabled: !enabled };
+      setProfile({ ...profile, settings: revertedSettings });
+    } else {
+      toast.success(`Voice Assistant ${enabled ? 'enabled' : 'disabled'}.`);
+    }
+  };
+
+  const handleVoiceChange = async (voiceURI: string) => {
+    if (!profile) return;
+
+    const newSettings = { ...profile.settings, tts_voice_uri: voiceURI };
+    setProfile({ ...profile, settings: newSettings }); // Optimistic update
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ settings: newSettings })
+      .eq('id', profile.id);
+
+    if (error) {
+      toast.error('Failed to save voice preference.');
+       // Revert optimistic update on error
+       const revertedSettings = { ...profile.settings, tts_voice_uri: profile.settings.tts_voice_uri };
+       setProfile({ ...profile, settings: revertedSettings });
+    } else {
+      toast.success('Voice preference saved.');
+    }
+  };
 
   return (
     <div className="container mx-auto px-4 py-8">
       <Card className="max-w-2xl mx-auto">
         <CardHeader>
           <CardTitle>Settings</CardTitle>
-          <CardDescription>Manage your application settings.</CardDescription>
+          <CardDescription>Manage your application settings and preferences.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="space-y-2">
-            <Label>Theme</Label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {['executive', 'matrix', 'safari', 'darkKnight', 'cyberpunk', 'ocean', 'forest', 'sunset'].map((themeId) => (
+        <CardContent className="space-y-8">
+          {/* --- Theme Settings --- */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-medium">Appearance</h3>
+            <div className="space-y-2">
+              <Label>Theme</Label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {['executive', 'matrix', 'safari', 'darkKnight', 'cyberpunk', 'ocean', 'forest', 'sunset'].map((themeId) => (
+                  <Button
+                    key={themeId}
+                    variant={theme === themeId ? 'default' : 'outline'}
+                    onClick={() => setTheme(themeId as any)}
+                  >
+                    {themeId.charAt(0).toUpperCase() + themeId.slice(1).replace(/([A-Z])/g, ' $1').trim()}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Theme Mode</Label>
+              <div className="flex gap-2">
                 <Button
-                  key={themeId}
-                  variant={theme === themeId ? 'default' : 'outline'}
-                  onClick={() => setTheme(themeId as any)}
+                  variant={themeMode === 'light' ? 'default' : 'outline'}
+                  onClick={() => setThemeMode('light')}
                 >
-                  {themeId.charAt(0).toUpperCase() + themeId.slice(1).replace(/([A-Z])/g, ' $1').trim()}
+                  Light
                 </Button>
-              ))}
+                <Button
+                  variant={themeMode === 'dark' ? 'default' : 'outline'}
+                  onClick={() => setThemeMode('dark')}
+                >
+                  Dark
+                </Button>
+              </div>
             </div>
           </div>
-          <div className="space-y-2">
-            <Label>Theme Mode</Label>
-            <div className="flex gap-2">
-              <Button
-                variant={themeMode === 'light' ? 'default' : 'outline'}
-                onClick={() => setThemeMode('light')}
-              >
-                Light
-              </Button>
-              <Button
-                variant={themeMode === 'dark' ? 'default' : 'outline'}
-                onClick={() => setThemeMode('dark')}
-              >
-                Dark
-              </Button>
+          
+          {/* --- Voice Assistant Settings --- */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-medium">Voice Assistant (Oracle)</h3>
+            <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm">
+              <Label htmlFor="tts-enabled" className="flex flex-col gap-1">
+                <span>Enable Voice Readouts</span>
+                <span className="font-normal leading-snug text-muted-foreground">
+                  Automatically read analysis results aloud.
+                </span>
+              </Label>
+              <Switch
+                id="tts-enabled"
+                checked={profile?.settings?.tts_enabled ?? false}
+                onCheckedChange={handleTtsEnabledChange}
+              />
             </div>
+            {profile?.settings?.tts_enabled && (
+              <div className="space-y-2">
+                <Label htmlFor="tts-voice">Preferred Voice</Label>
+                <Select
+                  value={profile?.settings?.tts_voice_uri || ''}
+                  onValueChange={handleVoiceChange}
+                  disabled={voices.length === 0}
+                >
+                  <SelectTrigger id="tts-voice">
+                    <SelectValue placeholder="Select a voice..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {voices.map((voice) => (
+                      <SelectItem key={voice.voiceURI} value={voice.voiceURI}>
+                        {voice.name} ({voice.lang})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

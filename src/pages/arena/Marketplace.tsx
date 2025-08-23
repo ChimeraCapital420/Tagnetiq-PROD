@@ -9,6 +9,7 @@ import { AspectRatio } from '@/components/ui/aspect-ratio';
 import { WatchlistManager } from '@/components/arena/WatchlistManager';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAppContext } from '@/contexts/AppContext'; // Import AppContext
 
 interface MarketplaceItem {
   id: string;
@@ -19,14 +20,15 @@ interface MarketplaceItem {
 }
 
 const Marketplace: React.FC = () => {
+  const { searchArenaQuery, setSearchArenaQuery } = useAppContext(); // Get search context
   const [items, setItems] = useState<MarketplaceItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(searchArenaQuery); // Initialize with context
 
-  const fetchMarketplaceData = useCallback(async () => {
+  const fetchMarketplaceData = useCallback(async (query: string) => {
     setLoading(true);
     try {
-      const url = `/api/arena/marketplace${searchTerm ? `?searchQuery=${encodeURIComponent(searchTerm)}` : ''}`;
+      const url = `/api/arena/marketplace${query ? `?searchQuery=${encodeURIComponent(query)}` : ''}`;
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error('Failed to fetch marketplace data.');
@@ -38,21 +40,23 @@ const Marketplace: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm]);
+  }, []);
 
   useEffect(() => {
-    const initialFetch = () => {
-        // Only fetch on initial load, search will trigger subsequent fetches
-        if (searchTerm === '') {
-            fetchMarketplaceData();
-        }
-    };
-    initialFetch();
-  }, [fetchMarketplaceData, searchTerm]);
+    // If there's a query from the context, fetch data immediately
+    if (searchArenaQuery) {
+      fetchMarketplaceData(searchArenaQuery);
+      // Clear the context query after using it to prevent re-searching on navigation
+      setSearchArenaQuery(''); 
+    } else {
+      // Otherwise, perform the initial fetch for all items
+      fetchMarketplaceData('');
+    }
+  }, [searchArenaQuery, fetchMarketplaceData, setSearchArenaQuery]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchMarketplaceData();
+    fetchMarketplaceData(searchTerm);
   };
 
   return (
