@@ -35,6 +35,7 @@ import InvestorSuite from '@/pages/InvestorSuite';
 import BetaConsole from '@/pages/admin/BetaConsole';
 import MapConsole from '@/pages/admin/MapConsole';
 import InvestorPortal from '@/pages/investor/Portal';
+import ProfilePage from '@/pages/Profile'; // Import the new Profile page
 import { FeedbackModal } from '@/components/beta/FeedbackModal';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
 import DualScanner from '@/components/DualScanner';
@@ -54,6 +55,7 @@ const AppRoutes: React.FC = () => {
             <Route path="/beta/welcome" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaWelcome /></ProtectedRoute>} />
             <Route path="/beta/missions" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaMissions /></ProtectedRoute>} />
             <Route path="/beta/referrals" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaReferrals /></ProtectedRoute>} />
+            <Route path="/profile" element={<ProtectedRoute isAllowed={!!user} to="/login"><ProfilePage /></ProtectedRoute>} />
 
             <Route path="/arena/marketplace" element={<ProtectedRoute isAllowed={!!user} to="/login"><Marketplace /></ProtectedRoute>} />
             <Route path="/arena/challenge/:id" element={<ProtectedRoute isAllowed={!!user} to="/login"><ChallengeDetail /></ProtectedRoute>} />

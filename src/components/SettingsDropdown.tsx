@@ -8,7 +8,7 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent,
   DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Settings, LogOut, Sun, Moon, Palette, MessageSquare, BarChart, ShieldCheck, Beaker, Map, Leaf } from 'lucide-react';
+import { Settings, LogOut, Sun, Moon, Palette, MessageSquare, BarChart, ShieldCheck, Beaker, Map, Leaf, User } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import { Switch } from '@/components/ui/switch';
@@ -37,6 +37,8 @@ const SettingsDropdown: React.FC = () => {
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-64" align="end">
         <DropdownMenuLabel>Settings</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild><Link to="/profile"><User className="mr-2 h-4 w-4" /><span>My Profile</span></Link></DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuSub>
@@ -87,7 +89,6 @@ const SettingsDropdown: React.FC = () => {
             <DropdownMenuItem asChild><Link to="/admin/map"><Map className="mr-2 h-4 w-4" /><span>Global Map</span></Link></DropdownMenuItem>
             <DropdownMenuItem asChild><Link to="/admin/beta"><Beaker className="mr-2 h-4 w-4" /><span>Beta Console</span></Link></DropdownMenuItem>
             <DropdownMenuItem asChild><Link to="/admin/investors"><BarChart className="mr-2 h-4 w-4" /><span>Investor Suite</span></Link></DropdownMenuItem>
-            <DropdownMenuItem asChild><Link to="/beta-controls"><ShieldCheck className="mr-2 h-4 w-4" /><span>Beta Flags</span></Link></DropdownMenuItem>
           </>
         )}
 

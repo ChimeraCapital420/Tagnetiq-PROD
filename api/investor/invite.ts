@@ -4,21 +4,23 @@ import { supaAdmin } from '../_lib/supaAdmin';
 import { createSignature } from '../_lib/crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import QRCode from 'qrcode'; // Import the new library
+import { verifyUserIsAdmin } from '../_lib/security'; // CORRECTED: Import admin verification
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
-
-  // Admin auth check should be here
-
-  const { name, email, company, expires_at, mode } = req.body;
-
-  if (!name || !email || !expires_at || !mode) {
-    return res.status(400).json({ error: 'Missing required fields.' });
-  }
-
   try {
+    // SECURITY: Verify the user is an admin before proceeding.
+    await verifyUserIsAdmin(req);
+
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method Not Allowed' });
+    }
+
+    const { name, email, company, expires_at, mode } = req.body;
+
+    if (!name || !email || !expires_at || !mode) {
+      return res.status(400).json({ error: 'Missing required fields.' });
+    }
+
     let { data: investor, error: investorError } = await supaAdmin
       .from('investors')
       .select('id')
@@ -58,8 +60,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const pixelSignature = createSignature(invite.id);
     const pixelUrl = `${baseUrl}/api/pixel?i=${invite.id}&sig=${pixelSignature}`;
 
-    // --- MODIFICATION START ---
-    // Generate the QR code as a Data URL
     const qrCodeDataUrl = await QRCode.toDataURL(signedUrl, {
         errorCorrectionLevel: 'H',
         margin: 2,
@@ -69,7 +69,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             light: '#F5F5F5'
         }
     });
-    // --- MODIFICATION END ---
 
 
     return res.status(200).json({
@@ -77,11 +76,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       inviteId: invite.id,
       signedUrl,
       pixelUrl,
-      qrCodeDataUrl, // Add the QR code to the response
+      qrCodeDataUrl,
     });
 
   } catch (error) {
+    const message = (error as Error).message;
+    if (message.includes('Authorization')) {
+        return res.status(403).json({ error: message });
+    }
+    if (message.includes('Authentication')) {
+        return res.status(401).json({ error: message });
+    }
     console.error(error);
-    return res.status(500).json({ error: (error as Error).message });
+    return res.status(500).json({ error: message });
   }
 }
