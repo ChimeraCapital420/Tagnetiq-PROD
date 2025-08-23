@@ -5,6 +5,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient, User } from '@supabase/supabase-js';
 import { verifyUser } from './_lib/security';
+import { dataSources, DataSource } from '../../src/lib/datasources';
+
 
 export const config = {
   runtime: 'edge',
@@ -34,6 +36,10 @@ interface HydraResponse {
   analysisCount: number;
   consensusRatio: string;
   reasoning: string;
+  resale_toolkit?: {
+    sales_copy: string;
+    recommended_marketplaces: DataSource[];
+    };
 }
 
 // --- HYDRA ENGINE CLASS ---
@@ -135,7 +141,34 @@ class HydraEngine {
 
         return { itemName, estimatedValue: avgValue.toFixed(2), decision, confidence, analysisCount: totalVotes, consensusRatio: `${buyVotes}/${totalVotes}`, reasoning };
     }
-
+    private getMarketplaceRecommendations(category_id: string, subcategory_id: string): DataSource[] {
+        const categoryData = dataSources.find(ds => ds.category_id === category_id && ds.subcategory_id === subcategory_id);
+        if (!categoryData) {
+            return [];
+        }
+    
+        return [...categoryData.tier_1_sources, ...categoryData.tier_2_sources, ...categoryData.tier_3_sources].filter(source => source.api_available);
+    }
+    
+    private async generateSalesCopy(analysisResult: HydraResponse): Promise<string> {
+        const prompt = `You are an expert e-commerce copywriter. Based on the following analysis, write a compelling, SEO-friendly sales description for this item. The description should be between 100 and 150 words.
+    
+        Item Name: ${analysisResult.itemName}
+        Estimated Value: $${analysisResult.estimatedValue}
+        Reasoning: ${analysisResult.reasoning}`;
+    
+        try {
+            const response = await openai.chat.completions.create({
+                model: 'gpt-4-turbo',
+                messages: [{ role: 'user', content: prompt }]
+            });
+            return response.choices[0].message.content || 'Error generating sales copy.';
+        } catch (error) {
+            console.error('Error generating sales copy:', error);
+            return 'Error generating sales copy.';
+        }
+    }
+    
     public async analyze(request: AnalysisRequest): Promise<HydraResponse> {
         const jsonPrompt = `Respond in JSON format only: {"itemName": "specific item name", "estimatedValue": "25.99", "decision": "BUY", "reasoning": "brief explanation"}`;
         let analyses: any[] = [];
@@ -155,7 +188,18 @@ class HydraEngine {
         }
         
         console.log(`🤖 Consensus built from ${analyses.length} successful AI analyses.`);
-        return this.buildConsensus(analyses, itemName);
+        
+        const consensus = this.buildConsensus(analyses, itemName);
+        
+        const sales_copy = await this.generateSalesCopy(consensus);
+        const recommended_marketplaces = this.getMarketplaceRecommendations(request.category_id, request.subcategory_id);
+        
+        consensus.resale_toolkit = {
+            sales_copy,
+            recommended_marketplaces
+        };
+        
+        return consensus;
     }
 }
 
