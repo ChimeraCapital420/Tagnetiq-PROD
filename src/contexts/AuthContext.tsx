@@ -1,119 +1,120 @@
 // FILE: src/contexts/AuthContext.tsx
-// GHOST PROTOCOL UPGRADE: 5-TIER ROLE SYSTEM & SECURE ADMIN CHECK
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { supabase, Profile } from '../lib/supabase';
+import { Session, User } from '@supabase/supabase-js';
 
-// The Profile type now includes our new, more granular role.
-export interface Profile {
+export type AppRole = 'admin' | 'developer' | 'investor' | 'retail' | 'user';
+
+export interface Profile extends Record<string, unknown> {
   id: string;
   email: string;
-  role: 'admin' | 'developer' | 'investor' | 'retail' | 'user';
-  full_name?: string;
-  avatar_url?: string;
-  onboarding_complete: boolean;
-  has_seen_arena_intro: boolean;
-  // Other profile fields...
-  settings: {
-    tts_enabled: boolean;
-    tts_voice_uri: string | null;
-  };
-  created_at: string;
-  updated_at: string;
+  role: AppRole;
+  screen_name: string;
+  mfa_enrolled: boolean;
 }
 
 interface AuthContextType {
+  session: Session | null;
   user: User | null;
   profile: Profile | null;
-  session: Session | null;
+  setProfile: (profile: Profile | null) => void;
   loading: boolean;
   signOut: () => Promise<void>;
-  // Role-based accessors for clarity throughout the application
   isAdmin: boolean;
   isDeveloper: boolean;
   isInvestor: boolean;
-  setProfile: React.Dispatch<React.SetStateAction<Profile | null>>;
+  isRetail: boolean;
+  isUser: boolean;
 }
 
-const AuthContext = createContext<AuthContextType>({
-  user: null,
-  profile: null,
-  session: null,
-  loading: true,
-  signOut: async () => {},
-  isAdmin: false,
-  isDeveloper: false,
-  isInvestor: false,
-  setProfile: () => {},
-});
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const useAuth = () => useContext(AuthContext);
-
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AuthProvider = ({ children }: { children: ReactNode }) => {
+  const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Derived role states for easy access
-  const isAdmin = profile?.role === 'admin';
-  const isDeveloper = profile?.role === 'developer' || isAdmin; // Admins are also developers
-  const isInvestor = profile?.role === 'investor' || isAdmin; // Admins are also investors
-
-  const fetchSessionData = useCallback(async (currentSession: Session | null) => {
-    setSession(currentSession);
-    const currentUser = currentSession?.user ?? null;
+  const getSessionAndProfile = async () => {
+    setLoading(true);
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      console.error('Error getting session:', sessionError);
+      setLoading(false);
+      return;
+    }
+    setSession(session);
+    const currentUser = session?.user || null;
     setUser(currentUser);
 
     if (currentUser) {
-      // Fetch profile and check for admin role from a trusted source (the database).
-      const { data: userProfile, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', currentUser.id)
-        .single();
-      
-      if (error) {
-        console.error("GHOST REPORT: Error fetching profile. User may not exist in profiles table.", error);
-        setProfile(null);
-      } else {
-        // --- DEVELOPER SHORTCUT ---
-        // For local development, you can force an admin role for a specific user.
-        const ADMIN_EMAILS = ['admin@tagnetiq.com']; // Add your dev email here
-        if (ADMIN_EMAILS.includes(currentUser.email!)) {
-          userProfile.role = 'admin';
+      try {
+        const { data, error, status } = await supabase
+          .from('profiles')
+          .select(`id, email, role, screen_name, mfa_enrolled`)
+          .eq('id', currentUser.id)
+          .single();
+        if (error && status !== 406) {
+          throw error;
         }
-        // --- END SHORTCUT ---
-        setProfile(userProfile as Profile);
+        if (data) {
+          setProfile(data as Profile);
+        }
+      } catch (error) {
+        console.error('Error fetching profile:', (error as Error).message);
       }
-    } else {
-      setProfile(null);
     }
     setLoading(false);
-  }, []);
+  };
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      fetchSessionData(session);
+    getSessionAndProfile();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      if (_event === 'SIGNED_IN' || _event === 'USER_UPDATED') {
+        getSessionAndProfile();
+      }
+      if (_event === 'SIGNED_OUT') {
+        setProfile(null);
+      }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        fetchSessionData(session);
-      }
-    );
-
-    return () => subscription.unsubscribe();
-  }, [fetchSessionData]);
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   const signOut = async () => {
     await supabase.auth.signOut();
+    setSession(null);
+    setUser(null);
+    setProfile(null);
   };
 
-  return (
-    <AuthContext.Provider value={{ user, profile, session, loading, signOut, isAdmin, isDeveloper, isInvestor, setProfile }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  const value = {
+    session,
+    user,
+    profile,
+    setProfile,
+    loading,
+    signOut,
+    isAdmin: profile?.role === 'admin',
+    isDeveloper: profile?.role === 'developer',
+    isInvestor: profile?.role === 'investor',
+    isRetail: profile?.role === 'retail',
+    isUser: profile?.role === 'user',
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
 };
