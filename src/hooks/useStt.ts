@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 
 // Type guard for SpeechRecognition API
 interface IWindow extends Window {
@@ -10,6 +11,7 @@ interface IWindow extends Window {
 }
 
 export const useStt = () => {
+  const { i18n } = useTranslation();
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -24,7 +26,7 @@ export const useStt = () => {
 
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
-    recognition.lang = 'en-US';
+    recognition.lang = i18n.language; // Set language from i18n
     recognition.interimResults = false;
 
     recognition.onstart = () => {
@@ -55,17 +57,18 @@ export const useStt = () => {
     return () => {
       recognition.stop();
     };
-  }, []);
+  }, [i18n.language]);
 
   const startListening = useCallback(() => {
     if (recognitionRef.current && !isListening) {
+      recognitionRef.current.lang = i18n.language; // Ensure language is up-to-date
       try {
         recognitionRef.current.start();
       } catch (error) {
         console.error("Could not start listening:", error);
       }
     }
-  }, [isListening]);
+  }, [isListening, i18n.language]);
 
   const stopListening = useCallback(() => {
     if (recognitionRef.current && isListening) {

@@ -1,27 +1,32 @@
 // FILE: src/components/beta/TriageTable.tsx
 
 import React, { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
 import type { Feedback } from '@/types/beta';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 export const TriageTable: React.FC = () => {
+  const { session } = useAuth();
   const [feedbackItems, setFeedbackItems] = useState<Feedback[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchFeedback = async () => {
+      if (!session) return;
       setLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('feedback')
-          .select('*')
-          .order('created_at', { ascending: false });
-        if (error) throw error;
+        const response = await fetch('/api/admin/feedback', {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (!response.ok) {
+          const { error } = await response.json();
+          throw new Error(error || 'Failed to load feedback.');
+        }
+        const data = await response.json();
         setFeedbackItems(data || []);
       } catch (error) {
         toast.error('Failed to load feedback.', { description: (error as Error).message });
@@ -30,15 +35,23 @@ export const TriageTable: React.FC = () => {
       }
     };
     fetchFeedback();
-  }, []);
+  }, [session]);
 
   const handleStatusChange = async (id: string, newStatus: string) => {
+    if (!session) return;
     try {
-      const { error } = await supabase
-        .from('feedback')
-        .update({ status: newStatus, updated_at: new Date().toISOString() })
-        .eq('id', id);
-      if (error) throw error;
+      const response = await fetch('/api/admin/feedback', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ id, status: newStatus }),
+      });
+      if (!response.ok) {
+        const { error } = await response.json();
+        throw new Error(error || 'Failed to update status.');
+      }
       
       setFeedbackItems(items => items.map(item => item.id === id ? { ...item, status: newStatus } : item));
       toast.success('Feedback status updated.');

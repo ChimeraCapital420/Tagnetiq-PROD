@@ -1,8 +1,10 @@
 // FILE: src/hooks/useTts.ts
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 
 export const useTts = () => {
+  const { i18n } = useTranslation();
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [preferredVoice, setPreferredVoice] = useState<SpeechSynthesisVoice | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -13,9 +15,8 @@ export const useTts = () => {
       setVoices(availableVoices);
     };
 
-    // The 'voiceschanged' event might fire immediately or after a delay.
     window.speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged);
-    handleVoicesChanged(); // Also call it directly in case the event has already fired.
+    handleVoicesChanged();
 
     return () => {
       window.speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged);
@@ -28,11 +29,12 @@ export const useTts = () => {
       return;
     }
 
-    // Cancel any ongoing speech
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
-    const voiceToUse = voices.find(v => v.voiceURI === voiceURI) || preferredVoice || voices[0];
+    utterance.lang = i18n.language; // Set language from i18n
+
+    const voiceToUse = voices.find(v => v.voiceURI === voiceURI) || preferredVoice || voices.find(v => v.lang.startsWith(i18n.language)) || voices[0];
     
     if (voiceToUse) {
       utterance.voice = voiceToUse;
@@ -43,7 +45,7 @@ export const useTts = () => {
     utterance.onerror = () => setIsSpeaking(false);
 
     window.speechSynthesis.speak(utterance);
-  }, [voices, preferredVoice]);
+  }, [voices, preferredVoice, i18n.language]);
 
   const cancel = useCallback(() => {
     if (window.speechSynthesis) {

@@ -8,11 +8,13 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent,
   DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Settings, LogOut, Sun, Moon, Palette, MessageSquare, BarChart, ShieldCheck, Beaker, Map, Leaf, User } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Settings, LogOut, Sun, Moon, Palette, MessageSquare, BarChart, ShieldCheck, Beaker, Map, Leaf, User, Languages } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { LanguageSelector } from './LanguageSelector';
 
 const themeNames = ['executive', 'matrix', 'safari', 'darkKnight', 'cyberpunk', 'ocean', 'forest', 'sunset'];
 
@@ -58,6 +60,17 @@ const SettingsDropdown: React.FC = () => {
             {themeMode === 'dark' ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
             <span>{themeMode === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
           </DropdownMenuItem>
+           <Popover>
+            <PopoverTrigger asChild>
+                <Button variant="ghost" className="w-full justify-start font-normal px-2 py-1.5 h-auto">
+                    <Languages className="mr-2 h-4 w-4" />
+                    <span>Language</span>
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent>
+                <LanguageSelector />
+            </PopoverContent>
+           </Popover>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
 

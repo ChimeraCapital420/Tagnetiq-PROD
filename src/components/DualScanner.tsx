@@ -1,3 +1,5 @@
+// FILE: src/components/DualScanner.tsx
+
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useZxing } from 'react-zxing';
 import { v4 as uuidv4 } from 'uuid';
@@ -15,6 +17,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import './DualScanner.css';
 
+
 type ScanMode = 'image' | 'barcode';
 type CaptureResolution = 'Low' | 'Medium' | 'High';
 
@@ -29,8 +32,10 @@ interface DualScannerProps {
   onClose: () => void;
 }
 
+
 const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const { setLastAnalysisResult, setIsAnalyzing, selectedCategory } = useAppContext();
+  const { session } = useAuth();
   
   const [scanMode, setScanMode] = useState<ScanMode>('image');
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
@@ -55,212 +60,281 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     }
   }, [zoomCapabilities]);
 
+  const handleZoomChange = (value: number[]) => {
+    if (videoRef.current?.srcObject) {
+      const track = (videoRef.current.srcObject as MediaStream).getVideoTracks()[0];
+      applyZoom(track, value[0]);
+    }
+  };
+
   const startCamera = useCallback(async () => {
-    try {
-      if (videoRef.current && videoRef.current.srcObject) {
-        (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
-      const videoElement = videoRef.current;
-      if (videoElement) {
-        videoElement.srcObject = stream;
-        await new Promise(resolve => videoElement.onloadedmetadata = resolve);
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const { width, height } = RESOLUTION_PRESETS[captureResolution];
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            facingMode,
+            width: { ideal: width },
+            height: { ideal: height },
+            zoom: true 
+          }
+        });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+
         const track = stream.getVideoTracks()[0];
         const capabilities = track.getCapabilities();
-        if ('zoom' in capabilities && capabilities.zoom) {
-          setZoomCapabilities({ min: capabilities.zoom.min, max: capabilities.zoom.max, step: capabilities.zoom.step });
-          setZoom(capabilities.zoom.min);
+        if (capabilities.zoom) {
+          setZoomCapabilities({
+            min: capabilities.zoom.min,
+            max: capabilities.zoom.max,
+            step: capabilities.zoom.step
+          });
+          setZoom(track.getSettings().zoom || 1);
         } else {
           setZoomCapabilities(null);
         }
+
+      } catch (err) {
+        console.error("Error accessing camera:", err);
+        toast.error("Camera access denied.", {
+          description: "Please enable camera permissions in your browser settings to use this feature.",
+        });
       }
-    } catch (error) {
-      console.error('Camera access error:', error);
-      toast.error("Camera Permission Needed", { description: "Please grant camera permissions to continue." });
-      onClose();
     }
-  }, [facingMode, onClose]);
+  }, [facingMode, captureResolution]);
+
+  const stopCamera = useCallback(() => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
-        startCamera();
+      startCamera();
+    } else {
+      stopCamera();
     }
-  }, [isOpen, facingMode, startCamera]);
-  
-  const handleAnalysis = useCallback(async (scanType: ScanMode, data: string | string[]) => {
-    setIsProcessing(true);
-    setIsAnalyzing(true);
-    toast.info(`Analyzing ${scanType}...`);
+    return () => stopCamera();
+  }, [isOpen, startCamera, stopCamera]);
 
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      toast.error("Authentication Error");
-      setIsProcessing(false);
-      setIsAnalyzing(false);
-      return;
+  const { ref: zxingRef } = useZxing({
+    onResult(result) {
+      if (scanMode === 'barcode') {
+        toast.success(`Barcode detected: ${result.getText()}`);
+        setLastAnalysisResult({ barcode: result.getText(), category: selectedCategory });
+        setIsAnalyzing(true);
+        onClose();
+      }
+    },
+    paused: scanMode !== 'barcode' || !isOpen,
+  });
+
+  useEffect(() => {
+    if (videoRef.current) {
+        zxingRef(videoRef.current);
     }
+  }, [zxingRef, isOpen, scanMode]);
+
+  const captureImage = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext('2d');
+      if (context) {
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg');
+        setCapturedImages(prev => [...prev, dataUrl]);
+      }
+    }
+  };
+
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (e.target?.result) {
+          setCapturedImages(prev => [...prev, e.target!.result as string]);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const processImages = async () => {
+    if (capturedImages.length === 0 || !session) return;
+    setIsProcessing(true);
+    toast.info("Uploading images and starting analysis...");
 
     try {
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
-        body: JSON.stringify({
-          category_id: selectedCategory?.split('-')[0] || 'general',
-          subcategory_id: selectedCategory?.split('-')[1] || undefined,
-          scanType,
-          data: Array.isArray(data) ? data[0] : data,
-        }),
+      // 1. Convert Data URLs to Blobs and get upload URLs
+      const fileMetas = capturedImages.map((_, index) => ({
+        name: `${session.user.id}/${uuidv4()}-${index}.jpg`,
+        type: 'image/jpeg'
+      }));
+
+      const { data: presignedUrlsData, error: presignedUrlError } = await supabase.functions.invoke('request-upload', {
+        body: { files: fileMetas }
       });
-      if (!response.ok) {
-        const { error } = await response.json();
-        throw new Error(error || 'Analysis failed.');
-      }
-      const result = await response.json();
-      setLastAnalysisResult({ ...result, id: uuidv4(), code: Array.isArray(data) ? "Image" : data, imageUrls: Array.isArray(data) ? data : undefined });
-      toast.success('Analysis Complete');
+      if (presignedUrlError) throw presignedUrlError;
+      
+      // 2. Upload files to presigned URLs
+      await Promise.all(capturedImages.map(async (dataUrl, index) => {
+        const { uploadUrl } = presignedUrlsData[index];
+        const blob = await (await fetch(dataUrl)).blob();
+        const { error: uploadError } = await supabase.storage.from('scans').uploadToSignedUrl(uploadUrl, blob);
+        if (uploadError) throw new Error(`Upload failed for image ${index + 1}: ${uploadError.message}`);
+      }));
+
+      const uploadedImageUrls = fileMetas.map(meta => meta.name);
+
+      // 3. Trigger analysis
+      const { data: analysisResult, error: analysisError } = await supabase.functions.invoke('analyze', {
+        body: { images: uploadedImageUrls, category: selectedCategory },
+      });
+      if (analysisError) throw analysisError;
+
+      setLastAnalysisResult(analysisResult);
+      setIsAnalyzing(true);
+      toast.success("Analysis complete!");
       onClose();
+
     } catch (error) {
-      toast.error('Analysis Error', { description: (error as Error).message });
-      setLastAnalysisResult(null);
+      console.error("Processing error:", error);
+      toast.error("Image processing failed.", {
+        description: (error as Error).message
+      });
     } finally {
       setIsProcessing(false);
-      setIsAnalyzing(false);
+      setCapturedImages([]);
     }
-  }, [selectedCategory, setIsAnalyzing, setLastAnalysisResult, onClose]);
-
-  const { ref: barcodeRef } = useZxing({ onDecodeResult: (result) => handleAnalysis('barcode', result.getText()) });
-
-  const captureImage = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return;
-    const canvas = canvasRef.current;
-    const context = canvas.getContext('2d');
-    if (!context) return;
-    const preset = RESOLUTION_PRESETS[captureResolution];
-    canvas.width = preset.width;
-    canvas.height = preset.height;
-    context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-    const imageData = canvas.toDataURL('image/jpeg', 0.85);
-    setCapturedImages(prev => [imageData, ...prev].slice(0, 5));
-    toast.success(`Photo captured at ${captureResolution} resolution!`);
-  }, [captureResolution]);
-
-  const getPinchDistance = (touches: React.TouchList) => {
-    const dx = touches[0].clientX - touches[1].clientX;
-    const dy = touches[0].clientY - touches[1].clientY;
-    return Math.sqrt(dx * dx + dy * dy);
   };
 
-  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (e.touches.length === 2) initialPinchDistance.current = getPinchDistance(e.touches);
+  const toggleFacingMode = () => {
+    setFacingMode(prev => (prev === 'user' ? 'environment' : 'user'));
   };
+  
+  const handleTouchMove = (e: React.TouchEvent<HTMLVideoElement>) => {
+    if (e.touches.length === 2 && videoRef.current?.srcObject) {
+      e.preventDefault();
+      const touch1 = e.touches[0];
+      const touch2 = e.touches[1];
+      const distance = Math.sqrt(Math.pow(touch2.pageX - touch1.pageX, 2) + Math.pow(touch2.pageY - touch1.pageY, 2));
 
-  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (e.touches.length === 2 && initialPinchDistance.current && zoomCapabilities && videoRef.current?.srcObject) {
-      const newDistance = getPinchDistance(e.touches);
-      const scale = newDistance / initialPinchDistance.current;
-      const newZoom = zoom * scale;
+      if (initialPinchDistance.current === null) {
+        initialPinchDistance.current = distance;
+      }
+      
       const track = (videoRef.current.srcObject as MediaStream).getVideoTracks()[0];
+      const scale = distance / initialPinchDistance.current;
+      const newZoom = Math.max(zoomCapabilities?.min || 1, Math.min(zoomCapabilities?.max || 10, zoom * scale));
+      
       applyZoom(track, newZoom);
     }
   };
-
-  const handleTouchEnd = () => { initialPinchDistance.current = null; };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    const imageFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
-    imageFiles.forEach(file => {
-      const reader = new FileReader();
-      reader.onload = (event) => setCapturedImages(prev => [event.target?.result as string, ...prev].slice(0, 5));
-      reader.readAsDataURL(file);
-    });
-    toast.success(`${imageFiles.length} image(s) added.`);
+  
+  const handleTouchEnd = () => {
+    initialPinchDistance.current = null;
   };
-
-  const handleFlipCamera = () => {
-    setFacingMode(p => p === 'user' ? 'environment' : 'user');
-  };
-
+  
   if (!isOpen) return null;
 
   return (
-    <div className="scanner-container" onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
-      <header className="scanner-header">
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon" className="rounded-full bg-black/30 backdrop-blur-sm"><SettingsIcon /></Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-64" align="start">
-            <div className="space-y-4">
-              <h4 className="font-medium leading-none">Smart Glasses</h4>
-              <Button className="w-full" onClick={() => toast.info('Pairing mode initiated...')}>
-                <Zap className="mr-2 h-4 w-4" /> Connect Glasses
-              </Button>
-              <Separator />
-              <h4 className="font-medium leading-none">Camera Settings</h4>
-              <div className="flex items-center justify-between"><Label htmlFor="grid-switch">Grid Overlay</Label><Switch id="grid-switch" checked={showGrid} onCheckedChange={setShowGrid} /></div>
-              <div className="grid w-full items-center gap-1.5">
-                <Label htmlFor="resolution">Capture Resolution</Label>
-                <Select value={captureResolution} onValueChange={(value) => setCaptureResolution(value as CaptureResolution)}>
-                  <SelectTrigger id="resolution"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="High">High (1080p)</SelectItem>
-                    <SelectItem value="Medium">Medium (720p)</SelectItem>
-                    <SelectItem value="Low">Low (480p)</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">Lower resolution is faster on cellular.</p>
-              </div>
-            </div>
-          </PopoverContent>
-        </Popover>
-        <div className="flex gap-2">
-          <Button variant={scanMode === 'image' ? 'secondary' : 'ghost'} size="sm" onClick={() => setScanMode('image')} className="backdrop-blur-sm"><Camera className="w-4 h-4 mr-2" />Photo</Button>
-          <Button variant={scanMode === 'barcode' ? 'secondary' : 'ghost'} size="sm" onClick={() => setScanMode('barcode')} className="backdrop-blur-sm"><Scan className="w-4 h-4 mr-2" />Barcode</Button>
-        </div>
-        <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full bg-black/30 backdrop-blur-sm"><X /></Button>
-      </header>
-      
-      <main className="scanner-main">
-        <video ref={scanMode === 'image' ? videoRef : barcodeRef} autoPlay playsInline muted className="scanner-video" />
-        {showGrid && scanMode === 'image' && <div className="grid-overlay" />}
-        {scanMode === 'barcode' && (
-          <div className="barcode-scanner-overlay">
-            <div className="barcode-scanner-aiming-box" />
-            <div className="barcode-scanner-laser" />
-          </div>
-        )}
-      </main>
+    <div className="dual-scanner-overlay" onClick={onClose}>
+      <div className="dual-scanner-content" onClick={e => e.stopPropagation()}>
+        <header className="dual-scanner-header">
+          <h2 className="text-lg font-semibold">{scanMode === 'image' ? 'Image Analysis' : 'Barcode Scanner'}</h2>
+          <Button variant="ghost" size="icon" onClick={onClose}><X /></Button>
+        </header>
 
-      <footer className="scanner-footer">
-        {scanMode === 'image' && (
-          <>
+        <main className="dual-scanner-main">
+          <div className="relative w-full h-full bg-black">
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              className="w-full h-full object-contain"
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+            />
+            {showGrid && <div className="grid-overlay" />}
+            <div className="absolute top-2 left-2 flex flex-col gap-2">
+              <Button size="icon" variant="secondary" onClick={toggleFacingMode}><FlipHorizontal /></Button>
+              <input type="file" ref={fileInputRef} accept="image/*" className="hidden" onChange={handleImageUpload} />
+              <Button size="icon" variant="secondary" onClick={() => fileInputRef.current?.click()}><Upload /></Button>
+            </div>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button size="icon" variant="secondary" className="absolute top-2 right-2"><SettingsIcon /></Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64 p-4 space-y-4">
+                <div className="space-y-2">
+                    <Label>Scan Mode</Label>
+                    <div className="flex gap-2">
+                        <Button onClick={() => setScanMode('image')} variant={scanMode === 'image' ? 'default' : 'outline'} className="flex-1">Image</Button>
+                        <Button onClick={() => setScanMode('barcode')} variant={scanMode === 'barcode' ? 'default' : 'outline'} className="flex-1">Barcode</Button>
+                    </div>
+                </div>
+                <Separator />
+                <div className="space-y-2">
+                    <Label>Camera Resolution</Label>
+                    <Select value={captureResolution} onValueChange={(val) => setCaptureResolution(val as CaptureResolution)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="Low">Low (640x480)</SelectItem>
+                            <SelectItem value="Medium">Medium (1280x720)</SelectItem>
+                            <SelectItem value="High">High (1920x1080)</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
+                <Separator />
+                <div className="flex items-center justify-between">
+                    <Label htmlFor="grid-switch">Show Grid</Label>
+                    <Switch id="grid-switch" checked={showGrid} onCheckedChange={setShowGrid} />
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </main>
+        
+        <footer className="dual-scanner-footer">
+          {scanMode === 'image' ? (
+            <>
+              <div className="captured-previews">
+                {capturedImages.map((src, index) => (
+                  <img key={index} src={src} alt={`capture ${index}`} className="preview-thumb" />
+                ))}
+              </div>
+              {capturedImages.length > 0 && 
+                <Button onClick={processImages} disabled={isProcessing} className="glow-on-hover">
+                  {isProcessing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analyzing...</> : <><Zap className="mr-2 h-4 w-4" /> Analyze</>}
+                </Button>
+              }
+              <Button onClick={captureImage} className="capture-button" size="icon" disabled={isProcessing}><Circle className="w-16 h-16" /></Button>
+            </>
+          ) : (
+             <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+                <Scan className="mr-2 h-4 w-4" /> Point camera at a barcode
+             </div>
+          )}
+        </footer>
+        <div className="absolute bottom-24 w-full flex justify-center p-4 pointer-events-none">
             {zoomCapabilities && (
-              <div className="flex items-center gap-2 px-4 bg-black/30 backdrop-blur-sm p-2 rounded-full">
+              <div className="flex items-center gap-2 px-4 bg-black/30 backdrop-blur-sm p-2 rounded-full pointer-events-auto">
                 <ZoomOut className="w-5 h-5" />
-                <Slider value={[zoom]} onValueChange={handleZoomChange} min={zoomCapabilities.min} max={zoomCapabilities.max} step={zoomCapabilities.step} />
+                <Slider value={[zoom]} onValueChange={handleZoomChange} min={zoomCapabilities.min} max={zoomCapabilities.max} step={zoomCapabilities.step} className="w-32" />
                 <ZoomIn className="w-5 h-5" />
               </div>
             )}
-            <div className="scanner-controls">
-              <Button variant="ghost" size="icon" className="w-16 h-16 rounded-full bg-black/30 backdrop-blur-sm" onClick={() => fileInputRef.current?.click()}>
-                  {capturedImages.length > 0 && <div className="absolute -top-1 -right-1 text-xs bg-primary rounded-full h-5 w-5 flex items-center justify-center">{capturedImages.length}</div>}
-                  <Upload />
-              </Button>
-              <button onClick={captureImage} className="shutter-button"><div className="shutter-button-inner" /></button>
-              <Button variant="ghost" size="icon" className="w-16 h-16 rounded-full bg-black/30 backdrop-blur-sm" onClick={handleFlipCamera}><FlipHorizontal /></Button>
-            </div>
-            {capturedImages.length > 0 && (
-                <Button onClick={() => handleAnalysis('image', capturedImages)} disabled={isProcessing} size="lg" className="w-full">
-                    {isProcessing ? <Loader2 className="animate-spin" /> : <><Check className="mr-2" /> Analyze ({capturedImages.length})</>}
-                </Button>
-            )}
-          </>
-        )}
-      </footer>
-      <canvas ref={canvasRef} className="hidden" />
-      <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
+          </div>
+      </div>
     </div>
   );
 };

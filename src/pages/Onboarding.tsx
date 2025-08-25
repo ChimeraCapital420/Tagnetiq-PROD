@@ -1,4 +1,4 @@
-// FILE: src/pages/Onboarding.tsx (REVISED FOR STATE SYNC)
+// FILE: src/pages/Onboarding.tsx
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -11,14 +11,25 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { CATEGORIES } from '@/lib/constants';
 import { Toggle } from '@/components/ui/toggle';
+import { useTranslation } from 'react-i18next';
+import { LanguageSelector } from '@/components/LanguageSelector';
 
 const OnboardingPage: React.FC = () => {
-  const { user, setProfile } = useAuth(); // GET THE setProfile FUNCTION
+  const { user, setProfile } = useAuth();
   const navigate = useNavigate();
+  const { t, i18n } = useTranslation();
   const [screenName, setScreenName] = useState('');
   const [location, setLocation] = useState('');
   const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [languageSelected, setLanguageSelected] = useState(false);
+
+  React.useEffect(() => {
+    const lng = i18n.language;
+    if(lng === 'en' || lng === 'es') {
+        setLanguageSelected(true);
+    }
+  }, [i18n.language]);
 
   const handleInterestToggle = (categoryId: string) => {
     setSelectedInterests(prev =>
@@ -49,20 +60,20 @@ const OnboardingPage: React.FC = () => {
           interests: selectedInterests,
           onboarding_complete: true,
           updated_at: new Date().toISOString(),
+          language_preference: i18n.language,
         })
         .eq('id', user.id)
-        .select() // Ask Supabase to return the updated row
-        .single(); // Expect only one row
+        .select()
+        .single();
 
       if (error) throw error;
 
-      // Manually update the profile in the app's global state
       if (data) {
         setProfile(data as Profile);
       }
 
       toast.success('Profile setup complete! Welcome to TagnetIQ.');
-      navigate('/dashboard', { replace: true }); // This will now work
+      navigate('/dashboard', { replace: true });
 
     } catch (error) {
       toast.error('Failed to save profile.', { description: (error as Error).message });
@@ -75,10 +86,14 @@ const OnboardingPage: React.FC = () => {
     <div className="min-h-screen flex items-center justify-center p-4 bg-background">
       <Card className="w-full max-w-2xl">
         <CardHeader>
-          <CardTitle className="text-2xl">Welcome to TagnetIQ!</CardTitle>
+          <CardTitle className="text-2xl">{t('welcome')} to TagnetIQ!</CardTitle>
           <CardDescription>Let's set up your profile. This will help us personalize your experience.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          <div className="space-y-2">
+            <Label>{t('select_language')}</Label>
+            <LanguageSelector />
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="screen-name">Choose a Screen Name</Label>
@@ -115,9 +130,11 @@ const OnboardingPage: React.FC = () => {
               ))}
             </div>
           </div>
-          <Button onClick={handleCompleteOnboarding} disabled={isLoading} className="w-full">
-            {isLoading ? 'Saving...' : 'Complete Setup & Enter App'}
-          </Button>
+          {languageSelected && (
+            <Button onClick={handleCompleteOnboarding} disabled={isLoading} className="w-full">
+              {isLoading ? 'Saving...' : 'Complete Setup & Enter App'}
+            </Button>
+          )}
         </CardContent>
       </Card>
     </div>
