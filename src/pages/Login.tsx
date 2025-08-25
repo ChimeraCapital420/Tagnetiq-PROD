@@ -1,97 +1,113 @@
 // FILE: src/pages/Login.tsx
+// GHOST PROTOCOL FIX: Enabled form submission on "Enter" key press.
 
-import React, { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
+import { useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import * as z from 'zod';
 import { Link, useNavigate } from 'react-router-dom';
-import { Eye, EyeOff } from 'lucide-react';
-import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { useToast } from '@/hooks/use-toast';
 
-const Login: React.FC = () => {
+const formSchema = z.object({
+  email: z.string().email({ message: 'Invalid email address.' }),
+  password: z.string().min(1, { message: 'Password is required.' }),
+});
+
+const Login = () => {
   const navigate = useNavigate();
-  const [showPassword, setShowPassword] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleLogin = async () => {
-    if (!email || !password) {
-      toast.error('Please enter both email and password.');
-      return;
-    }
+  const form = useForm<z.infer<typeof formSchema>>({
+    resolver: zodResolver(formSchema),
+    defaultValues: { email: '', password: '' },
+  });
+
+  async function onSubmit(values: z.infer<typeof formSchema>) {
     setIsLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email: values.email,
+      password: values.password,
+    });
+
     if (error) {
-      toast.error('Login Failed', { description: error.message });
+      toast({
+        title: 'Error signing in',
+        description: error.message,
+        variant: 'destructive',
+      });
     } else {
-      toast.success('Login successful!');
+      toast({
+        title: 'Success',
+        description: 'You are now signed in.',
+      });
       navigate('/dashboard');
     }
     setIsLoading(false);
-  };
+  }
 
-  const handlePasswordReset = async () => {
-    if (!email) {
-      toast.error('Please enter your email to reset your password.');
-      return;
-    }
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/update-password`,
-    });
-    if (error) {
-      toast.error('Error sending password reset email.', { description: error.message });
-    } else {
-      toast.success('Password reset link sent!', { description: 'Please check your email.' });
+  // GHOST FIX: Handler to trigger form submission on Enter key
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      form.handleSubmit(onSubmit)();
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-end p-4 md:p-8">
-      <Card className="w-full max-w-sm bg-background/80 backdrop-blur-sm mr-0 md:mr-16">
-        <CardHeader>
-          <CardTitle>Login</CardTitle>
-          <CardDescription>Enter your credentials to access your dashboard.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" placeholder="m@example.com" required value={email} onChange={(e) => setEmail(e.target.value)} disabled={isLoading} />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
-            <div className="relative">
-              <Input id="password" type={showPassword ? 'text' : 'password'} required value={password} onChange={(e) => setPassword(e.target.value)} disabled={isLoading} />
-              <button type="button" className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground" onClick={() => setShowPassword(!showPassword)}>
-                {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-              </button>
-            </div>
-          </div>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-                <Checkbox id="remember-me" disabled={isLoading} />
-                <Label htmlFor="remember-me" className="text-sm font-medium leading-none cursor-pointer">Remember Me</Label>
-            </div>
-            <button onClick={handlePasswordReset} className="text-xs text-muted-foreground hover:underline" disabled={isLoading}>
-              Forgot Password?
-            </button>
-          </div>
-        </CardContent>
-        <CardFooter className="flex flex-col">
-          <Button className="w-full" onClick={handleLogin} disabled={isLoading}>
-            {isLoading ? 'Signing In...' : 'Sign In'}
-          </Button>
-          <p className="mt-4 text-xs text-center text-muted-foreground">
-            Don't have an account?{' '}
-            <Link to="/signup" className="underline">
-              Sign up
-            </Link>
-          </p>
-        </CardFooter>
-      </Card>
+    <div className="flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 px-4">
+       <div className="w-full max-w-md p-8 space-y-8 bg-white rounded-lg shadow-md dark:bg-gray-800">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold">Welcome Back</h1>
+          <p className="text-gray-500 dark:text-gray-400">Sign in to continue to TagnetIQ</p>
+        </div>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+            <FormField
+              control={form.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email</FormLabel>
+                  <FormControl>
+                    <Input placeholder="you@example.com" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="password"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Password</FormLabel>
+                  <FormControl>
+                    {/* GHOST FIX: onKeyDown handler added */}
+                    <Input type="password" placeholder="••••••••" {...field} onKeyDown={handleKeyDown}/>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? 'Signing In...' : 'Sign In'}
+            </Button>
+          </form>
+        </Form>
+        <div className="text-center">
+            <p className="text-sm">
+                Don't have an account?{' '}
+                <Link to="/signup" className="font-medium text-blue-600 hover:text-blue-500">
+                Sign Up
+                </Link>
+            </p>
+        </div>
+      </div>
     </div>
   );
 };

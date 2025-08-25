@@ -1,7 +1,9 @@
 // FILE: src/pages/Vault.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { useMfa } from '@/contexts/MfaContext';
 import { VaultItemCard } from '@/components/vault/VaultItemCard';
 import { ItemDetailModal } from '@/components/vault/ItemDetailModal';
@@ -27,45 +29,32 @@ export interface VaultItem {
   created_at: string;
 }
 
+const fetchVaultItems = async (accessToken: string | undefined) => {
+    if (!accessToken) {
+        throw new Error("Not authenticated");
+    }
+    const { data, error } = await supabase.from('vault_items').select('*');
+    if (error) {
+        throw new Error(error.message);
+    }
+    return data;
+}
+
 const VaultPage: React.FC = () => {
-  const { isMfaEnrolled, isVaultUnlocked, isLoading: isMfaLoading, checkMfaStatus, unlockVault } = useMfa();
-  const [items, setItems] = useState<VaultItem[]>([]);
-  const [loadingItems, setLoadingItems] = useState(true);
-  const [selectedItem, setSelectedItem] = useState<VaultItem | null>(null);
-  const [challengeItem, setChallengeItem] = useState<VaultItem | null>(null);
+    const { profile, loading: authLoading, session } = useAuth();
+    const { isUnlocked, unlockVault } = useMfa();
 
-  useEffect(() => {
-    const fetchVaultItems = async () => {
-      if (!isVaultUnlocked) {
-        setLoadingItems(false);
-        return;
-      };
+    const [selectedItem, setSelectedItem] = useState<VaultItem | null>(null);
+    const [challengeItem, setChallengeItem] = useState<VaultItem | null>(null);
 
-      setLoadingItems(true);
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) throw new Error("Not authenticated");
+    const { data: items, isLoading: isLoadingItems, error: itemsError } = useQuery<VaultItem[], Error>({
+        queryKey: ['vaultItems'],
+        queryFn: () => fetchVaultItems(session?.access_token),
+        enabled: !!session?.access_token && isUnlocked,
+    });
 
-        const response = await fetch('/api/vault', {
-          headers: { 'Authorization': `Bearer ${session.access_token}` }
-        });
-
-        if (!response.ok) throw new Error("Failed to fetch vault items.");
-        
-        const data = await response.json();
-        setItems(data);
-      } catch (error: any) {
-        toast.error("Error Loading Vault", { description: error.message });
-      } finally {
-        setLoadingItems(false);
-      }
-    };
-
-    fetchVaultItems();
-  }, [isVaultUnlocked]);
-  
   const handleItemUpdate = (updatedItem: VaultItem) => {
-    setItems(prevItems => prevItems.map(item => item.id === updatedItem.id ? updatedItem : item));
+    setSelectedItem(updatedItem)
     toast.success(`${updatedItem.asset_name} has been updated.`);
   };
 
@@ -105,16 +94,15 @@ const VaultPage: React.FC = () => {
     }
   };
 
-  if (isMfaLoading) {
-    return (
-      <div className="container mx-auto p-8 text-center flex flex-col items-center justify-center h-[calc(100vh-8rem)]">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        <p className="mt-4 text-muted-foreground">Verifying security status...</p>
-      </div>
-    );
+  if (authLoading) {
+    return <div className="container mx-auto p-8 text-center">Loading Security Profile...</div>;
   }
 
-  if (!isMfaEnrolled) {
+  if (!profile) {
+      return <div className="container mx-auto p-8 text-center">Error: User profile not found.</div>;
+  }
+
+  if (!profile.mfa_enrolled) {
     return (
       <div className="container mx-auto p-4 md:p-8 flex items-center justify-center h-[calc(100vh-8rem)]">
         <Card className="max-w-md w-full">
@@ -128,14 +116,14 @@ const VaultPage: React.FC = () => {
                 </CardDescription>
             </CardHeader>
             <CardContent>
-                <MfaSetup onSuccess={checkMfaStatus} />
+                <MfaSetup onSuccess={() => {}} />
             </CardContent>
         </Card>
       </div>
     );
   }
 
-  if (!isVaultUnlocked) {
+  if (profile.mfa_enrolled && !isUnlocked) {
      return (
       <div className="container mx-auto p-4 md:p-8 flex items-center justify-center h-[calc(100vh-8rem)]">
         <Card className="max-w-sm w-full">
@@ -154,19 +142,24 @@ const VaultPage: React.FC = () => {
           <h1 className="text-3xl font-bold">Digital Vault</h1>
           <p className="text-muted-foreground">Your secure inventory of valued assets.</p>
         </div>
-        <PdfDownloadButton items={items} />
+        <PdfDownloadButton items={items || []} />
       </div>
 
-      {loadingItems ? (
+      {isLoadingItems ? (
          <div className="text-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary mx-auto" /></div>
-      ) : items.length === 0 ? (
+      ) : itemsError ? (
+          <div className="text-center py-16 border-2 border-dashed rounded-lg">
+          <h3 className="text-xl font-semibold">Error Loading Vault</h3>
+          <p className="text-muted-foreground mt-2">{itemsError.message}</p>
+        </div>
+      ) : items && items.length === 0 ? (
         <div className="text-center py-16 border-2 border-dashed rounded-lg">
           <h3 className="text-xl font-semibold">Your Vault is Empty</h3>
           <p className="text-muted-foreground mt-2">Add items from your analysis history to begin building your inventory.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-          {items.map(item => (
+          {items && items.map(item => (
             <VaultItemCard 
               key={item.id} 
               item={item} 
