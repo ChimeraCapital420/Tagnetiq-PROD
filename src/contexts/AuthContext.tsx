@@ -5,20 +5,16 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 
-// Define AppRole Type
-export type AppRole = 'admin' | 'developer' | 'investor' | 'retail' | 'user';
-
 // The Profile type now includes our new, more granular role.
 export interface Profile {
   id: string;
   email: string;
-  role: AppRole;
-  screen_name: string;
-  mfa_enrolled: boolean;
+  role: 'admin' | 'developer' | 'investor' | 'retail' | 'user';
   full_name?: string;
   avatar_url?: string;
   onboarding_complete: boolean;
   has_seen_arena_intro: boolean;
+  // Other profile fields...
   settings: {
     tts_enabled: boolean;
     tts_voice_uri: string | null;
@@ -37,8 +33,6 @@ interface AuthContextType {
   isAdmin: boolean;
   isDeveloper: boolean;
   isInvestor: boolean;
-  isRetail: boolean;
-  isUser: boolean;
   setProfile: React.Dispatch<React.SetStateAction<Profile | null>>;
 }
 
@@ -51,8 +45,6 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   isDeveloper: false,
   isInvestor: false,
-  isRetail: false,
-  isUser: false,
   setProfile: () => {},
 });
 
@@ -66,11 +58,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Derived role states for easy access
   const isAdmin = profile?.role === 'admin';
-  const isDeveloper = profile?.role === 'developer';
-  const isInvestor = profile?.role === 'investor';
-  const isRetail = profile?.role === 'retail';
-  const isUser = profile?.role === 'user';
-
+  const isDeveloper = profile?.role === 'developer' || isAdmin; // Admins are also developers
+  const isInvestor = profile?.role === 'investor' || isAdmin; // Admins are also investors
 
   const fetchSessionData = useCallback(async (currentSession: Session | null) => {
     setSession(currentSession);
@@ -81,7 +70,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Fetch profile and check for admin role from a trusted source (the database).
       const { data: userProfile, error } = await supabase
         .from('profiles')
-        .select('id, email, role, screen_name, mfa_enrolled, full_name, avatar_url, onboarding_complete, has_seen_arena_intro, settings, created_at, updated_at')
+        .select('*')
         .eq('id', currentUser.id)
         .single();
       
@@ -89,6 +78,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error("GHOST REPORT: Error fetching profile. User may not exist in profiles table.", error);
         setProfile(null);
       } else {
+        // --- DEVELOPER SHORTCUT ---
+        // For local development, you can force an admin role for a specific user.
+        const ADMIN_EMAILS = ['admin@tagnetiq.com']; // Add your dev email here
+        if (ADMIN_EMAILS.includes(currentUser.email!)) {
+          userProfile.role = 'admin';
+        }
+        // --- END SHORTCUT ---
         setProfile(userProfile as Profile);
       }
     } else {
@@ -104,9 +100,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
-        if (_event === 'SIGNED_IN' || _event === 'USER_UPDATED') {
-            fetchSessionData(session);
-        }
         fetchSessionData(session);
       }
     );
@@ -118,22 +111,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await supabase.auth.signOut();
   };
 
-  const value = {
-      user,
-      profile,
-      session,
-      loading,
-      signOut,
-      isAdmin,
-      isDeveloper,
-      isInvestor,
-      isRetail,
-      isUser,
-      setProfile
-  }
-
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider value={{ user, profile, session, loading, signOut, isAdmin, isDeveloper, isInvestor, setProfile }}>
       {children}
     </AuthContext.Provider>
   );

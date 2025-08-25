@@ -1,4 +1,4 @@
-// FILE: src/components/ui/sonner.tsx (CREATE THIS NEW FILE)
+// FILE: src/components/ui/sonner.tsx
 import { Toaster as Sonner } from "sonner"
 
 type ToasterProps = React.ComponentProps<typeof Sonner>
@@ -9,6 +9,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme="dark"
       className="toaster group"
+      position="bottom-right"
       toastOptions={{
         classNames: {
           toast:

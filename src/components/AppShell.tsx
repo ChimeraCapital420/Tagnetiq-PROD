@@ -36,7 +36,7 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     
     let imageUrl = '';
     const isHomePage = location.pathname === '/';
-    const isAuthPage = !user && (location.pathname === '/login' || location.pathname === '/signup');
+    const isAuthPage = location.pathname === '/login' || location.pathname === '/signup';
     const isInvestorPage = location.pathname === '/investor' || location.pathname === '/admin/investors';
 
     if (isHomePage) {
@@ -46,9 +46,6 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     } else if (isInvestorPage) {
         imageUrl = '/images/investor-splash.jpg';
     } else {
-        // CORRECTED: This block now runs for ANY authenticated page that isn't a special case.
-        // The check for `themeMode === 'dark'` has been removed, allowing backgrounds
-        // to appear in both light and dark modes.
         imageUrl = themeImageMap[theme] || '';
     }
     
