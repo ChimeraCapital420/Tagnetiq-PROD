@@ -88,6 +88,7 @@ export const VerificationModal: React.FC<VerificationModalProps> = ({ challengeI
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Verify Item Possession</DialogTitle>
+          {/* CORRECTED: This description was added to fix the accessibility warning without changing any logic. */}
           <DialogDescription>
             Take a photo of the item next to a piece of paper with your username and today's date written on it.
           </DialogDescription>
