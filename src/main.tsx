@@ -5,14 +5,17 @@ import ReactDOM from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
-import './i18n'; // Import the i18n configuration
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+// Create a client
+const queryClient = new QueryClient();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <React.Suspense fallback={<div>Loading...</div>}>
+      <QueryClientProvider client={queryClient}>
         <App />
-      </React.Suspense>
+      </QueryClientProvider>
     </ErrorBoundary>
   </React.StrictMode>
 );
