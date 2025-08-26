@@ -9,13 +9,14 @@ import { MfaSetup } from '../components/mfa/MfaSetup';
 import { MfaUnlock } from '../components/mfa/MfaUnlock';
 import { VaultItemCard } from '../components/vault/VaultItemCard';
 import { PdfDownloadButton } from '../components/vault/PdfDownloadButton';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+// CORRECTED: The import path for the Alert component was wrong. This is the fix.
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx'; 
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { ItemDetailModal } from '@/components/vault/ItemDetailModal';
 import { ChallengeConfirmationModal } from '@/components/arena/ChallengeConfirmationModal';
 import { toast } from 'sonner';
 
-// CORRECTED: The VaultItem type MUST be defined and exported here,
+// The VaultItem type MUST be defined and exported here,
 // as all child components import it from this file.
 export interface VaultItem {
   id: string;
@@ -109,7 +110,6 @@ const VaultPage: React.FC = () => {
   }
 
   if (!profile.mfa_enrolled) {
-    // The onSuccess prop is required by the MfaSetup component.
     return <MfaSetup onSuccess={() => queryClient.invalidateQueries({ queryKey: ['profile'] })} />;
   }
 
@@ -122,7 +122,6 @@ const VaultPage: React.FC = () => {
       <div className="container mx-auto p-4 md:p-8">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-4xl font-bold">Digital Vault</h1>
-          {/* CORRECTED: Removed the 'profile' prop which is not accepted by PdfDownloadButton */}
           {vaultItems && vaultItems.length > 0 && <PdfDownloadButton items={vaultItems} />}
         </div>
 
@@ -165,7 +164,6 @@ const VaultPage: React.FC = () => {
         )}
       </div>
       
-      {/* CORRECTED: Removed the 'isOpen' prop which is not accepted by ItemDetailModal */}
       {selectedItem && (
         <ItemDetailModal 
           item={selectedItem} 
@@ -174,7 +172,6 @@ const VaultPage: React.FC = () => {
         />
       )}
       
-      {/* CORRECTED: Changed prop 'onSuccess' to 'onConfirm' to match the component's definition */}
       {itemToChallenge && (
         <ChallengeConfirmationModal 
           isOpen={!!itemToChallenge}
