@@ -27,7 +27,6 @@ const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error("Failed to find the root element");
 }
-
 const root = ReactDOM.createRoot(rootElement);
 
 root.render(
@@ -43,8 +42,8 @@ root.render(
               </MfaProvider>
             </AuthProvider>
           </AppProvider>
+          <ReactQueryDevtools initialIsOpen={false} />
         </ThemeProvider>
-        <ReactQueryDevtools initialIsOpen={false} />
       </QueryClientProvider>
     </Router>
   </React.StrictMode>
