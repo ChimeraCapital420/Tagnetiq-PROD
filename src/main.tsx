@@ -1,50 +1,32 @@
+// FILE: src/main.tsx
+
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter as Router } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-// import { ReactQueryDevtools } from '@tanstack/react-query-devtools'; // Temporarily removed
-import App from './App';
-import { AuthProvider } from './contexts/AuthContext';
-import { MfaProvider } from './contexts/MfaContext';
-import { AppProvider } from './contexts/AppContext';
-import { ThemeProvider } from './components/theme-provider';
-import { Toaster } from './components/ui/sonner';
+import App from './App.tsx';
 import './index.css';
+import ErrorBoundary from './components/ErrorBoundary.tsx';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AuthProvider } from './contexts/AuthContext.tsx';
+import { MfaProvider } from './contexts/MfaContext.tsx';
+import './i18n'; // Initializes the language library
 
-// Create a single, stable instance of the QueryClient.
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
-      cacheTime: 1000 * 60 * 30, // 30 minutes
-      refetchOnWindowFocus: false, // Prevents unnecessary refetches
-      retry: 2, // Retry failed queries twice
-    },
-  },
-});
+// Creates the client for the data-fetching library
+const queryClient = new QueryClient();
 
-const rootElement = document.getElementById('root');
-if (!rootElement) {
-  throw new Error("Failed to find the root element");
-}
-const root = ReactDOM.createRoot(rootElement);
-
-root.render(
+ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <Router>
+    <ErrorBoundary>
+      {/* Provides the data-fetching client to the entire app */}
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-          <AuthProvider>
-            <AppProvider>
-              <MfaProvider>
-                <App />
-                <Toaster />
-              </MfaProvider>
-            </AppProvider>
-          </AuthProvider>
-          {/* <ReactQueryDevtools initialIsOpen={false} /> */}
-        </ThemeProvider>
+        <AuthProvider>
+          <MfaProvider>
+            {/* Allows language files to load correctly */}
+            <React.Suspense fallback="Loading...">
+              <App />
+            </React.Suspense>
+          </MfaProvider>
+        </AuthProvider>
       </QueryClientProvider>
-    </Router>
+    </ErrorBoundary>
   </React.StrictMode>
 );

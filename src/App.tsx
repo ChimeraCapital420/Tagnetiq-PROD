@@ -3,14 +3,13 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useAppContext } from '@/contexts/AppContext';
-import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { BetaProvider } from '@/contexts/BetaContext';
 import { ThemeProvider } from '@/components/theme-provider';
 import { Toaster as SonnerToaster } from '@/components/ui/sonner';
 import AppLayout from '@/components/AppLayout';
 import AppShell from '@/components/AppShell';
 import ProtectedRoute from '@/routes/ProtectedRoute';
-import { MfaProvider } from '@/contexts/MfaContext';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 
@@ -48,8 +47,8 @@ const AppRoutes: React.FC = () => {
             <Route path="/login" element={!user ? <Login /> : <Navigate to="/dashboard" replace />} />
             <Route path="/signup" element={!user ? <SignUp /> : <Navigate to="/dashboard" replace />} />
             <Route path="/certificate/:id" element={<CertificatePage />} />
-            <Route path="/investor" element={<InvestorPortal />} /> 
-            
+            <Route path="/investor" element={<InvestorPortal />} />
+
             <Route path="/dashboard" element={<ProtectedRoute isAllowed={!!user} to="/login"><Dashboard /></ProtectedRoute>} />
             <Route path="/vault" element={<ProtectedRoute isAllowed={!!user} to="/login"><VaultPage /></ProtectedRoute>} />
             <Route path="/beta/welcome" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaWelcome /></ProtectedRoute>} />
@@ -61,13 +60,13 @@ const AppRoutes: React.FC = () => {
             <Route path="/arena/challenge/:id" element={<ProtectedRoute isAllowed={!!user} to="/login"><ChallengeDetail /></ProtectedRoute>} />
             <Route path="/arena/leaderboard" element={<ProtectedRoute isAllowed={!!user} to="/login"><Leaderboard /></ProtectedRoute>} />
             <Route path="/arena/messages" element={<ProtectedRoute isAllowed={!!user} to="/login"><MessagesPage /></ProtectedRoute>} />
-            
+
             <Route path="/beta-controls" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><BetaControls /></ProtectedRoute>} />
             <Route path="/admin/investors" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><InvestorSuite /></ProtectedRoute>} />
             <Route path="/admin/investors/manage" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><Investor /></ProtectedRoute>} />
             <Route path="/admin/beta" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><BetaConsole /></ProtectedRoute>} />
             <Route path="/admin/map" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><MapConsole /></ProtectedRoute>} />
-            
+
             <Route path="*" element={<NotFound />} />
         </Routes>
     );
@@ -88,7 +87,7 @@ const AppContent: React.FC = () => {
                   method: 'POST',
                   headers: { 'Authorization': `Bearer ${session.access_token}` },
               });
-              
+
               setProfile(p => p ? { ...p, has_seen_arena_intro: true } : null);
           } catch (error) {
               toast.error("Could not save preference", { description: (error as Error).message });
@@ -113,20 +112,16 @@ const AppContent: React.FC = () => {
 function App() {
   return (
     <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-      <AuthProvider>
-        <AppProvider>
-          <BetaProvider>
-            <MfaProvider>
-              <Router>
-                  <AppShell>
-                      <AppContent />
-                      <SonnerToaster />
-                  </AppShell>
-              </Router>
-            </MfaProvider>
-          </BetaProvider>
-        </AppProvider>
-      </AuthProvider>
+      <AppProvider>
+        <BetaProvider>
+            <Router>
+                <AppShell>
+                    <AppContent />
+                    <SonnerToaster />
+                </AppShell>
+            </Router>
+        </BetaProvider>
+      </AppProvider>
     </ThemeProvider>
   );
 }
