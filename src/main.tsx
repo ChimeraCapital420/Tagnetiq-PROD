@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter as Router } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+// import { ReactQueryDevtools } from '@tanstack/react-query-devtools'; // Temporarily removed
 import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
 import { MfaProvider } from './contexts/MfaContext';
@@ -34,15 +34,15 @@ root.render(
     <Router>
       <QueryClientProvider client={queryClient}>
         <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-          <AppProvider>
-            <AuthProvider>
+          <AuthProvider>
+            <AppProvider>
               <MfaProvider>
                 <App />
                 <Toaster />
               </MfaProvider>
-            </AuthProvider>
-          </AppProvider>
-          <ReactQueryDevtools initialIsOpen={false} />
+            </AppProvider>
+          </AuthProvider>
+          {/* <ReactQueryDevtools initialIsOpen={false} /> */}
         </ThemeProvider>
       </QueryClientProvider>
     </Router>
