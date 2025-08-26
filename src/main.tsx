@@ -1,26 +1,51 @@
-// FILE: src/main.tsx
-
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App.tsx';
-import './index.css';
-import ErrorBoundary from './components/ErrorBoundary.tsx';
+import { BrowserRouter as Router } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import './i18n'; // Initializes the language library
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import App from './App';
+import { AuthProvider } from './contexts/AuthContext';
+import { MfaProvider } from './contexts/MfaContext';
+import { AppProvider } from './contexts/AppContext';
+import { ThemeProvider } from './components/theme-provider';
+import { Toaster } from './components/ui/sonner';
+import './index.css';
 
-// Creates the client for the data-fetching library
-const queryClient = new QueryClient();
+// Create a single, stable instance of the QueryClient.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5, // 5 minutes
+      cacheTime: 1000 * 60 * 30, // 30 minutes
+      refetchOnWindowFocus: false, // Prevents unnecessary refetches
+      retry: 2, // Retry failed queries twice
+    },
+  },
+});
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error("Failed to find the root element");
+}
+
+const root = ReactDOM.createRoot(rootElement);
+
+root.render(
   <React.StrictMode>
-    <ErrorBoundary>
-      {/* Provides the data-fetching client to the entire app */}
+    <Router>
       <QueryClientProvider client={queryClient}>
-        {/* Allows language files to load correctly */}
-        <React.Suspense fallback="Loading...">
-          <App />
-        </React.Suspense>
+        <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+          <AppProvider>
+            <AuthProvider>
+              <MfaProvider>
+                <App />
+                <Toaster />
+              </MfaProvider>
+            </AuthProvider>
+          </AppProvider>
+        </ThemeProvider>
+        <ReactQueryDevtools initialIsOpen={false} />
       </QueryClientProvider>
-    </ErrorBoundary>
+    </Router>
   </React.StrictMode>
 );
