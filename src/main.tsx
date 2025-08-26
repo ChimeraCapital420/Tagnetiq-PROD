@@ -6,17 +6,17 @@ import App from './App.tsx';
 import './index.css';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import './i18n'; // This was missing: It initializes the language library.
+import './i18n'; // Initializes the language library
 
-// This was misconfigured: It creates the client for data fetching.
+// Creates the client for the data-fetching library
 const queryClient = new QueryClient();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      {/* This was missing: It provides the data client to your app. */}
+      {/* Provides the data-fetching client to the entire app */}
       <QueryClientProvider client={queryClient}>
-        {/* This was missing: It allows language files to load. */}
+        {/* Allows language files to load correctly */}
         <React.Suspense fallback="Loading...">
           <App />
         </React.Suspense>
