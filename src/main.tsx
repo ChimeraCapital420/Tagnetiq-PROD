@@ -6,9 +6,9 @@ import App from './App.tsx';
 import './index.css';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import './i18n'; // CRITICAL: This line imports and runs your i18n setup.
+import './i18n'; // CRITICAL: This was missing. It initializes the language library.
 
-// CORRECTED: The QueryClient MUST be instantiated with parentheses.
+// CORRECTED: The QueryClient MUST be instantiated with parentheses `()`.
 const queryClient = new QueryClient();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
