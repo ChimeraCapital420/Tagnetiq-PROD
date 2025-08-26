@@ -57,11 +57,11 @@ const VaultPage: React.FC = () => {
     return data || [];
   };
 
-  const { data: vaultItems, isLoading: isVaultLoading, isError, error } = useQuery<VaultItem[], Error>(
-    'vaultItems',
-    fetchVaultItems,
-    { enabled: !!session?.access_token && isUnlocked }
-  );
+  const { data: vaultItems, isLoading: isVaultLoading, isError, error } = useQuery<VaultItem[], Error>({
+    queryKey: ['vaultItems'],
+    queryFn: fetchVaultItems,
+    enabled: !!session?.access_token && isUnlocked,
+  });
   
   const handleConfirmChallenge = async (askingPrice: number) => {
     if (!itemToChallenge || !session) return;
