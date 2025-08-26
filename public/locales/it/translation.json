@@ -1,0 +1,13 @@
+{
+  "welcome": "Benvenuto",
+  "select_language": "Seleziona la tua lingua",
+  "onboarding_title": "Benvenuto in TagnetIQ!",
+  "onboarding_description": "Impostiamo il tuo profilo. Questo ci aiuterà a personalizzare la tua esperienza.",
+  "screen_name_label": "Scegli un nome utente",
+  "screen_name_placeholder": "es: MagoDellaRivendita",
+  "location_label": "Dove ti trovi?",
+  "location_placeholder": "es: Roma, IT",
+  "interests_label": "Quali sono i tuoi interessi principali?",
+  "interests_description": "Seleziona tutto ciò che si applica. Questo aiuta ad adattare l'IA alle tue esigenze.",
+  "complete_setup_button": "Completa la configurazione ed entra nell'app"
+}

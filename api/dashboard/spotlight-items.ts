@@ -1,4 +1,4 @@
-// FILE: api/dashboard/spotlight-items.ts
+// FILE: api/dashboard/spotlight-items.ts (REVISED)
 
 import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -12,78 +12,142 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const user = await verifyUser(req);
 
-    // Tier 1: Fetch user's interests
-    const { data: profile, error: profileError } = await supaAdmin
-      .from('profiles')
-      .select('interests')
-      .eq('id', user.id)
-      .single();
-
-    if (profileError) throw new Error('Could not fetch user profile.');
-
-    const userInterests: string[] = profile?.interests || [];
-    let spotlightItems: any[] = [];
-
-    // Fetch items matching user interests
-    if (userInterests.length > 0) {
-      const { data: interestItems, error: interestError } = await supaAdmin
+    // Simplified Logic: Fetch the 10 most recent active listings.
+    // This removes the dependency on the 'profiles' table and 'interests',
+    // making the query more robust against schema variations.
+    const { data: recentItems, error: recentError } = await supaAdmin
         .from('marketplace_listings')
-        .select('id, item_name, primary_photo_url')
-        .in('item_category', userInterests)
+        .select('id, item_name, primary_photo_url, challenge_id')
         .eq('status', 'active')
-        .limit(10);
-      
-      if (interestError) console.error('Error fetching interest items:', interestError);
-      if (interestItems) spotlightItems = [...spotlightItems, ...interestItems];
-    }
-
-    // Tier 2: Fetch items based on recent scan categories if needed
-    if (spotlightItems.length < 10) {
-      const { data: recentScans, error: scanError } = await supaAdmin
-        .from('scan_history')
-        .select('category')
-        .eq('user_id', user.id)
         .order('created_at', { ascending: false })
-        .limit(5);
+        .limit(10);
 
-      if (scanError) console.error('Error fetching recent scans:', scanError);
-
-      if (recentScans && recentScans.length > 0) {
-        const recentCategories = [...new Set(recentScans.map(s => s.category))];
-        const { data: categoryItems, error: categoryError } = await supaAdmin
-          .from('marketplace_listings')
-          .select('id, item_name, primary_photo_url')
-          .in('item_category', recentCategories)
-          .eq('status', 'active')
-          .limit(10 - spotlightItems.length);
-
-        if (categoryError) console.error('Error fetching category items:', categoryError);
-        if (categoryItems) spotlightItems = [...spotlightItems, ...categoryItems];
-      }
+    if (recentError) {
+      console.error('Error fetching recent items for spotlight:', recentError);
+      // Throwing the error will be caught by the catch block and return a 500
+      throw recentError;
     }
-    
-    // Tier 3: Fill with most recent popular items if still not enough
-    if (spotlightItems.length < 10) {
-        const { data: recentItems, error: recentError } = await supaAdmin
-            .from('marketplace_listings')
-            .select('id, item_name, primary_photo_url')
-            .eq('status', 'active')
-            .order('created_at', { ascending: false })
-            .limit(10 - spotlightItems.length);
 
-        if (recentError) console.error('Error fetching recent items:', recentError);
-        if (recentItems) spotlightItems = [...spotlightItems, ...recentItems];
-    }
-    
-    // Deduplicate and ensure final count is 10 or less
-    const uniqueItems = Array.from(new Map(spotlightItems.map(item => [item.id, item])).values());
-
-    return res.status(200).json(uniqueItems.slice(0, 10));
+    return res.status(200).json(recentItems || []);
 
   } catch (error: any) {
     const message = error.message || 'An unexpected error occurred.';
     if (message.includes('Authentication')) return res.status(401).json({ error: message });
     console.error('Error fetching spotlight items:', message);
-    return res.status(500).json({ error: message });
+    // Ensure a generic error is sent to the client
+    return res.status(500).json({ error: 'Could not retrieve spotlight items.' });
   }
 }
+```typescript
+// FILE: src/components/arena/AlertsDropdown.tsx (REVISED)
+
+import React, { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Button } from '@/components/ui/button';
+import { Bell, BellRing } from 'lucide-react';
+import { Link } from 'react-router-dom';
+
+interface Alert {
+    id: number;
+    listing_id: string; // We'll fetch the listing_id directly
+    // The nested listing data is removed to simplify the query
+}
+
+// A new interface for the simplified data we will fetch
+interface ListingInfo {
+    item_name: string;
+    challenge_id: string;
+}
+
+const AlertsDropdown: React.FC = () => {
+    const [alerts, setAlerts] = useState<Alert[]>([]);
+    const [listingDetails, setListingDetails] = useState<Record<string, ListingInfo>>({});
+    const [isOpen, setIsOpen] = useState(false);
+
+    useEffect(() => {
+        const fetchAlertsAndDetails = async () => {
+            if (!isOpen) return;
+
+            // Step 1: Fetch the alerts, but without the complex join
+            const { data, error } = await supabase
+                .from('watchlist_alerts')
+                .select(`id, listing_id`)
+                .eq('is_read', false)
+                .limit(5);
+
+            if (error) {
+                console.error("Error fetching alerts:", error);
+                return;
+            }
+            
+            setAlerts(data || []);
+
+            // Step 2: If we have alerts, fetch the details for their listings
+            if (data && data.length > 0) {
+                const listingIds = data.map(a => a.listing_id);
+                const { data: listingsData, error: listingsError } = await supabase
+                    .from('marketplace_listings')
+                    .select('id, item_name, challenge_id')
+                    .in('id', listingIds);
+
+                if (listingsError) {
+                    console.error("Error fetching listing details for alerts:", listingsError);
+                    return;
+                }
+
+                // Create a map for easy lookup
+                const detailsMap = (listingsData || []).reduce((acc, listing) => {
+                    acc[listing.id] = { item_name: listing.item_name, challenge_id: listing.challenge_id };
+                    return acc;
+                }, {} as Record<string, ListingInfo>);
+                
+                setListingDetails(detailsMap);
+            }
+        };
+
+        fetchAlertsAndDetails();
+    }, [isOpen]);
+
+    const handleMarkAsRead = async () => {
+        if (alerts.length === 0) return;
+        const alertIds = alerts.map(a => a.id);
+        await supabase.from('watchlist_alerts').update({ is_read: true }).in('id', alertIds);
+        setAlerts([]);
+        setListingDetails({});
+    };
+
+    return (
+        <Popover open={isOpen} onOpenChange={setIsOpen}>
+            <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" className="relative">
+                    {alerts.length > 0 ? <BellRing className="h-5 w-5 text-primary" /> : <Bell className="h-5 w-5" />}
+                    {alerts.length > 0 && (
+                        <span className="absolute top-0 right-0 h-2 w-2 rounded-full bg-primary" />
+                    )}
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80" align="end" onCloseAutoFocus={handleMarkAsRead}>
+                <div className="p-4">
+                    <h4 className="font-medium leading-none">Notifications</h4>
+                    <p className="text-sm text-muted-foreground">New items matching your watchlist.</p>
+                </div>
+                <div className="grid gap-2 p-2">
+                    {alerts.length > 0 ? alerts.map(alert => {
+                        const details = listingDetails[alert.listing_id];
+                        if (!details) return null; // Don't render if details haven't loaded yet
+                        return (
+                            <Link to={`/arena/challenge/${details.challenge_id}`} key={alert.id} className="block p-2 hover:bg-muted rounded-md text-sm">
+                                New listing for: <span className="font-semibold">{details.item_name}</span>
+                            </Link>
+                        )
+                    }) : (
+                        <p className="text-sm text-center text-muted-foreground py-4">No new alerts.</p>
+                    )}
+                </div>
+            </PopoverContent>
+        </Popover>
+    );
+};
+
+export default AlertsDropdown;

@@ -2,8 +2,75 @@
 
 import { NavigateFunction } from 'react-router-dom';
 import { toast } from 'sonner';
+import { supabase } from './supabase';
 
-// The context now includes the TTS speak function and new action dispatchers
+// --- SYSTEM 1: OLD SCANNER-SPECIFIC COMMANDS (Restored for DualScanner) ---
+
+interface SimpleCommandActions {
+    onScan: () => void;
+    onClose: () => void;
+}
+
+const debounce = <F extends (...args: any[]) => any>(func: F, delay: number) => {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    return (...args: Parameters<F>): void => {
+        if (timeout) {
+            clearTimeout(timeout);
+        }
+        timeout = setTimeout(() => {
+            func(...args);
+        }, delay);
+    };
+};
+
+const debouncedMarketSearch = debounce(async (query: string) => {
+    try {
+        const { data, error } = await supabase
+            .from('marketplace_listings')
+            .select('item_name, challenge_id')
+            .textSearch('fts', query, { type: 'websearch' })
+            .limit(1);
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+            toast.success(`Found "${data[0].item_name}". Navigating now...`);
+            window.location.href = `/arena/challenge/${data[0].challenge_id}`;
+        } else {
+            toast.info(`No direct match found for "${query}". Broadening search.`);
+            window.location.href = `/arena/marketplace?search=${encodeURIComponent(query)}`;
+        }
+    } catch (err) {
+        toast.error('Error searching marketplace', { description: (err as Error).message });
+    }
+}, 500);
+
+// This function is required by the useStt hook, which is used by DualScanner.
+export const processVoiceCommand = (command: string, actions: SimpleCommandActions) => {
+    const lowerCommand = command.toLowerCase();
+    console.log("Processing simple command:", lowerCommand);
+    toast.info(`Command heard: "${command}"`);
+
+    if (lowerCommand.includes("scan") || lowerCommand.includes("analyze")) {
+        actions.onScan();
+    } else if (lowerCommand.includes("close") || lowerCommand.includes("cancel")) {
+        actions.onClose();
+    } else if (lowerCommand.startsWith("search for")) {
+        const query = lowerCommand.replace("search for", "").trim();
+        if (query) {
+            toast.info(`Searching marketplace for: "${query}"...`);
+            debouncedMarketSearch(query);
+        } else {
+            toast.warning("Search command heard, but no item was specified.");
+        }
+    } else {
+        toast.warning("Command not recognized", { description: "Try 'Scan', 'Close', or 'Search for [item]'."});
+    }
+};
+
+
+// --- SYSTEM 2: NEW ORACLE-BASED GLOBAL COMMANDS (Your existing code) ---
+
 interface CommandContext {
   setIsScannerOpen: (isOpen: boolean) => void;
   startScanWithCategory: (categoryId: string, subcategoryId: string | null) => void;
@@ -19,10 +86,10 @@ interface OracleResponse {
   feedback_phrase: string;
 }
 
+// This function is used by the new global voice control feature.
 export const handleVoiceCommand = async (command: string, context: CommandContext) => {
-  console.log(`Received command: "${command}"`);
+  console.log(`Received command for Oracle: "${command}"`);
 
-  // --- Fast Path for Simple Commands ---
   if (command.includes('open vault')) {
     context.speak('Opening your Vault.', context.voiceURI);
     context.navigate('/vault');
@@ -34,7 +101,6 @@ export const handleVoiceCommand = async (command: string, context: CommandContex
     return;
   }
 
-  // --- NLU Path for Complex Commands ---
   try {
     const response = await fetch('/api/oracle/interpret-command', {
       method: 'POST',
@@ -48,10 +114,8 @@ export const handleVoiceCommand = async (command: string, context: CommandContex
 
     const data: OracleResponse = await response.json();
     
-    // Speak the feedback phrase first
     context.speak(data.feedback_phrase, context.voiceURI);
 
-    // Execute action based on intent
     switch (data.intent) {
       case 'SEARCH_ARENA':
         context.setSearchArenaQuery(data.parameters.query);
@@ -67,7 +131,6 @@ export const handleVoiceCommand = async (command: string, context: CommandContex
         break;
 
       case 'UNKNOWN':
-        // The feedback phrase already handled the user notification. No further action needed.
         break;
         
       default:

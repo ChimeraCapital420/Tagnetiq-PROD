@@ -1,7 +1,8 @@
 // FILE: src/pages/Vault.tsx
 
 import React, { useState } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+// CORRECTED: Standardized the import path to be absolute.
+import { useAuth } from '@/contexts/AuthContext';
 import { useMfa } from '../contexts/MfaContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
@@ -9,15 +10,12 @@ import { MfaSetup } from '../components/mfa/MfaSetup';
 import { MfaUnlock } from '../components/mfa/MfaUnlock';
 import { VaultItemCard } from '../components/vault/VaultItemCard';
 import { PdfDownloadButton } from '../components/vault/PdfDownloadButton';
-// CORRECTED: This import now points to the file you created in Part 1.
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'; 
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { ItemDetailModal } from '@/components/vault/ItemDetailModal';
 import { ChallengeConfirmationModal } from '@/components/arena/ChallengeConfirmationModal';
 import { toast } from 'sonner';
 
-// The VaultItem type MUST be defined and exported here,
-// as all child components import it from this file.
 export interface VaultItem {
   id: string;
   user_id: string;

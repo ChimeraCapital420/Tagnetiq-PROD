@@ -1,4 +1,4 @@
-// FILE: src/i18n.ts
+// FILE: src/i18n.ts (REVISED AND CORRECTED)
 
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
@@ -9,6 +9,7 @@ i18n
   .use(initReactI18next)
   .init({
     fallbackLng: 'en',
+    supportedLngs: ['en', 'es', 'fr', 'it'], // Added French and Italian
     backend: {
       loadPath: '/locales/{{lng}}/translation.json',
     },

@@ -22,14 +22,6 @@ const OnboardingPage: React.FC = () => {
   const [location, setLocation] = useState('');
   const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [languageSelected, setLanguageSelected] = useState(false);
-
-  React.useEffect(() => {
-    const lng = i18n.language;
-    if(lng === 'en' || lng === 'es') {
-        setLanguageSelected(true);
-    }
-  }, [i18n.language]);
 
   const handleInterestToggle = (categoryId: string) => {
     setSelectedInterests(prev =>
@@ -86,8 +78,8 @@ const OnboardingPage: React.FC = () => {
     <div className="min-h-screen flex items-center justify-center p-4 bg-background">
       <Card className="w-full max-w-2xl">
         <CardHeader>
-          <CardTitle className="text-2xl">{t('welcome')} to TagnetIQ!</CardTitle>
-          <CardDescription>Let's set up your profile. This will help us personalize your experience.</CardDescription>
+          <CardTitle className="text-2xl">{t('onboarding_title')}</CardTitle>
+          <CardDescription>{t('onboarding_description')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="space-y-2">
@@ -96,27 +88,27 @@ const OnboardingPage: React.FC = () => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="screen-name">Choose a Screen Name</Label>
+              <Label htmlFor="screen-name">{t('screen_name_label')}</Label>
               <Input
                 id="screen-name"
-                placeholder="e.g., ResaleWizard"
+                placeholder={t('screen_name_placeholder')}
                 value={screenName}
                 onChange={(e) => setScreenName(e.target.value)}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="location">Where are you located?</Label>
+              <Label htmlFor="location">{t('location_label')}</Label>
               <Input
                 id="location"
-                placeholder="e.g., Denver, CO"
+                placeholder={t('location_placeholder')}
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
               />
             </div>
           </div>
           <div className="space-y-2">
-            <Label>What are your primary interests?</Label>
-            <p className="text-sm text-muted-foreground">Select all that apply. This helps tailor the AI to your needs.</p>
+            <Label>{t('interests_label')}</Label>
+            <p className="text-sm text-muted-foreground">{t('interests_description')}</p>
             <div className="flex flex-wrap gap-2 pt-2">
               {CATEGORIES.map(category => (
                 <Toggle
@@ -130,11 +122,9 @@ const OnboardingPage: React.FC = () => {
               ))}
             </div>
           </div>
-          {languageSelected && (
-            <Button onClick={handleCompleteOnboarding} disabled={isLoading} className="w-full">
-              {isLoading ? 'Saving...' : 'Complete Setup & Enter App'}
-            </Button>
-          )}
+          <Button onClick={handleCompleteOnboarding} disabled={isLoading} className="w-full">
+            {isLoading ? 'Saving...' : t('complete_setup_button')}
+          </Button>
         </CardContent>
       </Card>
     </div>
