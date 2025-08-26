@@ -17,11 +17,15 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   }
 });
 
-// --- Your existing Database type definitions and helpers go below this line ---
+// This is now the single source of truth for the Profile type.
+export type AppRole = 'admin' | 'developer' | 'investor' | 'retail' | 'user';
 
 export interface Profile {
   id: string;
   email: string;
+  role: AppRole;
+  screen_name: string | null;
+  mfa_enrolled: boolean;
   full_name?: string;
   avatar_url?: string;
   subscription_tier: 'free' | 'pro' | 'enterprise';

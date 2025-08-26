@@ -1,18 +1,9 @@
 // FILE: src/contexts/AuthContext.tsx
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { supabase, Profile } from '../lib/supabase';
+// Import the single, authoritative Profile type
+import { supabase, Profile } from '../lib/supabase'; 
 import { Session, User } from '@supabase/supabase-js';
-
-export type AppRole = 'admin' | 'developer' | 'investor' | 'retail' | 'user';
-
-export interface Profile extends Record<string, unknown> {
-  id: string;
-  email: string;
-  role: AppRole;
-  screen_name: string;
-  mfa_enrolled: boolean;
-}
 
 interface AuthContextType {
   session: Session | null;
@@ -50,9 +41,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     if (currentUser) {
       try {
+        // Fetch the entire profile, not just a subset of columns.
+        // This ensures the 'role' and all other data is always present.
         const { data, error, status } = await supabase
           .from('profiles')
-          .select(`id, email, role, screen_name, mfa_enrolled`)
+          .select(`*`) 
           .eq('id', currentUser.id)
           .single();
         if (error && status !== 406) {
