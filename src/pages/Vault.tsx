@@ -9,8 +9,8 @@ import { MfaSetup } from '../components/mfa/MfaSetup';
 import { MfaUnlock } from '../components/mfa/MfaUnlock';
 import { VaultItemCard } from '../components/vault/VaultItemCard';
 import { PdfDownloadButton } from '../components/vault/PdfDownloadButton';
-// CORRECTED: The import path for the Alert component was wrong. This is the fix.
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx'; 
+// CORRECTED: This import now points to the file you created in Part 1.
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'; 
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { ItemDetailModal } from '@/components/vault/ItemDetailModal';
 import { ChallengeConfirmationModal } from '@/components/arena/ChallengeConfirmationModal';
@@ -122,7 +122,7 @@ const VaultPage: React.FC = () => {
       <div className="container mx-auto p-4 md:p-8">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-4xl font-bold">Digital Vault</h1>
-          {vaultItems && vaultItems.length > 0 && <PdfDownloadButton items={vaultItems} />}
+          {vaultItems && vaultItems.length > 0 && profile && <PdfDownloadButton items={vaultItems} profile={profile} />}
         </div>
 
         {isVaultLoading && (
