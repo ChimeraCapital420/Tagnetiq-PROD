@@ -1,11 +1,10 @@
+// FILE: src/lib/supabase.ts
+
 import { createClient } from '@supabase/supabase-js';
 
-// This is the CORRECT, production-safe way to read your keys.
-// Vite replaces these variables with your actual keys during the build process.
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// This error is what you see on the live site because Vercel is missing the keys.
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('CRITICAL ERROR: Supabase keys not found. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your Environment Variables in Vercel.');
 }
@@ -17,7 +16,6 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: true
   }
 });
-
 
 // --- Your existing Database type definitions and helpers go below this line ---
 
