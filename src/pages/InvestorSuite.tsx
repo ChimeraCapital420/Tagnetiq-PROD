@@ -1,4 +1,4 @@
-// FILE: src/pages/InvestorSuite.tsx (REPLACE ENTIRE FILE)
+// FILE: src/pages/InvestorSuite.tsx (REVISED AND VERIFIED)
 
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,8 @@ import { HighlightQuote } from '@/components/investor/HighlightQuote';
 import { ArenaGrowthMetrics } from '@/components/investor/ArenaGrowthMetrics';
 import { Separator } from '@/components/ui/separator';
 import { PartnershipFunnel } from '@/components/investor/PartnershipFunnel';
+import { useAuth } from '@/contexts/AuthContext'; // Added for admin check
+import { InvestorInviteForm } from '@/components/admin/investor/InvestorInviteForm'; // Added to place the form
 
 // Expanded Metrics interface to include all necessary data points
 interface Metrics {
@@ -36,6 +38,7 @@ interface Metrics {
 }
 
 const InvestorSuite: React.FC = () => {
+  const { isAdmin } = useAuth(); // Get admin status from auth context
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState<number>(30);
@@ -58,11 +61,6 @@ const InvestorSuite: React.FC = () => {
     };
     fetchMetrics();
   }, [days]);
-
-  const funnelData = metrics ? [
-    { name: 'Invited', value: metrics.totalBetaInvites, fill: '#8884d8' },
-    { name: 'Activated', value: metrics.totalBetaTesters, fill: '#82ca9d' },
-  ] : [];
 
   const growthChartActions = (
     <div className="flex gap-1">
@@ -117,6 +115,10 @@ const InvestorSuite: React.FC = () => {
                         <LiveFeed />
                     </div>
                     <div className="space-y-8">
+                        {/* --- MODIFICATION START --- */}
+                        {/* The InvestorInviteForm is now placed here, rendered only for admins. */}
+                        {isAdmin && <InvestorInviteForm />}
+                        {/* --- MODIFICATION END --- */}
                         <BetaInsights data={metrics} />
                         <PartnershipFunnel />
                         <FunnelChart />

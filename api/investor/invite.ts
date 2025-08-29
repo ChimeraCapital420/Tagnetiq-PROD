@@ -1,93 +1,43 @@
-// FILE: api/investors/invite.ts
+// FILE: api/investor/invite.ts
 
 import { supaAdmin } from '../_lib/supaAdmin';
-import { createSignature } from '../_lib/crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import QRCode from 'qrcode'; // Import the new library
-import { verifyUserIsAdmin } from '../_lib/security'; // CORRECTED: Import admin verification
+import { verifyUserIsAdmin } from '../_lib/security';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  }
+
   try {
     // SECURITY: Verify the user is an admin before proceeding.
     await verifyUserIsAdmin(req);
 
-    if (req.method !== 'POST') {
-      return res.status(405).json({ error: 'Method Not Allowed' });
+    const { email } = req.body;
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({ error: 'A valid email is required.' });
     }
 
-    const { name, email, company, expires_at, mode } = req.body;
+    // Use the Supabase admin client to invite a new user by email.
+    // This handles the secure token generation and email sending process.
+    const { data, error } = await supaAdmin.auth.admin.inviteUserByEmail(email);
 
-    if (!name || !email || !expires_at || !mode) {
-      return res.status(400).json({ error: 'Missing required fields.' });
+    if (error) {
+      // Provide more specific feedback if the user already exists
+      if (error.message.includes('unique constraint') || error.message.includes('User already registered')) {
+          return res.status(409).json({ error: 'A user with this email already exists.' });
+      }
+      throw error;
     }
 
-    let { data: investor, error: investorError } = await supaAdmin
-      .from('investors')
-      .select('id')
-      .eq('email', email)
-      .single();
+    return res.status(200).json({ success: true, message: `Invite successfully sent to ${email}.` });
 
-    if (investorError && investorError.code !== 'PGRST116') {
-      throw investorError;
+  } catch (error: any) {
+    const message = error.message || 'An unexpected error occurred.';
+    if (message.includes('Authentication') || message.includes('Authorization')) {
+      return res.status(401).json({ error: message });
     }
-
-    if (!investor) {
-      const { data: newInvestor, error: newInvestorError } = await supaAdmin
-        .from('investors')
-        .insert({ name, email, company })
-        .select('id')
-        .single();
-      if (newInvestorError) throw newInvestorError;
-      investor = newInvestor;
-    }
-
-    const token = `tq_${crypto.randomUUID()}`;
-    const { data: invite, error: inviteError } = await supaAdmin
-      .from('investor_invites')
-      .insert({
-        investor_id: investor.id,
-        token,
-        expires_at,
-        mode,
-      })
-      .select('id')
-      .single();
-
-    if (inviteError) throw inviteError;
-
-    const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:5173';
-    const signedUrl = `${baseUrl}/investor?token=${token}`;
-    const pixelSignature = createSignature(invite.id);
-    const pixelUrl = `${baseUrl}/api/pixel?i=${invite.id}&sig=${pixelSignature}`;
-
-    const qrCodeDataUrl = await QRCode.toDataURL(signedUrl, {
-        errorCorrectionLevel: 'H',
-        margin: 2,
-        scale: 6,
-        color: {
-            dark: '#0A0A0A',
-            light: '#F5F5F5'
-        }
-    });
-
-
-    return res.status(200).json({
-      success: true,
-      inviteId: invite.id,
-      signedUrl,
-      pixelUrl,
-      qrCodeDataUrl,
-    });
-
-  } catch (error) {
-    const message = (error as Error).message;
-    if (message.includes('Authorization')) {
-        return res.status(403).json({ error: message });
-    }
-    if (message.includes('Authentication')) {
-        return res.status(401).json({ error: message });
-    }
-    console.error(error);
+    console.error('Error sending Supabase invite:', message);
     return res.status(500).json({ error: message });
   }
 }
