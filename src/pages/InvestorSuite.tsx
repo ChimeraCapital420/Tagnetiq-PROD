@@ -1,4 +1,4 @@
-// FILE: src/pages/InvestorSuite.tsx (REVISED AND VERIFIED)
+// FILE: src/pages/InvestorSuite.tsx (REVISED FOR NEW INVITE MODULE)
 
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
@@ -19,8 +19,7 @@ import { HighlightQuote } from '@/components/investor/HighlightQuote';
 import { ArenaGrowthMetrics } from '@/components/investor/ArenaGrowthMetrics';
 import { Separator } from '@/components/ui/separator';
 import { PartnershipFunnel } from '@/components/investor/PartnershipFunnel';
-import { useAuth } from '@/contexts/AuthContext'; // Added for admin check
-import { InvestorInviteForm } from '@/components/admin/investor/InvestorInviteForm'; // Added to place the form
+import { InvestorInviteModule } from '@/components/investor/InvestorInviteModule'; // MODIFICATION: Import new module
 
 // Expanded Metrics interface to include all necessary data points
 interface Metrics {
@@ -38,7 +37,6 @@ interface Metrics {
 }
 
 const InvestorSuite: React.FC = () => {
-  const { isAdmin } = useAuth(); // Get admin status from auth context
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState<number>(30);
@@ -116,8 +114,8 @@ const InvestorSuite: React.FC = () => {
                     </div>
                     <div className="space-y-8">
                         {/* --- MODIFICATION START --- */}
-                        {/* The InvestorInviteForm is now placed here, rendered only for admins. */}
-                        {isAdmin && <InvestorInviteForm />}
+                        {/* The new module is placed here, available to all investors. */}
+                        <InvestorInviteModule />
                         {/* --- MODIFICATION END --- */}
                         <BetaInsights data={metrics} />
                         <PartnershipFunnel />
