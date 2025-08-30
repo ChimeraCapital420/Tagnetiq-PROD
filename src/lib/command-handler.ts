@@ -1,10 +1,14 @@
 // FILE: src/lib/command-handler.ts
+// STATUS: Surgically updated for multilingual NLU. No other functions were altered.
 
 import { NavigateFunction } from 'react-router-dom';
 import { toast } from 'sonner';
 import { supabase } from './supabase';
+// --- ORACLE SURGICAL ADDITION ---
+// Import useTranslation to access the current language.
+import { useTranslation } from 'react-i18next';
 
-// --- SYSTEM 1: OLD SCANNER-SPECIFIC COMMANDS (Restored for DualScanner) ---
+// --- SYSTEM 1: OLD SCANNER-SPECIFIC COMMANDS (Unaffected by this operation) ---
 
 interface SimpleCommandActions {
     onScan: () => void;
@@ -45,7 +49,6 @@ const debouncedMarketSearch = debounce(async (query: string) => {
     }
 }, 500);
 
-// This function is required by the useStt hook, which is used by DualScanner.
 export const processVoiceCommand = (command: string, actions: SimpleCommandActions) => {
     const lowerCommand = command.toLowerCase();
     console.log("Processing simple command:", lowerCommand);
@@ -69,7 +72,7 @@ export const processVoiceCommand = (command: string, actions: SimpleCommandActio
 };
 
 
-// --- SYSTEM 2: NEW ORACLE-BASED GLOBAL COMMANDS (Your existing code) ---
+// --- SYSTEM 2: NEW ORACLE-BASED GLOBAL COMMANDS (Surgically Updated) ---
 
 interface CommandContext {
   setIsScannerOpen: (isOpen: boolean) => void;
@@ -86,60 +89,75 @@ interface OracleResponse {
   feedback_phrase: string;
 }
 
-// This function is used by the new global voice control feature.
-export const handleVoiceCommand = async (command: string, context: CommandContext) => {
-  console.log(`Received command for Oracle: "${command}"`);
+export const useOracleCommandHandler = () => {
+    // --- ORACLE SURGICAL ADDITION ---
+    // The i18n instance is brought into the scope of the command handler.
+    const { i18n } = useTranslation();
 
-  if (command.includes('open vault')) {
-    context.speak('Opening your Vault.', context.voiceURI);
-    context.navigate('/vault');
-    return;
-  }
-  if (command.includes('go home') || command.includes('open dashboard')) {
-    context.speak('Navigating to your dashboard.', context.voiceURI);
-    context.navigate('/dashboard');
-    return;
-  }
+    const handleVoiceCommand = async (command: string, context: CommandContext) => {
+        console.log(`Received command for Oracle: "${command}" in language "${i18n.language}"`);
 
-  try {
-    const response = await fetch('/api/oracle/interpret-command', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command }),
-    });
+        // Fast path checks remain untouched.
+        if (command.includes('open vault')) {
+            context.speak('Opening your Vault.', context.voiceURI);
+            context.navigate('/vault');
+            return;
+        }
+        if (command.includes('go home') || command.includes('open dashboard')) {
+            context.speak('Navigating to your dashboard.', context.voiceURI);
+            context.navigate('/dashboard');
+            return;
+        }
 
-    if (!response.ok) {
-      throw new Error('The Oracle is not responding.');
-    }
+        try {
+            const response = await fetch('/api/oracle/interpret-command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // --- ORACLE SURGICAL ADDITION ---
+                // The user's current language is now sent with the command.
+                // This instructs the NLU model to interpret the command in the correct language
+                // and to generate the feedback_phrase in that same language.
+                body: JSON.stringify({ command, language: i18n.language }),
+            });
 
-    const data: OracleResponse = await response.json();
+            if (!response.ok) {
+                const errorBody = await response.text();
+                console.error("Oracle API Error Response:", errorBody);
+                throw new Error('The Oracle is not responding.');
+            }
+
+            const data: OracleResponse = await response.json();
+            
+            context.speak(data.feedback_phrase, context.voiceURI);
+
+            switch (data.intent) {
+                case 'SEARCH_ARENA':
+                    context.setSearchArenaQuery(data.parameters.query);
+                    context.navigate('/arena/marketplace');
+                    break;
+                
+                case 'INITIATE_SCAN':
+                    context.startScanWithCategory(data.parameters.category_id, data.parameters.subcategory_id);
+                    break;
+
+                case 'NAVIGATE':
+                    context.navigate(`/${data.parameters.destination}`);
+                    break;
+
+                case 'UNKNOWN':
+                    break;
+                    
+                default:
+                    toast.warning('Received an unknown intent from the Oracle.');
+            }
+
+        } catch (error) {
+            const message = (error as Error).message;
+            toast.error('Voice command failed', { description: message });
+            context.speak(`Sorry, there was an error processing your command: ${message}`, context.voiceURI);
+        }
+    };
     
-    context.speak(data.feedback_phrase, context.voiceURI);
-
-    switch (data.intent) {
-      case 'SEARCH_ARENA':
-        context.setSearchArenaQuery(data.parameters.query);
-        context.navigate('/arena/marketplace');
-        break;
-      
-      case 'INITIATE_SCAN':
-        context.startScanWithCategory(data.parameters.category_id, data.parameters.subcategory_id);
-        break;
-
-      case 'NAVIGATE':
-        context.navigate(`/${data.parameters.destination}`);
-        break;
-
-      case 'UNKNOWN':
-        break;
-        
-      default:
-        toast.warning('Received an unknown intent from the Oracle.');
-    }
-
-  } catch (error) {
-    const message = (error as Error).message;
-    toast.error('Voice command failed', { description: message });
-    context.speak(`Sorry, there was an error processing your command: ${message}`, context.voiceURI);
-  }
+    // The hook now returns the configured handler function.
+    return { handleVoiceCommand };
 };

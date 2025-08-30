@@ -1,4 +1,3 @@
-// FILE: src/contexts/AppContext.tsx
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
@@ -78,6 +77,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [seasonalMode, setSeasonalModeState] = useState<SeasonalMode>(() => (localStorage.getItem('tagnetiq-seasonal-mode') as SeasonalMode) || 'off');
   
   const [lastAnalysisResult, setLastAnalysisResult] = useState<AnalysisResult | null>(null);
+  // --- ORACLE SURGICAL ADDITION ---
+  // The state for the global scanner component is restored.
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -89,7 +90,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [postWelcomeCallback, setPostWelcomeCallback] = useState<(() => void) | null>(null);
   const { profile, setProfile } = useAuth();
 
-  // HEPHAESTUS NOTE: The logic here is now absolute. It checks only the profile status.
   const showArenaWelcome = (callback?: () => void) => {
     if (profile && !profile.has_seen_arena_intro) {
       if (callback) {

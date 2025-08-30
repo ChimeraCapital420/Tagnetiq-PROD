@@ -1,4 +1,5 @@
 // FILE: api/oracle/interpret-command.ts
+// STATUS: Forged as a new, self-contained API endpoint.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';

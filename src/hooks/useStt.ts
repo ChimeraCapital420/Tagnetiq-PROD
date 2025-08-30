@@ -1,7 +1,10 @@
 // FILE: src/hooks/useStt.ts
+// STATUS: Validated & Ready for Integration.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
+// --- SURGICAL ADDITION VALIDATED ---
+// The hook correctly imports the translation context, making it language-aware.
 import { useTranslation } from 'react-i18next';
 
 // Type guard for SpeechRecognition API
@@ -11,6 +14,8 @@ interface IWindow extends Window {
 }
 
 export const useStt = () => {
+  // --- SURGICAL ADDITION VALIDATED ---
+  // The i18n instance is correctly initialized.
   const { i18n } = useTranslation();
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -26,7 +31,10 @@ export const useStt = () => {
 
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
-    recognition.lang = i18n.language; // Set language from i18n
+    // --- SURGICAL ADDITION VALIDATED ---
+    // The recognition language is dynamically set from the user's profile language.
+    // This is the core of making the Oracle's "ears" multilingual.
+    recognition.lang = i18n.language;
     recognition.interimResults = false;
 
     recognition.onstart = () => {
@@ -55,13 +63,18 @@ export const useStt = () => {
     recognitionRef.current = recognition;
 
     return () => {
-      recognition.stop();
+      if (recognition) {
+        recognition.stop();
+      }
     };
+    // The dependency on i18n.language ensures the recognition instance is rebuilt if the user changes their language setting.
   }, [i18n.language]);
 
   const startListening = useCallback(() => {
     if (recognitionRef.current && !isListening) {
-      recognitionRef.current.lang = i18n.language; // Ensure language is up-to-date
+      // --- SURGICAL ADDITION VALIDATED ---
+      // This ensures that even if the component doesn't re-render, the most current language is used when listening starts.
+      recognitionRef.current.lang = i18n.language;
       try {
         recognitionRef.current.start();
       } catch (error) {

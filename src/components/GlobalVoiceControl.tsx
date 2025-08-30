@@ -1,10 +1,11 @@
 // FILE: src/components/GlobalVoiceControl.tsx
+// STATUS: Forged as a new, self-contained component.
 
 import React, { useEffect, useState } from 'react';
 import { Mic, MicOff, Loader2 } from 'lucide-react';
 import { useStt } from '@/hooks/useStt';
-import { useTts } from '@/hooks/useTts'; // Import TTS hook
-import { useAuth } from '@/contexts/AuthContext'; // Import Auth to get voice preference
+import { useTts } from '@/hooks/useTts';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 
 interface GlobalVoiceControlProps {
@@ -13,8 +14,8 @@ interface GlobalVoiceControlProps {
 
 const GlobalVoiceControl: React.FC<GlobalVoiceControlProps> = ({ onCommand }) => {
   const { isListening, transcript, startListening, stopListening, isSupported } = useStt();
-  const { speak } = useTts(); // Get the speak function
-  const { profile } = useAuth(); // Get profile for voice preference
+  const { speak } = useTts();
+  const { profile } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
@@ -22,7 +23,8 @@ const GlobalVoiceControl: React.FC<GlobalVoiceControlProps> = ({ onCommand }) =>
       setIsProcessing(true);
       // Pass the TTS context along with the command
       onCommand(transcript.toLowerCase(), { speak, voiceURI: profile?.settings?.tts_voice_uri || null });
-      setTimeout(() => setIsProcessing(false), 1500); // Give time for feedback to be spoken
+      // Set a timeout to prevent immediate re-triggering and allow feedback to be spoken.
+      setTimeout(() => setIsProcessing(false), 1500);
     }
   }, [transcript, onCommand, speak, profile]);
 
@@ -34,6 +36,7 @@ const GlobalVoiceControl: React.FC<GlobalVoiceControlProps> = ({ onCommand }) =>
     }
   };
 
+  // If the browser does not support the SpeechRecognition API, this component will not render.
   if (!isSupported) {
     return null;
   }

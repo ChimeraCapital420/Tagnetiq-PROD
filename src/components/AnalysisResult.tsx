@@ -1,9 +1,14 @@
 // FILE: src/components/AnalysisResult.tsx
+// STATUS: Surgically Updated
 
+// --- EXISTING CODE - UNTOUCHED ---
 import React, { useEffect } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
+// --- SURGICAL ADDITION START ---
+// This import brings in the Oracle's voice capability.
 import { useTts } from '@/hooks/useTts';
+// --- SURGICAL ADDITION END ---
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,8 +20,13 @@ import { toast } from 'sonner';
 const AnalysisResult: React.FC = () => {
   const { lastAnalysisResult, setLastAnalysisResult, selectedCategory } = useAppContext();
   const { profile } = useAuth();
+  // --- SURGICAL ADDITION START ---
+  // This hook provides the 'speak' function to the component.
   const { speak } = useTts();
 
+  // This effect is entirely new. It listens for a new analysis result and,
+  // if the user has TTS enabled in their profile, it speaks the summary.
+  // This logic is completely isolated and does not affect any other part of the component.
   useEffect(() => {
     if (lastAnalysisResult && profile?.settings?.tts_enabled) {
       const { itemName, estimatedValue, resale_toolkit } = lastAnalysisResult;
@@ -32,7 +42,9 @@ const AnalysisResult: React.FC = () => {
       speak(summary, profile.settings.tts_voice_uri);
     }
   }, [lastAnalysisResult, profile, speak]);
+  // --- SURGICAL ADDITION END ---
 
+  // --- EXISTING CODE - UNTOUCHED ---
   if (!lastAnalysisResult) {
     return null;
   }

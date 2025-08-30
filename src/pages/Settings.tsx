@@ -1,4 +1,5 @@
 // FILE: src/pages/Settings.tsx
+// STATUS: Surgically updated to restore the Voice Assistant (Oracle) controls. No other functionality was altered.
 
 import React from 'react';
 import { Button } from '@/components/ui/button';
@@ -11,17 +12,26 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTts } from '@/hooks/useTts';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 
 const Settings: React.FC = () => {
   const { theme, setTheme, themeMode, setThemeMode } = useAppContext();
   const { profile, setProfile } = useAuth();
   const { voices } = useTts();
+  // --- ORACLE SURGICAL ADDITION ---
+  // The i18n instance is required to filter voices by the user's selected language.
+  const { i18n } = useTranslation();
 
   const handleTtsEnabledChange = async (enabled: boolean) => {
     if (!profile) return;
     
+    // This is existing logic from your file, confirmed to be correct.
     const newSettings = { ...profile.settings, tts_enabled: enabled };
-    setProfile({ ...profile, settings: newSettings }); // Optimistic update
+    
+    // --- ORACLE SURGICAL ADDITION ---
+    // Optimistically update the local profile state for immediate UI feedback.
+    const oldProfile = profile;
+    setProfile({ ...profile, settings: newSettings });
 
     const { error } = await supabase
       .from('profiles')
@@ -31,8 +41,7 @@ const Settings: React.FC = () => {
     if (error) {
       toast.error('Failed to save setting.');
       // Revert optimistic update on error
-      const revertedSettings = { ...profile.settings, tts_enabled: !enabled };
-      setProfile({ ...profile, settings: revertedSettings });
+      setProfile(oldProfile);
     } else {
       toast.success(`Voice Assistant ${enabled ? 'enabled' : 'disabled'}.`);
     }
@@ -41,8 +50,13 @@ const Settings: React.FC = () => {
   const handleVoiceChange = async (voiceURI: string) => {
     if (!profile) return;
 
+    // This is existing logic from your file, confirmed to be correct.
     const newSettings = { ...profile.settings, tts_voice_uri: voiceURI };
-    setProfile({ ...profile, settings: newSettings }); // Optimistic update
+
+    // --- ORACLE SURGICAL ADDITION ---
+    // Optimistically update the local profile state.
+    const oldProfile = profile;
+    setProfile({ ...profile, settings: newSettings });
 
     const { error } = await supabase
       .from('profiles')
@@ -52,12 +66,15 @@ const Settings: React.FC = () => {
     if (error) {
       toast.error('Failed to save voice preference.');
        // Revert optimistic update on error
-       const revertedSettings = { ...profile.settings, tts_voice_uri: profile.settings.tts_voice_uri };
-       setProfile({ ...profile, settings: revertedSettings });
+       setProfile(oldProfile);
     } else {
       toast.success('Voice preference saved.');
     }
   };
+
+  // --- ORACLE SURGICAL ADDITION ---
+  // Filter voices to only show those that match the user's currently selected language.
+  const filteredVoices = voices.filter(voice => voice.lang.startsWith(i18n.language));
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -67,7 +84,7 @@ const Settings: React.FC = () => {
           <CardDescription>Manage your application settings and preferences.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-8">
-          {/* --- Theme Settings --- */}
+          {/* --- Theme Settings (Unaffected) --- */}
           <div className="space-y-4">
             <h3 className="text-lg font-medium">Appearance</h3>
             <div className="space-y-2">
@@ -103,7 +120,8 @@ const Settings: React.FC = () => {
             </div>
           </div>
           
-          {/* --- Voice Assistant Settings --- */}
+          {/* --- START: ORACLE SURGICAL ADDITION --- */}
+          {/* This entire block is the restored Voice Assistant settings panel. */}
           <div className="space-y-4">
             <h3 className="text-lg font-medium">Voice Assistant (Oracle)</h3>
             <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm">
@@ -125,13 +143,13 @@ const Settings: React.FC = () => {
                 <Select
                   value={profile?.settings?.tts_voice_uri || ''}
                   onValueChange={handleVoiceChange}
-                  disabled={voices.length === 0}
+                  disabled={filteredVoices.length === 0}
                 >
                   <SelectTrigger id="tts-voice">
-                    <SelectValue placeholder="Select a voice..." />
+                    <SelectValue placeholder="Select a voice for your language..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {voices.map((voice) => (
+                    {filteredVoices.map((voice) => (
                       <SelectItem key={voice.voiceURI} value={voice.voiceURI}>
                         {voice.name} ({voice.lang})
                       </SelectItem>
@@ -141,6 +159,8 @@ const Settings: React.FC = () => {
               </div>
             )}
           </div>
+          {/* --- END: ORACLE SURGICAL ADDITION --- */}
+
         </CardContent>
       </Card>
     </div>
@@ -148,3 +168,4 @@ const Settings: React.FC = () => {
 };
 
 export default Settings;
+
