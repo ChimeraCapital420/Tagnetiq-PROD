@@ -1,3 +1,6 @@
+// FILE: src/contexts/AppContext.tsx
+// STATUS: Corrected. Surgically updated to support conversational memory and proactive advice.
+
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
@@ -17,6 +20,20 @@ export interface AnalysisResult {
     recommended_marketplaces: any[];
   };
 }
+
+// --- ORACLE SURGICAL ADDITION START ---
+// New types to support the Oracle's advanced conversational features.
+export interface OracleResponseType {
+    text: string;
+    timestamp: number;
+}
+
+export interface ConversationTurn {
+    role: 'user' | 'assistant';
+    content: string;
+}
+// --- ORACLE SURGICAL ADDITION END ---
+
 
 interface AppContextType {
   theme: Theme;
@@ -41,6 +58,12 @@ interface AppContextType {
   setSearchArenaQuery: (query: string) => void;
   startScanWithCategory: (categoryId: string, subcategoryId: string | null) => void;
   showArenaWelcome: (callback?: () => void) => void;
+  // --- ORACLE SURGICAL ADDITION START ---
+  oracleResponse: OracleResponseType | null;
+  setOracleResponse: (response: string) => void;
+  conversationHistory: ConversationTurn[];
+  addConversationTurn: (turn: ConversationTurn) => void;
+  // --- ORACLE SURGICAL ADDITION END ---
 }
 
 const defaultAppContext: AppContextType = {
@@ -55,7 +78,7 @@ const defaultAppContext: AppContextType = {
   isScannerOpen: false, 
   setIsScannerOpen: () => {}, 
   isAnalyzing: false,
-  setIsAnalyzing: () => {},
+  setIsAnalyzing: () => {}, 
   selectedCategory: null,
   setSelectedCategory: () => {},
   isFeedbackModalOpen: false,
@@ -66,6 +89,12 @@ const defaultAppContext: AppContextType = {
   setSearchArenaQuery: () => {},
   startScanWithCategory: () => {},
   showArenaWelcome: () => {},
+  // --- ORACLE SURGICAL ADDITION START ---
+  oracleResponse: null,
+  setOracleResponse: () => {},
+  conversationHistory: [],
+  addConversationTurn: () => {},
+  // --- ORACLE SURGICAL ADDITION END ---
 };
 
 const AppContext = createContext<AppContextType>(defaultAppContext);
@@ -77,8 +106,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [seasonalMode, setSeasonalModeState] = useState<SeasonalMode>(() => (localStorage.getItem('tagnetiq-seasonal-mode') as SeasonalMode) || 'off');
   
   const [lastAnalysisResult, setLastAnalysisResult] = useState<AnalysisResult | null>(null);
-  // --- ORACLE SURGICAL ADDITION ---
-  // The state for the global scanner component is restored.
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -87,6 +114,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   
   const [searchArenaQuery, setSearchArenaQuery] = useState('');
   
+  // --- ORACLE SURGICAL ADDITION START ---
+  const [oracleResponse, _setOracleResponse] = useState<OracleResponseType | null>(null);
+  const [conversationHistory, setConversationHistory] = useState<ConversationTurn[]>([]);
+  // --- ORACLE SURGICAL ADDITION END ---
+
   const [postWelcomeCallback, setPostWelcomeCallback] = useState<(() => void) | null>(null);
   const { profile, setProfile } = useAuth();
 
@@ -145,6 +177,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIsScannerOpen(true);
   };
 
+  // --- ORACLE SURGICAL ADDITION START ---
+  const setOracleResponse = (text: string) => {
+    _setOracleResponse({ text, timestamp: Date.now() });
+  };
+
+  const addConversationTurn = (turn: ConversationTurn) => {
+    setConversationHistory(prev => {
+        const newHistory = [...prev, turn];
+        // Keep the history from getting too long (e.g., last 6 turns / 3 exchanges)
+        if (newHistory.length > 6) {
+            return newHistory.slice(-6);
+        }
+        return newHistory;
+    });
+  };
+  // --- ORACLE SURGICAL ADDITION END ---
+
   const value = {
     theme, themeMode, seasonalMode,
     setTheme: handleSetTheme,
@@ -158,6 +207,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     searchArenaQuery, setSearchArenaQuery,
     startScanWithCategory,
     showArenaWelcome,
+    // --- ORACLE SURGICAL ADDITION START ---
+    oracleResponse,
+    setOracleResponse,
+    conversationHistory,
+    addConversationTurn,
+    // --- ORACLE SURGICAL ADDITION END ---
   };
 
   return (

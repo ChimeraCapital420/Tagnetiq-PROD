@@ -9,9 +9,11 @@ import ResponsiveNavigation from './ResponsiveNavigation';
 import NewMarketingNavigation from './NewMarketingNavigation';
 import DualScanner from './DualScanner';
 import GlobalVoiceControl from './GlobalVoiceControl';
-// --- ORACLE SURGICAL INTEGRATION ---
-// The master command handler is imported.
+// --- ORACLE SURGICAL INTEGRATION START ---
 import { useOracleCommandHandler } from '@/lib/command-handler';
+import OracleVisualizer from './OracleVisualizer';
+import OracleResponseDisplay from './OracleResponseDisplay';
+// --- ORACLE SURGICAL INTEGRATION END ---
 
 const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
@@ -24,23 +26,19 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const showAppNav = user && !isHomePage;
   const showMarketingNav = !user || isHomePage;
   
-  // --- ORACLE SURGICAL INTEGRATION ---
-  // We instantiate the command handler hook here, in the highest relevant component,
-  // so it has access to both navigation and the full application context.
+  // --- ORACLE SURGICAL INTEGRATION START ---
   const { handleVoiceCommand } = useOracleCommandHandler();
 
   const onVoiceCommand = (command: string, ttsContext: { speak: Function, voiceURI: string | null }) => {
-    // This function assembles the complete "context" object that the command handler needs to execute any possible action.
-    // It combines the application state setters from useAppContext, the navigation function, and the TTS functions.
     const commandContext = {
       ...appContext,
       navigate,
       speak: ttsContext.speak,
       voiceURI: ttsContext.voiceURI,
     };
-    // The command and the full context are passed to the handler for processing.
     handleVoiceCommand(command, commandContext);
   };
+  // --- ORACLE SURGICAL INTEGRATION END ---
 
   return (
     <div className="relative z-10">
@@ -53,13 +51,19 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
         {children}
       </main>
       
-      {/* --- ORACLE SURGICAL INTEGRATION --- */}
-      {/* The GlobalVoiceControl is rendered here for authenticated users. */}
-      {/* Its onCommand prop is connected to our master handler function. */}
-      {/* This is a clean, additive placement that does not affect other components. */}
-      {user && <GlobalVoiceControl onCommand={onVoiceCommand} />}
+      {/* --- ORACLE SURGICAL INTEGRATION START --- */}
+      {/* The core Oracle UI components are added here. They are self-contained and only render for authenticated users. */}
+      {user && (
+        <>
+            <GlobalVoiceControl onCommand={onVoiceCommand} />
+            <OracleVisualizer />
+            <OracleResponseDisplay />
+        </>
+      )}
+      {/* --- ORACLE SURGICAL INTEGRATION END --- */}
     </div>
   );
 };
 
 export default AppLayout;
+

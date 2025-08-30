@@ -1,5 +1,5 @@
 // FILE: src/pages/Settings.tsx
-// STATUS: Surgically updated to restore the Voice Assistant (Oracle) controls. No other functionality was altered.
+// STATUS: Surgically updated to add the PremiumVoiceSelector. No other functionality was altered.
 
 import React from 'react';
 import { Button } from '@/components/ui/button';
@@ -13,23 +13,22 @@ import { useTts } from '@/hooks/useTts';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
+// --- ORACLE SURGICAL ADDITION START ---
+// This is the only new import required for this operation.
+import PremiumVoiceSelector from '@/components/PremiumVoiceSelector';
+// --- ORACLE SURGICAL ADDITION END ---
 
 const Settings: React.FC = () => {
   const { theme, setTheme, themeMode, setThemeMode } = useAppContext();
   const { profile, setProfile } = useAuth();
   const { voices } = useTts();
-  // --- ORACLE SURGICAL ADDITION ---
-  // The i18n instance is required to filter voices by the user's selected language.
   const { i18n } = useTranslation();
 
   const handleTtsEnabledChange = async (enabled: boolean) => {
     if (!profile) return;
     
-    // This is existing logic from your file, confirmed to be correct.
     const newSettings = { ...profile.settings, tts_enabled: enabled };
     
-    // --- ORACLE SURGICAL ADDITION ---
-    // Optimistically update the local profile state for immediate UI feedback.
     const oldProfile = profile;
     setProfile({ ...profile, settings: newSettings });
 
@@ -40,7 +39,6 @@ const Settings: React.FC = () => {
 
     if (error) {
       toast.error('Failed to save setting.');
-      // Revert optimistic update on error
       setProfile(oldProfile);
     } else {
       toast.success(`Voice Assistant ${enabled ? 'enabled' : 'disabled'}.`);
@@ -50,11 +48,8 @@ const Settings: React.FC = () => {
   const handleVoiceChange = async (voiceURI: string) => {
     if (!profile) return;
 
-    // This is existing logic from your file, confirmed to be correct.
     const newSettings = { ...profile.settings, tts_voice_uri: voiceURI };
 
-    // --- ORACLE SURGICAL ADDITION ---
-    // Optimistically update the local profile state.
     const oldProfile = profile;
     setProfile({ ...profile, settings: newSettings });
 
@@ -65,15 +60,12 @@ const Settings: React.FC = () => {
 
     if (error) {
       toast.error('Failed to save voice preference.');
-       // Revert optimistic update on error
        setProfile(oldProfile);
     } else {
       toast.success('Voice preference saved.');
     }
   };
 
-  // --- ORACLE SURGICAL ADDITION ---
-  // Filter voices to only show those that match the user's currently selected language.
   const filteredVoices = voices.filter(voice => voice.lang.startsWith(i18n.language));
 
   return (
@@ -84,7 +76,7 @@ const Settings: React.FC = () => {
           <CardDescription>Manage your application settings and preferences.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-8">
-          {/* --- Theme Settings (Unaffected) --- */}
+          {/* --- Theme Settings (Unaffected by this operation) --- */}
           <div className="space-y-4">
             <h3 className="text-lg font-medium">Appearance</h3>
             <div className="space-y-2">
@@ -120,15 +112,14 @@ const Settings: React.FC = () => {
             </div>
           </div>
           
-          {/* --- START: ORACLE SURGICAL ADDITION --- */}
-          {/* This entire block is the restored Voice Assistant settings panel. */}
+          {/* --- Voice Assistant Settings (Surgically Updated) --- */}
           <div className="space-y-4">
             <h3 className="text-lg font-medium">Voice Assistant (Oracle)</h3>
             <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm">
               <Label htmlFor="tts-enabled" className="flex flex-col gap-1">
                 <span>Enable Voice Readouts</span>
                 <span className="font-normal leading-snug text-muted-foreground">
-                  Automatically read analysis results aloud.
+                  Allow the Oracle to speak analysis results and provide feedback.
                 </span>
               </Label>
               <Switch
@@ -138,29 +129,43 @@ const Settings: React.FC = () => {
               />
             </div>
             {profile?.settings?.tts_enabled && (
-              <div className="space-y-2">
-                <Label htmlFor="tts-voice">Preferred Voice</Label>
-                <Select
-                  value={profile?.settings?.tts_voice_uri || ''}
-                  onValueChange={handleVoiceChange}
-                  disabled={filteredVoices.length === 0}
-                >
-                  <SelectTrigger id="tts-voice">
-                    <SelectValue placeholder="Select a voice for your language..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {filteredVoices.map((voice) => (
-                      <SelectItem key={voice.voiceURI} value={voice.voiceURI}>
-                        {voice.name} ({voice.lang})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="tts-voice">Standard System Voice</Label>
+                   <p className="text-xs text-muted-foreground">
+                        A generic voice from your browser or operating system.
+                    </p>
+                  <Select
+                    value={profile?.settings?.tts_voice_uri || ''}
+                    onValueChange={handleVoiceChange}
+                    disabled={filteredVoices.length === 0}
+                  >
+                    <SelectTrigger id="tts-voice">
+                      <SelectValue placeholder="Select a default voice for your language..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {filteredVoices.map((voice) => (
+                        <SelectItem key={voice.voiceURI} value={voice.voiceURI}>
+                          {voice.name} ({voice.lang})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* --- START: ORACLE SURGICAL ADDITION --- */}
+                {/* This block adds the premium voice selection UI without altering the standard voice selector above. */}
+                <div className="space-y-2 pt-4">
+                    <Label>Premium Oracle Voice</Label>
+                    <p className="text-sm text-muted-foreground">
+                        Choose a high-quality, natural-sounding voice for your AI partner.
+                    </p>
+                    <PremiumVoiceSelector />
+                </div>
+                {/* --- END: ORACLE SURGICAL ADDITION --- */}
+              </>
             )}
           </div>
-          {/* --- END: ORACLE SURGICAL ADDITION --- */}
-
         </CardContent>
       </Card>
     </div>

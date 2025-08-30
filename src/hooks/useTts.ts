@@ -1,19 +1,23 @@
 // FILE: src/hooks/useTts.ts
-// STATUS: Validated & Ready for Integration.
+// STATUS: Surgically updated to support premium, server-generated AI voices.
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+// --- ORACLE SURGICAL ADDITION START ---
+// We need the AuthContext to get the user's token for secure API calls.
+import { useAuth } from '@/contexts/AuthContext';
+// --- ORACLE SURGICAL ADDITION END ---
 
 export const useTts = () => {
-  // --- SURGICAL ADDITION: Oracle Language Awareness ---
-  // The hook is connected to the application's internationalization (i18n) system.
-  // This allows the Oracle's voice to be aware of the user's selected language.
   const { i18n } = useTranslation();
-  // --- END SURGICAL ADDITION ---
-
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [preferredVoice, setPreferredVoice] = useState<SpeechSynthesisVoice | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  // --- ORACLE SURGICAL ADDITION START ---
+  const { session } = useAuth();
+  // State to manage the Audio object for premium voices, allowing us to pause/cancel it.
+  const [audio, setAudio] = useState<HTMLAudioElement | null>(null);
+  // --- ORACLE SURGICAL ADDITION END ---
 
   useEffect(() => {
     const handleVoicesChanged = () => {
@@ -29,47 +33,94 @@ export const useTts = () => {
     };
   }, []);
 
-  const speak = useCallback((text: string, voiceURI?: string | null) => {
-    if (!window.speechSynthesis) {
-      console.warn('Speech Synthesis not supported in this browser.');
+  // --- ORACLE SURGICAL MODIFICATION START ---
+  // The `speak` function is upgraded to accept an optional `premiumVoiceId`.
+  const speak = useCallback(async (text: string, voiceURI?: string | null, premiumVoiceId?: string | null) => {
+    if (isSpeaking) {
+      // Prevent new speech from starting while another is in progress.
       return;
     }
 
-    window.speechSynthesis.cancel();
+    // Always cancel previous speech, whether it's native or premium.
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    if (audio) audio.pause();
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    
-    // --- SURGICAL ADDITION: Dynamic Language & Voice Selection ---
-    // 1. The utterance's language is explicitly set from the app's current language setting.
-    //    This ensures the browser's TTS engine uses the correct pronunciation rules.
-    utterance.lang = i18n.language;
+    // **PATH 1: Premium AI Voice Generation**
+    if (premiumVoiceId && session) {
+      setIsSpeaking(true);
+      try {
+        const response = await fetch('/api/oracle/generate-speech', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ text, voiceId: premiumVoiceId }),
+        });
 
-    // 2. The voice selection logic is enhanced. It now intelligently prioritizes:
-    //    a. The user's explicitly saved preferred voice (`voiceURI`).
-    //    b. The hook's currently active voice (`preferredVoice`).
-    //    c. The *first available voice* on the user's system that matches their selected language.
-    //    d. A fallback to the very first voice if no match is found.
-    const voiceToUse = voices.find(v => v.voiceURI === voiceURI) || preferredVoice || voices.find(v => v.lang.startsWith(i18n.language)) || voices[0];
-    // --- END SURGICAL ADDITION ---
-    
-    if (voiceToUse) {
-      utterance.voice = voiceToUse;
+        if (!response.ok) {
+          throw new Error('Failed to generate premium voice audio.');
+        }
+
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const newAudio = new Audio(audioUrl);
+        
+        setAudio(newAudio); // Store the audio object so it can be cancelled.
+        
+        newAudio.play();
+        newAudio.onended = () => {
+            setIsSpeaking(false);
+            setAudio(null);
+        };
+        newAudio.onerror = () => {
+            console.error("Error playing premium voice audio.");
+            setIsSpeaking(false);
+            setAudio(null);
+        };
+      } catch (error) {
+        console.error(error);
+        setIsSpeaking(false);
+        // Fallback to native TTS on error
+        speak(text, voiceURI, null);
+      }
+    // **PATH 2: Standard Browser Voice (Fallback)**
+    } else {
+        if (!window.speechSynthesis) {
+            console.warn('Speech Synthesis not supported in this browser.');
+            return;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = i18n.language;
+        const voiceToUse = voices.find(v => v.voiceURI === voiceURI) || preferredVoice || voices.find(v => v.lang.startsWith(i18n.language)) || voices[0];
+        
+        if (voiceToUse) {
+            utterance.voice = voiceToUse;
+        }
+
+        utterance.onstart = () => setIsSpeaking(true);
+        utterance.onend = () => setIsSpeaking(false);
+        utterance.onerror = () => setIsSpeaking(false);
+
+        window.speechSynthesis.speak(utterance);
     }
-
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-
-    window.speechSynthesis.speak(utterance);
-    // The i18n.language dependency ensures this `speak` function rebuilds if the user changes language.
-  }, [voices, preferredVoice, i18n.language]);
+  }, [voices, preferredVoice, i18n.language, session, audio, isSpeaking]);
+  // --- ORACLE SURGICAL MODIFICATION END ---
 
   const cancel = useCallback(() => {
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-      setIsSpeaking(false);
+    // --- ORACLE SURGICAL MODIFICATION START ---
+    // The cancel function is now upgraded to stop both types of audio.
+    if (audio) {
+        audio.pause();
+        setAudio(null);
     }
-  }, []);
+    if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+    }
+    setIsSpeaking(false);
+    // --- ORACLE SURGICAL MODIFICATION END ---
+  }, [audio]);
 
   const setVoiceByURI = useCallback((uri: string) => {
     const foundVoice = voices.find(v => v.voiceURI === uri);
@@ -87,3 +138,4 @@ export const useTts = () => {
     preferredVoice,
   };
 };
+
