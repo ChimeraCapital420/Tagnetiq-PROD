@@ -1,6 +1,9 @@
 // FILE: src/contexts/AppContext.tsx
-
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { useAuth } from './AuthContext';
+import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
+import { supabase } from '@/lib/supabase';
+import { toast } from 'sonner';
 
 type Theme = 'executive' | 'matrix' | 'safari' | 'darkKnight' | 'cyberpunk' | 'ocean' | 'forest' | 'sunset';
 type ThemeMode = 'light' | 'dark';
@@ -35,10 +38,10 @@ interface AppContextType {
   setIsFeedbackModalOpen: (isOpen: boolean) => void;
   isArenaWelcomeOpen: boolean; 
   setIsArenaWelcomeOpen: (isOpen: boolean) => void;
-  // --- NEWLY ADDED FOR ORACLE PHASE 3 ---
   searchArenaQuery: string;
   setSearchArenaQuery: (query: string) => void;
   startScanWithCategory: (categoryId: string, subcategoryId: string | null) => void;
+  showArenaWelcome: (callback?: () => void) => void;
 }
 
 const defaultAppContext: AppContextType = {
@@ -60,16 +63,16 @@ const defaultAppContext: AppContextType = {
   setIsFeedbackModalOpen: () => {},
   isArenaWelcomeOpen: false,
   setIsArenaWelcomeOpen: () => {},
-  // --- NEWLY ADDED FOR ORACLE PHASE 3 ---
   searchArenaQuery: '',
   setSearchArenaQuery: () => {},
   startScanWithCategory: () => {},
+  showArenaWelcome: () => {},
 };
 
 const AppContext = createContext<AppContextType>(defaultAppContext);
 export const useAppContext = () => useContext(AppContext);
 
-export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('tagnetiq-theme') as Theme) || 'darkKnight');
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => (localStorage.getItem('tagnetiq-theme-mode') as ThemeMode) || 'dark');
   const [seasonalMode, setSeasonalModeState] = useState<SeasonalMode>(() => (localStorage.getItem('tagnetiq-seasonal-mode') as SeasonalMode) || 'off');
@@ -81,8 +84,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [isArenaWelcomeOpen, setIsArenaWelcomeOpen] = useState(false);
   
-  // --- NEWLY ADDED FOR ORACLE PHASE 3 ---
   const [searchArenaQuery, setSearchArenaQuery] = useState('');
+  
+  const [postWelcomeCallback, setPostWelcomeCallback] = useState<(() => void) | null>(null);
+  const { profile, setProfile } = useAuth();
+
+  // HEPHAESTUS NOTE: The logic here is now absolute. It checks only the profile status.
+  const showArenaWelcome = (callback?: () => void) => {
+    if (profile && !profile.has_seen_arena_intro) {
+      if (callback) {
+        setPostWelcomeCallback(() => callback);
+      }
+      setIsArenaWelcomeOpen(true);
+    } else if (callback) {
+      callback();
+    }
+  };
+
+  const handleDismissWelcome = async (dontShowAgain: boolean) => {
+    setIsArenaWelcomeOpen(false);
+    if (postWelcomeCallback) {
+      postWelcomeCallback();
+      setPostWelcomeCallback(null);
+    }
+    if (dontShowAgain && profile && !profile.has_seen_arena_intro) {
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) throw new Error("Not authenticated");
+            await fetch('/api/arena/mark-intro-seen', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${session.access_token}` },
+            });
+            setProfile(p => p ? { ...p, has_seen_arena_intro: true } : null);
+        } catch (error) {
+            toast.error("Could not save preference", { description: (error as Error).message });
+        }
+    }
+  };
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -101,7 +139,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem('tagnetiq-seasonal-mode', mode);
   }
   
-  // --- NEWLY ADDED FOR ORACLE PHASE 3 ---
   const startScanWithCategory = (categoryId: string, subcategoryId: string | null) => {
     const categoryToSet = subcategoryId || categoryId;
     setSelectedCategory(categoryToSet);
@@ -118,14 +155,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     selectedCategory, setSelectedCategory,
     isFeedbackModalOpen, setIsFeedbackModalOpen,
     isArenaWelcomeOpen, setIsArenaWelcomeOpen,
-    // --- NEWLY ADDED FOR ORACLE PHASE 3 ---
     searchArenaQuery, setSearchArenaQuery,
     startScanWithCategory,
+    showArenaWelcome,
   };
 
   return (
     <AppContext.Provider value={value}>
       {children}
+      <ArenaWelcomeAlert isOpen={isArenaWelcomeOpen} onDismiss={handleDismissWelcome} />
     </AppContext.Provider>
   );
 };

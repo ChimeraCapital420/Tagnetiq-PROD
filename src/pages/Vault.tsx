@@ -1,7 +1,6 @@
 // FILE: src/pages/Vault.tsx
 
 import React, { useState } from 'react';
-// CORRECTED: Standardized the import path to be absolute.
 import { useAuth } from '@/contexts/AuthContext';
 import { useMfa } from '../contexts/MfaContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,7 +12,7 @@ import { PdfDownloadButton } from '../components/vault/PdfDownloadButton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'; 
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { ItemDetailModal } from '@/components/vault/ItemDetailModal';
-import { ChallengeConfirmationModal } from '@/components/arena/ChallengeConfirmationModal';
+import ChallengeConfirmationModal from '@/components/arena/ChallengeConfirmationModal';
 import { toast } from 'sonner';
 
 export interface VaultItem {
@@ -61,7 +60,8 @@ const VaultPage: React.FC = () => {
     enabled: !!session?.access_token && isUnlocked,
   });
   
-  const handleConfirmChallenge = async (askingPrice: number) => {
+  // HEPHAESTUS NOTE: This handler is updated to send all required data for a challenge.
+  const handleConfirmChallenge = async (purchasePrice: number, askingPrice: number) => {
     if (!itemToChallenge || !session) return;
     
     const toastId = toast.loading("Submitting item to the Arena...");
@@ -72,7 +72,14 @@ const VaultPage: React.FC = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ vault_item_id: itemToChallenge.id, asking_price: askingPrice }),
+        body: JSON.stringify({ 
+            vault_item_id: itemToChallenge.id, 
+            purchase_price: purchasePrice,
+            asking_price: askingPrice,
+            item_name: itemToChallenge.asset_name,
+            primary_photo_url: itemToChallenge.photos?.[0] || null,
+            description: itemToChallenge.notes || '' 
+        }),
       });
 
       if (!response.ok) {
@@ -82,7 +89,8 @@ const VaultPage: React.FC = () => {
 
       toast.success("Item successfully listed in the Arena!", { id: toastId });
       setItemToChallenge(null);
-      queryClient.invalidateQueries({ queryKey: ['vaultItems'] });
+      // Invalidate queries to reflect that the item is now part of a challenge if needed
+      // queryClient.invalidateQueries({ queryKey: ['vaultItems'] });
 
     } catch (err) {
       toast.error("Failed to start challenge", { id: toastId, description: (err as Error).message });

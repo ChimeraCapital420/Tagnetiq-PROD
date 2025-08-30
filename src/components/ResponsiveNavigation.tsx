@@ -1,3 +1,4 @@
+// FILE: src/components/ResponsiveNavigation.tsx
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import SettingsDropdown from './SettingsDropdown';
@@ -11,18 +12,18 @@ const ResponsiveNavigation: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { profile } = useAuth();
-  const { setIsArenaWelcomeOpen, setIsScannerOpen } = useAppContext(); 
+  // --- HEPHAESTUS FORGE: SURGICAL MODIFICATION 1 of 2 ---
+  // We now import the new showArenaWelcome function from the context.
+  const { showArenaWelcome, setIsScannerOpen } = useAppContext(); 
   const isVaultActive = location.pathname.startsWith('/vault');
   const isArenaActive = location.pathname.startsWith('/arena');
   const isDashboardActive = location.pathname.startsWith('/dashboard');
 
+  // --- HEPHAESTUS FORGE: SURGICAL MODIFICATION 2 of 2 ---
+  // The logic is updated to use the new context function, ensuring the pathway is correct.
   const handleArenaClick = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (profile && !profile.has_seen_arena_intro) {
-        setIsArenaWelcomeOpen(true);
-    } else {
-        navigate('/arena/marketplace');
-    }
+    showArenaWelcome(() => navigate('/arena/marketplace'));
   };
 
   return (

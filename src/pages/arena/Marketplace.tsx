@@ -7,9 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
 import { AspectRatio } from '@/components/ui/aspect-ratio';
 import { WatchlistManager } from '@/components/arena/WatchlistManager';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ShieldCheck } from 'lucide-react'; // HEPHAESTUS NOTE: Imported ShieldCheck icon
 import { toast } from 'sonner';
-import { useAppContext } from '@/contexts/AppContext'; // Import AppContext
+import { useAppContext } from '@/contexts/AppContext';
+import { Badge } from '@/components/ui/badge'; // HEPHAESTUS NOTE: Imported Badge component
 
 interface MarketplaceItem {
   id: string;
@@ -17,13 +18,14 @@ interface MarketplaceItem {
   item_name: string;
   asking_price: number;
   primary_photo_url: string;
+  is_verified: boolean; // HEPHAESTUS NOTE: Added is_verified to the interface
 }
 
 const Marketplace: React.FC = () => {
-  const { searchArenaQuery, setSearchArenaQuery } = useAppContext(); // Get search context
+  const { searchArenaQuery, setSearchArenaQuery } = useAppContext();
   const [items, setItems] = useState<MarketplaceItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState(searchArenaQuery); // Initialize with context
+  const [searchTerm, setSearchTerm] = useState(searchArenaQuery);
 
   const fetchMarketplaceData = useCallback(async (query: string) => {
     setLoading(true);
@@ -43,13 +45,10 @@ const Marketplace: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // If there's a query from the context, fetch data immediately
     if (searchArenaQuery) {
       fetchMarketplaceData(searchArenaQuery);
-      // Clear the context query after using it to prevent re-searching on navigation
       setSearchArenaQuery(''); 
     } else {
-      // Otherwise, perform the initial fetch for all items
       fetchMarketplaceData('');
     }
   }, [searchArenaQuery, fetchMarketplaceData, setSearchArenaQuery]);
@@ -91,7 +90,14 @@ const Marketplace: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
                 {items.map(item => (
                   <Link to={`/arena/challenge/${item.challenge_id}`} key={item.id}>
-                    <Card className="h-full overflow-hidden hover:border-primary transition-all group">
+                    <Card className="h-full overflow-hidden hover:border-primary transition-all group relative">
+                      {/* HEPHAESTUS NOTE: This block adds the "Verified" badge if applicable. */}
+                      {item.is_verified && (
+                        <Badge variant="secondary" className="absolute top-2 right-2 z-10 bg-green-600 text-white border-green-500">
+                          <ShieldCheck className="h-4 w-4 mr-1"/>
+                          Verified
+                        </Badge>
+                      )}
                       <CardHeader className="p-0">
                         <AspectRatio ratio={1 / 1}>
                           <img 

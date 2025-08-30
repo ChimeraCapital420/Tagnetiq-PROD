@@ -2,7 +2,7 @@
 
 import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../_lib/security'; // CORRECTED: Use standard user verification
+import { verifyUser } from '../_lib/security';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
@@ -15,10 +15,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let query = supaAdmin
       .from('marketplace_listings')
-      .select('*')
+      // HEPHAESTUS NOTE: This query now joins with the challenges table to check its status.
+      .select('*, challenge:arena_challenges(status)')
+      // HEPHAESTUS NOTE: This filter ensures only listings from ACTIVE challenges are shown.
+      .eq('challenge.status', 'active') 
       .order('created_at', { ascending: false });
 
-    // If a search query is provided, filter the results
+    // If a search query is provided, filter the results (your existing logic is preserved)
     if (searchQuery && typeof searchQuery === 'string') {
       query = query.textSearch('item_name', searchQuery, {
         type: 'websearch',

@@ -57,10 +57,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (updateError) throw updateError;
     
-    // 4. (Optional but recommended) Update the original vault item's sale price
+    // --- HEPHAESTUS FORGE: SURGICAL ADDITION ---
+    // 4. Remove the listing from the active marketplace to complete the loop.
+    const { error: deleteError } = await supaAdmin
+        .from('marketplace_listings')
+        .delete()
+        .eq('challenge_id', challengeId);
+    
+    if (deleteError) {
+        // Log this error but don't fail the entire transaction, as the core task is complete.
+        console.error(`Failed to delete marketplace listing for challenge ${challengeId}:`, deleteError.message);
+    }
+    // --- END OF ADDITION ---
+
+    // 5. (Existing) Update the original vault item's sale price
     await supaAdmin.from('vault_items').update({ actual_sale_price: salePrice }).eq('id', updatedChallenge.vault_item_id);
 
-    // 5. Add an entry to the leaderboards table
+    // 6. (Existing) Add an entry to the leaderboards table
     const { error: leaderboardError } = await supaAdmin.from('leaderboards').insert({
         user_id: user.id,
         challenge_id: challengeId,
@@ -69,7 +82,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         timeframe: 'all-time',
     });
 
-    if (leaderboardError) throw leaderboardError;
+    if (leaderboardError) {
+        // Log this error but do not fail the request
+        console.error(`Failed to add leaderboard entry for challenge ${challengeId}:`, leaderboardError.message);
+    };
 
     return res.status(200).json({ success: true, roi: roi.toFixed(2) });
 

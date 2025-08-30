@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext'; // Using AuthContext for session management
 
 interface Watchlist {
   id: string;
@@ -18,12 +19,11 @@ export const WatchlistManager: React.FC = () => {
   const [watchlists, setWatchlists] = useState<Watchlist[]>([]);
   const [newKeywords, setNewKeywords] = useState('');
   const [loading, setLoading] = useState(true);
+  const { session } = useAuth(); // Get session from AuthContext
 
   const fetchWatchlists = useCallback(async () => {
+    if (!session) return;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Not authenticated");
-
       const response = await fetch('/api/arena/watchlist', {
         headers: { 'Authorization': `Bearer ${session.access_token}` },
       });
@@ -35,7 +35,7 @@ export const WatchlistManager: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [session]);
 
   useEffect(() => {
     fetchWatchlists();
@@ -43,13 +43,11 @@ export const WatchlistManager: React.FC = () => {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!session) return;
     const keywords = newKeywords.split(',').map(k => k.trim()).filter(Boolean);
     if (keywords.length === 0) return;
 
     try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) throw new Error("Not authenticated");
-
         const response = await fetch('/api/arena/watchlist', {
             method: 'POST',
             headers: {
@@ -69,10 +67,8 @@ export const WatchlistManager: React.FC = () => {
   };
   
   const handleRemove = async (id: string) => {
+    if (!session) return;
     try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) throw new Error("Not authenticated");
-
         await fetch('/api/arena/watchlist', {
             method: 'DELETE',
             headers: {
