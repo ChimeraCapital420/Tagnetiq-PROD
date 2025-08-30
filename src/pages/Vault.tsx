@@ -1,5 +1,4 @@
 // FILE: src/pages/Vault.tsx
-
 import React, { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMfa } from '../contexts/MfaContext';
@@ -9,11 +8,12 @@ import { MfaSetup } from '../components/mfa/MfaSetup';
 import { MfaUnlock } from '../components/mfa/MfaUnlock';
 import { VaultItemCard } from '../components/vault/VaultItemCard';
 import { PdfDownloadButton } from '../components/vault/PdfDownloadButton';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'; 
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { ItemDetailModal } from '@/components/vault/ItemDetailModal';
 import ChallengeConfirmationModal from '@/components/arena/ChallengeConfirmationModal';
 import { toast } from 'sonner';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export interface VaultItem {
   id: string;
@@ -37,6 +37,21 @@ export interface VaultItem {
   updated_at: string;
 }
 
+// CHARON: A skeleton loader provides a better user experience than a simple spinner.
+// It gives the user a preview of the content that is loading.
+const VaultSkeletonLoader = () => (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div key={i} className="bg-gray-800/20 backdrop-blur-sm p-4 rounded-lg animate-pulse">
+          <div className="w-full h-48 bg-gray-700/50 rounded-md mb-4"></div>
+          <div className="h-6 w-3/4 bg-gray-700/50 rounded"></div>
+          <div className="h-4 w-1/2 bg-gray-700/50 rounded mt-2"></div>
+        </div>
+      ))}
+    </div>
+);
+
+
 const VaultPage: React.FC = () => {
   const { profile, loading: authLoading, session } = useAuth();
   const { isUnlocked, unlockVault } = useMfa();
@@ -59,11 +74,10 @@ const VaultPage: React.FC = () => {
     queryFn: fetchVaultItems,
     enabled: !!session?.access_token && isUnlocked,
   });
-  
-  // HEPHAESTUS NOTE: This handler is updated to send all required data for a challenge.
+
   const handleConfirmChallenge = async (purchasePrice: number, askingPrice: number) => {
     if (!itemToChallenge || !session) return;
-    
+
     const toastId = toast.loading("Submitting item to the Arena...");
     try {
       const response = await fetch('/api/arena/challenge', {
@@ -72,13 +86,13 @@ const VaultPage: React.FC = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ 
-            vault_item_id: itemToChallenge.id, 
+        body: JSON.stringify({
+            vault_item_id: itemToChallenge.id,
             purchase_price: purchasePrice,
             asking_price: askingPrice,
             item_name: itemToChallenge.asset_name,
             primary_photo_url: itemToChallenge.photos?.[0] || null,
-            description: itemToChallenge.notes || '' 
+            description: itemToChallenge.notes || ''
         }),
       });
 
@@ -89,9 +103,6 @@ const VaultPage: React.FC = () => {
 
       toast.success("Item successfully listed in the Arena!", { id: toastId });
       setItemToChallenge(null);
-      // Invalidate queries to reflect that the item is now part of a challenge if needed
-      // queryClient.invalidateQueries({ queryKey: ['vaultItems'] });
-
     } catch (err) {
       toast.error("Failed to start challenge", { id: toastId, description: (err as Error).message });
     }
@@ -125,19 +136,19 @@ const VaultPage: React.FC = () => {
 
   return (
     <>
-      <div className="container mx-auto p-4 md:p-8">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-4xl font-bold">Digital Vault</h1>
-          {vaultItems && vaultItems.length > 0 && profile && <PdfDownloadButton items={vaultItems} profile={profile} />}
+      <motion.div
+        className="container mx-auto p-4 md:p-8"
+        initial={{ opacity: 0, y: 15 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+      >
+        <div className="flex justify-between items-center mb-8">
+            <h1 className="text-4xl font-bold tracking-wider">Digital Vault</h1>
+            {vaultItems && vaultItems.length > 0 && profile && <PdfDownloadButton items={vaultItems} profile={profile} />}
         </div>
 
-        {isVaultLoading && (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="mr-2 h-8 w-8 animate-spin" />
-            <span className="text-xl">Loading Vault Items...</span>
-          </div>
-        )}
-        
+        {isVaultLoading && <VaultSkeletonLoader />}
+
         {isError && (
           <Alert variant="destructive">
             <ShieldAlert className="h-4 w-4" />
@@ -150,42 +161,61 @@ const VaultPage: React.FC = () => {
         )}
 
         {!isVaultLoading && !isError && vaultItems && vaultItems.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <motion.div
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+            // CHARON: Container variant for staggering child animations.
+            variants={{
+                hidden: { opacity: 0 },
+                show: {
+                  opacity: 1,
+                  transition: {
+                    staggerChildren: 0.05,
+                  },
+                },
+              }}
+              initial="hidden"
+              animate="show"
+          >
             {vaultItems.map((item) => (
-              <VaultItemCard 
-                key={item.id} 
-                item={item} 
+              <VaultItemCard
+                key={item.id}
+                item={item}
                 onSelect={() => setSelectedItem(item)}
                 onStartChallenge={() => setItemToChallenge(item)}
               />
             ))}
-          </div>
+          </motion.div>
         )}
-        
+
         {!isVaultLoading && !isError && (!vaultItems || vaultItems.length === 0) && (
           <div className="text-center py-16 border-2 border-dashed rounded-lg">
             <h2 className="text-2xl font-semibold">Your Vault is Empty</h2>
             <p className="text-muted-foreground mt-2">Add items from the analysis page to secure them in your vault.</p>
           </div>
         )}
-      </div>
-      
-      {selectedItem && (
-        <ItemDetailModal 
-          item={selectedItem} 
-          onClose={() => setSelectedItem(null)}
-          onUpdate={handleUpdateItem}
-        />
-      )}
-      
-      {itemToChallenge && (
-        <ChallengeConfirmationModal 
-          isOpen={!!itemToChallenge}
-          onClose={() => setItemToChallenge(null)}
-          item={itemToChallenge}
-          onConfirm={handleConfirmChallenge}
-        />
-      )}
+      </motion.div>
+
+      {/* CHARON: AnimatePresence allows the modals to animate in and out gracefully. */}
+      <AnimatePresence>
+        {selectedItem && (
+          <ItemDetailModal
+            item={selectedItem}
+            onClose={() => setSelectedItem(null)}
+            onUpdate={handleUpdateItem}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {itemToChallenge && (
+          <ChallengeConfirmationModal
+            isOpen={!!itemToChallenge}
+            onClose={() => setItemToChallenge(null)}
+            item={itemToChallenge}
+            onConfirm={handleConfirmChallenge}
+          />
+        )}
+      </AnimatePresence>
     </>
   );
 };

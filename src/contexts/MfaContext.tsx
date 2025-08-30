@@ -1,5 +1,3 @@
-// FILE: src/contexts/MfaContext.tsx
-
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 
 interface MfaContextType {
@@ -10,7 +8,19 @@ interface MfaContextType {
 
 const MfaContext = createContext<MfaContextType | undefined>(undefined);
 
-export const MfaProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+export const useMfa = (): MfaContextType => {
+  const context = useContext(MfaContext);
+  if (!context) {
+    throw new Error('useMfa must be used within a MfaProvider');
+  }
+  return context;
+};
+
+interface MfaProviderProps {
+  children: ReactNode;
+}
+
+export const MfaProvider = ({ children }: MfaProviderProps) => {
   const [isUnlocked, setIsUnlocked] = useState(false);
 
   const unlockVault = () => {
@@ -20,24 +30,10 @@ export const MfaProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const lockVault = () => {
     setIsUnlocked(false);
   };
-  
-  const value = {
-    isUnlocked,
-    unlockVault,
-    lockVault,
-  };
 
   return (
-    <MfaContext.Provider value={value}>
+    <MfaContext.Provider value={{ isUnlocked, unlockVault, lockVault }}>
       {children}
     </MfaContext.Provider>
   );
-};
-
-export const useMfa = (): MfaContextType => {
-  const context = useContext(MfaContext);
-  if (!context) {
-    throw new Error('useMfa must be used within an MfaProvider');
-  }
-  return context;
 };

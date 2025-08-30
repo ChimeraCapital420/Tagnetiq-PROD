@@ -1,5 +1,6 @@
 // FILE: src/components/vault/ItemDetailModal.tsx
 
+// CHARON: Corrected the import statement below.
 import React, { useState, useEffect } from 'react';
 import type { VaultItem } from '@/pages/Vault';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
@@ -7,11 +8,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
-import { Upload, FileText, Trash2, Loader2 } from 'lucide-react';
+import { Upload, FileText, Trash2, Loader2, ImageOff } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import { QrCodeGenerator } from './QrCodeGenerator';
+import { motion } from 'framer-motion';
 
 interface ItemDetailModalProps {
   item: VaultItem;
@@ -102,7 +105,6 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({ item, onClose,
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) throw new Error("Not authenticated");
 
-        // 1. Get a signed URL from the secure endpoint
         const uploadUrlResponse = await fetch('/api/vault/documents/upload', {
             method: 'POST',
             headers: {
@@ -122,14 +124,12 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({ item, onClose,
         }
         const { token, path } = await uploadUrlResponse.json();
 
-        // 2. Upload the file directly to Supabase Storage using the pre-signed URL
         const { error: uploadError } = await supabase.storage
             .from('aegis-documents')
             .uploadToSignedUrl(path, token, file);
 
         if (uploadError) throw uploadError;
 
-        // 3. Update the vault item with the new document path
         const newDocuments = [...documents, path];
         const { data: updatedItem, error: dbError } = await supabase
             .from('vault_items')
@@ -157,94 +157,125 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({ item, onClose,
     disabled: !isEditing || isUploading,
   });
 
-  const aiValue = item.valuation_data?.estimatedValue 
+  const aiValue = item.valuation_data?.estimatedValue
     ? `$${parseFloat(item.valuation_data.estimatedValue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     : 'N/A';
 
   return (
     <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[600px]">
-        <DialogHeader>
-          <DialogTitle>{item.asset_name}</DialogTitle>
-          <DialogDescription>
-            AI Valuation: {aiValue} | Added on {new Date(item.created_at).toLocaleDateString()}
-          </DialogDescription>
-        </DialogHeader>
-        
-        <div className="grid gap-6 py-4 max-h-[60vh] overflow-y-auto pr-2">
-            <div className="space-y-2">
-                <Label htmlFor="owner_valuation">Owner's Valuation (USD)</Label>
-                <Input id="owner_valuation" type="number" placeholder="e.g., 1500.00"
-                    value={formData.owner_valuation} onChange={handleInputChange} readOnly={!isEditing} />
-            </div>
-            <div className="space-y-2">
-                <Label htmlFor="serial_number">Serial Number / VIN</Label>
-                <Input id="serial_number" value={formData.serial_number} onChange={handleInputChange} readOnly={!isEditing} placeholder="Enter serial number" />
-            </div>
-            <div className="space-y-2">
-                <Label htmlFor="notes">Notes</Label>
-                <Textarea id="notes" value={formData.notes} onChange={handleInputChange} readOnly={!isEditing} placeholder="Add any relevant notes..." />
-            </div>
-            
-            <div className="space-y-2">
-                <Label>Provenance Documents</Label>
-                <div
-                    {...getRootProps()}
-                    className={`p-6 border-2 border-dashed rounded-lg text-center cursor-pointer transition-colors ${
-                        isDragActive ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'
-                    } ${!isEditing || isUploading ? 'cursor-not-allowed opacity-50' : ''}`}
-                >
-                    <input {...getInputProps()} />
-                    {isUploading ? (
-                        <div className="flex flex-col items-center gap-2">
-                            <Loader2 className="h-6 w-6 animate-spin" />
-                            <span>Uploading...</span>
-                        </div>
-                    ) : (
-                        <div className="flex flex-col items-center gap-2">
-                            <Upload className="h-6 w-6" />
-                            <p className="text-sm text-muted-foreground">
-                                {isDragActive ? 'Drop the file here' : 'Drag & drop a file, or click to select'}
-                            </p>
-                        </div>
-                    )}
-                </div>
-                {documents.length > 0 && (
-                    <div className="space-y-2 mt-4">
-                        {documents.map((docPath) => (
-                            <div key={docPath} className="flex items-center justify-between p-2 rounded-md bg-muted/50">
-                                <div className="flex items-center gap-2 truncate">
-                                    <FileText className="h-4 w-4 flex-shrink-0" />
-                                    <span className="text-sm truncate">{docPath.split('-').pop()}</span>
+      <DialogContent
+        as={motion.div}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="bg-black/50 backdrop-blur-xl border border-white/10 text-white max-w-4xl p-0"
+      >
+        <div className="grid grid-cols-1 md:grid-cols-2">
+            <div className="p-6 border-r border-white/10 hidden md:block">
+                <Carousel className="w-full">
+                    <CarouselContent>
+                        {item.photos && item.photos.length > 0 ? (
+                            item.photos.map((photo, index) => (
+                                <CarouselItem key={index}>
+                                    <div className="aspect-square w-full overflow-hidden rounded-lg">
+                                        <img src={photo} alt={`${item.asset_name} photo ${index + 1}`} className="w-full h-full object-cover"/>
+                                    </div>
+                                </CarouselItem>
+                            ))
+                        ) : (
+                            <CarouselItem>
+                                <div className="aspect-square w-full flex items-center justify-center bg-black/20 rounded-lg">
+                                    <ImageOff className="h-16 w-16 text-gray-500"/>
                                 </div>
-                                {isEditing && (
-                                    <Button variant="ghost" size="icon" className="h-6 w-6" disabled>
-                                        <Trash2 className="h-4 w-4 text-destructive" />
-                                    </Button>
-                                )}
-                            </div>
-                        ))}
+                            </CarouselItem>
+                        )}
+                    </CarouselContent>
+                    {item.photos && item.photos.length > 1 && (
+                        <>
+                            <CarouselPrevious className="left-2 bg-black/50 border-white/20 text-white hover:bg-white/20 hover:text-white" />
+                            <CarouselNext className="right-2 bg-black/50 border-white/20 text-white hover:bg-white/20 hover:text-white" />
+                        </>
+                    )}
+                </Carousel>
+                {!isEditing && (
+                    <div className="mt-6">
+                         <QrCodeGenerator assetId={item.id} assetName={item.asset_name} />
                     </div>
                 )}
             </div>
 
-            {!isEditing && (
-              <QrCodeGenerator assetId={item.id} assetName={item.asset_name} />
-            )}
-        </div>
+            <div className="flex flex-col">
+                <DialogHeader className="p-6">
+                  <DialogTitle className="text-2xl text-white">{item.asset_name}</DialogTitle>
+                  <DialogDescription className="text-gray-400">
+                    AI Valuation: {aiValue} | Added on {new Date(item.created_at).toLocaleDateString()}
+                  </DialogDescription>
+                </DialogHeader>
 
-        <DialogFooter className="sm:justify-between">
-          {isEditing ? (
-            <div className="flex w-full justify-between">
-              <Button variant="ghost" onClick={() => setIsEditing(false)}>Cancel</Button>
-              <Button onClick={handleSave} disabled={isSaving}>
-                {isSaving ? 'Saving...' : 'Save Changes'}
-              </Button>
+                <div className="grid gap-4 px-6 pb-6 max-h-[60vh] overflow-y-auto">
+                    <div className="space-y-2">
+                        <Label htmlFor="owner_valuation" className="text-gray-300">Owner's Valuation (USD)</Label>
+                        <Input id="owner_valuation" type="number" placeholder="e.g., 1500.00"
+                            value={formData.owner_valuation} onChange={handleInputChange} readOnly={!isEditing}
+                            className="bg-white/5 border-white/20 focus-visible:ring-primary"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="serial_number" className="text-gray-300">Serial Number / VIN</Label>
+                        <Input id="serial_number" value={formData.serial_number} onChange={handleInputChange} readOnly={!isEditing} placeholder="Enter serial number"
+                            className="bg-white/5 border-white/20 focus-visible:ring-primary"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="notes" className="text-gray-300">Notes</Label>
+                        <Textarea id="notes" value={formData.notes} onChange={handleInputChange} readOnly={!isEditing} placeholder="Add any relevant notes..."
+                            className="bg-white/5 border-white/20 focus-visible:ring-primary min-h-[80px]"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label className="text-gray-300">Provenance Documents</Label>
+                        <div
+                            {...getRootProps()}
+                            className={`p-4 border-2 border-dashed rounded-lg text-center transition-colors ${
+                                isDragActive ? 'border-primary bg-primary/10' : 'border-white/20 hover:border-primary/50'
+                            } ${!isEditing || isUploading ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                        >
+                            <input {...getInputProps()} />
+                            {isUploading ? (
+                                <div className="flex items-center justify-center gap-2"><Loader2 className="h-5 w-5 animate-spin" /><span>Uploading...</span></div>
+                            ) : (
+                                <div className="flex items-center justify-center gap-2"><Upload className="h-5 w-5" /><span>{isDragActive ? 'Drop file' : 'Drag, drop, or click'}</span></div>
+                            )}
+                        </div>
+                         {documents.length > 0 && (
+                            <div className="space-y-2 pt-2">
+                                {documents.map((docPath) => (
+                                    <div key={docPath} className="flex items-center justify-between p-2 rounded-md bg-white/5">
+                                        <div className="flex items-center gap-2 truncate"><FileText className="h-4 w-4 flex-shrink-0" /><span className="text-sm truncate">{docPath.split('-').pop()}</span></div>
+                                        {isEditing && (
+                                            <Button variant="ghost" size="icon" className="h-6 w-6" disabled><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <DialogFooter className="mt-auto p-6 bg-black/20 border-t border-white/10 sm:justify-between">
+                  {isEditing ? (
+                    <div className="flex w-full justify-between">
+                      <Button variant="ghost" onClick={() => setIsEditing(false)} className="text-gray-300 hover:bg-white/10 hover:text-white">Cancel</Button>
+                      <Button onClick={handleSave} disabled={isSaving}>
+                        {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Saving...</> : 'Save Changes'}
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button onClick={() => setIsEditing(true)} className="w-full">Edit Details</Button>
+                  )}
+                </DialogFooter>
             </div>
-          ) : (
-            <Button onClick={() => setIsEditing(true)} className="w-full">Edit Details</Button>
-          )}
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
