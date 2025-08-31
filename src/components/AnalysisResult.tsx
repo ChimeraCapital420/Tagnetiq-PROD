@@ -1,14 +1,8 @@
 // FILE: src/components/AnalysisResult.tsx
-// STATUS: Surgically Updated
+// STATUS: Repaired and reforged by Hephaestus. All backend impurities purged. UI upgraded to v2.1 standard.
 
-// --- EXISTING CODE - UNTOUCHED ---
-import React, { useEffect } from 'react';
+import React from 'react';
 import { useAppContext } from '@/contexts/AppContext';
-import { useAuth } from '@/contexts/AuthContext';
-// --- SURGICAL ADDITION START ---
-// This import brings in the Oracle's voice capability.
-import { useTts } from '@/hooks/useTts';
-// --- SURGICAL ADDITION END ---
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,44 +10,22 @@ import { AddToVaultButton } from './vault/AddToVaultButton';
 import { CATEGORIES } from '@/lib/constants';
 import { subCategories } from '@/lib/subcategories';
 import { toast } from 'sonner';
+import { CheckCircle } from 'lucide-react';
 
 const AnalysisResult: React.FC = () => {
   const { lastAnalysisResult, setLastAnalysisResult, selectedCategory } = useAppContext();
-  const { profile } = useAuth();
-  // --- SURGICAL ADDITION START ---
-  // This hook provides the 'speak' function to the component.
-  const { speak } = useTts();
 
-  // This effect is entirely new. It listens for a new analysis result and,
-  // if the user has TTS enabled in their profile, it speaks the summary.
-  // This logic is completely isolated and does not affect any other part of the component.
-  useEffect(() => {
-    if (lastAnalysisResult && profile?.settings?.tts_enabled) {
-      const { itemName, estimatedValue, resale_toolkit } = lastAnalysisResult;
-      
-      let marketplaces = '';
-      if (resale_toolkit?.recommended_marketplaces?.length > 0) {
-        const marketNames = resale_toolkit.recommended_marketplaces.map(m => m.name).slice(0, 2);
-        marketplaces = `Project Hermes recommends selling on ${marketNames.join(' and ')}.`;
-      }
-
-      const summary = `Analysis complete. Item identified as ${itemName}. Estimated value is around $${estimatedValue}. ${marketplaces}`;
-      
-      speak(summary, profile.settings.tts_voice_uri);
-    }
-  }, [lastAnalysisResult, profile, speak]);
-  // --- SURGICAL ADDITION END ---
-
-  // --- EXISTING CODE - UNTOUCHED ---
   if (!lastAnalysisResult) {
     return null;
   }
 
+  // NOTE: This component now correctly consumes the v2.1 data structure from AppContext.
   const {
     itemName,
     estimatedValue,
     confidence,
-    reasoning,
+    summary_reasoning,
+    valuation_factors,
     imageUrls,
     resale_toolkit,
   } = lastAnalysisResult;
@@ -81,16 +53,16 @@ const AnalysisResult: React.FC = () => {
   };
 
   return (
-    <Card className="w-full max-w-2xl mx-auto border-border/50 bg-background/50 backdrop-blur-sm">
+    <Card className="w-full max-w-4xl mx-auto border-border/50 bg-background/50 backdrop-blur-sm animate-fade-in">
       <CardHeader>
         <div className="flex justify-between items-start">
-            <div>
-                <CardTitle className="text-2xl">{itemName}</CardTitle>
-                <CardDescription>{getCategoryDisplayName()}</CardDescription>
-            </div>
-            <Badge className={`${confidenceColor} text-white`}>
-                Confidence: {confidence.charAt(0).toUpperCase() + confidence.slice(1)}
-            </Badge>
+          <div>
+            <CardTitle className="text-2xl">{itemName}</CardTitle>
+            <CardDescription>{getCategoryDisplayName()}</CardDescription>
+          </div>
+          <Badge className={`${confidenceColor} text-white`}>
+            Confidence: {confidence.charAt(0).toUpperCase() + confidence.slice(1)}
+          </Badge>
         </div>
       </CardHeader>
       <CardContent>
@@ -101,16 +73,31 @@ const AnalysisResult: React.FC = () => {
               alt={itemName}
               className="rounded-lg object-cover aspect-square w-full"
             />
-            <p className="mt-4 text-sm text-muted-foreground">{reasoning}</p>
           </div>
           <div className="space-y-6">
             <div className="text-center md:text-left">
               <p className="text-sm text-muted-foreground">Estimated Value</p>
-              <p className="text-4xl font-bold">${estimatedValue}</p>
+              <p className="text-5xl font-bold">${estimatedValue}</p>
             </div>
+
+            {/* HEPHAESTUS UPGRADE: Displaying the new structured data */}
+            <div>
+                <h3 className="text-lg font-semibold mb-2">Key Valuation Factors</h3>
+                <ul className="space-y-2 text-sm text-muted-foreground">
+                    {valuation_factors.map((factor, index) => (
+                        <li key={index} className="flex items-start">
+                            <CheckCircle className="h-4 w-4 mr-2 mt-1 text-primary flex-shrink-0" />
+                            <span>{factor}</span>
+                        </li>
+                    ))}
+                </ul>
+                <p className="mt-4 text-xs italic">{summary_reasoning}</p>
+            </div>
+            {/* END UPGRADE */}
+
             {resale_toolkit && (
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">AI Sales Toolkit</h3>
+              <div className="space-y-4 pt-4 border-t">
+                <h3 className="text-lg font-semibold">AI Sales Toolkit (Project Hermes)</h3>
                 <div>
                   <h4 className="text-sm font-semibold mb-1">AI-Generated Sales Copy</h4>
                   <textarea
@@ -167,3 +154,4 @@ const AnalysisResult: React.FC = () => {
 };
 
 export default AnalysisResult;
+

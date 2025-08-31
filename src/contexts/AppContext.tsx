@@ -1,5 +1,5 @@
 // FILE: src/contexts/AppContext.tsx
-// STATUS: Corrected. Surgically updated to support conversational memory and proactive advice.
+// STATUS: Forged by Hephaestus to support Hydra v2.1, Nexus, and Oracle symbiosis.
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useAuth } from './AuthContext';
@@ -11,18 +11,37 @@ type Theme = 'executive' | 'matrix' | 'safari' | 'darkKnight' | 'cyberpunk' | 'o
 type ThemeMode = 'light' | 'dark';
 type SeasonalMode = 'winter' | 'spring' | 'summer' | 'fall' | 'off';
 
+// --- HEPHAESTUS FORGE: v2.1 DATA STRUCTURE ---
+// This defines the structure for marketplace data, ensuring type safety for the resale_toolkit.
+export interface DataSource {
+  name: string;
+  url: string;
+  reason: string;
+  api_available: boolean;
+  affiliate_link_template?: string;
+}
+
+// This is the upgraded data contract for Hydra Engine v2.1.
+// It replaces the simple 'reasoning' string with a structured, actionable output for Nexus and Oracle.
 export interface AnalysisResult {
-  id: string; decision: 'BUY' | 'PASS'; itemName: string; estimatedValue: string;
-  confidence: 'high' | 'medium' | 'low'; reasoning: string;
-  analysisCount?: number; consensusRatio?: string; code?: string; imageUrls?: string[];
+  id: string;
+  decision: 'BUY' | 'PASS';
+  itemName: string;
+  estimatedValue: string;
+  confidence: 'high' | 'medium' | 'low';
+  summary_reasoning: string;       // A brief, top-level summary.
+  valuation_factors: string[];     // A detailed list of the top 5 value drivers.
+  analysisCount?: number;
+  consensusRatio?: string;
+  code?: string;
+  imageUrls?: string[];
   resale_toolkit?: {
     sales_copy: string;
-    recommended_marketplaces: any[];
+    recommended_marketplaces: DataSource[];
   };
 }
 
-// --- ORACLE SURGICAL ADDITION START ---
-// New types to support the Oracle's advanced conversational features.
+// Data structures for the Oracle conversational AI remain untouched.
 export interface OracleResponseType {
     text: string;
     timestamp: number;
@@ -32,7 +51,7 @@ export interface ConversationTurn {
     role: 'user' | 'assistant';
     content: string;
 }
-// --- ORACLE SURGICAL ADDITION END ---
+// --- END FORGE ---
 
 
 interface AppContextType {
@@ -58,12 +77,10 @@ interface AppContextType {
   setSearchArenaQuery: (query: string) => void;
   startScanWithCategory: (categoryId: string, subcategoryId: string | null) => void;
   showArenaWelcome: (callback?: () => void) => void;
-  // --- ORACLE SURGICAL ADDITION START ---
   oracleResponse: OracleResponseType | null;
   setOracleResponse: (response: string) => void;
   conversationHistory: ConversationTurn[];
   addConversationTurn: (turn: ConversationTurn) => void;
-  // --- ORACLE SURGICAL ADDITION END ---
 }
 
 const defaultAppContext: AppContextType = {
@@ -89,16 +106,20 @@ const defaultAppContext: AppContextType = {
   setSearchArenaQuery: () => {},
   startScanWithCategory: () => {},
   showArenaWelcome: () => {},
-  // --- ORACLE SURGICAL ADDITION START ---
   oracleResponse: null,
   setOracleResponse: () => {},
   conversationHistory: [],
   addConversationTurn: () => {},
-  // --- ORACLE SURGICAL ADDITION END ---
 };
 
 const AppContext = createContext<AppContextType>(defaultAppContext);
-export const useAppContext = () => useContext(AppContext);
+export const useAppContext = () => {
+    const context = useContext(AppContext);
+    if (context === undefined) {
+        throw new Error('useAppContext must be used within an AppProvider');
+    }
+    return context;
+};
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('tagnetiq-theme') as Theme) || 'darkKnight');
@@ -114,10 +135,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   
   const [searchArenaQuery, setSearchArenaQuery] = useState('');
   
-  // --- ORACLE SURGICAL ADDITION START ---
   const [oracleResponse, _setOracleResponse] = useState<OracleResponseType | null>(null);
   const [conversationHistory, setConversationHistory] = useState<ConversationTurn[]>([]);
-  // --- ORACLE SURGICAL ADDITION END ---
 
   const [postWelcomeCallback, setPostWelcomeCallback] = useState<(() => void) | null>(null);
   const { profile, setProfile } = useAuth();
@@ -177,7 +196,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIsScannerOpen(true);
   };
 
-  // --- ORACLE SURGICAL ADDITION START ---
   const setOracleResponse = (text: string) => {
     _setOracleResponse({ text, timestamp: Date.now() });
   };
@@ -185,14 +203,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addConversationTurn = (turn: ConversationTurn) => {
     setConversationHistory(prev => {
         const newHistory = [...prev, turn];
-        // Keep the history from getting too long (e.g., last 6 turns / 3 exchanges)
-        if (newHistory.length > 6) {
-            return newHistory.slice(-6);
+        // Keep the history from getting too long (e.g., last 10 turns / 5 exchanges)
+        if (newHistory.length > 10) {
+            return newHistory.slice(-10);
         }
         return newHistory;
     });
   };
-  // --- ORACLE SURGICAL ADDITION END ---
 
   const value = {
     theme, themeMode, seasonalMode,
@@ -207,12 +224,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     searchArenaQuery, setSearchArenaQuery,
     startScanWithCategory,
     showArenaWelcome,
-    // --- ORACLE SURGICAL ADDITION START ---
     oracleResponse,
     setOracleResponse,
     conversationHistory,
     addConversationTurn,
-    // --- ORACLE SURGICAL ADDITION END ---
   };
 
   return (
@@ -222,3 +237,4 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     </AppContext.Provider>
   );
 };
+

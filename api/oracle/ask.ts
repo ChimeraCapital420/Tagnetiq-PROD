@@ -1,14 +1,14 @@
 // FILE: api/oracle/ask.ts
-// STATUS: NEW - This is the Oracle's new brain for proactive, conversational advice.
+// STATUS: Surgically updated to accept Hydra v2.1 AnalysisResult for context-aware advice.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
 import { verifyUser } from '../_lib/security';
-import { supaAdmin } from '../_lib/supaAdmin';
+// Hephaestus Note: SupaAdmin is not needed for this endpoint as it only uses passed context.
 
 export const config = {
   runtime: 'edge',
-  maxDuration: 60, // Allow longer for thoughtful responses
+  maxDuration: 60,
 };
 
 const openai = new OpenAI({ apiKey: process.env.TIER2_OPENAI_TOKEN });
@@ -16,10 +16,10 @@ const openai = new OpenAI({ apiKey: process.env.TIER2_OPENAI_TOKEN });
 const systemPrompt = `
 You are the Oracle, the AI heart of the TagnetIQ platform. You serve as an expert analyst and a proactive business partner to the user. Your personality is professional, insightful, and slightly futuristic. You are not a simple chatbot; you are a high-level advisor.
 
-Your goal is to synthesize the user's question with their recent activity to provide actionable, intelligent advice.
+Your goal is to synthesize the user's question with their recent activity and the specific item analysis they provide to give actionable, intelligent advice.
 
-- **Analyze Context:** Carefully review the user's scan history and vault contents. Identify patterns, high-value categories, and potential opportunities.
-- **Be Proactive:** Don't just answer the question literally. Anticipate the user's underlying goal and offer strategic suggestions.
+- **Analyze Context:** Carefully review the provided analysis context, including the item's valuation factors.
+- **Be Proactive:** Don't just answer the question literally. Anticipate the user's underlying goal and offer strategic suggestions based on the provided data.
 - **Be Conversational:** Your responses must be in natural language, clear, and concise. Address the user directly.
 - **Maintain Persona:** You are the Oracle. Your responses should be confident and authoritative, yet helpful.
 
@@ -33,34 +33,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const user = await verifyUser(req);
-    const { question, conversationHistory } = req.body;
+    // --- HYDRA V2.1 SURGICAL UPDATE START ---
+    // The endpoint now accepts an `analysisContext` object alongside the question.
+    const { question, conversationHistory, analysisContext } = req.body;
+    // --- HYDRA V2.1 SURGICAL UPDATE END ---
 
     if (!question || typeof question !== 'string') {
       return res.status(400).json({ error: 'A valid "question" string is required.' });
     }
 
-    // In a real implementation, we would fetch the user's recent scans and vault items here.
-    // For now, we will use mock context to demonstrate the capability.
-    const userContext = `
-      ## User Context ##
-      Recent Scans: [
-        { itemName: 'Kenner Star Wars Figure', estimatedValue: '$85.00' },
-        { itemName: 'First Edition "Dune"', estimatedValue: '$2,500.00' },
-        { itemName: 'LEGO Millennium Falcon 75192', estimatedValue: '$750.00' }
-      ]
-      Vault Items: [
-        { asset_name: 'Vintage Kenner Collection', owner_valuation: '$3,200.00' },
-        { asset_name: 'Rare Sci-Fi First Editions', owner_valuation: '$7,800.00' }
-      ]
-      Stated Interests: ['starwars', 'books-firstedition', 'lego']
-    `;
+    // --- HYDRA V2.1 SURGICAL UPDATE START ---
+    // The userContext is now built dynamically from the provided analysis object.
+    // This makes the Oracle's advice directly relevant to the item being discussed.
+    let userContext = "## User Context ##\nNo specific item context provided.";
+    if (analysisContext) {
+        userContext = `
+            ## Analysis Context for Conversation ##
+            Item Name: ${analysisContext.itemName}
+            Estimated Value: $${analysisContext.estimatedValue}
+            Summary: ${analysisContext.summary_reasoning}
+            Key Valuation Factors:
+            ${analysisContext.valuation_factors.map((factor: string) => `- ${factor}`).join('\n')}
+        `;
+    }
+    // --- HYDRA V2.1 SURGICAL UPDATE END ---
 
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
         { role: 'system', content: systemPrompt },
         { role: 'system', content: userContext }
     ];
 
-    // Add conversation history if it exists
     if (Array.isArray(conversationHistory)) {
         messages.push(...conversationHistory);
     }
@@ -91,3 +93,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'The Oracle is currently contemplating. Please try again later.' });
   }
 }
+

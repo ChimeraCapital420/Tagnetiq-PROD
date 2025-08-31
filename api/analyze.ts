@@ -1,4 +1,6 @@
 // FILE: api/analyze.ts
+// STATUS: Surgically upgraded by Hephaestus to support Hydra v2.1 structured analysis.
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
@@ -12,24 +14,16 @@ export const config = {
   maxDuration: 45,
 };
 
-// --- SDK INITIALIZATION ---
-// Tier 1 (High-Speed/Low-Cost)
+// --- SDK INITIALIZATION (Unchanged) ---
 const anthropic = new Anthropic({ apiKey: process.env.TIER1_ANTHROPIC_SECRET });
 const genAI = new GoogleGenerativeAI(process.env.TIER1_GOOGLE_AI_TOKEN as string);
-
-// Tier 2 (High-Performance/High-Cost)
 const openai = new OpenAI({ apiKey: process.env.TIER2_OPENAI_TOKEN });
 const deepseek = new OpenAI({ apiKey: process.env.TIER2_DEEPSEEK_TOKEN, baseURL: 'https://api.deepseek.com/v1' });
 const grok = new OpenAI({ apiKey: process.env.TIER2_XAI_SECRET, baseURL: 'https://api.xai.com/v1' });
 
-// --- INTERFACES ---
-interface AnalysisRequest {
-  scanType: 'barcode' | 'image' | 'vin';
-  data: string;
-  category_id: string;
-  subcategory_id: string;
-}
 
+// --- HEPHAESTUS v2.1 UPGRADE START ---
+// The HydraResponse interface is updated to the new data contract for Nexus/Oracle.
 interface HydraResponse {
   itemName: string;
   estimatedValue: string;
@@ -37,15 +31,25 @@ interface HydraResponse {
   confidence: 'high' | 'medium' | 'low';
   analysisCount: number;
   consensusRatio: string;
-  reasoning: string;
+  summary_reasoning: string;       // Replaces the old 'reasoning' field.
+  valuation_factors: string[];     // New structured list of key value drivers.
   resale_toolkit?: {
     sales_copy: string;
     recommended_marketplaces: DataSource[];
   };
 }
+// --- HEPHAESTUS v2.1 UPGRADE END ---
 
-// --- HYDRA ENGINE CLASS ---
+
+interface AnalysisRequest {
+  scanType: 'barcode' | 'image' | 'vin';
+  data: string;
+  category_id: string;
+  subcategory_id: string;
+}
+
 class HydraEngine {
+    // --- UNCHANGED CODE ---
     private async identifyProductByBarcode(barcode: string): Promise<any> {
         console.log(`🔍 Looking up barcode: ${barcode}`);
         return { title: `Product ${barcode}`, brand: 'Unknown', category: 'General Goods', upc: barcode };
@@ -106,7 +110,11 @@ class HydraEngine {
                 try {
                     const jsonMatch = result.value.match(/\{[\s\S]*\}/);
                     if (jsonMatch) {
-                        validAnalyses.push(JSON.parse(jsonMatch[0]));
+                        const parsed = JSON.parse(jsonMatch[0]);
+                        // --- HEPHAESTUS v2.1 UPGRADE: Validate new structure ---
+                        if (parsed.valuation_factors && Array.isArray(parsed.valuation_factors) && parsed.summary_reasoning) {
+                           validAnalyses.push(parsed);
+                        }
                     }
                 } catch (e) { console.error(`Error parsing JSON from AI service ${i}:`, e); }
             } else if (result.status === 'rejected') {
@@ -117,9 +125,10 @@ class HydraEngine {
         return validAnalyses;
     }
 
+    // --- HEPHAESTUS v2.1 UPGRADE: Reforged Consensus Logic ---
     private buildConsensus(analyses: any[], itemName: string): HydraResponse {
         if (analyses.length === 0) {
-            return { itemName, estimatedValue: '0.00', decision: 'PASS', confidence: 'low', analysisCount: 0, consensusRatio: '0/0', reasoning: 'No AI models were able to provide a valid analysis.' };
+            return { itemName, estimatedValue: '0.00', decision: 'PASS', confidence: 'low', analysisCount: 0, consensusRatio: '0/0', summary_reasoning: 'No AI models were able to provide a valid analysis.', valuation_factors: [] };
         }
 
         const buyVotes = analyses.filter(a => a.decision === 'BUY').length;
@@ -127,6 +136,15 @@ class HydraEngine {
         const values = analyses.map(a => parseFloat(a.estimatedValue) || 0).filter(v => v > 0);
         const avgValue = values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : 0;
         
+        // Aggregate and rank all valuation factors from all models to find the top 5.
+        const factorCounts = new Map<string, number>();
+        analyses.flatMap(a => a.valuation_factors).forEach(factor => {
+            factorCounts.set(factor, (factorCounts.get(factor) || 0) + 1);
+        });
+        const sortedFactors = Array.from(factorCounts.entries())
+            .sort((a, b) => b[1] - a[1])
+            .map(entry => entry[0]);
+
         let confidence: 'high' | 'medium' | 'low' = 'low';
         if (totalVotes >= 3) {
             const ratio = buyVotes / totalVotes;
@@ -137,11 +155,13 @@ class HydraEngine {
         }
 
         const decision = buyVotes > totalVotes / 2 ? 'BUY' : 'PASS';
-        const reasoning = `Synthesized from ${totalVotes} AI models. ${analyses[0]?.reasoning || ''}`;
+        const summary_reasoning = `Synthesized from ${totalVotes} AI models. ${analyses[0]?.summary_reasoning || 'No summary available.'}`;
 
-        return { itemName, estimatedValue: avgValue.toFixed(2), decision, confidence, analysisCount: totalVotes, consensusRatio: `${buyVotes}/${totalVotes}`, reasoning };
+        return { itemName, estimatedValue: avgValue.toFixed(2), decision, confidence, analysisCount: totalVotes, consensusRatio: `${buyVotes}/${totalVotes}`, summary_reasoning, valuation_factors: sortedFactors.slice(0, 5) };
     }
+    // --- END UPGRADE ---
     
+    // --- UNCHANGED CODE ---
     private getMarketplaceRecommendations(category_id: string, subcategory_id: string): DataSource[] {
         const categoryData = dataSources.find(ds => ds.category_id === category_id && ds.subcategory_id === subcategory_id);
         if (!categoryData) {
@@ -150,15 +170,16 @@ class HydraEngine {
     
         return [...categoryData.tier_1_sources, ...categoryData.tier_2_sources, ...categoryData.tier_3_sources]
             .filter(source => source.api_available && source.affiliate_link_template)
-            .slice(0, 5); // Return top 5
+            .slice(0, 5);
     }
     
+    // --- HEPHAESTUS v2.1 UPGRADE: Enhanced Sales Copy Prompt ---
     private async generateSalesCopy(analysisResult: HydraResponse): Promise<string> {
-        const prompt = `You are an expert e-commerce copywriter. Based on the following analysis, write a compelling, SEO-friendly sales description for this item. The description should be between 100 and 150 words.
+        const prompt = `You are an expert e-commerce copywriter. Based on the following analysis, write a compelling, SEO-friendly sales description for this item. Use the 'Key Value Drivers' to structure the description and highlight the most important features.
     
         Item Name: ${analysisResult.itemName}
         Estimated Value: $${analysisResult.estimatedValue}
-        Reasoning: ${analysisResult.reasoning}`;
+        Key Value Drivers: ${analysisResult.valuation_factors.join(', ')}`;
     
         try {
             const response = await openai.chat.completions.create({
@@ -171,9 +192,12 @@ class HydraEngine {
             return 'Error generating sales copy.';
         }
     }
+    // --- END UPGRADE ---
     
     public async analyze(request: AnalysisRequest): Promise<HydraResponse> {
-        const jsonPrompt = `Respond in JSON format only: {"itemName": "specific item name", "estimatedValue": "25.99", "decision": "BUY", "reasoning": "brief explanation"}`;
+        // --- HEPHAESTUS v2.1 UPGRADE: New AI Prompt ---
+        const jsonPrompt = `Analyze the item. Respond in JSON format ONLY: {"itemName": "specific name", "estimatedValue": "25.99", "decision": "BUY", "valuation_factors": ["Factor 1", "Factor 2", "Factor 3", "Factor 4", "Factor 5"], "summary_reasoning": "A brief summary."}`;
+        
         let analyses: any[] = [];
         let itemName = "Analysis";
 
@@ -206,7 +230,7 @@ class HydraEngine {
     }
 }
 
-// --- API ROUTE HANDLER ---
+// --- API ROUTE HANDLER (Unchanged) ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
@@ -233,3 +257,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ error: 'Hydra engine failed.', details: message });
     }
 }
+
