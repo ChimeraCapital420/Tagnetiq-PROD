@@ -1,4 +1,4 @@
-// FILE: src/components/DualScanner.tsx (RE-ARCHITECTED & CORRECTED)
+// FILE: src/components/DualScanner.tsx
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useZxing } from 'react-zxing';
@@ -16,7 +16,7 @@ type ScanMode = 'image' | 'barcode' | 'video';
 
 interface DualScannerProps {
   isOpen: boolean;
-  onClose: () => void; // CORRECTED SYNTAX
+  onClose: () => void;
 }
 
 const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
@@ -150,7 +150,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     setIsProcessing(true);
     setIsAnalyzing(true);
     onClose();
-    toast.info("Analysis initiated...", { description: "Your item is being analyzed by the Hydra Engine." });
+    toast.info("Analysis initiated...");
 
     try {
       const response = await fetch('/api/analyze', {
@@ -169,26 +169,18 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
       if (!response.ok) {
         const errorData = await response.json();
-        // Fallback for cases where errorData.error might not exist
-        const errorMessage = errorData.error || 'Analysis request failed due to an unknown error.';
-        throw new Error(errorMessage);
+        throw new Error(errorData.error || 'Analysis request failed.');
       }
       
       const analysisResult = await response.json();
       setLastAnalysisResult({ ...analysisResult, id: uuidv4(), imageUrls: capturedImages });
-      
-      // --- DIRECTIVE COMPLETE: ENHANCED "ANALYSIS COMPLETE" TOAST ---
-      toast.success('Analysis Complete!', { 
-        description: `Identified as: ${analysisResult.itemName}`
-      });
+      toast.success("Analysis complete!");
 
     } catch (error) {
       console.error("Processing error:", error);
       setLastAnalysisResult(null);
-
-      // --- DIRECTIVE COMPLETE: REFACTORED "ANALYSIS FAILED" TOAST ---
       toast.error("Analysis Failed", {
-        description: "The AI engine is currently experiencing high traffic. Please try again in a moment."
+        description: (error as Error).message
       });
     } finally {
       setIsProcessing(false);
@@ -284,3 +276,4 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 };
 
 export default DualScanner;
+

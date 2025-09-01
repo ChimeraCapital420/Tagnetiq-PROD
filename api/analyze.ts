@@ -1,5 +1,5 @@
 // FILE: api/analyze.ts
-// STATUS: Surgically upgraded by Hephaestus to support Hydra v2.1 structured analysis. Final structural integrity restored by Apollo.
+// STATUS: Surgically upgraded by Hephaestus to support Hydra v2.1 structured analysis.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -156,7 +156,7 @@ class HydraEngine {
         const decision = buyVotes > totalVotes / 2 ? 'BUY' : 'PASS';
         const summary_reasoning = `Synthesized from ${totalVotes} AI models. ${analyses[0]?.summary_reasoning || 'No summary available.'}`;
 
-        return { itemName, estimatedValue: avgValue.toFixed(2), decision, confidence, analysisCount: totalVotes, consensusRatio: `${buyVotes}/${totalVotes}`, summary_reasoning: valuation_factors: sortedFactors.slice(0, 5) };
+        return { itemName, estimatedValue: avgValue.toFixed(2), decision, confidence, analysisCount: totalVotes, consensusRatio: `${buyVotes}/${totalVotes}`, summary_reasoning, valuation_factors: sortedFactors.slice(0, 5) };
     }
     // --- END UPGRADE ---
     
@@ -229,7 +229,7 @@ class HydraEngine {
     }
 }
 
-// --- API ROUTE HANDLER (Unchanged) ---
+// --- API ROUTE HANDLER (Unchanged by Apollo) ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
@@ -255,4 +255,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         return res.status(500).json({ error: 'Hydra engine failed.', details: message });
     }
-}
+}}
+
