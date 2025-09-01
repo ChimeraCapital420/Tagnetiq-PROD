@@ -1,4 +1,4 @@
-// FILE: src/components/investor/SentimentChart.tsx (CREATE OR REPLACE)
+// FILE: src/components/investor/SentimentChart.tsx (CREATE THIS NEW FILE)
 
 import React, { useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend } from 'recharts';

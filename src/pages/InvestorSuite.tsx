@@ -1,4 +1,4 @@
-// FILE: src/pages/InvestorSuite.tsx (REVISED FOR NEW INVITE MODULE)
+// FILE: src/pages/InvestorSuite.tsx (REPLACE ENTIRE FILE)
 
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
@@ -18,8 +18,6 @@ import { CallToAction } from '@/components/investor/CallToAction';
 import { HighlightQuote } from '@/components/investor/HighlightQuote';
 import { ArenaGrowthMetrics } from '@/components/investor/ArenaGrowthMetrics';
 import { Separator } from '@/components/ui/separator';
-import { PartnershipFunnel } from '@/components/investor/PartnershipFunnel';
-import { InvestorInviteModule } from '@/components/investor/InvestorInviteModule'; // MODIFICATION: Import new module
 
 // Expanded Metrics interface to include all necessary data points
 interface Metrics {
@@ -43,11 +41,13 @@ const InvestorSuite: React.FC = () => {
 
   useEffect(() => {
     const fetchMetrics = async () => {
-      setLoading(true);
+      // Don't set loading to true on refetch for a smoother UX
+      if (!metrics) setLoading(true); 
       try {
         const response = await fetch(`/api/investor/metrics?days=${days}`);
         if (!response.ok) {
-          throw new Error('Failed to load investor metrics.');
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to load investor metrics.');
         }
         const data = await response.json();
         setMetrics(data);
@@ -59,6 +59,11 @@ const InvestorSuite: React.FC = () => {
     };
     fetchMetrics();
   }, [days]);
+
+  const funnelData = metrics ? [
+    { name: 'Invited', value: metrics.totalBetaInvites, fill: '#8884d8' },
+    { name: 'Activated', value: metrics.totalBetaTesters, fill: '#82ca9d' },
+  ] : [];
 
   const growthChartActions = (
     <div className="flex gap-1">
@@ -100,11 +105,10 @@ const InvestorSuite: React.FC = () => {
             <div className="text-center p-8 text-muted-foreground">Loading Core Metrics...</div>
         ) : (
             <>
-                <KpiCards />
-
-                <Separator />
+                <KpiCards data={metrics} />
+                <Separator className="my-8" />
                 <ArenaGrowthMetrics />
-                <Separator />
+                <Separator className="my-8" />
 
                 <div className="grid gap-8 lg:grid-cols-3">
                     <div className="lg:col-span-2 space-y-8">
@@ -113,13 +117,8 @@ const InvestorSuite: React.FC = () => {
                         <LiveFeed />
                     </div>
                     <div className="space-y-8">
-                        {/* --- MODIFICATION START --- */}
-                        {/* The new module is placed here, available to all investors. */}
-                        <InvestorInviteModule />
-                        {/* --- MODIFICATION END --- */}
                         <BetaInsights data={metrics} />
-                        <PartnershipFunnel />
-                        <FunnelChart />
+                        <FunnelChart data={funnelData} />
                         <DocsShelf />
                     </div>
                 </div>

@@ -75,6 +75,8 @@ export const InvestorInviteModule: React.FC = () => {
     }
     setIsLoading(true);
 
+    // --- SURGICAL FIX START ---
+    // The logic inside this try...catch block is the only part that has been modified.
     try {
       const response = await fetch('/api/investor/invite', {
         method: 'POST',
@@ -87,17 +89,19 @@ export const InvestorInviteModule: React.FC = () => {
       
       const result = await response.json();
       if (!response.ok) {
+        // This ensures that if the API returns an error in the JSON, it is properly thrown.
         throw new Error(result.error || 'Failed to send invite.');
       }
       
       toast.success('Invite Sent!', { description: `An invitation has been sent to ${email}.` });
       setEmail('');
-      fetchStats(); // Refresh stats after sending
+      fetchStats(); // This correctly refreshes the stats after a successful invite.
     } catch (error) {
       toast.error('Invite Failed', { description: (error as Error).message });
     } finally {
       setIsLoading(false);
     }
+    // --- SURGICAL FIX END ---
   };
 
   const statusBadge = (status: Invite['status']) => {

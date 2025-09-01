@@ -1,4 +1,4 @@
-// FILE: src/components/investor/CallToAction.tsx
+// FILE: src/components/investor/CallToAction.tsx (REPLACE ENTIRE FILE)
 
 import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -39,10 +39,12 @@ export const CallToAction: React.FC = () => {
         body: JSON.stringify(formData),
       });
 
+      // --- FIX START: Properly handle the JSON response ---
+      const result = await response.json();
       if (!response.ok) {
-        const { error } = await response.json();
-        throw new Error(error || 'An unknown error occurred.');
+        throw new Error(result.error || 'An unknown error occurred.');
       }
+      // --- FIX END ---
 
       toast.success('Request Submitted!', {
         description: 'Thank you for your interest. We will be in touch shortly.',
