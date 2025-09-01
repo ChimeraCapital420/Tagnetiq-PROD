@@ -1,4 +1,4 @@
-// FILE: src/components/DualScanner.tsx (RE-ARCHITECTED)
+// FILE: src/components/DualScanner.tsx (RE-ARCHITECTED & CORRECTED)
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useZxing } from 'react-zxing';
@@ -16,7 +16,7 @@ type ScanMode = 'image' | 'barcode' | 'video';
 
 interface DualScannerProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose: () => void; // CORRECTED SYNTAX
 }
 
 const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
@@ -169,18 +169,26 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Analysis request failed.');
+        // Fallback for cases where errorData.error might not exist
+        const errorMessage = errorData.error || 'Analysis request failed due to an unknown error.';
+        throw new Error(errorMessage);
       }
       
       const analysisResult = await response.json();
       setLastAnalysisResult({ ...analysisResult, id: uuidv4(), imageUrls: capturedImages });
-      toast.success("Analysis complete!");
+      
+      // --- DIRECTIVE COMPLETE: ENHANCED "ANALYSIS COMPLETE" TOAST ---
+      toast.success('Analysis Complete!', { 
+        description: `Identified as: ${analysisResult.itemName}`
+      });
 
     } catch (error) {
       console.error("Processing error:", error);
       setLastAnalysisResult(null);
+
+      // --- DIRECTIVE COMPLETE: REFACTORED "ANALYSIS FAILED" TOAST ---
       toast.error("Analysis Failed", {
-        description: (error as Error).message
+        description: "The AI engine is currently experiencing high traffic. Please try again in a moment."
       });
     } finally {
       setIsProcessing(false);

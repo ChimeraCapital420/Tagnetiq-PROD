@@ -1,5 +1,8 @@
+// FILE: src/components/BackgroundManager.tsx
+
 import React from 'react';
 import { useAppContext } from '@/contexts/AppContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { getThemeConfig } from '@/lib/themes';
 
 // --- START: Self-Contained Seasonal & Animated Components ---
@@ -37,17 +40,17 @@ const FallOverlay = () => <div className="particles-overlay">{[...Array(20)].map
 
 const BackgroundManager: React.FC = () => {
   const { theme, themeMode, seasonalMode } = useAppContext();
+  const { profile } = useAuth(); // Import useAuth to get profile
   const themeConfig = getThemeConfig(theme, themeMode);
 
-  // This map holds the URLs for themes that use a simple, static background image.
   const staticThemeImageMap: { [key: string]: string } = {
-    executive: '/executive-bg.jpg',
-    safari: '/safari-bg.jpg',
-    darkKnight: '/dark-knight-bg.jpg',
-    cyberpunk: '/cyberpunk-bg.jpg',
-    ocean: '/ocean-bg.jpg',
-    forest: '/forest-bg.jpg',
-    sunset: '/sunset-bg.jpg',
+    executive: '/images/executive-bg.jpg',
+    safari: '/images/safari-bg.jpg',
+    darkKnight: '/images/dark-knight-bg.jpg',
+    cyberpunk: '/images/cyberpunk-bg.jpg',
+    ocean: '/images/ocean-bg.jpg',
+    forest: '/images/forest-bg.jpg',
+    sunset: '/images/sunset-bg.jpg',
   };
 
   const renderSeasonalOverlay = () => {
@@ -60,7 +63,21 @@ const BackgroundManager: React.FC = () => {
     }
   };
   
-  const imageUrl = seasonalMode === 'off' ? (staticThemeImageMap[theme] || '') : '';
+  const getBackgroundImageUrl = () => {
+    // 1. Prioritize user's custom background URL
+    if (profile?.custom_background_url) {
+      return `url(${profile.custom_background_url})`;
+    }
+    // 2. Fallback to the theme-based image if seasonal is off
+    if (seasonalMode === 'off' && staticThemeImageMap[theme]) {
+        return `url(${staticThemeImageMap[theme]})`;
+    }
+    // 3. No image if a seasonal mode is on or no theme image exists
+    return 'none';
+  };
+
+  const backgroundImageUrl = getBackgroundImageUrl();
+  
   const seasonalGradientMap = {
       winter: 'linear-gradient(to bottom, rgba(161, 196, 253, 0.5), rgba(194, 233, 251, 0.5))',
       spring: 'linear-gradient(to bottom, rgba(212, 252, 121, 0.4), rgba(150, 230, 161, 0.4))',
@@ -76,7 +93,7 @@ const BackgroundManager: React.FC = () => {
         className="fixed inset-0 z-[-2] transition-all duration-500 bg-cover bg-center"
         style={{
           backgroundColor: themeConfig.colors.background,
-          backgroundImage: imageUrl ? `url(${imageUrl})` : 'none',
+          backgroundImage: backgroundImageUrl,
           opacity: themeMode === 'dark' ? 1 : 0.6,
         }}
       />

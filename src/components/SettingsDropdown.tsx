@@ -24,6 +24,8 @@ const SettingsDropdown: React.FC = () => {
 
   const handleSeasonalToggle = (isChecked: boolean) => {
     if (isChecked) {
+      // Set a default season when turning on, e.g., 'fall'.
+      // This could be made more dynamic based on the actual date in the future.
       setSeasonalMode('fall');
     } else {
       setSeasonalMode('off');
@@ -40,7 +42,12 @@ const SettingsDropdown: React.FC = () => {
       <DropdownMenuContent className="w-64" align="end">
         <DropdownMenuLabel>Settings</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem asChild><Link to="/profile"><User className="mr-2 h-4 w-4" /><span>My Profile</span></Link></DropdownMenuItem>
+        <DropdownMenuItem asChild>
+            <Link to="/profile">
+                <User className="mr-2 h-4 w-4" />
+                <span>User Control Panel</span>
+            </Link>
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuSub>
@@ -61,15 +68,15 @@ const SettingsDropdown: React.FC = () => {
             <span>{themeMode === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
           </DropdownMenuItem>
            <Popover>
-            <PopoverTrigger asChild>
-                <Button variant="ghost" className="w-full justify-start font-normal px-2 py-1.5 h-auto">
-                    <Languages className="mr-2 h-4 w-4" />
-                    <span>Language</span>
-                </Button>
-            </PopoverTrigger>
-            <PopoverContent>
-                <LanguageSelector />
-            </PopoverContent>
+             <PopoverTrigger asChild>
+               <Button variant="ghost" className="w-full justify-start font-normal px-2 py-1.5 h-auto">
+                   <Languages className="mr-2 h-4 w-4" />
+                   <span>Language</span>
+               </Button>
+             </PopoverTrigger>
+             <PopoverContent>
+                 <LanguageSelector />
+             </PopoverContent>
            </Popover>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
@@ -86,7 +93,7 @@ const SettingsDropdown: React.FC = () => {
               onCheckedChange={handleSeasonalToggle}
             />
           </div>
-           <p className="text-xs text-muted-foreground mt-1 px-1">Adds seasonal visuals over your theme.</p>
+          <p className="text-xs text-muted-foreground mt-1 px-1">Adds seasonal visuals over your theme.</p>
         </div>
 
         <DropdownMenuSeparator />

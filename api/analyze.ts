@@ -1,5 +1,5 @@
 // FILE: api/analyze.ts
-// STATUS: Surgically upgraded by Hephaestus to support Hydra v2.1 structured analysis.
+// STATUS: Surgically upgraded by Hephaestus to support Hydra v2.1 structured analysis. Corrected by Apollo.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -14,7 +14,7 @@ export const config = {
   maxDuration: 45,
 };
 
-// --- SDK INITIALIZATION (Unchanged) ---
+// --- SDK INITIALIZATION ---
 const anthropic = new Anthropic({ apiKey: process.env.TIER1_ANTHROPIC_SECRET });
 const genAI = new GoogleGenerativeAI(process.env.TIER1_GOOGLE_AI_TOKEN as string);
 const openai = new OpenAI({ apiKey: process.env.TIER2_OPENAI_TOKEN });
@@ -136,7 +136,6 @@ class HydraEngine {
         const values = analyses.map(a => parseFloat(a.estimatedValue) || 0).filter(v => v > 0);
         const avgValue = values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : 0;
         
-        // Aggregate and rank all valuation factors from all models to find the top 5.
         const factorCounts = new Map<string, number>();
         analyses.flatMap(a => a.valuation_factors).forEach(factor => {
             factorCounts.set(factor, (factorCounts.get(factor) || 0) + 1);
@@ -230,7 +229,7 @@ class HydraEngine {
     }
 }
 
-// --- API ROUTE HANDLER (Unchanged) ---
+// --- API ROUTE HANDLER (Unchanged by Apollo) ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
@@ -257,4 +256,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ error: 'Hydra engine failed.', details: message });
     }
 }
-

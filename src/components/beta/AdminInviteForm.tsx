@@ -4,8 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext'; // Import useAuth to get session token
 
 export const AdminInviteForm: React.FC = () => {
+  const { session } = useAuth(); // Get session for authenticated API calls
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -14,12 +16,21 @@ export const AdminInviteForm: React.FC = () => {
       toast.error('Please enter an email address to send an invite.');
       return;
     }
+    if (!session) {
+      toast.error('Authentication error. Please log in again.');
+      return;
+    }
+
     setIsLoading(true);
     
     try {
       const response = await fetch('/api/beta/invite', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          // Add the Authorization header for secure endpoints
+          'Authorization': `Bearer ${session.access_token}`
+        },
         body: JSON.stringify({ email }),
       });
 
@@ -28,13 +39,10 @@ export const AdminInviteForm: React.FC = () => {
         throw new Error(error || 'Failed to send invite.');
       }
 
-      const { acceptUrl } = await response.json();
+      // CORRECTED: The success message now accurately reflects the backend action.
+      // No misleading "Copy Link" action is provided.
       toast.success('Invite Sent Successfully!', {
-        description: `The invite link for ${email} has been generated.`,
-        action: {
-          label: 'Copy Link',
-          onClick: () => navigator.clipboard.writeText(acceptUrl),
-        },
+        description: `An invitation email has been sent to ${email}.`,
       });
       setEmail(''); // Clear input on success
     } catch (error) {
