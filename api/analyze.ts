@@ -1,5 +1,5 @@
 // FILE: api/analyze.ts
-// STATUS: Surgically upgraded by Hephaestus to support Hydra v2.1 structured analysis. Corrected and finalized by Apollo.
+// STATUS: Surgically upgraded by Hephaestus to support Hydra v2.1 structured analysis. Final structural integrity restored by Apollo.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -136,7 +136,6 @@ class HydraEngine {
         const values = analyses.map(a => parseFloat(a.estimatedValue) || 0).filter(v => v > 0);
         const avgValue = values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : 0;
         
-        // Aggregate and rank all valuation factors from all models to find the top 5.
         const factorCounts = new Map<string, number>();
         analyses.flatMap(a => a.valuation_factors).forEach(factor => {
             factorCounts.set(factor, (factorCounts.get(factor) || 0) + 1);
@@ -157,7 +156,7 @@ class HydraEngine {
         const decision = buyVotes > totalVotes / 2 ? 'BUY' : 'PASS';
         const summary_reasoning = `Synthesized from ${totalVotes} AI models. ${analyses[0]?.summary_reasoning || 'No summary available.'}`;
 
-        return { itemName, estimatedValue: avgValue.toFixed(2), decision, confidence, analysisCount: totalVotes, consensusRatio: `${buyVotes}/${totalVotes}`, summary_reasoning, valuation_factors: sortedFactors.slice(0, 5) };
+        return { itemName, estimatedValue: avgValue.toFixed(2), decision, confidence, analysisCount: totalVotes, consensusRatio: `${buyVotes}/${totalVotes}`, summary_reasoning: valuation_factors: sortedFactors.slice(0, 5) };
     }
     // --- END UPGRADE ---
     
