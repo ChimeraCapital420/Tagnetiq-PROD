@@ -3,7 +3,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useZxing } from 'react-zxing';
 import { v4 as uuidv4 } from 'uuid';
-import { X, FlipHorizontal, Upload, Circle, Zap, Loader2, ScanLine, ImageIcon, Video, Settings as SettingsIcon, Focus } from 'lucide-react';
+import { X, FlipHorizontal, Upload, Circle, Zap, Loader2, ScanLine, ImageIcon, Video, Settings as SettingsIcon, Focus, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -26,12 +26,16 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   
   const [scanMode, setScanMode] = useState<ScanMode>('image');
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
+  const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
+  const [videoThumbnails, setVideoThumbnails] = useState<string[]>([]);
+  const [selectedVideoIndex, setSelectedVideoIndex] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
   const [isRecording, setIsRecording] = useState(false);
   const [videoChunks, setVideoChunks] = useState<Blob[]>([]);
+  const [recordedVideos, setRecordedVideos] = useState<Blob[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -132,9 +136,48 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       if (context) {
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
-        setCapturedImages(prev => [...prev, dataUrl].slice(-5));
+        const newImages = [...capturedImages, dataUrl].slice(-5);
+        setCapturedImages(newImages);
+        setSelectedImageIndex(newImages.length - 1); // Auto-select the latest image
       }
     }
+  };
+
+  const generateVideoThumbnail = async (videoBlob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const videoUrl = URL.createObjectURL(videoBlob);
+      const tempVideo = document.createElement('video');
+      tempVideo.src = videoUrl;
+      tempVideo.muted = true;
+      tempVideo.preload = 'metadata';
+      
+      tempVideo.onloadedmetadata = () => {
+        tempVideo.currentTime = Math.max(0.1, tempVideo.duration / 2);
+      };
+
+      tempVideo.onseeked = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = tempVideo.videoWidth || 320;
+        canvas.height = tempVideo.videoHeight || 240;
+        const context = canvas.getContext('2d');
+        
+        if (context) {
+          context.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+          const thumbnail = canvas.toDataURL('image/jpeg', 0.8);
+          URL.revokeObjectURL(videoUrl);
+          resolve(thumbnail);
+        } else {
+          reject(new Error('Could not generate thumbnail'));
+        }
+      };
+
+      tempVideo.onerror = () => {
+        URL.revokeObjectURL(videoUrl);
+        reject(new Error('Video loading failed'));
+      };
+
+      tempVideo.load();
+    });
   };
 
   const startVideoRecording = () => {
@@ -157,7 +200,20 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         }
       };
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
+        const videoBlob = new Blob(videoChunks, { type: 'video/webm' });
+        const newVideos = [...recordedVideos, videoBlob].slice(-5);
+        setRecordedVideos(newVideos);
+        
+        try {
+          const thumbnail = await generateVideoThumbnail(videoBlob);
+          const newThumbnails = [...videoThumbnails, thumbnail].slice(-5);
+          setVideoThumbnails(newThumbnails);
+          setSelectedVideoIndex(newThumbnails.length - 1); // Auto-select the latest video
+        } catch (error) {
+          console.error('Failed to generate thumbnail:', error);
+        }
+
         toast.success("Video recorded successfully!");
         setIsRecording(false);
       };
@@ -179,52 +235,56 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  // VULCAN FORGE: SURGICALLY REPLACED FUNCTION
   const processVideoAnalysis = async () => {
-    if (videoChunks.length === 0) {
-      toast.error("No video recorded to analyze.");
+    if (recordedVideos.length === 0 || selectedVideoIndex === null) {
+      toast.error("No video selected for analysis.");
       return;
     }
 
     setIsProcessing(true);
     setIsAnalyzing(true);
     onClose();
+    toast.info("Video analysis starting...");
 
     try {
-      const videoBlob = new Blob(videoChunks, { type: 'video/webm' });
-      
-      // Create a temporary video element to extract frames
-      const videoUrl = URL.createObjectURL(videoBlob);
+      const selectedVideoBlob = recordedVideos[selectedVideoIndex];
+      const videoUrl = URL.createObjectURL(selectedVideoBlob);
       const tempVideo = document.createElement('video');
       tempVideo.src = videoUrl;
-      tempVideo.muted = true; // Prevent audio issues
+      tempVideo.muted = true;
+      tempVideo.preload = 'metadata';
       
       await new Promise((resolve, reject) => {
         tempVideo.onloadedmetadata = () => {
-          console.log('Video duration:', tempVideo.duration);
+          console.log('Video loaded - Duration:', tempVideo.duration, 'Dimensions:', tempVideo.videoWidth, 'x', tempVideo.videoHeight);
           resolve(true);
         };
-        tempVideo.onerror = reject;
+        tempVideo.onerror = (e) => {
+          console.error('Video loading error:', e);
+          reject(new Error("Video failed to load"));
+        };
         tempVideo.load();
       });
 
-      // Check if duration is valid
       if (!tempVideo.duration || tempVideo.duration === 0 || isNaN(tempVideo.duration)) {
-        throw new Error("Invalid video duration. Video may be corrupted.");
+        throw new Error("Invalid video duration. Video may be corrupted or too short.");
       }
 
-      // Extract frame at middle of video for analysis
-      const targetTime = Math.max(0, tempVideo.duration / 2);
+      const targetTime = Math.max(0.1, tempVideo.duration / 2);
       tempVideo.currentTime = targetTime;
       
       await new Promise((resolve, reject) => {
-        tempVideo.onseeked = resolve;
-        tempVideo.onerror = reject;
-        // Fallback timeout in case seeking fails
-        setTimeout(resolve, 2000);
+        tempVideo.onseeked = () => {
+          console.log('Video seeked to:', tempVideo.currentTime);
+          resolve(true);
+        };
+        tempVideo.onerror = (e) => {
+          console.error('Video seeking error:', e);
+          reject(new Error("Failed to seek video"));
+        };
+        setTimeout(() => resolve(true), 3000);
       });
 
-      // Draw frame to canvas and get image data
       const canvas = document.createElement('canvas');
       canvas.width = tempVideo.videoWidth || 640;
       canvas.height = tempVideo.videoHeight || 480;
@@ -237,71 +297,15 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       context.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
       const frameDataUrl = canvas.toDataURL('image/jpeg', 0.95);
       
-      // Verify we got a valid frame
-      if (!frameDataUrl || frameDataUrl === 'data:,') {
-        throw new Error("Could not extract frame from video");
+      if (!frameDataUrl || frameDataUrl === 'data:,' || frameDataUrl.length < 100) {
+        throw new Error("Could not extract valid frame from video");
+      }
+
+      // FIXED AUTH: Proper session validation
+      if (!session?.access_token) {
+        throw new Error("Authentication required. Please sign in again.");
       }
       
-      // Process the frame like a normal image
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`
-        },
-        body: JSON.stringify({
-          scanType: 'image',
-          data: frameDataUrl,
-          category_id: selectedCategory?.split('-')[0] || 'general',
-          subcategory_id: selectedCategory || 'general'
-        })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Analysis failed: ${response.status}`);
-      }
-      
-      const analysisResult: AnalysisResult = await response.json();
-      setLastAnalysisResult({ ...analysisResult, id: uuidv4() });
-      toast.success("Video analysis complete!");
-
-      // Cleanup
-      URL.revokeObjectURL(videoUrl);
-
-    } catch (error) {
-      console.error("Video processing error:", error);
-      toast.error("Video Analysis Failed", {
-        description: (error as Error).message
-      });
-    } finally {
-      setIsProcessing(false);
-      setIsAnalyzing(false);
-      setVideoChunks([]);
-    }
-  };
-
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        if (e.target?.result) {
-          setCapturedImages(prev => [...prev, e.target!.result as string].slice(-5));
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const processImages = async () => {
-    if (capturedImages.length === 0 || !session) return;
-    setIsProcessing(true);
-    setIsAnalyzing(true);
-    onClose();
-    toast.info("Analysis initiated...");
-
-    try {
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: {
@@ -310,7 +314,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         },
         body: JSON.stringify({
           scanType: 'image',
-          data: capturedImages[0],
+          data: frameDataUrl,
           category_id: selectedCategory?.split('-')[0] || 'general',
           subcategory_id: selectedCategory || 'general'
         })
@@ -328,7 +332,81 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       }
       
       const analysisResult: AnalysisResult = await response.json();
-      // @ts-ignore
+      setLastAnalysisResult({ ...analysisResult, id: uuidv4() });
+      toast.success("Video analysis complete!");
+
+      URL.revokeObjectURL(videoUrl);
+
+    } catch (error) {
+      console.error("Video processing error:", error);
+      toast.error("Video Analysis Failed", {
+        description: (error as Error).message
+      });
+    } finally {
+      setIsProcessing(false);
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (e.target?.result) {
+          const newImages = [...capturedImages, e.target.result as string].slice(-5);
+          setCapturedImages(newImages);
+          setSelectedImageIndex(newImages.length - 1);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const processImages = async () => {
+    if (capturedImages.length === 0 || selectedImageIndex === null) {
+      toast.error("No image selected for analysis.");
+      return;
+    }
+
+    // FIXED AUTH: Proper session validation
+    if (!session?.access_token) {
+      toast.error("Authentication required. Please sign in again.");
+      return;
+    }
+
+    setIsProcessing(true);
+    setIsAnalyzing(true);
+    onClose();
+    toast.info("Analysis initiated...");
+
+    try {
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          scanType: 'image',
+          data: capturedImages[selectedImageIndex],
+          category_id: selectedCategory?.split('-')[0] || 'general',
+          subcategory_id: selectedCategory || 'general'
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Analysis API Error Response Text:", errorText);
+        try {
+            const errorData = JSON.parse(errorText);
+            throw new Error(errorData.error || `Analysis request failed with status ${response.status}.`);
+        } catch (e) {
+             throw new Error(`Analysis request failed with status ${response.status}. The server response was not valid JSON.`);
+        }
+      }
+      
+      const analysisResult: AnalysisResult = await response.json();
       setLastAnalysisResult({ ...analysisResult, id: uuidv4(), imageUrls: capturedImages });
       toast.success("Analysis complete!");
 
@@ -342,6 +420,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       setIsProcessing(false);
       setIsAnalyzing(false);
       setCapturedImages([]);
+      setSelectedImageIndex(null);
     }
   };
 
@@ -406,10 +485,10 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                   <Button onClick={captureImage} className="capture-button" size="icon" disabled={isProcessing || capturedImages.length >= 5}>
                       <Circle className="w-16 h-16 fill-white" />
                   </Button>
-                  {capturedImages.length > 0 && 
+                  {capturedImages.length > 0 && selectedImageIndex !== null && 
                     <Button onClick={processImages} disabled={isProcessing} size="lg" style={{ position: 'absolute', right: '1rem', bottom: '6rem' }}>
                       {isProcessing ? <Loader2 className="animate-spin" /> : <Zap />}
-                      <span className="ml-2">Analyze</span>
+                      <span className="ml-2">Analyze Selected</span>
                     </Button>
                   }
               </div>
@@ -426,18 +505,43 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                   >
                       <Circle className="w-16 h-16 fill-white" />
                   </Button>
-                  {videoChunks.length > 0 && !isRecording && 
+                  {recordedVideos.length > 0 && !isRecording && selectedVideoIndex !== null && 
                     <Button onClick={processVideoAnalysis} disabled={isProcessing} size="lg" style={{ position: 'absolute', right: '1rem', bottom: '6rem' }}>
                       {isProcessing ? <Loader2 className="animate-spin" /> : <Zap />}
-                      <span className="ml-2">Analyze Video</span>
+                      <span className="ml-2">Analyze Selected Video</span>
                     </Button>
                   }
               </div>
             )}
             
             <div className="captured-previews">
-              {capturedImages.map((src, index) => (
-                <img key={index} src={src} alt={`capture ${index}`} className="preview-thumb" />
+              {scanMode === 'image' && capturedImages.map((src, index) => (
+                <div key={index} className="relative">
+                  <img 
+                    src={src} 
+                    alt={`capture ${index}`} 
+                    className={`preview-thumb cursor-pointer ${selectedImageIndex === index ? 'ring-2 ring-blue-500' : ''}`}
+                    onClick={() => setSelectedImageIndex(index)}
+                  />
+                  {selectedImageIndex === index && (
+                    <Check className="absolute top-0 right-0 w-4 h-4 bg-blue-500 text-white rounded-full p-0.5" />
+                  )}
+                </div>
+              ))}
+              
+              {scanMode === 'video' && videoThumbnails.map((src, index) => (
+                <div key={index} className="relative">
+                  <img 
+                    src={src} 
+                    alt={`video ${index}`} 
+                    className={`preview-thumb cursor-pointer ${selectedVideoIndex === index ? 'ring-2 ring-blue-500' : ''}`}
+                    onClick={() => setSelectedVideoIndex(index)}
+                  />
+                  {selectedVideoIndex === index && (
+                    <Check className="absolute top-0 right-0 w-4 h-4 bg-blue-500 text-white rounded-full p-0.5" />
+                  )}
+                  <Video className="absolute bottom-0 right-0 w-3 h-3 bg-black/50 text-white rounded p-0.5" />
+                </div>
               ))}
             </div>
 
