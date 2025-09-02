@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import CameraSettingsModal from './CameraSettingsModal';
 import './DualScanner.css';
-import { AnalysisResult } from '@/types'; // VULCAN FORGE: ADDED IMPORT FOR TYPE SAFETY
+import { AnalysisResult } from '@/types';
 
 type ScanMode = 'image' | 'barcode' | 'video';
 
@@ -155,16 +155,9 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     toast.info("Analysis initiated...");
 
     try {
-      // VULCAN FORGE: CONSTRUCT ABSOLUTE URL.
-      // This is the critical fix. It bypasses any local proxy issues by targeting the deployed function directly.
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      if (!supabaseUrl) {
-          throw new Error("Supabase URL is not configured in environment variables. Analysis cannot proceed.");
-      }
-      // Using the VITE_SUPABASE_URL guarantees we are pointing to the same deployment for both DB and functions.
-      const apiUrl = new URL('/api/analyze', supabaseUrl).toString();
-
-      const response = await fetch(apiUrl, { // VULCAN FORGE: Using the absolute URL
+      // VULCAN FORGE: REVERTED TO RELATIVE PATH.
+      // This is the correct implementation for both local proxying (with `vercel dev`) and live deployment.
+      const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -178,23 +171,20 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         })
       });
 
-      // VULCAN FORGE: Hardened error handling to diagnose the exact failure.
       if (!response.ok) {
+        // This hardened error handling remains to provide clear feedback.
         const errorText = await response.text();
         console.error("Analysis API Error Response Text:", errorText);
         try {
-            // Attempt to parse it as JSON, as our resilient API should always return JSON.
             const errorData = JSON.parse(errorText);
             throw new Error(errorData.error || `Analysis request failed with status ${response.status}.`);
         } catch (e) {
-             // If parsing fails, it's likely an HTML error page from a proxy or infrastructure issue.
              throw new Error(`Analysis request failed with status ${response.status}. The server response was not valid JSON.`);
         }
       }
       
-      const analysisResult = await response.json();
-      // VULCAN FORGE: Cast to the imported AnalysisResult type for safety before setting state.
-      setLastAnalysisResult({ ...(analysisResult as AnalysisResult), id: uuidv4(), imageUrls: capturedImages });
+      const analysisResult: AnalysisResult = await response.json();
+      setLastAnalysisResult({ ...analysisResult, id: uuidv4(), imageUrls: capturedImages });
       toast.success("Analysis complete!");
 
     } catch (error) {
