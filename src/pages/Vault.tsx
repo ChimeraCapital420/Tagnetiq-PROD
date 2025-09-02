@@ -37,8 +37,6 @@ export interface VaultItem {
   updated_at: string;
 }
 
-// CHARON: A skeleton loader provides a better user experience than a simple spinner.
-// It gives the user a preview of the content that is loading.
 const VaultSkeletonLoader = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
       {Array.from({ length: 8 }).map((_, i) => (
@@ -144,7 +142,8 @@ const VaultPage: React.FC = () => {
       >
         <div className="flex justify-between items-center mb-8">
             <h1 className="text-4xl font-bold tracking-wider">Digital Vault</h1>
-            {vaultItems && vaultItems.length > 0 && profile && <PdfDownloadButton items={vaultItems} profile={profile} />}
+            {/* THE FIX: The 'profile' prop is removed as per the directive. */}
+            {vaultItems && vaultItems.length > 0 && <PdfDownloadButton items={vaultItems} />}
         </div>
 
         {isVaultLoading && <VaultSkeletonLoader />}
@@ -163,7 +162,6 @@ const VaultPage: React.FC = () => {
         {!isVaultLoading && !isError && vaultItems && vaultItems.length > 0 && (
           <motion.div
             className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
-            // CHARON: Container variant for staggering child animations.
             variants={{
                 hidden: { opacity: 0 },
                 show: {
@@ -195,7 +193,6 @@ const VaultPage: React.FC = () => {
         )}
       </motion.div>
 
-      {/* CHARON: AnimatePresence allows the modals to animate in and out gracefully. */}
       <AnimatePresence>
         {selectedItem && (
           <ItemDetailModal

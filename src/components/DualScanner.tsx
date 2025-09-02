@@ -1,9 +1,9 @@
-// FILE: src/components/DualScanner.tsx
+// FILE: src/components/DualScanner.tsx (MULTI-MODAL ANALYSIS SYSTEM)
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useZxing } from 'react-zxing';
 import { v4 as uuidv4 } from 'uuid';
-import { X, FlipHorizontal, Upload, Circle, Zap, Loader2, ScanLine, ImageIcon, Video, Settings as SettingsIcon, Focus, Check } from 'lucide-react';
+import { X, FlipHorizontal, Upload, Circle, Zap, Loader2, ScanLine, ImageIcon, Video, Settings as SettingsIcon, Focus, Check, FileText, Award, ShieldCheck, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,6 +15,19 @@ import { AnalysisResult } from '@/types';
 
 type ScanMode = 'image' | 'barcode' | 'video';
 
+interface CapturedItem {
+  id: string;
+  type: 'photo' | 'video' | 'document' | 'certificate';
+  data: string; // base64 or blob URL
+  thumbnail: string;
+  name: string;
+  selected: boolean;
+  metadata?: {
+    documentType?: 'certificate' | 'grading' | 'appraisal' | 'receipt' | 'authenticity' | 'other';
+    description?: string;
+  };
+}
+
 interface DualScannerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -25,21 +38,18 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const { session } = useAuth();
   
   const [scanMode, setScanMode] = useState<ScanMode>('image');
-  const [capturedImages, setCapturedImages] = useState<string[]>([]);
-  const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
-  const [videoThumbnails, setVideoThumbnails] = useState<string[]>([]);
-  const [selectedVideoIndex, setSelectedVideoIndex] = useState<number | null>(null);
+  const [capturedItems, setCapturedItems] = useState<CapturedItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
   const [isRecording, setIsRecording] = useState(false);
   const [videoChunks, setVideoChunks] = useState<Blob[]>([]);
-  const [recordedVideos, setRecordedVideos] = useState<Blob[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const documentInputRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
@@ -119,6 +129,37 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     return () => stopCamera();
   }, [isOpen, startCamera, stopCamera]);
 
+  const addCapturedItem = (item: Omit<CapturedItem, 'id' | 'selected'>) => {
+    const newItem: CapturedItem = {
+      ...item,
+      id: uuidv4(),
+      selected: true, // Auto-select new items
+    };
+    
+    setCapturedItems(prev => {
+      // Deselect other items of different types if this is the first of its type
+      const updated = prev.map(existingItem => ({
+        ...existingItem,
+        selected: false
+      }));
+      return [...updated, newItem].slice(-10); // Keep max 10 items
+    });
+  };
+
+  const toggleItemSelection = (itemId: string) => {
+    setCapturedItems(prev => 
+      prev.map(item => 
+        item.id === itemId 
+          ? { ...item, selected: !item.selected }
+          : item
+      )
+    );
+  };
+
+  const removeItem = (itemId: string) => {
+    setCapturedItems(prev => prev.filter(item => item.id !== itemId));
+  };
+
   const handleManualFocus = () => {
     if (videoRef.current) {
       videoRef.current.focus();
@@ -136,9 +177,13 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       if (context) {
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
-        const newImages = [...capturedImages, dataUrl].slice(-5);
-        setCapturedImages(newImages);
-        setSelectedImageIndex(newImages.length - 1); // Auto-select the latest image
+        
+        addCapturedItem({
+          type: 'photo',
+          data: dataUrl,
+          thumbnail: dataUrl,
+          name: `Photo ${capturedItems.filter(i => i.type === 'photo').length + 1}`
+        });
       }
     }
   };
@@ -202,14 +247,17 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
       mediaRecorder.onstop = async () => {
         const videoBlob = new Blob(videoChunks, { type: 'video/webm' });
-        const newVideos = [...recordedVideos, videoBlob].slice(-5);
-        setRecordedVideos(newVideos);
         
         try {
           const thumbnail = await generateVideoThumbnail(videoBlob);
-          const newThumbnails = [...videoThumbnails, thumbnail].slice(-5);
-          setVideoThumbnails(newThumbnails);
-          setSelectedVideoIndex(newThumbnails.length - 1); // Auto-select the latest video
+          const videoUrl = URL.createObjectURL(videoBlob);
+          
+          addCapturedItem({
+            type: 'video',
+            data: videoUrl,
+            thumbnail: thumbnail,
+            name: `Video ${capturedItems.filter(i => i.type === 'video').length + 1}`
+          });
         } catch (error) {
           console.error('Failed to generate thumbnail:', error);
         }
@@ -235,141 +283,102 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  const processVideoAnalysis = async () => {
-    if (recordedVideos.length === 0 || selectedVideoIndex === null) {
-      toast.error("No video selected for analysis.");
-      return;
-    }
-
-    setIsProcessing(true);
-    setIsAnalyzing(true);
-    onClose();
-    toast.info("Video analysis starting...");
-
-    try {
-      const selectedVideoBlob = recordedVideos[selectedVideoIndex];
-      const videoUrl = URL.createObjectURL(selectedVideoBlob);
-      const tempVideo = document.createElement('video');
-      tempVideo.src = videoUrl;
-      tempVideo.muted = true;
-      tempVideo.preload = 'metadata';
-      
-      await new Promise((resolve, reject) => {
-        tempVideo.onloadedmetadata = () => {
-          console.log('Video loaded - Duration:', tempVideo.duration, 'Dimensions:', tempVideo.videoWidth, 'x', tempVideo.videoHeight);
-          resolve(true);
-        };
-        tempVideo.onerror = (e) => {
-          console.error('Video loading error:', e);
-          reject(new Error("Video failed to load"));
-        };
-        tempVideo.load();
-      });
-
-      if (!tempVideo.duration || tempVideo.duration === 0 || isNaN(tempVideo.duration)) {
-        throw new Error("Invalid video duration. Video may be corrupted or too short.");
-      }
-
-      const targetTime = Math.max(0.1, tempVideo.duration / 2);
-      tempVideo.currentTime = targetTime;
-      
-      await new Promise((resolve, reject) => {
-        tempVideo.onseeked = () => {
-          console.log('Video seeked to:', tempVideo.currentTime);
-          resolve(true);
-        };
-        tempVideo.onerror = (e) => {
-          console.error('Video seeking error:', e);
-          reject(new Error("Failed to seek video"));
-        };
-        setTimeout(() => resolve(true), 3000);
-      });
-
-      const canvas = document.createElement('canvas');
-      canvas.width = tempVideo.videoWidth || 640;
-      canvas.height = tempVideo.videoHeight || 480;
-      const context = canvas.getContext('2d');
-      
-      if (!context) {
-        throw new Error("Could not get canvas context");
-      }
-
-      context.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
-      const frameDataUrl = canvas.toDataURL('image/jpeg', 0.95);
-      
-      if (!frameDataUrl || frameDataUrl === 'data:,' || frameDataUrl.length < 100) {
-        throw new Error("Could not extract valid frame from video");
-      }
-
-      // FIXED AUTH: Proper session validation
-      if (!session?.access_token) {
-        throw new Error("Authentication required. Please sign in again.");
-      }
-      
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({
-          scanType: 'image',
-          data: frameDataUrl,
-          category_id: selectedCategory?.split('-')[0] || 'general',
-          subcategory_id: selectedCategory || 'general'
-        })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Analysis API Error Response Text:", errorText);
-        try {
-            const errorData = JSON.parse(errorText);
-            throw new Error(errorData.error || `Analysis request failed with status ${response.status}.`);
-        } catch (e) {
-             throw new Error(`Analysis request failed with status ${response.status}. The server response was not valid JSON.`);
-        }
-      }
-      
-      const analysisResult: AnalysisResult = await response.json();
-      setLastAnalysisResult({ ...analysisResult, id: uuidv4() });
-      toast.success("Video analysis complete!");
-
-      URL.revokeObjectURL(videoUrl);
-
-    } catch (error) {
-      console.error("Video processing error:", error);
-      toast.error("Video Analysis Failed", {
-        description: (error as Error).message
-      });
-    } finally {
-      setIsProcessing(false);
-      setIsAnalyzing(false);
-    }
-  };
-
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       const reader = new FileReader();
       reader.onload = (e) => {
         if (e.target?.result) {
-          const newImages = [...capturedImages, e.target.result as string].slice(-5);
-          setCapturedImages(newImages);
-          setSelectedImageIndex(newImages.length - 1);
+          const dataUrl = e.target.result as string;
+          addCapturedItem({
+            type: 'photo',
+            data: dataUrl,
+            thumbnail: dataUrl,
+            name: file.name || `Upload ${capturedItems.filter(i => i.type === 'photo').length + 1}`
+          });
         }
       };
       reader.readAsDataURL(file);
     }
+    // Reset input
+    if (event.target) {
+      event.target.value = '';
+    }
   };
 
-  const processImages = async () => {
-    if (capturedImages.length === 0 || selectedImageIndex === null) {
-      toast.error("No image selected for analysis.");
+  const handleDocumentUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (e.target?.result) {
+          const dataUrl = e.target.result as string;
+          
+          // Create a thumbnail for document (first page if PDF, or the image itself)
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          canvas.width = 200;
+          canvas.height = 260;
+          
+          if (ctx) {
+            // Create a document-style thumbnail
+            ctx.fillStyle = '#f8f9fa';
+            ctx.fillRect(0, 0, 200, 260);
+            ctx.fillStyle = '#6c757d';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Document', 100, 130);
+            ctx.fillText(file.name.split('.').pop()?.toUpperCase() || 'FILE', 100, 150);
+          }
+          
+          const thumbnailUrl = canvas.toDataURL('image/png');
+          
+          // Detect document type from filename
+          const fileName = file.name.toLowerCase();
+          let documentType: CapturedItem['metadata']['documentType'] = 'other';
+          
+          if (fileName.includes('certificate') || fileName.includes('cert')) {
+            documentType = 'certificate';
+          } else if (fileName.includes('grade') || fileName.includes('grading')) {
+            documentType = 'grading';
+          } else if (fileName.includes('appraisal')) {
+            documentType = 'appraisal';
+          } else if (fileName.includes('receipt') || fileName.includes('invoice')) {
+            documentType = 'receipt';
+          } else if (fileName.includes('authentic')) {
+            documentType = 'authenticity';
+          }
+          
+          addCapturedItem({
+            type: 'document',
+            data: dataUrl,
+            thumbnail: thumbnailUrl,
+            name: file.name,
+            metadata: {
+              documentType: documentType,
+              description: `${documentType.charAt(0).toUpperCase() + documentType.slice(1)} document`
+            }
+          });
+
+          toast.success(`Document uploaded: ${documentType} detected`);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+    // Reset input
+    if (event.target) {
+      event.target.value = '';
+    }
+  };
+
+  const processMultiModalAnalysis = async () => {
+    const selectedItems = capturedItems.filter(item => item.selected);
+    
+    if (selectedItems.length === 0) {
+      toast.error("Please select at least one item for analysis.");
       return;
     }
 
-    // FIXED AUTH: Proper session validation
     if (!session?.access_token) {
       toast.error("Authentication required. Please sign in again.");
       return;
@@ -378,21 +387,67 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     setIsProcessing(true);
     setIsAnalyzing(true);
     onClose();
-    toast.info("Analysis initiated...");
+    toast.info(`Analyzing ${selectedItems.length} items with AI...`);
 
     try {
+      // Prepare the multi-modal analysis payload
+      const analysisData = {
+        scanType: 'multi-modal',
+        items: await Promise.all(selectedItems.map(async (item) => {
+          let processedData = item.data;
+          
+          // For videos, extract a frame
+          if (item.type === 'video') {
+            try {
+              const videoBlob = await fetch(item.data).then(r => r.blob());
+              const videoUrl = URL.createObjectURL(videoBlob);
+              const tempVideo = document.createElement('video');
+              tempVideo.src = videoUrl;
+              tempVideo.muted = true;
+              tempVideo.preload = 'metadata';
+              
+              await new Promise((resolve) => {
+                tempVideo.onloadedmetadata = () => {
+                  tempVideo.currentTime = Math.max(0.1, tempVideo.duration / 2);
+                };
+                tempVideo.onseeked = resolve;
+                tempVideo.load();
+              });
+
+              const canvas = document.createElement('canvas');
+              canvas.width = tempVideo.videoWidth || 640;
+              canvas.height = tempVideo.videoHeight || 480;
+              const context = canvas.getContext('2d');
+              
+              if (context) {
+                context.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+                processedData = canvas.toDataURL('image/jpeg', 0.95);
+              }
+              
+              URL.revokeObjectURL(videoUrl);
+            } catch (error) {
+              console.error('Error processing video:', error);
+            }
+          }
+          
+          return {
+            type: item.type,
+            name: item.name,
+            data: processedData,
+            metadata: item.metadata || {}
+          };
+        })),
+        category_id: selectedCategory?.split('-')[0] || 'general',
+        subcategory_id: selectedCategory || 'general'
+      };
+
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`
         },
-        body: JSON.stringify({
-          scanType: 'image',
-          data: capturedImages[selectedImageIndex],
-          category_id: selectedCategory?.split('-')[0] || 'general',
-          subcategory_id: selectedCategory || 'general'
-        })
+        body: JSON.stringify(analysisData)
       });
 
       if (!response.ok) {
@@ -407,8 +462,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       }
       
       const analysisResult: AnalysisResult = await response.json();
-      setLastAnalysisResult({ ...analysisResult, id: uuidv4(), imageUrls: capturedImages });
-      toast.success("Analysis complete!");
+      setLastAnalysisResult({ 
+        ...analysisResult, 
+        id: uuidv4(), 
+        imageUrls: selectedItems.map(item => item.thumbnail) 
+      });
+      toast.success("Multi-modal analysis complete!");
 
     } catch (error) {
       console.error("Processing error:", error);
@@ -419,8 +478,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     } finally {
       setIsProcessing(false);
       setIsAnalyzing(false);
-      setCapturedImages([]);
-      setSelectedImageIndex(null);
     }
   };
 
@@ -433,6 +490,20 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       toast.info("No other camera detected.");
     }
   };
+
+  const getItemIcon = (type: string, metadata?: any) => {
+    switch (type) {
+      case 'photo': return <ImageIcon className="w-3 h-3" />;
+      case 'video': return <Video className="w-3 h-3" />;
+      case 'document': 
+        if (metadata?.documentType === 'certificate') return <Award className="w-3 h-3" />;
+        if (metadata?.documentType === 'authenticity') return <ShieldCheck className="w-3 h-3" />;
+        return <FileText className="w-3 h-3" />;
+      default: return <FileText className="w-3 h-3" />;
+    }
+  };
+
+  const selectedCount = capturedItems.filter(item => item.selected).length;
   
   if (!isOpen) return null;
 
@@ -476,21 +547,17 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
             <div className="scanner-controls">
                 <Button variant="ghost" size="icon" onClick={handleFlipCamera}><FlipHorizontal/></Button>
                 <Button variant="ghost" size="icon" onClick={handleManualFocus}><Focus /></Button>
-                <input type="file" ref={fileInputRef} accept="image/*" className="hidden" onChange={handleImageUpload} />
-                <Button variant="ghost" size="icon" onClick={() => fileInputRef.current?.click()}><Upload /></Button>
+                <input type="file" ref={imageInputRef} accept="image/*" className="hidden" onChange={handleImageUpload} />
+                <Button variant="ghost" size="icon" onClick={() => imageInputRef.current?.click()}><Upload /></Button>
+                <input type="file" ref={documentInputRef} accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="hidden" onChange={handleDocumentUpload} />
+                <Button variant="ghost" size="icon" onClick={() => documentInputRef.current?.click()}><FileText /></Button>
             </div>
 
             {scanMode === 'image' && (
               <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Button onClick={captureImage} className="capture-button" size="icon" disabled={isProcessing || capturedImages.length >= 5}>
+                  <Button onClick={captureImage} className="capture-button" size="icon" disabled={isProcessing || capturedItems.length >= 10}>
                       <Circle className="w-16 h-16 fill-white" />
                   </Button>
-                  {capturedImages.length > 0 && selectedImageIndex !== null && 
-                    <Button onClick={processImages} disabled={isProcessing} size="lg" style={{ position: 'absolute', right: '1rem', bottom: '6rem' }}>
-                      {isProcessing ? <Loader2 className="animate-spin" /> : <Zap />}
-                      <span className="ml-2">Analyze Selected</span>
-                    </Button>
-                  }
               </div>
             )}
 
@@ -505,49 +572,60 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                   >
                       <Circle className="w-16 h-16 fill-white" />
                   </Button>
-                  {recordedVideos.length > 0 && !isRecording && selectedVideoIndex !== null && 
-                    <Button onClick={processVideoAnalysis} disabled={isProcessing} size="lg" style={{ position: 'absolute', right: '1rem', bottom: '6rem' }}>
-                      {isProcessing ? <Loader2 className="animate-spin" /> : <Zap />}
-                      <span className="ml-2">Analyze Selected Video</span>
-                    </Button>
-                  }
               </div>
             )}
             
-            <div className="captured-previews">
-              {scanMode === 'image' && capturedImages.map((src, index) => (
-                <div key={index} className="relative">
+            {/* MULTI-MODAL ANALYSIS BUTTON */}
+            {selectedCount > 0 && (
+              <div style={{ position: 'absolute', right: '1rem', bottom: '8rem', zIndex: 10 }}>
+                <Button onClick={processMultiModalAnalysis} disabled={isProcessing} size="lg" className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700">
+                  {isProcessing ? <Loader2 className="animate-spin mr-2" /> : <Zap className="mr-2" />}
+                  Analyze {selectedCount} Item{selectedCount > 1 ? 's' : ''}
+                </Button>
+              </div>
+            )}
+            
+            {/* CAPTURED ITEMS GRID */}
+            <div className="captured-previews" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'center', maxHeight: '4rem', overflowY: 'auto' }}>
+              {capturedItems.map((item) => (
+                <div key={item.id} className="relative group">
                   <img 
-                    src={src} 
-                    alt={`capture ${index}`} 
-                    className={`preview-thumb cursor-pointer ${selectedImageIndex === index ? 'ring-2 ring-blue-500' : ''}`}
-                    onClick={() => setSelectedImageIndex(index)}
+                    src={item.thumbnail} 
+                    alt={item.name} 
+                    className={`preview-thumb cursor-pointer transition-all ${item.selected ? 'ring-2 ring-blue-500 scale-105' : 'opacity-70 hover:opacity-100'}`}
+                    onClick={() => toggleItemSelection(item.id)}
+                    title={`${item.name} (${item.type})`}
                   />
-                  {selectedImageIndex === index && (
+                  
+                  {/* Selection indicator */}
+                  {item.selected && (
                     <Check className="absolute top-0 right-0 w-4 h-4 bg-blue-500 text-white rounded-full p-0.5" />
                   )}
-                </div>
-              ))}
-              
-              {scanMode === 'video' && videoThumbnails.map((src, index) => (
-                <div key={index} className="relative">
-                  <img 
-                    src={src} 
-                    alt={`video ${index}`} 
-                    className={`preview-thumb cursor-pointer ${selectedVideoIndex === index ? 'ring-2 ring-blue-500' : ''}`}
-                    onClick={() => setSelectedVideoIndex(index)}
-                  />
-                  {selectedVideoIndex === index && (
-                    <Check className="absolute top-0 right-0 w-4 h-4 bg-blue-500 text-white rounded-full p-0.5" />
-                  )}
-                  <Video className="absolute bottom-0 right-0 w-3 h-3 bg-black/50 text-white rounded p-0.5" />
+                  
+                  {/* Type indicator */}
+                  <div className="absolute bottom-0 left-0 bg-black/70 text-white rounded-tr p-0.5">
+                    {getItemIcon(item.type, item.metadata)}
+                  </div>
+                  
+                  {/* Remove button (appears on hover) */}
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    className="absolute top-0 left-0 w-4 h-4 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeItem(item.id);
+                    }}
+                  >
+                    <Trash2 className="w-2 h-2" />
+                  </Button>
                 </div>
               ))}
             </div>
 
             <div className="mode-toggle">
                 <Button onClick={() => setScanMode('image')} variant={scanMode === 'image' ? 'secondary' : 'ghost'}>
-                  <ImageIcon className="mr-2"/>Image
+                  <ImageIcon className="mr-2"/>Photo
                 </Button>
                 <Button onClick={() => setScanMode('barcode')} variant={scanMode === 'barcode' ? 'secondary' : 'ghost'}>
                   <ScanLine className="mr-2"/>Barcode
