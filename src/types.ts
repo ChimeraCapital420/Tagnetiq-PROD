@@ -22,7 +22,7 @@ export interface ResaleToolkit {
   linkToMyStore: boolean;
   shareToSocial: boolean;
   generatePosBarcode?: boolean; // For Retailer role
-  pushToWebsite?: boolean;      // For Retailer role
+  pushToWebsite?: boolean;       // For Retailer role
   postToBusinessSocials?: boolean; // For Retailer role
 }
 
@@ -45,6 +45,7 @@ export interface AnalysisResult {
   // New fields for v2.1
   summary_reasoning: string;
   valuation_factors: string[];
+  analysis_quality: 'OPTIMAL' | 'DEGRADED' | 'FALLBACK'; // VULCAN FORGE: ADDED AS PER DIRECTIVE
 
   marketComps: MarketComp[];
   resale_toolkit: ResaleToolkit;

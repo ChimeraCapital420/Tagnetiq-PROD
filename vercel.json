@@ -1,4 +1,5 @@
 {
+  "installCommand": "npm install",
   "rewrites": [
     {
       "source": "/((?!api/|images/|logo.jpg|placeholder.svg|robots.txt|manifest.json|favicon.ico).*)",
