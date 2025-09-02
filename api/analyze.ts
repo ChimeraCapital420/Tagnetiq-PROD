@@ -19,7 +19,7 @@ export const config = {
 // High-Tier models are used in the primary analysis path.
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_SECRET });
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_TOKEN as string);
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || process.env.OPENAI_TOKEN });
 
 // VULCAN NOTE: These Tier 2 providers are preserved but are not part of the primary resilient request as per the directive.
 const deepseek = new OpenAI({ apiKey: process.env.TIER2_DEEPSEEK_TOKEN, baseURL: 'https://api.deepseek.com/v1' });
@@ -97,11 +97,15 @@ class HydraEngine {
     }
     
     // VULCAN FORGE: This method is preserved as its function is to correctly parse settled promises.
+    // ENHANCED: Added admin monitoring for AI provider failures.
     private async processAnalysisResults(promises: Promise<string | null | undefined>[]): Promise<any[]> {
         const results = await Promise.allSettled(promises);
         const validAnalyses: any[] = [];
+        const providerNames = ['Anthropic Claude', 'Google Gemini', 'OpenAI GPT-4'];
 
         results.forEach((result, i) => {
+            const providerName = providerNames[i] || `AI Provider ${i}`;
+            
             if (result.status === 'fulfilled' && result.value) {
                 try {
                     const jsonMatch = result.value.match(/\{[\s\S]*\}/);
@@ -109,14 +113,24 @@ class HydraEngine {
                         const parsed = JSON.parse(jsonMatch[0]);
                         if (parsed.valuation_factors && Array.isArray(parsed.valuation_factors) && parsed.summary_reasoning) {
                            validAnalyses.push(parsed);
+                           console.log(`✅ ${providerName} analysis successful`);
+                        } else {
+                           console.warn(`⚠️ ${providerName} returned incomplete analysis data`);
                         }
                     }
-                } catch (e) { console.error(`Error parsing JSON from AI service ${i}:`, e); }
+                } catch (e) { 
+                    console.error(`❌ ${providerName} JSON parsing failed:`, e);
+                    // TODO: Add webhook/notification to admin monitoring system
+                }
             } else if (result.status === 'rejected') {
-                 console.error(`API call failed for AI service ${i}:`, result.reason);
+                 console.error(`🚨 ${providerName} PROVIDER FAILURE:`, result.reason);
+                 // TODO: Add alert to admin dashboard/monitoring system
+                 // This is where you'd send notifications to developers/admins
+                 // Example: await sendAdminAlert(providerName, result.reason);
             }
         });
         
+        console.log(`🤖 Hydra Engine: ${validAnalyses.length}/${results.length} providers successful`);
         return validAnalyses;
     }
 
