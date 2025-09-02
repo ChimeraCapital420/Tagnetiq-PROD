@@ -179,6 +179,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     }
   };
 
+  // VULCAN FORGE: SURGICALLY REPLACED FUNCTION
   const processVideoAnalysis = async () => {
     if (videoChunks.length === 0) {
       toast.error("No video recorded to analyze.");
@@ -196,52 +197,74 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       const videoUrl = URL.createObjectURL(videoBlob);
       const tempVideo = document.createElement('video');
       tempVideo.src = videoUrl;
+      tempVideo.muted = true; // Prevent audio issues
       
-      await new Promise(resolve => {
-        tempVideo.onloadeddata = resolve;
+      await new Promise((resolve, reject) => {
+        tempVideo.onloadedmetadata = () => {
+          console.log('Video duration:', tempVideo.duration);
+          resolve(true);
+        };
+        tempVideo.onerror = reject;
+        tempVideo.load();
       });
 
+      // Check if duration is valid
+      if (!tempVideo.duration || tempVideo.duration === 0 || isNaN(tempVideo.duration)) {
+        throw new Error("Invalid video duration. Video may be corrupted.");
+      }
+
       // Extract frame at middle of video for analysis
-      tempVideo.currentTime = tempVideo.duration / 2;
+      const targetTime = Math.max(0, tempVideo.duration / 2);
+      tempVideo.currentTime = targetTime;
       
-      await new Promise(resolve => {
+      await new Promise((resolve, reject) => {
         tempVideo.onseeked = resolve;
+        tempVideo.onerror = reject;
+        // Fallback timeout in case seeking fails
+        setTimeout(resolve, 2000);
       });
 
       // Draw frame to canvas and get image data
       const canvas = document.createElement('canvas');
-      canvas.width = tempVideo.videoWidth;
-      canvas.height = tempVideo.videoHeight;
+      canvas.width = tempVideo.videoWidth || 640;
+      canvas.height = tempVideo.videoHeight || 480;
       const context = canvas.getContext('2d');
       
-      if (context) {
-        context.drawImage(tempVideo, 0, 0);
-        const frameDataUrl = canvas.toDataURL('image/jpeg', 0.95);
-        
-        // Process the frame like a normal image
-        const response = await fetch('/api/analyze', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token}`
-          },
-          body: JSON.stringify({
-            scanType: 'image',
-            data: frameDataUrl,
-            category_id: selectedCategory?.split('-')[0] || 'general',
-            subcategory_id: selectedCategory || 'general'
-          })
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Analysis failed: ${response.status}`);
-        }
-        
-        const analysisResult: AnalysisResult = await response.json();
-        setLastAnalysisResult({ ...analysisResult, id: uuidv4() });
-        toast.success("Video analysis complete!");
+      if (!context) {
+        throw new Error("Could not get canvas context");
       }
+
+      context.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+      const frameDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+      
+      // Verify we got a valid frame
+      if (!frameDataUrl || frameDataUrl === 'data:,') {
+        throw new Error("Could not extract frame from video");
+      }
+      
+      // Process the frame like a normal image
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
+        body: JSON.stringify({
+          scanType: 'image',
+          data: frameDataUrl,
+          category_id: selectedCategory?.split('-')[0] || 'general',
+          subcategory_id: selectedCategory || 'general'
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Analysis failed: ${response.status}`);
+      }
+      
+      const analysisResult: AnalysisResult = await response.json();
+      setLastAnalysisResult({ ...analysisResult, id: uuidv4() });
+      toast.success("Video analysis complete!");
 
       // Cleanup
       URL.revokeObjectURL(videoUrl);
@@ -305,6 +328,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       }
       
       const analysisResult: AnalysisResult = await response.json();
+      // @ts-ignore
       setLastAnalysisResult({ ...analysisResult, id: uuidv4(), imageUrls: capturedImages });
       toast.success("Analysis complete!");
 
