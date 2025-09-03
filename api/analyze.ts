@@ -1,12 +1,133 @@
-// FILE: api/analyze.ts
+// VULCAN FORGE: Main orchestration logic is rebuilt for anti-fragility.
+    // ENHANCED: Added multi-modal analysis support
+    public async analyze(request: AnalysisRequest): Promise<AnalysisResult> {
+        if (request.scanType === 'multi-modal') {
+            return this.analyzeMultiModal(request);
+        }
+        
+        const jsonPrompt = `Analyze the item. Respond in JSON format ONLY: {"itemName": "specific name", "estimatedValue": "25.99", "decision": "BUY", "valuation_factors": ["Factor 1", "Factor 2", "Factor 3", "Factor 4", "Factor 5"], "summary_reasoning": "A brief summary."}`;
+        
+        let successfulAnalyses: any[] = [];
+        let totalProviders = 0;
+        let itemName = "Analysis";
+        let analysis_quality: AnalysisResult['analysis_quality'];
+
+        if (request.scanType === 'image') {
+            console.log('🖼️  Initiating Hydra image analysis...');
+            const { analyses, totalProviders: count } = await this.runImageAnalysis(request.data!, jsonPrompt);
+            successfulAnalyses = analyses;
+            totalProviders = count;
+            itemName = analyses[0]?.itemName || "Image Analysis";
+        } else if (request.scanType === 'barcode') {
+            console.log('║█║ Initiating Hydra barcode analysis...');
+            const productData = await this.identifyProductByBarcode(request.data!);
+            itemName = productData.title;
+            const { analyses, totalProviders: count } = await this.runTextAnalysis(productData, jsonPrompt);
+            successfulAnalyses = analyses;
+            totalProviders = count;
+        }
+
+        // VULCAN FORGE: Graceful Degradation & Fallback Logic
+        if (successfulAnalyses.length > 0) {
+            analysis_quality = successfulAnalyses.length === totalProviders ? 'OPTIMAL' : 'DEGRADED';
+            console.log(`🤖 Consensus built from ${successfulAnalyses.length}/${totalProviders} high-tier models. Quality: ${analysis_quality}`);
+        } else {
+            analysis_quality = 'FALLBACK';
+            console.warn(`HYDRA: All high-tier models failed. Executing fallback model.`);
+            try {
+                const fallbackResult = await fallbackModel.generateContent([jsonPrompt, { inlineData: { data: request.data!.replace(/^data:image\/[a-z]+;base64,/, ''), mimeType: "image/jpeg" } }]);
+                const fallbackResponse = JSON.parse(fallbackResult.response.text());
+                successfulAnalyses = [fallbackResponse];
+                itemName = fallbackResponse?.itemName || itemName;
+            } catch (fallbackError) {
+                console.error('HYDRA: CATASTROPHIC FAILURE. Fallback model also failed.', fallbackError);
+                successfulAnalyses = [];
+            }
+        }
+        
+        const consensus = this.buildConsensus(successfulAnalyses, itemName, analysis_quality);
+        
+        const fullResult: AnalysisResult = {
+            ...consensus,
+            id: `analysis_${new Date().getTime()}`,
+            capturedAt: new Date().toISOString(),
+            category: request.category_id,
+            subCategory: request.subcategory_id,
+            imageUrl: request.data!,
+            marketComps: [], 
+            resale_toolkit: { listInArena: true, sellOnProPlatforms: true, linkToMyStore: false, shareToSocial: true },
+            tags: [request.category_id],
+        };
+        
+        return fullResult;
+    }
+
+    // ENHANCED: Multi-modal analysis method for professional evaluation
+    private async analyzeMultiModal(request: AnalysisRequest): Promise<AnalysisResult> {
+        console.log('🔬 Initiating Hydra multi-modal professional analysis...');
+        
+        if (!request.items || request.items.length === 0) {
+            throw new Error('Multi-modal analysis requires at least one item');
+        }
+
+        // Construct comprehensive analysis prompt with document context
+        const documents = request.items.filter(item => item.type === 'document' || item.type === 'certificate');
+        const photos = request.items.filter(item => item.type === 'photo');
+        const videos = request.items.filter(item => item.type === 'video');
+
+        let contextPrompt = `Perform a comprehensive multi-modal analysis of this item using ALL provided materials. You have access to:
+- ${photos.length} photo(s) of the physical item
+- ${videos.length} video(s) of the item
+- ${documents.length} supporting document(s)`;
+
+        if (documents.length > 0) {
+            contextPrompt += `\n\nDOCUMENT CONTEXT:\n`;
+            documents.forEach(doc => {
+                contextPrompt += `- ${doc.name}: ${doc.metadata?.documentType || 'document'} (${doc.metadata?.description || 'supporting documentation'})\n`;
+            });
+            contextPrompt += `\nIMPORTANT: Cross-reference the physical item against any certificates, grading reports, or authenticity documents. Look for consistency in details, serial numbers, condition descriptions, etc.`;
+        }
+
+        contextPrompt += `\n\nProvide a professional appraisal considering:\n1. Physical condition from images/video\n2. Authentication from any certificates\n3. Market comparables and rarity\n4. Documentation quality and provenance\n\nRespond in JSON format ONLY: {"itemName": "specific name", "estimatedValue": "25.99", "decision": "BUY", "valuation_factors": ["Factor 1", "Factor 2", "Factor 3", "Factor 4", "Factor 5"], "summary_reasoning": "Professional analysis summary."}`;
+
+        // Prepare content for AI models
+        const analysisContent: any[] = [{ type: 'text', text: contextPrompt }];
+        
+        // Add all images and documents to the analysis
+        for (const item of request.items) {
+            if (item.type === 'photo' || item.type === 'video') {
+                analysisContent.push({
+                    type: 'image',
+                    source: {
+                        type: 'base64',
+                        media_type: 'image/jpeg',
+                        data: item.data.replace(/^data:image\/[a-z]+;base64,/, '')
+                    }
+                });
+            } else if (item.type === 'document') {
+                analysisContent.push({
+                    type: 'image',
+                    source: {
+                        type: 'base64',
+                        media_type: 'image/jpeg', 
+                        data: item.data.replace(/^data:image\/[a-z]+;base64,/, '')
+                    }
+                });
+            }
+        }
+
+        // Run enhanced multi-modal analysis
+        const highTierPromises = [
+            anthropic.messages// FILE: api/analyze.ts
 // STATUS: Re-Forged by VULCAN. Anti-Fragile. Structure preserved. Unbreakable.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { verifyUser } from './_lib/security';
 import { dataSources, DataSource } from './_lib/datasources';
-import { AnalysisResult } from '../src/types';
+import { AnalysisResult } from '../src/types'; // VULCAN FORGE: Using the central, upgraded type definition.
 
 export const config = {
   runtime: 'edge',
@@ -28,46 +149,6 @@ const grok = new OpenAI({ apiKey: process.env.TIER2_XAI_SECRET, baseURL: 'https:
 const fallbackGenAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_TOKEN as string);
 const fallbackModel = fallbackGenAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
-// Edge-compatible authentication function (inline to avoid crypto module issues)
-async function verifyUserEdge(req: VercelRequest) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new Error('Authentication error: Invalid authorization header format.');
-  }
-
-  const token = authHeader.split(' ')[1];
-  if (!token || token.length < 10) {
-    throw new Error('Authentication error: Invalid token format.');
-  }
-
-  // Simple token validation using Supabase client (Edge-compatible)
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error('Supabase configuration missing');
-  }
-
-  // Validate token with Supabase API directly (Edge-compatible)
-  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'apikey': supabaseAnonKey
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error('Authentication error: Invalid or expired token.');
-  }
-
-  const userData = await response.json();
-  if (!userData || !userData.id) {
-    throw new Error('Authentication error: Invalid user data.');
-  }
-
-  return userData;
-}
-
 // VULCAN NOTE: The original HydraResponse is preserved for structural integrity, though the system now uses the imported `AnalysisResult` type.
 interface HydraResponse {
   itemName: string;
@@ -85,17 +166,8 @@ interface HydraResponse {
 }
 
 interface AnalysisRequest {
-  scanType: 'barcode' | 'image' | 'vin' | 'multi-modal';
-  data?: string;
-  items?: Array<{
-    type: 'photo' | 'video' | 'document' | 'certificate';
-    name: string;
-    data: string;
-    metadata?: {
-      documentType?: 'certificate' | 'grading' | 'appraisal' | 'receipt' | 'authenticity' | 'other';
-      description?: string;
-    };
-  }>;
+  scanType: 'barcode' | 'image' | 'vin';
+  data: string;
   category_id: string;
   subcategory_id: string;
 }
@@ -243,150 +315,9 @@ class HydraEngine {
             return 'Error generating sales copy.';
         }
     }
-
-    // ENHANCED: Multi-modal analysis method for professional evaluation
-    private async analyzeMultiModal(request: AnalysisRequest): Promise<AnalysisResult> {
-        console.log('🔬 Initiating Hydra multi-modal professional analysis...');
-        
-        if (!request.items || request.items.length === 0) {
-            throw new Error('Multi-modal analysis requires at least one item');
-        }
-
-        // Construct comprehensive analysis prompt with document context
-        const documents = request.items.filter(item => item.type === 'document' || item.type === 'certificate');
-        const photos = request.items.filter(item => item.type === 'photo');
-        const videos = request.items.filter(item => item.type === 'video');
-
-        let contextPrompt = `Perform a comprehensive multi-modal analysis of this item using ALL provided materials. You have access to:
-- ${photos.length} photo(s) of the physical item
-- ${videos.length} video(s) of the item
-- ${documents.length} supporting document(s)`;
-
-        if (documents.length > 0) {
-            contextPrompt += `\n\nDOCUMENT CONTEXT:\n`;
-            documents.forEach(doc => {
-                contextPrompt += `- ${doc.name}: ${doc.metadata?.documentType || 'document'} (${doc.metadata?.description || 'supporting documentation'})\n`;
-            });
-            contextPrompt += `\nIMPORTANT: Cross-reference the physical item against any certificates, grading reports, or authenticity documents. Look for consistency in details, serial numbers, condition descriptions, etc.`;
-        }
-
-        contextPrompt += `\n\nProvide a professional appraisal considering:\n1. Physical condition from images/video\n2. Authentication from any certificates\n3. Market comparables and rarity\n4. Documentation quality and provenance\n\nRespond in JSON format ONLY: {"itemName": "specific name", "estimatedValue": "25.99", "decision": "BUY", "valuation_factors": ["Factor 1", "Factor 2", "Factor 3", "Factor 4", "Factor 5"], "summary_reasoning": "Professional analysis summary."}`;
-
-        // Prepare content for AI models
-        const analysisContent: any[] = [{ type: 'text', text: contextPrompt }];
-        
-        // Add all images and documents to the analysis
-        for (const item of request.items) {
-            if (item.type === 'photo' || item.type === 'video') {
-                analysisContent.push({
-                    type: 'image',
-                    source: {
-                        type: 'base64',
-                        media_type: 'image/jpeg',
-                        data: item.data.replace(/^data:image\/[a-z]+;base64,/, '')
-                    }
-                });
-            } else if (item.type === 'document') {
-                analysisContent.push({
-                    type: 'image',
-                    source: {
-                        type: 'base64',
-                        media_type: 'image/jpeg', 
-                        data: item.data.replace(/^data:image\/[a-z]+;base64,/, '')
-                    }
-                });
-            }
-        }
-
-        // Run enhanced multi-modal analysis
-        const highTierPromises = [
-            anthropic.messages.create({
-                model: 'claude-3-5-sonnet-20240620', 
-                max_tokens: 1500, // Increased for comprehensive analysis
-                messages: [{ role: 'user', content: analysisContent }]
-            }).then(res => (res.content[0].type === 'text' ? res.content[0].text : null)),
-            
-            genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" }).generateContent([
-                contextPrompt,
-                ...request.items.map(item => ({
-                    inlineData: { 
-                        data: item.data.replace(/^data:image\/[a-z]+;base64,/, ''), 
-                        mimeType: "image/jpeg" 
-                    }
-                }))
-            ]).then(res => res.response.text()),
-            
-            openai.chat.completions.create({
-                model: 'gpt-4o', 
-                max_tokens: 1200,
-                response_format: { type: "json_object" },
-                messages: [{
-                    role: 'user',
-                    content: [
-                        { type: 'text', text: contextPrompt },
-                        ...request.items.map(item => ({
-                            type: 'image_url' as const,
-                            image_url: { url: item.data }
-                        }))
-                    ]
-                }]
-            }).then(res => res.choices[0].message.content),
-        ];
-        
-        const analyses = await this.processAnalysisResults(highTierPromises);
-        const totalProviders = highTierPromises.length;
-        
-        let analysis_quality: AnalysisResult['analysis_quality'];
-        let itemName = "Multi-Modal Analysis";
-
-        if (analyses.length > 0) {
-            analysis_quality = analyses.length === totalProviders ? 'OPTIMAL' : 'DEGRADED';
-            itemName = analyses[0]?.itemName || itemName;
-            console.log(`🔬 Multi-modal consensus: ${analyses.length}/${totalProviders} models, Quality: ${analysis_quality}`);
-        } else {
-            analysis_quality = 'FALLBACK';
-            console.warn('HYDRA: Multi-modal analysis failed, using fallback');
-            // Fallback to single image analysis of the first photo
-            const firstPhoto = photos[0] || request.items[0];
-            if (firstPhoto) {
-                try {
-                    const fallbackResult = await fallbackModel.generateContent([
-                        contextPrompt,
-                        { inlineData: { data: firstPhoto.data.replace(/^data:image\/[a-z]+;base64,/, ''), mimeType: "image/jpeg" } }
-                    ]);
-                    const fallbackResponse = JSON.parse(fallbackResult.response.text());
-                    analyses.push(fallbackResponse);
-                    itemName = fallbackResponse?.itemName || itemName;
-                } catch (fallbackError) {
-                    console.error('HYDRA: Multi-modal fallback failed', fallbackError);
-                }
-            }
-        }
-        
-        const consensus = this.buildConsensus(analyses, itemName, analysis_quality);
-        
-        const fullResult: AnalysisResult = {
-            ...consensus,
-            id: `multimodal_${new Date().getTime()}`,
-            capturedAt: new Date().toISOString(),
-            category: request.category_id,
-            subCategory: request.subcategory_id,
-            imageUrl: photos[0]?.data || request.items[0]?.data || '',
-            marketComps: [], 
-            resale_toolkit: { listInArena: true, sellOnProPlatforms: true, linkToMyStore: false, shareToSocial: true },
-            tags: [request.category_id, 'multi-modal', 'professional-analysis'],
-        };
-        
-        return fullResult;
-    }
     
     // VULCAN FORGE: Main orchestration logic is rebuilt for anti-fragility.
-    // ENHANCED: Added multi-modal analysis support
     public async analyze(request: AnalysisRequest): Promise<AnalysisResult> {
-        if (request.scanType === 'multi-modal') {
-            return this.analyzeMultiModal(request);
-        }
-        
         const jsonPrompt = `Analyze the item. Respond in JSON format ONLY: {"itemName": "specific name", "estimatedValue": "25.99", "decision": "BUY", "valuation_factors": ["Factor 1", "Factor 2", "Factor 3", "Factor 4", "Factor 5"], "summary_reasoning": "A brief summary."}`;
         
         let successfulAnalyses: any[] = [];
@@ -396,13 +327,13 @@ class HydraEngine {
 
         if (request.scanType === 'image') {
             console.log('🖼️  Initiating Hydra image analysis...');
-            const { analyses, totalProviders: count } = await this.runImageAnalysis(request.data!, jsonPrompt);
+            const { analyses, totalProviders: count } = await this.runImageAnalysis(request.data, jsonPrompt);
             successfulAnalyses = analyses;
             totalProviders = count;
             itemName = analyses[0]?.itemName || "Image Analysis";
         } else if (request.scanType === 'barcode') {
             console.log('║█║ Initiating Hydra barcode analysis...');
-            const productData = await this.identifyProductByBarcode(request.data!);
+            const productData = await this.identifyProductByBarcode(request.data);
             itemName = productData.title;
             const { analyses, totalProviders: count } = await this.runTextAnalysis(productData, jsonPrompt);
             successfulAnalyses = analyses;
@@ -417,7 +348,7 @@ class HydraEngine {
             analysis_quality = 'FALLBACK';
             console.warn(`HYDRA: All high-tier models failed. Executing fallback model.`);
             try {
-                const fallbackResult = await fallbackModel.generateContent([jsonPrompt, { inlineData: { data: request.data!.replace(/^data:image\/[a-z]+;base64,/, ''), mimeType: "image/jpeg" } }]);
+                const fallbackResult = await fallbackModel.generateContent([jsonPrompt, { inlineData: { data: request.data.replace(/^data:image\/[a-z]+;base64,/, ''), mimeType: "image/jpeg" } }]);
                 const fallbackResponse = JSON.parse(fallbackResult.response.text());
                 successfulAnalyses = [fallbackResponse];
                 itemName = fallbackResponse?.itemName || itemName;
@@ -435,7 +366,7 @@ class HydraEngine {
             capturedAt: new Date().toISOString(),
             category: request.category_id,
             subCategory: request.subcategory_id,
-            imageUrl: request.data!,
+            imageUrl: request.data,
             marketComps: [], 
             resale_toolkit: { listInArena: true, sellOnProPlatforms: true, linkToMyStore: false, shareToSocial: true },
             tags: [request.category_id],
@@ -453,8 +384,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        // VULCAN NOTE: Using Edge-compatible authentication
-        await verifyUserEdge(req);
+        // VULCAN NOTE: SDKs are confirmed to be initialized in the global scope.
+        // The try/catch block will handle runtime errors during their use.
+        await verifyUser(req);
         
         const body = req.body as AnalysisRequest;
         
