@@ -414,9 +414,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        // VULCAN NOTE: SDKs are confirmed to be initialized in the global scope.
-        // The try/catch block will handle runtime errors during their use.
-        await verifyUser(req);
+        // VULCAN NOTE: Using Edge-compatible authentication
+        await verifyUserEdge(req);
         
         const body = req.body as AnalysisRequest;
         
