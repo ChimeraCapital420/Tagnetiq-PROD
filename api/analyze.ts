@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-// Edge-compatible configuration
+// Node.js runtime configuration (Edge runtime disabled to avoid crypto module conflicts)
 export const config = {
-  runtime: 'edge',
+  // runtime: 'edge', // Disabled due to crypto dependencies in other API files
   maxDuration: 45,
 };
 
