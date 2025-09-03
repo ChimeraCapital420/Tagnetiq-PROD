@@ -1,96 +1,251 @@
 // FILE: src/components/PremiumVoiceSelector.tsx
-// STATUS: NEW - A UI for selecting and previewing premium Oracle voices.
 
-import React, { useState } from 'react';
-import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import React, { useState, useEffect } from 'react';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Check, Loader2, Play } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Play, Pause, Sparkles, Globe, Mic } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTts } from '@/hooks/useTts';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 
-// This would typically come from a config file or API
-const premiumVoices = [
-  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', gender: 'Female', accent: 'American', description: 'Calm and Raspy' },
-  { id: '29vD33N1CtxCmqQRPO9k', name: 'Drew', gender: 'Male', accent: 'American', description: 'Well-rounded and Energetic' },
-  { id: '2EiwWnXFnvU5JabPnv8n', name: 'Clyde', gender: 'Male', accent: 'American', description: 'Deep and Smooth' },
-  { id: '5Q0t7uMcjvnagumLfvMk', name: 'Dave', gender: 'Male', accent: 'British', description: 'Informative and Deep' },
+interface PremiumVoice {
+  id: string;
+  name: string;
+  language: string;
+  gender: 'male' | 'female' | 'neutral';
+  accent?: string;
+  description: string;
+  preview_text: string;
+  tier: 'standard' | 'premium' | 'ultra';
+}
+
+const PREMIUM_VOICES: PremiumVoice[] = [
+  // English voices
+  {
+    id: 'oracle-nova-en',
+    name: 'Nova',
+    language: 'en',
+    gender: 'female',
+    accent: 'American',
+    description: 'Confident and professional with a modern edge',
+    preview_text: 'Hello, I am Nova, your Tagnetiq Oracle. Let me analyze this asset for you.',
+    tier: 'premium'
+  },
+  {
+    id: 'oracle-atlas-en',
+    name: 'Atlas',
+    language: 'en',
+    gender: 'male',
+    accent: 'British',
+    description: 'Distinguished and authoritative with refined articulation',
+    preview_text: 'Greetings, I am Atlas. Together, we shall uncover the true value of your assets.',
+    tier: 'premium'
+  },
+  {
+    id: 'oracle-sage-en',
+    name: 'Sage',
+    language: 'en',
+    gender: 'neutral',
+    accent: 'International',
+    description: 'Wise and calming with perfect clarity',
+    preview_text: 'Welcome. I am Sage, here to guide you through your asset evaluation journey.',
+    tier: 'ultra'
+  },
+  // Spanish voices
+  {
+    id: 'oracle-luna-es',
+    name: 'Luna',
+    language: 'es',
+    gender: 'female',
+    accent: 'Castilian',
+    description: 'Elegante y sofisticada con calidez natural',
+    preview_text: 'Hola, soy Luna, tu Oráculo de Tagnetiq. Permíteme analizar este activo para ti.',
+    tier: 'premium'
+  },
+  {
+    id: 'oracle-sol-es',
+    name: 'Sol',
+    language: 'es',
+    gender: 'male',
+    accent: 'Latin American',
+    description: 'Amigable y confiable con energía positiva',
+    preview_text: 'Saludos, soy Sol. Juntos descubriremos el verdadero valor de tus activos.',
+    tier: 'standard'
+  },
+  // French voices
+  {
+    id: 'oracle-amelie-fr',
+    name: 'Amélie',
+    language: 'fr',
+    gender: 'female',
+    accent: 'Parisian',
+    description: 'Sophistiquée et précise avec une touche d\'élégance',
+    preview_text: 'Bonjour, je suis Amélie, votre Oracle Tagnetiq. Laissez-moi analyser cet actif pour vous.',
+    tier: 'premium'
+  },
+  // Italian voices
+  {
+    id: 'oracle-marco-it',
+    name: 'Marco',
+    language: 'it',
+    gender: 'male',
+    accent: 'Tuscan',
+    description: 'Carismatico e professionale con passione italiana',
+    preview_text: 'Ciao, sono Marco, il tuo Oracolo Tagnetiq. Analizziamo insieme questo bene.',
+    tier: 'premium'
+  }
 ];
 
 const PremiumVoiceSelector: React.FC = () => {
-    const { profile, setProfile } = useAuth();
-    const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  const { profile, setProfile } = useAuth();
+  const { speak, cancel, isSpeaking } = useTts();
+  const { i18n, t } = useTranslation();
+  const [selectedVoice, setSelectedVoice] = useState<string | null>(
+    profile?.settings?.premium_voice_id || null
+  );
+  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
 
-    const handlePreview = async (voiceId: string, text: string) => {
-        setPlayingVoiceId(voiceId);
-        try {
-            const response = await fetch('/api/oracle/generate-speech', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, voiceId }),
-            });
-            if (!response.ok) throw new Error('Could not generate preview.');
-            
-            const audioBlob = await response.blob();
-            const audioUrl = URL.createObjectURL(audioBlob);
-            const audio = new Audio(audioUrl);
-            audio.play();
-            audio.onended = () => setPlayingVoiceId(null);
-        } catch (error) {
-            toast.error("Preview failed", { description: (error as Error).message });
-            setPlayingVoiceId(null);
-        }
-    };
+  // Filter voices by current language
+  const availableVoices = PREMIUM_VOICES.filter(
+    voice => voice.language === i18n.language
+  );
+
+  const handleVoiceSelect = async (voiceId: string) => {
+    if (!profile) return;
+
+    const oldSettings = profile.settings;
+    const newSettings = { ...oldSettings, premium_voice_id: voiceId };
     
-    const handleSelect = async (voiceId: string) => {
-        if (!profile) return;
-        const oldSettings = profile.settings;
-        const newSettings = { ...oldSettings, premium_voice_id: voiceId };
-        setProfile({ ...profile, settings: newSettings });
+    // Optimistic update
+    setSelectedVoice(voiceId);
+    setProfile({ ...profile, settings: newSettings });
 
-        const { error } = await supabase
-            .from('profiles')
-            .update({ settings: newSettings })
-            .eq('id', profile.id);
-        
-        if (error) {
-            setProfile({ ...profile, settings: oldSettings }); // Revert on error
-            toast.error("Failed to save voice", { description: error.message });
-        } else {
-            toast.success("Oracle voice updated!");
-        }
-    };
+    const { error } = await supabase
+      .from('profiles')
+      .update({ settings: newSettings })
+      .eq('id', profile.id);
 
+    if (error) {
+      // Rollback on error
+      setSelectedVoice(oldSettings?.premium_voice_id || null);
+      setProfile({ ...profile, settings: oldSettings });
+      toast.error(t('premiumVoice.saveFailed', 'Failed to save voice preference'));
+    } else {
+      toast.success(t('premiumVoice.saved', 'Premium voice selected'));
+    }
+  };
+
+  const handlePreview = async (voice: PremiumVoice) => {
+    if (playingVoice === voice.id) {
+      cancel();
+      setPlayingVoice(null);
+      return;
+    }
+
+    cancel();
+    setPlayingVoice(voice.id);
+    
+    // Use the premium voice for preview
+    await speak(voice.preview_text, null, voice.id);
+  };
+
+  useEffect(() => {
+    if (!isSpeaking) {
+      setPlayingVoice(null);
+    }
+  }, [isSpeaking]);
+
+  const getTierColor = (tier: string) => {
+    switch (tier) {
+      case 'ultra': return 'text-purple-500 border-purple-500';
+      case 'premium': return 'text-blue-500 border-blue-500';
+      default: return 'text-green-500 border-green-500';
+    }
+  };
+
+  const getTierIcon = (tier: string) => {
+    switch (tier) {
+      case 'ultra': return <Sparkles className="h-3 w-3" />;
+      case 'premium': return <Mic className="h-3 w-3" />;
+      default: return <Globe className="h-3 w-3" />;
+    }
+  };
+
+  if (availableVoices.length === 0) {
     return (
-        <div className="space-y-4">
-            {premiumVoices.map((voice) => {
-                const isSelected = profile?.settings?.premium_voice_id === voice.id;
-                return (
-                    <Card key={voice.id} className={cn("p-4 flex items-center justify-between", isSelected && "border-primary")}>
-                        <div>
-                            <CardTitle className="text-base">{voice.name}</CardTitle>
-                            <CardDescription>{voice.accent} • {voice.description}</CardDescription>
-                        </div>
-                        <div className="flex gap-2">
-                            <Button 
-                                size="icon" 
-                                variant="outline" 
-                                onClick={() => handlePreview(voice.id, `Hello, I am ${voice.name}. This is how I sound.`)}
-                                disabled={!!playingVoiceId}
-                            >
-                                {playingVoiceId === voice.id ? <Loader2 className="animate-spin" /> : <Play />}
-                            </Button>
-                            <Button onClick={() => handleSelect(voice.id)} disabled={isSelected}>
-                                {isSelected && <Check className="mr-2"/>}
-                                {isSelected ? 'Selected' : 'Select'}
-                            </Button>
-                        </div>
-                    </Card>
-                );
-            })}
-        </div>
+      <Card className="border-dashed">
+        <CardContent className="flex flex-col items-center justify-center py-8 text-center">
+          <Globe className="h-8 w-8 text-muted-foreground mb-4" />
+          <p className="text-sm text-muted-foreground">
+            {t('premiumVoice.noVoices', 'No premium voices available for your language yet.')}
+          </p>
+          <p className="text-xs text-muted-foreground mt-2">
+            {t('premiumVoice.comingSoon', 'More voices coming soon!')}
+          </p>
+        </CardContent>
+      </Card>
     );
+  }
+
+  return (
+    <div className="grid gap-3">
+      {availableVoices.map((voice) => (
+        <Card
+          key={voice.id}
+          className={cn(
+            "cursor-pointer transition-all hover:shadow-md",
+            selectedVoice === voice.id && "ring-2 ring-primary"
+          )}
+          onClick={() => handleVoiceSelect(voice.id)}
+        >
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 space-y-1">
+                <div className="flex items-center gap-2">
+                  <h4 className="font-semibold">{voice.name}</h4>
+                  <Badge 
+                    variant="outline" 
+                    className={cn("text-xs", getTierColor(voice.tier))}
+                  >
+                    {getTierIcon(voice.tier)}
+                    <span className="ml-1">{voice.tier}</span>
+                  </Badge>
+                  {voice.accent && (
+                    <span className="text-xs text-muted-foreground">
+                      ({voice.accent})
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {voice.description}
+                </p>
+              </div>
+              
+              <Button
+                variant="ghost"
+                size="icon"
+                className="shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlePreview(voice);
+                }}
+              >
+                {playingVoice === voice.id ? (
+                  <Pause className="h-4 w-4" />
+                ) : (
+                  <Play className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
 };
 
 export default PremiumVoiceSelector;
