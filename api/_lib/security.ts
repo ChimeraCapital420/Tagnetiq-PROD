@@ -1,10 +1,9 @@
 // FILE: api/_lib/security.ts
-// STATUS: COMPREHENSIVE SECURITY HARDENING - Multi-layer protection
+// STATUS: EDGE RUNTIME COMPATIBLE - Web Crypto API instead of Node.js crypto
 
 import { supaAdmin } from './supaAdmin';
 import type { VercelRequest } from '@vercel/node';
 import { User } from '@supabase/supabase-js';
-import crypto from 'crypto';
 
 // SECURITY: Rate limiting store (in production, use Redis)
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
@@ -152,7 +151,7 @@ async function enforceRateLimit(req: VercelRequest, customLimit?: { maxRequests:
 }
 
 /**
- * SECURITY: Request signature validation for critical endpoints
+ * SECURITY: Request signature validation using Web Crypto API (Edge compatible)
  */
 async function validateRequestSignature(req: VercelRequest, token: string) {
   const signature = req.headers['x-request-signature'] as string;
@@ -166,14 +165,44 @@ async function validateRequestSignature(req: VercelRequest, token: string) {
   }
 
   const payload = JSON.stringify(req.body) + timestamp + token;
-  const expectedSignature = crypto
-    .createHmac('sha256', process.env.REQUEST_SIGNATURE_SECRET || 'fallback-secret')
-    .update(payload)
-    .digest('hex');
+  const secret = process.env.REQUEST_SIGNATURE_SECRET || 'fallback-secret';
+  
+  // Use Web Crypto API instead of Node.js crypto
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  
+  const expectedSignatureBuffer = await crypto.subtle.sign(
+    'HMAC',
+    keyMaterial,
+    new TextEncoder().encode(payload)
+  );
+  
+  const expectedSignature = Array.from(new Uint8Array(expectedSignatureBuffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
 
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+  // Timing-safe comparison using constant time
+  if (!timingSafeEqual(signature, expectedSignature)) {
     throw new Error('Security error: Invalid request signature.');
   }
+}
+
+/**
+ * SECURITY: Timing-safe string comparison (Web Crypto compatible)
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
 }
 
 /**
