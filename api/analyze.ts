@@ -5,7 +5,6 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { verifyUser } from './_lib/security';
 import { dataSources, DataSource } from './_lib/datasources';
 import { AnalysisResult } from '../src/types';
 
@@ -28,6 +27,46 @@ const grok = new OpenAI({ apiKey: process.env.TIER2_XAI_SECRET, baseURL: 'https:
 // VULCAN FORGE: High-reliability, low-cost provider for fallback results.
 const fallbackGenAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_TOKEN as string);
 const fallbackModel = fallbackGenAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+
+// Edge-compatible authentication function (inline to avoid crypto module issues)
+async function verifyUserEdge(req: VercelRequest) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    throw new Error('Authentication error: Invalid authorization header format.');
+  }
+
+  const token = authHeader.split(' ')[1];
+  if (!token || token.length < 10) {
+    throw new Error('Authentication error: Invalid token format.');
+  }
+
+  // Simple token validation using Supabase client (Edge-compatible)
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error('Supabase configuration missing');
+  }
+
+  // Validate token with Supabase API directly (Edge-compatible)
+  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'apikey': supabaseAnonKey
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error('Authentication error: Invalid or expired token.');
+  }
+
+  const userData = await response.json();
+  if (!userData || !userData.id) {
+    throw new Error('Authentication error: Invalid user data.');
+  }
+
+  return userData;
+}
 
 // VULCAN NOTE: The original HydraResponse is preserved for structural integrity, though the system now uses the imported `AnalysisResult` type.
 interface HydraResponse {
