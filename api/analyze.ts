@@ -7,7 +7,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { verifyUser } from './_lib/security';
 import { dataSources, DataSource } from './_lib/datasources';
-import { AnalysisResult } from '../src/types'; // VULCAN FORGE: Using the central, upgraded type definition.
+import { AnalysisResult } from '../src/types';
 
 export const config = {
   runtime: 'edge',
