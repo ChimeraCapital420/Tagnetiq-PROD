@@ -1,7 +1,12 @@
 // FILE: api/user/reset-mfa.ts
 
-import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+
+// Dynamic import to handle ES module resolution
+async function getSupaAdmin() {
+  const { supaAdmin } = await import('../_lib/supaAdmin.js');
+  return supaAdmin;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -14,6 +19,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    // Get the admin client using dynamic import
+    const supaAdmin = await getSupaAdmin();
+    
     // Authenticate the user with the provided token using the admin client
     const { data: { user }, error: userError } = await supaAdmin.auth.getUser(token);
 
@@ -22,8 +30,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(401).json({ error: 'Invalid token or user not found.' });
     }
 
-    // Admin API for MFA is different - we need to use the admin REST API directly
-    // First, get all MFA factors for this user
+    // Get all MFA factors for this user from auth schema
     const { data: factors, error: factorsError } = await supaAdmin
       .from('auth.mfa_factors')
       .select('*')
