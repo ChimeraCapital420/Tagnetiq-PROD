@@ -9,12 +9,16 @@ import type { VaultItem } from '@/pages/Vault';
 interface ChallengeConfirmationModalProps {
   item: VaultItem | null;
   isOpen: boolean;
-  onClose: () => void;
+  onClose?: () => void; // Made optional with ?
   onConfirm: (purchasePrice: number, askingPrice: number) => void;
 }
 
-// HEPHAESTUS NOTE: Changed from a named export to a constant.
-const ChallengeConfirmationModal: React.FC<ChallengeConfirmationModalProps> = ({ item, isOpen, onClose, onConfirm }) => {
+const ChallengeConfirmationModal: React.FC<ChallengeConfirmationModalProps> = ({ 
+  item, 
+  isOpen, 
+  onClose = () => {}, // Provide default empty function
+  onConfirm 
+}) => {
   const [purchasePrice, setPurchasePrice] = useState('');
   const [askingPrice, setAskingPrice] = useState('');
 
@@ -37,8 +41,14 @@ const ChallengeConfirmationModal: React.FC<ChallengeConfirmationModalProps> = ({
     }
   };
 
+  const handleClose = () => {
+    if (onClose) {
+      onClose();
+    }
+  };
+
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Start Public ROI Challenge?</DialogTitle>
@@ -69,7 +79,7 @@ const ChallengeConfirmationModal: React.FC<ChallengeConfirmationModalProps> = ({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" onClick={handleClose}>Cancel</Button>
           <Button onClick={handleConfirm} disabled={!purchasePrice || !askingPrice}>Confirm & Start Challenge</Button>
         </DialogFooter>
       </DialogContent>
@@ -77,5 +87,4 @@ const ChallengeConfirmationModal: React.FC<ChallengeConfirmationModalProps> = ({
   );
 };
 
-// HEPHAESTUS NOTE: Added a default export to match the import in Vault.tsx.
 export default ChallengeConfirmationModal;
