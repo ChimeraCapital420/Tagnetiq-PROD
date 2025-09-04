@@ -1,12 +1,10 @@
 // FILE: api/social/generate-brag-card.ts
 
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { createCanvas, loadImage, registerFont } from 'canvas';
 import { supaAdmin } from '../_lib/supaAdmin';
-import path from 'path';
 
 export const config = {
-  runtime: 'nodejs',
+  runtime: 'edge',
   maxDuration: 30,
 };
 
@@ -17,9 +15,6 @@ interface BragCardRequest {
   confidenceScore: number;
   category: string;
 }
-
-// Register custom fonts if needed
-// registerFont(path.join(process.cwd(), 'fonts/Inter-Bold.ttf'), { family: 'Inter', weight: 'bold' });
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -34,182 +29,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Create a 1200x630 canvas (optimal for social media)
-    const canvas = createCanvas(1200, 630);
-    const ctx = canvas.getContext('2d');
+    // Generate HTML for the brag card
+    const html = generateBragCardHTML({
+      itemName,
+      estimatedValue,
+      imageUrl,
+      confidenceScore,
+      category
+    });
 
-    // Background gradient
-    const gradient = ctx.createLinearGradient(0, 0, 1200, 630);
-    gradient.addColorStop(0, '#1a1a2e');
-    gradient.addColorStop(1, '#0f0f23');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 1200, 630);
-
-    // Add grid pattern overlay
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i < 1200; i += 30) {
-      ctx.beginPath();
-      ctx.moveTo(i, 0);
-      ctx.lineTo(i, 630);
-      ctx.stroke();
-    }
-    for (let i = 0; i < 630; i += 30) {
-      ctx.beginPath();
-      ctx.moveTo(0, i);
-      ctx.lineTo(1200, i);
-      ctx.stroke();
-    }
-
-    // Load and draw the item image
-    try {
-      const itemImage = await loadImage(imageUrl);
-      
-      // Draw image container with border
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-      ctx.fillRect(40, 40, 400, 400);
-      
-      // Draw the actual image
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(50, 50, 380, 380);
-      ctx.clip();
-      
-      // Calculate aspect ratio to fit image
-      const imgAspect = itemImage.width / itemImage.height;
-      let drawWidth = 380;
-      let drawHeight = 380;
-      let drawX = 50;
-      let drawY = 50;
-      
-      if (imgAspect > 1) {
-        drawHeight = 380 / imgAspect;
-        drawY = 50 + (380 - drawHeight) / 2;
-      } else {
-        drawWidth = 380 * imgAspect;
-        drawX = 50 + (380 - drawWidth) / 2;
-      }
-      
-      ctx.drawImage(itemImage, drawX, drawY, drawWidth, drawHeight);
-      ctx.restore();
-    } catch (error) {
-      console.error('Failed to load item image:', error);
-      // Draw placeholder
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-      ctx.fillRect(50, 50, 380, 380);
-    }
-
-    // Right side content
-    const rightX = 500;
-
-    // Tagnetiq logo/brand
-    ctx.font = 'bold 36px sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText('TAGNETIQ', rightX, 80);
+    // Use Vercel's OG Image Generation API or external service
+    // For now, we'll use a simple approach with HTML2Canvas on the client side
+    // Return the data needed for client-side generation
     
-    // "AI VALUATION" badge
-    ctx.fillStyle = '#4ade80';
-    ctx.fillRect(rightX, 100, 180, 40);
-    ctx.fillStyle = '#000000';
-    ctx.font = 'bold 18px sans-serif';
-    ctx.fillText('AI VALUATION', rightX + 20, 127);
+    const bragCardData = {
+      itemName,
+      estimatedValue,
+      imageUrl,
+      confidenceScore,
+      category,
+      generatedAt: new Date().toISOString(),
+      shareId: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+    };
 
-    // Item name
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 48px sans-serif';
-    const maxWidth = 650;
-    let fontSize = 48;
-    
-    // Adjust font size if text is too long
-    while (ctx.measureText(itemName).width > maxWidth && fontSize > 24) {
-      fontSize -= 2;
-      ctx.font = `bold ${fontSize}px sans-serif`;
-    }
-    
-    // Word wrap if needed
-    const words = itemName.split(' ');
-    let line = '';
-    let y = 220;
-    
-    for (let n = 0; n < words.length; n++) {
-      const testLine = line + words[n] + ' ';
-      const metrics = ctx.measureText(testLine);
-      const testWidth = metrics.width;
-      
-      if (testWidth > maxWidth && n > 0) {
-        ctx.fillText(line, rightX, y);
-        line = words[n] + ' ';
-        y += fontSize + 10;
-      } else {
-        line = testLine;
-      }
-    }
-    ctx.fillText(line, rightX, y);
-
-    // Estimated value
-    ctx.font = 'bold 72px sans-serif';
-    ctx.fillStyle = '#4ade80';
-    ctx.fillText(`$${estimatedValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, rightX, y + 100);
-
-    // Category
-    ctx.font = '24px sans-serif';
-    ctx.fillStyle = '#a0a0a0';
-    ctx.fillText(category, rightX, y + 150);
-
-    // Confidence score with visual indicator
-    ctx.font = '20px sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText('AI Confidence:', rightX, y + 200);
-    
-    // Confidence bar background
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-    ctx.fillRect(rightX + 150, y + 185, 200, 20);
-    
-    // Confidence bar fill
-    const confidenceColor = confidenceScore > 85 ? '#4ade80' : confidenceScore > 65 ? '#fbbf24' : '#ef4444';
-    ctx.fillStyle = confidenceColor;
-    ctx.fillRect(rightX + 150, y + 185, (confidenceScore / 100) * 200, 20);
-    
-    // Confidence percentage
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(`${Math.round(confidenceScore)}%`, rightX + 360, y + 200);
-
-    // Footer
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-    ctx.fillRect(0, 550, 1200, 80);
-    
-    ctx.font = '18px sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText('Get your items valued with AI at tagnetiq.com', 400, 595);
-
-    // Convert canvas to buffer
-    const buffer = canvas.toBuffer('image/png');
-
-    // Generate unique filename
-    const filename = `brag-cards/${Date.now()}-${itemName.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.png`;
-
-    // Upload to Supabase Storage
-    const { data, error } = await supaAdmin.storage
-      .from('public-assets')
-      .upload(filename, buffer, {
-        contentType: 'image/png',
-        cacheControl: '3600',
-        upsert: false
-      });
+    // Store the brag card data for sharing
+    const { data, error } = await supaAdmin
+      .from('brag_cards')
+      .insert({
+        share_id: bragCardData.shareId,
+        item_name: itemName,
+        estimated_value: estimatedValue,
+        image_url: imageUrl,
+        confidence_score: confidenceScore,
+        category: category,
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
 
     if (error) {
-      console.error('Failed to upload brag card:', error);
-      throw new Error('Failed to upload brag card');
+      console.error('Failed to store brag card:', error);
+      // Continue anyway - we can still generate the card
     }
 
-    // Get public URL
-    const { data: { publicUrl } } = supaAdmin.storage
-      .from('public-assets')
-      .getPublicUrl(filename);
+    // Return a URL that will render the brag card
+    const bragCardUrl = `https://tagnetiq.com/brag/${bragCardData.shareId}`;
 
     return res.status(200).json({ 
       success: true, 
-      bragCardUrl: publicUrl 
+      bragCardUrl,
+      bragCardData,
+      html // Return HTML for client-side rendering
     });
 
   } catch (error: any) {
@@ -219,4 +89,156 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
+}
+
+function generateBragCardHTML(data: BragCardRequest): string {
+  const { itemName, estimatedValue, imageUrl, confidenceScore, category } = data;
+  const confidenceColor = confidenceScore > 85 ? '#4ade80' : confidenceScore > 65 ? '#fbbf24' : '#ef4444';
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          width: 1200px;
+          height: 630px;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          background: linear-gradient(135deg, #1a1a2e 0%, #0f0f23 100%);
+          color: white;
+          position: relative;
+          overflow: hidden;
+        }
+        .grid-pattern {
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-image: 
+            linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
+          background-size: 30px 30px;
+        }
+        .content {
+          position: relative;
+          display: flex;
+          height: 100%;
+          padding: 40px;
+          gap: 60px;
+        }
+        .image-container {
+          width: 400px;
+          height: 400px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          overflow: hidden;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .item-image {
+          max-width: 100%;
+          max-height: 100%;
+          object-fit: contain;
+        }
+        .info-container {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+        .brand {
+          font-size: 36px;
+          font-weight: bold;
+          margin-bottom: 20px;
+        }
+        .badge {
+          background: #4ade80;
+          color: black;
+          padding: 10px 20px;
+          display: inline-block;
+          font-weight: bold;
+          font-size: 18px;
+          margin-bottom: 40px;
+        }
+        .item-name {
+          font-size: 48px;
+          font-weight: bold;
+          margin-bottom: 30px;
+          line-height: 1.2;
+        }
+        .value {
+          font-size: 72px;
+          font-weight: bold;
+          color: #4ade80;
+          margin-bottom: 20px;
+        }
+        .category {
+          font-size: 24px;
+          color: #a0a0a0;
+          margin-bottom: 30px;
+        }
+        .confidence {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          font-size: 20px;
+        }
+        .confidence-bar {
+          width: 200px;
+          height: 20px;
+          background: rgba(255, 255, 255, 0.1);
+          position: relative;
+          overflow: hidden;
+        }
+        .confidence-fill {
+          position: absolute;
+          left: 0;
+          top: 0;
+          height: 100%;
+          background: ${confidenceColor};
+          width: ${confidenceScore}%;
+        }
+        .footer {
+          position: absolute;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          background: rgba(255, 255, 255, 0.1);
+          padding: 20px;
+          text-align: center;
+          font-size: 18px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="grid-pattern"></div>
+      <div class="content">
+        <div class="image-container">
+          <img src="${imageUrl}" alt="${itemName}" class="item-image">
+        </div>
+        <div class="info-container">
+          <div class="brand">TAGNETIQ</div>
+          <div class="badge">AI VALUATION</div>
+          <div class="item-name">${itemName}</div>
+          <div class="value">$${estimatedValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div class="category">${category}</div>
+          <div class="confidence">
+            <span>AI Confidence:</span>
+            <div class="confidence-bar">
+              <div class="confidence-fill"></div>
+            </div>
+            <span>${Math.round(confidenceScore)}%</span>
+          </div>
+        </div>
+      </div>
+      <div class="footer">
+        Get your items valued with AI at tagnetiq.com
+      </div>
+    </body>
+    </html>
+  `;
 }
