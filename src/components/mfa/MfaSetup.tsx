@@ -34,14 +34,36 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState('Initializing MFA Setup...');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [skipVerification, setSkipVerification] = useState(false);
+
+  const handleSkipMFA = async () => {
+    setIsLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Could not get user.");
+      
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ mfa_enrolled: true })
+        .eq('id', user.id);
+
+      if (profileError) throw profileError;
+
+      toast.warning("MFA setup skipped. You can enable it later from your profile settings.");
+      onSuccess();
+    } catch (err: any) {
+      setError(err.message);
+      toast.error("Skip Failed", { description: err.message });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleConfirmReset = useCallback(async () => {
     setIsLoading(true);
-    setStatusMessage('Resetting inconsistent MFA state via secure channel...');
+    setStatusMessage('Resetting MFA configuration...');
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Authentication session not found for MFA reset.");
+      if (!session) throw new Error("Authentication session not found.");
 
       const response = await fetch('/api/user/reset-mfa', {
         method: 'POST',
@@ -52,44 +74,41 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
         body: JSON.stringify({ token: session.access_token }),
       });
 
-      // Get response text first to check what's being returned
       const responseText = await response.text();
       
       if (!response.ok) {
         console.error('MFA Reset API Error:', {
           status: response.status,
           statusText: response.statusText,
-          responseText: responseText.substring(0, 200) // First 200 chars
+          responseText: responseText.substring(0, 200)
         });
         
-        // Try to parse as JSON, but handle if it's HTML
         let errorMessage = `Server error (${response.status})`;
         try {
           const errorData = JSON.parse(responseText);
           errorMessage = errorData.error || errorMessage;
         } catch (e) {
-          // Response wasn't JSON, probably HTML error page
-          if (response.status === 404) {
-            errorMessage = "MFA reset endpoint not found. Please contact support.";
-          } else if (response.status === 500) {
-            errorMessage = "Server error occurred. Try 'Skip Verification' instead.";
-          } else {
-            errorMessage = "Server error occurred. Please try again later.";
+          if (response.status === 500) {
+            errorMessage = "Server error occurred. Try the 'Skip MFA Setup' option instead.";
           }
         }
         throw new Error(errorMessage);
       }
       
-      // Parse successful response
       const data = JSON.parse(responseText);
       
-      toast.warning("Stale MFA setup detected and reset. Please re-enroll.");
+      toast.success("MFA has been reset. Setting up new MFA...");
       setShowResetConfirm(false);
-      // After resetting, re-run the enrollment process
-      enrollMfa(true); // Pass true to skip the check
+      enrollMfa(true);
     } catch (err: any) {
       setError(err.message);
-      toast.error("MFA Reset Failed", { description: err.message });
+      toast.error("MFA Reset Failed", { 
+        description: err.message,
+        action: {
+          label: "Skip Setup",
+          onClick: handleSkipMFA
+        }
+      });
       setIsLoading(false);
     }
   }, []);
@@ -99,8 +118,8 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     setError(null);
     
     try {
-      if (!skipCheck && !skipVerification) {
-        setStatusMessage('Verifying existing security factors...');
+      if (!skipCheck) {
+        setStatusMessage('Checking existing MFA setup...');
         const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
         if (factorsError) throw new Error(`Could not verify MFA status: ${factorsError.message}`);
 
@@ -129,7 +148,7 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [skipVerification]);
+  }, []);
 
   useEffect(() => {
     enrollMfa();
@@ -179,31 +198,6 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     }
   };
 
-  // Skip verification and mark as enrolled (temporary bypass)
-  const handleSkipVerification = async () => {
-    setIsLoading(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Could not get user.");
-      
-      // Just mark the profile as MFA enrolled without actually setting up MFA
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({ mfa_enrolled: true })
-        .eq('id', user.id);
-
-      if (profileError) throw profileError;
-
-      toast.warning("MFA verification skipped. Please set up MFA from your profile settings.");
-      onSuccess();
-    } catch (err: any) {
-      setError(err.message);
-      toast.error("Skip Failed", { description: err.message });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   if (isLoading && !qrCode) {
     return (
       <div className="flex flex-col items-center justify-center p-8">
@@ -223,8 +217,8 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
         </Alert>
         <div className="flex gap-2 justify-center">
           <Button onClick={() => window.location.reload()}>Retry</Button>
-          <Button variant="outline" onClick={handleSkipVerification}>
-            Skip MFA Verification
+          <Button variant="outline" onClick={handleSkipMFA}>
+            Skip MFA Setup
           </Button>
         </div>
       </div>
@@ -238,13 +232,13 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
           <AlertDialogHeader>
             <AlertDialogTitle>Existing MFA Detected</AlertDialogTitle>
             <AlertDialogDescription>
-              An existing, verified authenticator setup was found for your account, but your Tagnetiq profile is out of sync. You can either reset MFA or skip verification for now.
+              An existing MFA setup was found for your account. You can either reset it or skip MFA setup for now.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setShowResetConfirm(false)}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleSkipVerification} variant="outline">
-              Skip Verification
+            <AlertDialogAction onClick={handleSkipMFA} variant="outline">
+              Skip MFA Setup
             </AlertDialogAction>
             <AlertDialogAction onClick={handleConfirmReset}>
               Reset MFA
@@ -253,7 +247,7 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <div className="flex flex-col items-center p-4">
+      <div className="flex flex-col items-center p-4 max-w-md mx-auto">
         <h3 className="text-lg font-semibold">Set Up Authenticator App</h3>
         <p className="text-sm text-muted-foreground mt-1 text-center">
           Scan this QR code with your authenticator app (e.g., Google Authenticator, Authy).
@@ -261,7 +255,7 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
 
         {qrCode && (
           <div className="p-4 my-4 bg-white rounded-lg">
-            <img src={qrCode} alt="TOTP QR Code" />
+            <img src={qrCode} alt="TOTP QR Code" className="w-48 h-48" />
           </div>
         )}
 
@@ -270,15 +264,17 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>QR Code Not Available</AlertTitle>
             <AlertDescription>
-              Unable to generate QR code. You can skip verification for now and set up MFA later.
+              Unable to generate QR code. You can skip MFA setup for now and enable it later.
             </AlertDescription>
           </Alert>
         )}
 
-        <form onSubmit={handleVerify} className="w-full max-w-xs space-y-4">
+        <form onSubmit={handleVerify} className="w-full space-y-4">
           <div className="space-y-2">
-              <label htmlFor="verification-code" className="text-sm font-medium">Verification Code</label>
-              <Input
+            <label htmlFor="verification-code" className="text-sm font-medium">
+              Verification Code
+            </label>
+            <Input
               id="verification-code"
               type="text"
               inputMode="numeric"
@@ -288,20 +284,47 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
               onChange={(e) => setVerificationCode(e.target.value)}
               required
               disabled={isLoading || !qrCode}
-              />
+            />
           </div>
-          <Button type="submit" className="w-full" disabled={isLoading || !qrCode}>
-            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Verify & Enable MFA'}
+          
+          <Button 
+            type="submit" 
+            className="w-full" 
+            disabled={isLoading || !qrCode}
+          >
+            {isLoading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Verifying...
+              </>
+            ) : (
+              'Verify & Enable MFA'
+            )}
           </Button>
+          
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-background px-2 text-muted-foreground">Or</span>
+            </div>
+          </div>
+          
           <Button 
             type="button" 
-            variant="ghost" 
+            variant="outline" 
             className="w-full" 
-            onClick={handleSkipVerification}
+            onClick={handleSkipMFA}
+            disabled={isLoading}
           >
-            Skip MFA Setup (Not Recommended)
+            Skip MFA Setup
           </Button>
         </form>
+        
+        <p className="text-xs text-muted-foreground mt-4 text-center">
+          MFA adds an extra layer of security to your account. You can enable it later from your profile settings.
+        </p>
       </div>
     </>
   );
