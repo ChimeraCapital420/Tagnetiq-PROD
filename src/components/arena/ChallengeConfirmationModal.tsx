@@ -4,19 +4,21 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+
+// Import VaultItem type from Vault page
 import type { VaultItem } from '@/pages/Vault';
 
 interface ChallengeConfirmationModalProps {
   item: VaultItem | null;
   isOpen: boolean;
-  onClose?: () => void; // Made optional with ?
+  onClose: () => void;
   onConfirm: (purchasePrice: number, askingPrice: number) => void;
 }
 
 const ChallengeConfirmationModal: React.FC<ChallengeConfirmationModalProps> = ({ 
   item, 
   isOpen, 
-  onClose = () => {}, // Provide default empty function
+  onClose,
   onConfirm 
 }) => {
   const [purchasePrice, setPurchasePrice] = useState('');
@@ -41,14 +43,8 @@ const ChallengeConfirmationModal: React.FC<ChallengeConfirmationModalProps> = ({
     }
   };
 
-  const handleClose = () => {
-    if (onClose) {
-      onClose();
-    }
-  };
-
   return (
-    <Dialog open={isOpen} onOpenChange={handleClose}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Start Public ROI Challenge?</DialogTitle>
@@ -79,7 +75,7 @@ const ChallengeConfirmationModal: React.FC<ChallengeConfirmationModalProps> = ({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={handleClose}>Cancel</Button>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={handleConfirm} disabled={!purchasePrice || !askingPrice}>Confirm & Start Challenge</Button>
         </DialogFooter>
       </DialogContent>
