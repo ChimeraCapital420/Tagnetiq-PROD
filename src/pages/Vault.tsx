@@ -1,5 +1,5 @@
 // FILE: src/pages/Vault.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMfa } from '../contexts/MfaContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -57,6 +57,15 @@ const VaultPage: React.FC = () => {
 
   const [selectedItem, setSelectedItem] = useState<VaultItem | null>(null);
   const [itemToChallenge, setItemToChallenge] = useState<VaultItem | null>(null);
+
+  // DEBUG: Log the state of itemToChallenge
+  useEffect(() => {
+    console.log('🔍 Vault: itemToChallenge state changed:', {
+      hasItem: !!itemToChallenge,
+      itemId: itemToChallenge?.id,
+      itemName: itemToChallenge?.asset_name
+    });
+  }, [itemToChallenge]);
 
   const fetchVaultItems = async (): Promise<VaultItem[]> => {
     if (!session?.access_token) {
@@ -142,7 +151,6 @@ const VaultPage: React.FC = () => {
       >
         <div className="flex justify-between items-center mb-8">
             <h1 className="text-4xl font-bold tracking-wider">Digital Vault</h1>
-            {/* THE FIX: The 'profile' prop is removed as per the directive. */}
             {vaultItems && vaultItems.length > 0 && <PdfDownloadButton items={vaultItems} />}
         </div>
 
@@ -179,7 +187,10 @@ const VaultPage: React.FC = () => {
                 key={item.id}
                 item={item}
                 onSelect={() => setSelectedItem(item)}
-                onStartChallenge={() => setItemToChallenge(item)}
+                onStartChallenge={() => {
+                  console.log('🎮 VaultItemCard: onStartChallenge clicked for:', item.asset_name);
+                  setItemToChallenge(item);
+                }}
               />
             ))}
           </motion.div>
@@ -203,11 +214,22 @@ const VaultPage: React.FC = () => {
         )}
       </AnimatePresence>
 
+      {/* DEBUG: Log before rendering modal */}
+      {itemToChallenge && console.log('🎯 Vault: About to render ChallengeConfirmationModal', {
+        isOpen: !!itemToChallenge,
+        onClose: typeof (() => setItemToChallenge(null)),
+        item: itemToChallenge?.asset_name,
+        onConfirm: typeof handleConfirmChallenge
+      })}
+      
       <AnimatePresence>
         {itemToChallenge && (
           <ChallengeConfirmationModal
             isOpen={!!itemToChallenge}
-            onClose={() => setItemToChallenge(null)}
+            onClose={() => {
+              console.log('🚪 Vault: onClose called');
+              setItemToChallenge(null);
+            }}
             item={itemToChallenge}
             onConfirm={handleConfirmChallenge}
           />

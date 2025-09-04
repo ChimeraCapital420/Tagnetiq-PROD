@@ -21,6 +21,17 @@ const ChallengeConfirmationModal: React.FC<ChallengeConfirmationModalProps> = ({
   onClose,
   onConfirm 
 }) => {
+  // DEBUG: Log every render with prop status
+  console.log('🚨 ChallengeConfirmationModal rendered with props:', { 
+    item: !!item, 
+    isOpen, 
+    hasOnClose: !!onClose,
+    onCloseType: typeof onClose,
+    hasOnConfirm: !!onConfirm,
+    onConfirmType: typeof onConfirm,
+    stackTrace: new Error().stack
+  });
+
   const [purchasePrice, setPurchasePrice] = useState('');
   const [askingPrice, setAskingPrice] = useState('');
 
@@ -30,6 +41,12 @@ const ChallengeConfirmationModal: React.FC<ChallengeConfirmationModalProps> = ({
       setAskingPrice('');
     }
   }, [isOpen]);
+
+  // Add safety check
+  if (!onClose) {
+    console.error('❌ ChallengeConfirmationModal: onClose prop is missing!');
+    return null;
+  }
 
   if (!isOpen || !item) return null;
 

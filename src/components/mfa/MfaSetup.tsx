@@ -168,7 +168,7 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={onClose}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => setShowResetConfirm(false)}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmReset}>Yes, Reset MFA</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
