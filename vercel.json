@@ -1,8 +1,28 @@
 {
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
   "installCommand": "npm install",
+  "functions": {
+    "api/**/*.ts": {
+      "runtime": "@vercel/node@2.15.1"
+    },
+    "api/**/*.js": {
+      "runtime": "@vercel/node@2.15.1"
+    },
+    "api/*.ts": {
+      "runtime": "@vercel/node@2.15.1"
+    },
+    "api/*.js": {
+      "runtime": "@vercel/node@2.15.1"
+    }
+  },
   "rewrites": [
     {
-      "source": "/((?!api/|images/|logo.jpg|placeholder.svg|robots.txt|manifest.json|favicon.ico).*)",
+      "source": "/api/:match*",
+      "destination": "/api/:match*"
+    },
+    {
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ]
