@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { HydraEngine } from '../src/lib/hydra-engine';
-import { HydraConsensus } from '../src/types/hydra';
+import { HydraEngine } from '../src/lib/hydra-engine.js';  // Added .js extension
+import { HydraConsensus } from '../src/types/hydra.js';    // Added .js extension
 
 // Node.js runtime configuration
 export const config = {

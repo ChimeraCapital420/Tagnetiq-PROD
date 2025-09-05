@@ -1,4 +1,4 @@
-import { AIProvider, AIAnalysisResponse, ParsedAnalysis } from '@/types/hydra';
+import { AIProvider, AIAnalysisResponse, ParsedAnalysis } from '@/types/hydra.js';  // Added .js
 
 export abstract class BaseAIProvider {
   protected provider: AIProvider;

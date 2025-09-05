@@ -1,7 +1,7 @@
 import { BaseAIProvider } from './base-provider.js';
 import { AIProvider, AIAnalysisResponse } from '@/types/hydra.js';
 
-export class MistralProvider extends BaseAIProvider {
+export class DeepSeekProvider extends BaseAIProvider {
   constructor(config: AIProvider) {
     super(config);
   }
@@ -10,18 +10,28 @@ export class MistralProvider extends BaseAIProvider {
     const startTime = Date.now();
     
     try {
-      // Mistral currently doesn't support images directly, so we'll use a workaround
-      const textPrompt = `${prompt}\n\nNote: Analyzing based on visual inspection.`;
-      
-      const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      // DeepSeek uses OpenAI-compatible API
+      const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: this.provider.model,
-          messages: [{ role: 'user', content: textPrompt }],
+          model: this.provider.model || 'deepseek-chat',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              ...images.map(img => ({
+                type: 'image_url',
+                image_url: { 
+                  url: img,
+                  detail: 'high'
+                }
+              }))
+            ]
+          }],
           temperature: 0.1,
           max_tokens: 800,
           response_format: { type: 'json_object' }
@@ -29,7 +39,7 @@ export class MistralProvider extends BaseAIProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`Mistral API error: ${response.status}`);
+        throw new Error(`DeepSeek API error: ${response.status}`);
       }
 
       const data = await response.json();
@@ -38,11 +48,11 @@ export class MistralProvider extends BaseAIProvider {
       
       return {
         response: parsed,
-        confidence: parsed?.confidence || 0.78, // Lower confidence without direct image support
+        confidence: parsed?.confidence || 0.82,
         responseTime: Date.now() - startTime
       };
     } catch (error) {
-      console.error(`Mistral analysis error:`, error);
+      console.error(`DeepSeek analysis error:`, error);
       throw error;
     }
   }

@@ -1,5 +1,5 @@
-import { BaseAIProvider } from './base-provider';
-import { AIProvider, AIAnalysisResponse } from '@/types/hydra';
+import { BaseAIProvider } from './base-provider.js';
+import { AIProvider, AIAnalysisResponse } from '@/types/hydra.js';
 
 export class GroqProvider extends BaseAIProvider {
   constructor(config: AIProvider) {

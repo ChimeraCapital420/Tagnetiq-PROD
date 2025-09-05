@@ -1,7 +1,7 @@
 import { BaseAIProvider } from './base-provider.js';
 import { AIProvider, AIAnalysisResponse } from '@/types/hydra.js';
 
-export class MistralProvider extends BaseAIProvider {
+export class XAIProvider extends BaseAIProvider {
   constructor(config: AIProvider) {
     super(config);
   }
@@ -10,26 +10,29 @@ export class MistralProvider extends BaseAIProvider {
     const startTime = Date.now();
     
     try {
-      // Mistral currently doesn't support images directly, so we'll use a workaround
-      const textPrompt = `${prompt}\n\nNote: Analyzing based on visual inspection.`;
+      // xAI Grok API (requires special access)
+      // Note: This is speculative as xAI hasn't released public API docs yet
+      const textPrompt = `${prompt}\n\nNote: Analyze this item for resale value.`;
       
-      const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      const response = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: this.provider.model,
-          messages: [{ role: 'user', content: textPrompt }],
+          model: this.provider.model || 'grok-1',
+          messages: [{ 
+            role: 'user', 
+            content: textPrompt 
+          }],
           temperature: 0.1,
-          max_tokens: 800,
-          response_format: { type: 'json_object' }
+          max_tokens: 800
         })
       });
 
       if (!response.ok) {
-        throw new Error(`Mistral API error: ${response.status}`);
+        throw new Error(`xAI API error: ${response.status}`);
       }
 
       const data = await response.json();
@@ -38,11 +41,11 @@ export class MistralProvider extends BaseAIProvider {
       
       return {
         response: parsed,
-        confidence: parsed?.confidence || 0.78, // Lower confidence without direct image support
+        confidence: parsed?.confidence || 0.80,
         responseTime: Date.now() - startTime
       };
     } catch (error) {
-      console.error(`Mistral analysis error:`, error);
+      console.error(`xAI analysis error:`, error);
       throw error;
     }
   }
