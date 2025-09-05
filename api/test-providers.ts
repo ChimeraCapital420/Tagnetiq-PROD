@@ -1,6 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { ProviderFactory } from '../src/lib/ai-providers/provider-factory.js';
 
 export const config = {
   maxDuration: 60,
@@ -10,6 +9,269 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+// Test provider class
+class TestProvider {
+  constructor(
+    private config: any,
+    private apiKey: string
+  ) {}
+
+  async analyze(images: string[], prompt: string): Promise<any> {
+    const { name, endpoint, model } = this.config;
+    
+    switch (name) {
+      case 'OpenAI':
+        return this.testOpenAI(images, prompt);
+      case 'Anthropic':
+        return this.testAnthropic(images, prompt);
+      case 'Google':
+        return this.testGoogle(images, prompt);
+      case 'Mistral':
+        return this.testMistral(prompt);
+      case 'Groq':
+        return this.testGroq(prompt);
+      case 'DeepSeek':
+        return this.testDeepSeek(images, prompt);
+      case 'xAI':
+        return this.testXAI(prompt);
+      case 'Perplexity':
+        return this.testPerplexity(prompt);
+      default:
+        throw new Error(`Unknown provider: ${name}`);
+    }
+  }
+
+  private async testOpenAI(images: string[], prompt: string) {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({
+        model: this.config.model || 'gpt-4-turbo',
+        messages: [{
+          role: 'user',
+          content: images.length > 0 ? [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: images[0] } }
+          ] : prompt
+        }],
+        max_tokens: 1000
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return {
+      response: JSON.parse(data.choices[0].message.content),
+      confidence: 0.85
+    };
+  }
+
+  private async testAnthropic(images: string[], prompt: string) {
+    const messages = images.length > 0 ? [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: images[0].split(',')[1] } },
+        { type: 'text', text: prompt }
+      ]
+    }] : [{
+      role: 'user',
+      content: prompt
+    }];
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: this.config.model || 'claude-3-opus-20240229',
+        messages,
+        max_tokens: 1000
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Anthropic error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return {
+      response: JSON.parse(data.content[0].text),
+      confidence: 0.9
+    };
+  }
+
+  private async testGoogle(images: string[], prompt: string) {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${this.config.model || 'gemini-pro'}:generateContent?key=${this.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: images.length > 0 ? [
+              { text: prompt },
+              { inline_data: { mime_type: 'image/jpeg', data: images[0].split(',')[1] } }
+            ] : [{ text: prompt }]
+          }]
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Google error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return {
+      response: JSON.parse(data.candidates[0].content.parts[0].text),
+      confidence: 0.85
+    };
+  }
+
+  private async testMistral(prompt: string) {
+    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({
+        model: this.config.model || 'mistral-large-latest',
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Mistral error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return {
+      response: JSON.parse(data.choices[0].message.content),
+      confidence: 0.8
+    };
+  }
+
+  private async testGroq(prompt: string) {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({
+        model: this.config.model || 'llama3-70b-8192',
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Groq error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return {
+      response: JSON.parse(data.choices[0].message.content),
+      confidence: 0.75
+    };
+  }
+
+  private async testDeepSeek(images: string[], prompt: string) {
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({
+        model: this.config.model || 'deepseek-chat',
+        messages: [{
+          role: 'user',
+          content: images.length > 0 ? [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: images[0] } }
+          ] : prompt
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`DeepSeek error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return {
+      response: JSON.parse(data.choices[0].message.content),
+      confidence: 0.8
+    };
+  }
+
+  private async testXAI(prompt: string) {
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({
+        model: this.config.model || 'grok-beta',
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`xAI error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return {
+      response: JSON.parse(data.choices[0].message.content),
+      confidence: 0.85
+    };
+  }
+
+  private async testPerplexity(prompt: string) {
+    const response = await fetch('https://api.perplexity.ai/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({
+        model: this.config.model || 'llama-3.1-sonar-large-128k-online',
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Perplexity error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return {
+      response: JSON.parse(data.choices[0].message.content),
+      confidence: 0.8
+    };
+  }
+}
 
 // Test each provider individually
 async function testProviders() {
@@ -49,11 +311,7 @@ async function testProviders() {
     }
     
     try {
-      const provider = ProviderFactory.create({
-        ...config,
-        apiKey,
-        baseWeight: parseFloat(config.base_weight)
-      });
+      const provider = new TestProvider(config, apiKey);
       
       const startTime = Date.now();
       
