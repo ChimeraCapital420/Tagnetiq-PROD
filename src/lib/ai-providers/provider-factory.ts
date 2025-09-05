@@ -5,8 +5,9 @@ import { AnthropicProvider } from './anthropic-provider.js';
 import { GoogleProvider } from './google-provider.js';
 import { MistralProvider } from './mistral-provider.js';
 import { GroqProvider } from './groq-provider.js';
-import { DeepSeekProvider } from './deepseek-provider.js';  // NEW
-import { XAIProvider } from './xai-provider.js';          // NEW
+import { DeepSeekProvider } from './deepseek-provider.js';
+import { XAIProvider } from './xai-provider.js';
+import { PerplexityProvider } from './perplexity-provider.js';
 
 export class ProviderFactory {
   static create(config: AIProvider): BaseAIProvider {
@@ -22,9 +23,11 @@ export class ProviderFactory {
       case 'groq':
         return new GroqProvider(config);
       case 'deepseek':
-        return new DeepSeekProvider(config);  // NEW
+        return new DeepSeekProvider(config);
       case 'xai':
-        return new XAIProvider(config);       // NEW
+        return new XAIProvider(config);
+      case 'perplexity':
+        return new PerplexityProvider(config);
       default:
         throw new Error(`Unknown provider: ${config.name}`);
     }
