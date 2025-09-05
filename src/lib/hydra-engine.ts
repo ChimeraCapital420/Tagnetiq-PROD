@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { AIProvider, ModelVote, HydraConsensus, ParsedAnalysis } from '@/types/hydra.js';
 import { ProviderFactory } from './ai-providers/provider-factory.js';
 import { BaseAIProvider } from './ai-providers/base-provider.js';
+import { AuthorityManager } from './authorities/authority-manager.js';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -262,6 +263,72 @@ export class HydraEngine {
       consensus,
       processingTime: Date.now() - startTime
     };
+  }
+  
+  async analyzeWithAuthority(images: string[], prompt: string, category?: string): Promise<HydraConsensus> {
+    // Run standard multi-AI analysis first
+    const consensus = await this.analyze(images, prompt);
+    
+    // Check if it's a book category or if the item name suggests it's a book
+    const isBook = category === 'books' || 
+                   category === 'media' || 
+                   consensus.consensus.itemName.toLowerCase().includes('book') ||
+                   consensus.consensus.itemName.toLowerCase().includes('isbn');
+    
+    if (isBook) {
+      console.log('📚 Detected book item, running authority validation...');
+      
+      const authorityManager = new AuthorityManager();
+      
+      // Extract text from the best AI description for ISBN detection
+      let combinedText = consensus.consensus.itemName;
+      if (consensus.votes.length > 0) {
+        const bestVote = consensus.votes.reduce((best, vote) => 
+          vote.weight > best.weight ? vote : best, consensus.votes[0]
+        );
+        if (bestVote.rawResponse?.summary_reasoning) {
+          combinedText += ' ' + bestVote.rawResponse.summary_reasoning;
+        }
+      }
+      
+      const bookData = await authorityManager.validateBook(
+        consensus.consensus.itemName,
+        combinedText
+      );
+      
+      if (bookData && bookData.verified) {
+        // Enhance consensus with authority data
+        consensus.authorityData = bookData;
+        
+        // Boost confidence when verified by authority
+        const oldConfidence = consensus.consensus.confidence;
+        consensus.consensus.confidence = Math.min(
+          Math.round(consensus.consensus.confidence * 1.15), 
+          97
+        );
+        
+        // Use authority price data if available and reasonable
+        if (bookData.marketValue) {
+          const aiValue = consensus.consensus.estimatedValue;
+          const authorityValue = bookData.marketValue.good;
+          
+          // If authority value is within reasonable range of AI estimate, use weighted average
+          if (authorityValue > 0 && authorityValue < aiValue * 3 && authorityValue > aiValue * 0.3) {
+            consensus.consensus.estimatedValue = parseFloat(
+              ((aiValue * 0.6) + (authorityValue * 0.4)).toFixed(2)
+            );
+          }
+        }
+        
+        console.log(`✅ Book verified by ${bookData.source}`);
+        console.log(`   Confidence: ${oldConfidence}% → ${consensus.consensus.confidence}%`);
+        console.log(`   ISBN: ${bookData.isbn || 'Not found'}`);
+      } else {
+        console.log('❌ Could not verify book through authority sources');
+      }
+    }
+    
+    return consensus;
   }
   
   private calculateWeight(provider: AIProvider, confidence: number): number {

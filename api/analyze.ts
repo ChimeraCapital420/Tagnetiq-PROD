@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { HydraEngine } from '../src/lib/hydra-engine.js';  // Added .js extension
-import { HydraConsensus } from '../src/types/hydra.js';    // Added .js extension
+import { HydraEngine } from '../src/lib/hydra-engine.js';
+import { HydraConsensus } from '../src/types/hydra.js';
 
 // Node.js runtime configuration
 export const config = {
@@ -51,6 +51,7 @@ interface AnalysisResult {
   };
   tags: string[];
   hydraConsensus?: HydraConsensus;
+  authorityData?: any;
 }
 
 // Auth verification
@@ -70,7 +71,7 @@ async function verifyUser(req: VercelRequest) {
   return user;
 }
 
-// Main analysis function using Hydra Engine
+// Main analysis function using Hydra Engine with Authority
 async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult> {
   const jsonPrompt = `Analyze the item. Respond in JSON format ONLY: {"itemName": "specific name", "estimatedValue": "25.99", "decision": "BUY", "valuation_factors": ["Factor 1", "Factor 2", "Factor 3", "Factor 4", "Factor 5"], "summary_reasoning": "A brief summary.", "confidence": 0.85}`;
   
@@ -88,8 +89,8 @@ async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult
   const hydra = new HydraEngine();
   await hydra.initialize();
   
-  // Run multi-AI consensus analysis
-  const consensus = await hydra.analyze([imageData], jsonPrompt);
+  // Run multi-AI consensus analysis WITH authority validation
+  const consensus = await hydra.analyzeWithAuthority([imageData], jsonPrompt, request.category_id);
   
   console.log(`✅ Hydra consensus complete: ${consensus.votes.length} AI models voted`);
   
@@ -136,7 +137,8 @@ async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult
       shareToSocial: true
     },
     tags: [request.category_id],
-    hydraConsensus: consensus // Include full consensus data for visualization
+    hydraConsensus: consensus,
+    authorityData: consensus.authorityData // Include authority data if available
   };
   
   return fullResult;
