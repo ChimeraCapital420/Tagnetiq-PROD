@@ -1,9 +1,9 @@
 // FILE: src/components/AnalysisResult.tsx
-// STATUS: Repaired and reforged by Hephaestus. Pathing impurities purged.
+// STATUS: Hydra-enhanced with multi-AI consensus display
 
 import React, { useState } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
-import { useAuth } from '@/contexts/AuthContext'; // CORRECTED IMPORT PATH
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { CheckCircle, Star, WandSparkles, Loader2 } from 'lucide-react';
+import { HydraConsensusDisplay } from './HydraConsensusDisplay';
 
 const AnalysisResult: React.FC = () => {
   const { lastAnalysisResult, setLastAnalysisResult } = useAppContext();
@@ -26,13 +27,12 @@ const AnalysisResult: React.FC = () => {
   const [hoveredRating, setHoveredRating] = useState(0);
   const [givenRating, setGivenRating] = useState(0);
 
-
   if (!lastAnalysisResult) {
     return null;
   }
 
   const {
-    id, // Required for feedback loop
+    id,
     itemName,
     estimatedValue,
     confidenceScore,
@@ -86,27 +86,25 @@ const AnalysisResult: React.FC = () => {
     setGivenRating(rating);
 
     try {
-        const response = await fetch('/api/nexus/feedback', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                analysis_id: id,
-                user_id: user.id,
-                rating: rating,
-            }),
-        });
+      const response = await fetch('/api/nexus/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          analysis_id: id,
+          user_id: user.id,
+          rating: rating,
+        }),
+      });
 
-        if (!response.ok) throw new Error('Failed to submit feedback.');
+      if (!response.ok) throw new Error('Failed to submit feedback.');
 
-        setFeedbackSubmitted(true);
-        toast.success('Thank you! Your feedback makes our AI smarter.');
-
+      setFeedbackSubmitted(true);
+      toast.success('Thank you! Your feedback makes our AI smarter.');
     } catch (error: any) {
-        toast.error(error.message);
-        setGivenRating(0); // Reset on error
+      toast.error(error.message);
+      setGivenRating(0); // Reset on error
     }
   };
-
 
   const confidenceColor = confidenceScore > 85 ? 'bg-green-500' : confidenceScore > 65 ? 'bg-yellow-500' : 'bg-red-500';
 
@@ -123,7 +121,15 @@ const AnalysisResult: React.FC = () => {
               Confidence: {confidenceScore.toFixed(0)}%
             </Badge>
           </div>
+          
+          {/* HYDRA CONSENSUS DISPLAY */}
+          {lastAnalysisResult.hydraConsensus && (
+            <div className="mt-4">
+              <HydraConsensusDisplay consensus={lastAnalysisResult.hydraConsensus} />
+            </div>
+          )}
         </CardHeader>
+        
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <img
@@ -139,11 +145,11 @@ const AnalysisResult: React.FC = () => {
 
               <div>
                 <div className="flex justify-between items-center mb-2">
-                    <h3 className="text-lg font-semibold">Key Valuation Factors</h3>
-                    <Button variant="outline" size="sm" onClick={() => setIsRefineOpen(true)}>
-                        <WandSparkles className="h-4 w-4 mr-2" />
-                        Refine Analysis
-                    </Button>
+                  <h3 className="text-lg font-semibold">Key Valuation Factors</h3>
+                  <Button variant="outline" size="sm" onClick={() => setIsRefineOpen(true)}>
+                    <WandSparkles className="h-4 w-4 mr-2" />
+                    Refine Analysis
+                  </Button>
                 </div>
                 <ul className="space-y-2 text-sm text-muted-foreground">
                   {valuation_factors.map((factor, index) => (
@@ -158,36 +164,46 @@ const AnalysisResult: React.FC = () => {
             </div>
           </div>
         </CardContent>
+        
         <CardFooter className="flex flex-col gap-4">
-            {/* --- Core Feature: Action Hub --- */}
-            <div className="w-full p-4 border rounded-lg bg-background">
-                <h3 className="text-sm font-semibold mb-3 text-center text-muted-foreground">ACTION HUB</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    <AddToVaultButton analysisResult={lastAnalysisResult} onSuccess={handleClear} />
-                    <Button variant="secondary" className="w-full" onClick={() => toast.info('Marketplace listing coming soon!')}>List on Marketplace</Button>
-                    <Button variant="secondary" className="w-full" onClick={() => toast.info('Social sharing coming soon!')}>Share to Social</Button>
-                    <Button variant="outline" onClick={handleClear} className="w-full">Clear & Scan Next</Button>
-                </div>
+          {/* --- Core Feature: Action Hub --- */}
+          <div className="w-full p-4 border rounded-lg bg-background">
+            <h3 className="text-sm font-semibold mb-3 text-center text-muted-foreground">ACTION HUB</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <AddToVaultButton analysisResult={lastAnalysisResult} onSuccess={handleClear} />
+              <Button variant="secondary" className="w-full" onClick={() => toast.info('Marketplace listing coming soon!')}>
+                List on Marketplace
+              </Button>
+              <Button variant="secondary" className="w-full" onClick={() => toast.info('Social sharing coming soon!')}>
+                Share to Social
+              </Button>
+              <Button variant="outline" onClick={handleClear} className="w-full">
+                Clear & Scan Next
+              </Button>
             </div>
-            {/* --- Core Feature: Learning Feedback Loop --- */}
-            <div className="w-full text-center">
-                 <p className="text-xs text-muted-foreground mb-2">{feedbackSubmitted ? "Thank you for your feedback!" : "Rate Analysis Accuracy"}</p>
-                 <div className="flex justify-center gap-1">
-                     {[1, 2, 3, 4, 5].map((star) => (
-                         <Star
-                             key={star}
-                             className={`cursor-pointer transition-colors ${
-                                 (hoveredRating || givenRating) >= star
-                                     ? 'text-yellow-400 fill-yellow-400'
-                                     : 'text-gray-300'
-                             } ${feedbackSubmitted ? 'cursor-not-allowed opacity-50' : ''}`}
-                             onMouseEnter={() => !feedbackSubmitted && setHoveredRating(star)}
-                             onMouseLeave={() => setHoveredRating(0)}
-                             onClick={() => handleFeedbackSubmit(star)}
-                         />
-                     ))}
-                 </div>
+          </div>
+          
+          {/* --- Core Feature: Learning Feedback Loop --- */}
+          <div className="w-full text-center">
+            <p className="text-xs text-muted-foreground mb-2">
+              {feedbackSubmitted ? "Thank you for your feedback!" : "Rate Analysis Accuracy"}
+            </p>
+            <div className="flex justify-center gap-1">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Star
+                  key={star}
+                  className={`cursor-pointer transition-colors ${
+                    (hoveredRating || givenRating) >= star
+                      ? 'text-yellow-400 fill-yellow-400'
+                      : 'text-gray-300'
+                  } ${feedbackSubmitted ? 'cursor-not-allowed opacity-50' : ''}`}
+                  onMouseEnter={() => !feedbackSubmitted && setHoveredRating(star)}
+                  onMouseLeave={() => setHoveredRating(0)}
+                  onClick={() => handleFeedbackSubmit(star)}
+                />
+              ))}
             </div>
+          </div>
         </CardFooter>
       </Card>
 
@@ -211,7 +227,9 @@ const AnalysisResult: React.FC = () => {
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsRefineOpen(false)} disabled={isSubmitting}>Cancel</Button>
+            <Button variant="outline" onClick={() => setIsRefineOpen(false)} disabled={isSubmitting}>
+              Cancel
+            </Button>
             <Button onClick={handleRefineSubmit} disabled={isSubmitting}>
               {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               Submit & Re-Analyze
