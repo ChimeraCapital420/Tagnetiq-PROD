@@ -2,25 +2,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
-  "functions": {
-    "api/**/*.ts": {
-      "runtime": "@vercel/node@2.15.1"
-    },
-    "api/**/*.js": {
-      "runtime": "@vercel/node@2.15.1"
-    },
-    "api/*.ts": {
-      "runtime": "@vercel/node@2.15.1"
-    },
-    "api/*.js": {
-      "runtime": "@vercel/node@2.15.1"
-    }
-  },
   "rewrites": [
-    {
-      "source": "/api/:match*",
-      "destination": "/api/:match*"
-    },
     {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
