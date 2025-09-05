@@ -35,6 +35,7 @@ export interface HydraConsensus {
     analysisQuality: 'OPTIMAL' | 'DEGRADED' | 'FALLBACK';
   };
   processingTime: number;
+  authorityData?: any; // THIS LINE WAS MISSING
 }
 
 // Analysis request/response types
