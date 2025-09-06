@@ -18,6 +18,121 @@ const openai = new OpenAI({
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 const googleModel = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest"});
 
+// --- API Integration Functions ---
+async function searchNumistaCoins(searchTerm: string) {
+  const apiKey = process.env.NUMISTA_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    const response = await fetch(
+      `https://api.numista.com/v3/types?q=${encodeURIComponent(searchTerm)}&count=10`,
+      {
+        headers: {
+          'Numista-API-Key': apiKey,
+          'Accept': 'application/json'
+        }
+      }
+    );
+
+    if (!response.ok) return [];
+    const data = await response.json();
+    
+    return (data.types || []).map((coin: any) => ({
+      source: 'Numista',
+      title: coin.title,
+      year: coin.min_year || coin.max_year,
+      country: coin.issuer?.name,
+      composition: coin.composition?.text,
+      weight: coin.weight,
+      diameter: coin.diameter,
+      mintage: coin.mintage,
+      catalog_id: coin.id
+    }));
+  } catch (error) {
+    console.error('Numista error:', error);
+    return [];
+  }
+}
+
+async function searchBricksetLego(searchTerm: string) {
+  const apiKey = process.env.BRICKSET_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    const response = await fetch('https://brickset.com/api/v3.asmx/getSets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        apiKey: apiKey,
+        params: JSON.stringify({ query: searchTerm, pageSize: 10 })
+      }).toString()
+    });
+
+    if (!response.ok) return [];
+    
+    const text = await response.text();
+    const jsonMatch = text.match(/>(\{.*\})</);
+    if (!jsonMatch) return [];
+    
+    const data = JSON.parse(jsonMatch[1]);
+    const sets = data.sets || [];
+
+    return sets.map((set: any) => ({
+      source: 'Brickset',
+      set_number: set.number,
+      name: set.name,
+      year: set.year,
+      theme: set.theme,
+      subtheme: set.subtheme,
+      pieces: set.pieces,
+      minifigs: set.minifigs,
+      retail_price_usd: set.USRetailPrice,
+      current_value_new: set.currentValue?.new,
+      current_value_used: set.currentValue?.used
+    }));
+  } catch (error) {
+    console.error('Brickset error:', error);
+    return [];
+  }
+}
+
+// --- Perplexity API Integration ---
+async function searchPerplexity(query: string, category: string) {
+  const apiKey = process.env.PERPLEXITY_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const response = await fetch('https://api.perplexity.ai/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'pplx-7b-online',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a collectibles valuation expert. Provide current market data and pricing information.'
+          },
+          {
+            role: 'user',
+            content: `Find current market prices and recent sales data for: ${query} in the ${category} category. Focus on: recent eBay sold listings, auction results, current retail prices, and condition-based pricing variations.`
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 1000
+      }),
+    });
+
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } catch (error) {
+    console.error('Perplexity error:', error);
+    return null;
+  }
+}
 
 /**
  * A helper function to safely parse a JSON string from an AI response.
@@ -43,7 +158,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { original_analysis, refinement_text } = req.body;
+    const { original_analysis, refinement_text, category, subcategory } = req.body;
 
     if (!original_analysis || !refinement_text) {
       return res.status(400).json({ error: 'Missing original_analysis or refinement_text in request body.' });
@@ -51,23 +166,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const analysis: AnalysisResult = original_analysis;
 
+    // --- Fetch Category-Specific API Data ---
+    let apiData = [];
+    let perplexityData = null;
+
+    // Determine search query from item name or refinement text
+    const searchQuery = analysis.itemName || refinement_text;
+
+    // Category-specific API calls
+    if (category === 'Toys & Collectibles' && subcategory === 'LEGO Sets') {
+      apiData = await searchBricksetLego(searchQuery);
+      perplexityData = await searchPerplexity(searchQuery, 'LEGO collectibles');
+    } else if (category === 'Coins & Currency') {
+      apiData = await searchNumistaCoins(searchQuery);
+      perplexityData = await searchPerplexity(searchQuery, 'numismatic coins');
+    } else {
+      // For other categories, just use Perplexity
+      perplexityData = await searchPerplexity(searchQuery, category || 'collectibles');
+    }
+
     // --- Dynamic Multi-AI Consensus Prompt ---
     const prompt = `
-      You are an expert appraiser. Given the following item analysis and a new piece of information from the user, your task is to provide an adjusted valuation and updated valuation factors.
+      You are an expert appraiser. Given the following item analysis, new information from the user, and category-specific market data, provide an adjusted valuation.
 
       Original Item Analysis:
       - Item: ${analysis.itemName}
+      - Category: ${category || 'Unknown'}
+      - Subcategory: ${subcategory || 'Unknown'}
       - Original Estimated Value: $${analysis.estimatedValue.toFixed(2)}
       - Original Key Valuation Factors: ${analysis.valuation_factors.join('; ')}
       - Original Summary: ${analysis.summary_reasoning}
 
       New Information Provided by User: "${refinement_text}"
 
+      ${apiData.length > 0 ? `Category-Specific Market Data:
+      ${JSON.stringify(apiData, null, 2)}` : ''}
+
+      ${perplexityData ? `Current Market Intelligence:
+      ${perplexityData}` : ''}
+
       Your Task:
-      1.  Analyze how the new information impacts the item's value.
-      2.  Determine a new, adjusted estimated value as a single number.
-      3.  Create a new, updated list of the top 5 key valuation factors. The new information MUST be reflected as one of these factors.
-      4.  Generate a new, concise summary_reasoning that incorporates the user's refinement.
+      1. Analyze how the new information and market data impact the item's value.
+      2. If specific API data is provided (Numista for coins, Brickset for LEGO), prioritize this authoritative data.
+      3. Determine a new, adjusted estimated value as a single number.
+      4. Create a new list of the top 5 key valuation factors incorporating market data.
+      5. Generate a new summary that reflects both the refinement and the market data.
 
       Respond ONLY with a valid JSON object in the following format, with no other text or explanation.
       {
