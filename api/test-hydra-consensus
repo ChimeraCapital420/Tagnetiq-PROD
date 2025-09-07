@@ -1,0 +1,84 @@
+// api/test-hydra-consensus.ts
+import { VercelRequest, VercelResponse } from '@vercel/node';
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const testCases = [
+    {
+      category: "Trading Cards",
+      item: "Charizard Base Set Pokemon Card",
+      expectedAPIs: ["CardHedge", "TCGPlayer", "Perplexity"],
+      expectedAIs: ["OpenAI", "Anthropic", "Google", "Mistral", "Groq", "DeepSeek", "xAI", "Perplexity"]
+    },
+    {
+      category: "LEGO Sets", 
+      item: "LEGO Creator Expert 10255 Assembly Square",
+      expectedAPIs: ["BrickSet", "Perplexity"],
+      expectedAIs: ["OpenAI", "Anthropic", "Google", "Mistral", "Groq", "DeepSeek", "xAI", "Perplexity"]
+    },
+    {
+      category: "Coins",
+      item: "1921 Morgan Silver Dollar",
+      expectedAPIs: ["Numista", "PCGS", "Perplexity"],
+      expectedAIs: ["OpenAI", "Anthropic", "Google", "Mistral", "Groq", "DeepSeek", "xAI", "Perplexity"]
+    },
+    {
+      category: "Watches",
+      item: "Rolex Submariner 116610",
+      expectedAPIs: ["Chrono24", "Perplexity"],
+      expectedAIs: ["OpenAI", "Anthropic", "Google", "Mistral", "Groq", "DeepSeek", "xAI", "Perplexity"]
+    }
+  ];
+
+  const results = [];
+  
+  for (const testCase of testCases) {
+    const startTime = Date.now();
+    
+    // Call your analyze endpoint
+    const response = await fetch(`${process.env.VERCEL_URL}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category: testCase.category,
+        items: [{
+          type: 'text',
+          data: testCase.item
+        }]
+      })
+    });
+    
+    const analysis = await response.json();
+    const endTime = Date.now();
+    
+    // Check which sources responded
+    const activeSources = {
+      apis: [], // Parse from response
+      ais: [], // Parse from response
+    };
+    
+    results.push({
+      testCase: testCase.item,
+      category: testCase.category,
+      responseTime: endTime - startTime,
+      expectedAPIs: testCase.expectedAPIs,
+      actualAPIs: activeSources.apis,
+      expectedAIs: testCase.expectedAIs,
+      actualAIs: activeSources.ais,
+      missingAPIs: testCase.expectedAPIs.filter(api => !activeSources.apis.includes(api)),
+      missingAIs: testCase.expectedAIs.filter(ai => !activeSources.ais.includes(ai)),
+      consensusScore: analysis.confidenceScore,
+      value: analysis.estimatedValue
+    });
+  }
+  
+  return res.json({
+    timestamp: new Date().toISOString(),
+    results,
+    summary: {
+      totalTests: results.length,
+      averageResponseTime: results.reduce((a, b) => a + b.responseTime, 0) / results.length,
+      apiCoverage: calculateCoverage(results, 'apis'),
+      aiCoverage: calculateCoverage(results, 'ais')
+    }
+  });
+}

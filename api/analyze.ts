@@ -50,7 +50,19 @@ interface AnalysisResult {
     shareToSocial: boolean;
   };
   tags: string[];
-  hydraConsensus?: HydraConsensus;
+  hydraConsensus?: HydraConsensus & {
+    totalSources: number;
+    aiModels: {
+      responded: string[];
+      weights: Record<string, number>;
+    };
+    apiSources: {
+      responded: string[];
+      data: Record<string, { confidence: number; dataPoints: number }>;
+    };
+    consensusMethod: string;
+    finalConfidence: number;
+  };
   authorityData?: any;
 }
 
@@ -116,6 +128,35 @@ async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult
   const summaryReasoning = bestVote?.rawResponse?.summary_reasoning || 
     `Consensus reached by ${consensus.consensus.totalVotes} AI models with ${consensus.consensus.confidence}% agreement.`;
   
+  // NEW: Build enhanced source tracking data
+  const respondedAIs = consensus.votes
+    .filter(vote => vote.success)
+    .map(vote => vote.provider);
+  
+  const aiWeights: Record<string, number> = {};
+  consensus.votes.forEach(vote => {
+    if (vote.success && vote.provider) {
+      aiWeights[vote.provider] = vote.weight;
+    }
+  });
+  
+  // Extract API sources from authority data if available
+  const apiSources = consensus.authorityData ? {
+    responded: Object.keys(consensus.authorityData),
+    data: Object.entries(consensus.authorityData).reduce((acc, [source, data]: [string, any]) => {
+      acc[source] = {
+        confidence: data.confidence || 0.95,
+        dataPoints: Array.isArray(data) ? data.length : 1
+      };
+      return acc;
+    }, {} as Record<string, { confidence: number; dataPoints: number }>)
+  } : {
+    responded: [],
+    data: {}
+  };
+  
+  const totalSources = respondedAIs.length + apiSources.responded.length;
+  
   const fullResult: AnalysisResult = {
     id: consensus.analysisId,
     itemName: consensus.consensus.itemName,
@@ -137,7 +178,17 @@ async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult
       shareToSocial: true
     },
     tags: [request.category_id],
-    hydraConsensus: consensus,
+    hydraConsensus: {
+      ...consensus,
+      totalSources,
+      aiModels: {
+        responded: respondedAIs,
+        weights: aiWeights
+      },
+      apiSources,
+      consensusMethod: 'weighted_average',
+      finalConfidence: consensus.consensus.confidence / 100
+    },
     authorityData: consensus.authorityData // Include authority data if available
   };
   

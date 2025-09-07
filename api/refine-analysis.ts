@@ -54,6 +54,59 @@ async function searchNumistaCoins(searchTerm: string) {
   }
 }
 
+// --- NEW: PCGS Coin Grading & Population Data ---
+async function searchPCGSCoins(searchTerm: string) {
+  const apiKey = process.env.PCGS_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    // Note: PCGS API structure varies - adjust endpoint based on their documentation
+    // This is a common structure for coin grading APIs
+    const response = await fetch(
+      `https://api.pcgs.com/v1/coins/search?q=${encodeURIComponent(searchTerm)}&limit=10`,
+      {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Accept': 'application/json'
+        }
+      }
+    );
+
+    if (!response.ok) return [];
+    const data = await response.json();
+    
+    return (data.results || data.coins || []).map((coin: any) => ({
+      source: 'PCGS',
+      pcgs_number: coin.pcgs_number,
+      title: coin.description || coin.coin_name,
+      year: coin.year,
+      mint_mark: coin.mint_mark,
+      denomination: coin.denomination,
+      // Population data shows rarity
+      population_data: {
+        total_graded: coin.population?.total,
+        ms65_and_higher: coin.population?.ms65_plus,
+        ms67_and_higher: coin.population?.ms67_plus,
+        ms70_perfect: coin.population?.ms70
+      },
+      // Price guide data
+      price_guide: {
+        ms60: coin.prices?.ms60,
+        ms63: coin.prices?.ms63,
+        ms65: coin.prices?.ms65,
+        ms67: coin.prices?.ms67,
+        ms70: coin.prices?.ms70
+      },
+      variety: coin.variety,
+      designation: coin.designation,
+      coin_facts: coin.coin_facts
+    }));
+  } catch (error) {
+    console.error('PCGS error:', error);
+    return [];
+  }
+}
+
 async function searchBricksetLego(searchTerm: string) {
   const apiKey = process.env.BRICKSET_API_KEY;
   if (!apiKey) return [];
@@ -92,6 +145,50 @@ async function searchBricksetLego(searchTerm: string) {
     }));
   } catch (error) {
     console.error('Brickset error:', error);
+    return [];
+  }
+}
+
+// --- Chrono24 Watch Search Integration ---
+async function searchChrono24Watches(searchTerm: string) {
+  const apiKey = process.env.CHRONO24_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    // Note: This is a hypothetical API structure based on typical watch marketplace APIs
+    // You'll need to adjust based on actual Chrono24 API documentation
+    const response = await fetch(
+      `https://api.chrono24.com/v1/watches/search?q=${encodeURIComponent(searchTerm)}&limit=10`,
+      {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Accept': 'application/json'
+        }
+      }
+    );
+
+    if (!response.ok) return [];
+    const data = await response.json();
+    
+    return (data.watches || data.items || []).map((watch: any) => ({
+      source: 'Chrono24',
+      brand: watch.brand,
+      model: watch.model,
+      reference: watch.reference_number,
+      year: watch.production_year,
+      condition: watch.condition,
+      box_papers: watch.box_and_papers,
+      movement: watch.movement_type,
+      case_material: watch.case_material,
+      case_diameter: watch.case_diameter_mm,
+      average_price: watch.price_stats?.average,
+      min_price: watch.price_stats?.min,
+      max_price: watch.price_stats?.max,
+      market_trend: watch.price_trend,
+      listing_url: watch.url
+    }));
+  } catch (error) {
+    console.error('Chrono24 error:', error);
     return [];
   }
 }
@@ -178,8 +275,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       apiData = await searchBricksetLego(searchQuery);
       perplexityData = await searchPerplexity(searchQuery, 'LEGO collectibles');
     } else if (category === 'Coins & Currency') {
-      apiData = await searchNumistaCoins(searchQuery);
-      perplexityData = await searchPerplexity(searchQuery, 'numismatic coins');
+      // UPDATED: Call both Numista and PCGS for coins
+      const [numistaData, pcgsData] = await Promise.all([
+        searchNumistaCoins(searchQuery),
+        searchPCGSCoins(searchQuery)
+      ]);
+      apiData = [...numistaData, ...pcgsData];
+      perplexityData = await searchPerplexity(searchQuery, 'numismatic coins grading PCGS');
+    } else if (category === 'Jewelry & Watches' && (subcategory === 'Luxury Watches' || subcategory === 'Watches')) {
+      // Chrono24 integration for watches
+      apiData = await searchChrono24Watches(searchQuery);
+      perplexityData = await searchPerplexity(searchQuery, 'luxury watches market');
     } else {
       // For other categories, just use Perplexity
       perplexityData = await searchPerplexity(searchQuery, category || 'collectibles');
@@ -207,10 +313,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       Your Task:
       1. Analyze how the new information and market data impact the item's value.
-      2. If specific API data is provided (Numista for coins, Brickset for LEGO), prioritize this authoritative data.
-      3. Determine a new, adjusted estimated value as a single number.
-      4. Create a new list of the top 5 key valuation factors incorporating market data.
-      5. Generate a new summary that reflects both the refinement and the market data.
+      2. If specific API data is provided (Numista for coins, Brickset for LEGO, Chrono24 for watches, PCGS for coin grading), prioritize this authoritative data.
+      3. For coins specifically: 
+         - PCGS population data indicates rarity (lower populations = higher value)
+         - Grade differences dramatically affect value (MS65 vs MS67 can be 10x difference)
+         - Consider both Numista's global data and PCGS's US-focused grading data
+      4. For watches specifically, consider factors like: brand prestige, reference rarity, condition, box/papers completeness, and current market trends.
+      5. Determine a new, adjusted estimated value as a single number.
+      6. Create a new list of the top 5 key valuation factors incorporating market data.
+      7. Generate a new summary that reflects both the refinement and the market data.
 
       Respond ONLY with a valid JSON object in the following format, with no other text or explanation.
       {
