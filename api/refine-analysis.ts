@@ -6,21 +6,43 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// --- Initialize AI Clients ---
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_SECRET || process.env.ANTHROPIC_API_KEY,
-});
+// UPDATED: Flexible API key retrieval functions
+function getOpenAIKey(): string | undefined {
+  return process.env.OPENAI_API_KEY || 
+         process.env.OPEN_AI_API_KEY || 
+         process.env.OPENAI_TOKEN || 
+         process.env.OPEN_AI_TOKEN ||
+         process.env.OPENAI_SECRET;
+}
 
-const openai = new OpenAI({
-  apiKey: process.env.OPEN_AI_API_KEY || process.env.OPENAI_API_KEY,
-});
+function getAnthropicKey(): string | undefined {
+  return process.env.ANTHROPIC_API_KEY || 
+         process.env.ANTHROPIC_SECRET || 
+         process.env.ANTHROPIC_TOKEN ||
+         process.env.CLAUDE_API_KEY;
+}
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_TOKEN || process.env.GOOGLE_API_KEY!);
-const googleModel = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest"});
+function getGoogleKey(): string | undefined {
+  return process.env.GOOGLE_API_KEY || 
+         process.env.GOOGLE_AI_TOKEN || 
+         process.env.GOOGLE_AI_KEY ||
+         process.env.GEMINI_API_KEY ||
+         process.env.GEMINI_TOKEN;
+}
+
+// --- Initialize AI Clients with flexible keys ---
+const anthropicKey = getAnthropicKey();
+const openaiKey = getOpenAIKey();
+const googleKey = getGoogleKey();
+
+const anthropic = anthropicKey ? new Anthropic({ apiKey: anthropicKey }) : null;
+const openai = openaiKey ? new OpenAI({ apiKey: openaiKey }) : null;
+const genAI = googleKey ? new GoogleGenerativeAI(googleKey) : null;
+const googleModel = genAI ? genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest"}) : null;
 
 // --- API Integration Functions ---
 async function searchNumistaCoins(searchTerm: string) {
-  const apiKey = process.env.NUMISTA_API_KEY;
+  const apiKey = process.env.NUMISTA_API_KEY || process.env.NUMISTA_TOKEN;
   if (!apiKey) return [];
 
   try {
@@ -56,7 +78,7 @@ async function searchNumistaCoins(searchTerm: string) {
 
 // --- PCGS Coin Grading & Population Data ---
 async function searchPCGSCoins(searchTerm: string) {
-  const apiKey = process.env.PCGS_API_KEY;
+  const apiKey = process.env.PCGS_API_KEY || process.env.PCGS_TOKEN || process.env.PCGS_SECRET;
   if (!apiKey) return [];
 
   try {
@@ -108,7 +130,7 @@ async function searchPCGSCoins(searchTerm: string) {
 }
 
 async function searchBricksetLego(searchTerm: string) {
-  const apiKey = process.env.BRICKSET_API_KEY;
+  const apiKey = process.env.BRICKSET_API_KEY || process.env.BRICKSET_TOKEN;
   if (!apiKey) return [];
 
   try {
@@ -151,7 +173,7 @@ async function searchBricksetLego(searchTerm: string) {
 
 // --- Chrono24 Watch Search Integration ---
 async function searchChrono24Watches(searchTerm: string) {
-  const apiKey = process.env.CHRONO24_API_KEY;
+  const apiKey = process.env.CHRONO24_API_KEY || process.env.CHRONO24_TOKEN;
   if (!apiKey) return [];
 
   try {
@@ -195,7 +217,7 @@ async function searchChrono24Watches(searchTerm: string) {
 
 // --- NEW: GoCollect Multi-Category Integration ---
 async function searchGoCollect(searchTerm: string, collectibleType: string = 'all') {
-  const apiKey = process.env.GOCOLLECT_API_KEY;
+  const apiKey = process.env.GOCOLLECT_API_KEY || process.env.GO_COLLECT_API_KEY || process.env.GOCOLLECT_TOKEN;
   if (!apiKey) return [];
 
   try {
@@ -255,7 +277,7 @@ async function searchGoCollect(searchTerm: string, collectibleType: string = 'al
 
 // --- Perplexity API Integration ---
 async function searchPerplexity(query: string, category: string) {
-  const apiKey = process.env.PERPLEXITY_API_KEY;
+  const apiKey = process.env.PERPLEXITY_API_KEY || process.env.PERPLEXITY_TOKEN || process.env.PPLX_API_KEY;
   if (!apiKey) return null;
 
   try {
@@ -436,25 +458,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `;
 
     // --- Execute Parallel AI Calls ---
-    const aiPromises = [
-      // Anthropic Call
-      anthropic.messages.create({
-        model: "claude-3-5-sonnet-20240620",
-        max_tokens: 1024,
-        messages: [{ role: "user", content: prompt }],
-      }).then(response => safeJsonParse(response.content[0].text)),
+    const aiPromises = [];
+    
+    // Only add AI calls if the client is initialized
+    if (anthropic) {
+      aiPromises.push(
+        anthropic.messages.create({
+          model: "claude-3-5-sonnet-20240620",
+          max_tokens: 1024,
+          messages: [{ role: "user", content: prompt }],
+        }).then(response => safeJsonParse(response.content[0].text))
+      );
+    }
+    
+    if (openai) {
+      aiPromises.push(
+        openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" },
+        }).then(response => safeJsonParse(response.choices[0].message.content!))
+      );
+    }
+    
+    if (googleModel) {
+      aiPromises.push(
+        googleModel.generateContent(prompt)
+          .then(response => safeJsonParse(response.response.text()))
+      );
+    }
 
-      // OpenAI Call
-      openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" },
-      }).then(response => safeJsonParse(response.choices[0].message.content!)),
-
-      // Google Gemini Call
-      googleModel.generateContent(prompt)
-        .then(response => safeJsonParse(response.response.text())),
-    ];
+    if (aiPromises.length === 0) {
+      console.error("No AI services available - check API key configuration");
+      throw new Error("No AI services are available. Please check API key configuration.");
+    }
 
     const results = await Promise.allSettled(aiPromises);
 
