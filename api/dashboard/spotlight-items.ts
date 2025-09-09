@@ -1,3 +1,5 @@
+// FILE: api/dashboard/spotlight-items.ts
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -36,8 +38,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from('vault_items')
       .select(`
         id,
-        item_name,
-        primary_photo_url,
+        asset_name,
+        photos,
         created_at
       `)
       .eq('spotlight_featured', true)
@@ -49,8 +51,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Failed to fetch spotlight items');
     }
 
-    // Return the data as JSON (not JSX!)
-    return res.status(200).json(data || []);
+    // Transform the data to match expected format
+    const transformedData = (data || []).map(item => ({
+      id: item.id,
+      item_name: item.asset_name, // Map asset_name to item_name for compatibility
+      primary_photo_url: item.photos?.[0] || null, // Use first photo from array
+      created_at: item.created_at
+    }));
+
+    // Return the data as JSON
+    return res.status(200).json(transformedData);
 
   } catch (error: any) {
     const message = error.message || 'An internal server error occurred.';
