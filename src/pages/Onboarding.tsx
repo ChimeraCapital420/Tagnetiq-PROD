@@ -1,134 +1,255 @@
 // FILE: src/pages/Onboarding.tsx
 
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
-import { supabase, Profile } from '@/lib/supabase';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { CATEGORIES } from '@/lib/constants';
-import { Toggle } from '@/components/ui/toggle';
-import { useTranslation } from 'react-i18next';
-import { LanguageSelector } from '@/components/LanguageSelector';
+import { supabase } from '@/lib/supabase';
+import { User } from '@supabase/supabase-js';
 
-const OnboardingPage: React.FC = () => {
-  const { user, setProfile } = useAuth();
+const INTERESTS_OPTIONS = [
+  'Real Estate',
+  'Vehicles', 
+  'Collectibles',
+  'Luxury Goods',
+  'LEGO',
+  'Star Wars',
+  'Sports Memorabilia',
+  'Books & Media',
+  'Coins & Currency',
+  'Trading Cards',
+  'Art & Antiques',
+  'Electronics'
+];
+
+const LANGUAGES = [
+  { code: 'en', name: 'English' },
+  { code: 'es', name: 'Spanish' },
+  { code: 'fr', name: 'French' },
+  { code: 'de', name: 'German' },
+  { code: 'it', name: 'Italian' },
+  { code: 'pt', name: 'Portuguese' },
+  { code: 'ja', name: 'Japanese' },
+  { code: 'zh', name: 'Chinese' }
+];
+
+const Onboarding: React.FC = () => {
   const navigate = useNavigate();
-  const { t, i18n } = useTranslation();
-  const [screenName, setScreenName] = useState('');
-  const [location, setLocation] = useState('');
-  const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
+  const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [step, setStep] = useState(1);
+  
+  // Form data
+  const [screenName, setScreenName] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [languagePreference, setLanguagePreference] = useState('en');
+  const [interests, setInterests] = useState<string[]>([]);
+  const [locationText, setLocationText] = useState('');
 
-  const handleInterestToggle = (categoryId: string) => {
-    setSelectedInterests(prev =>
-      prev.includes(categoryId)
-        ? prev.filter(id => id !== categoryId)
-        : [...prev, categoryId]
+  useEffect(() => {
+    checkUser();
+  }, []);
+
+  const checkUser = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      navigate('/login');
+      return;
+    }
+    setUser(user);
+    
+    // Check if already onboarded
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('onboarding_complete')
+      .eq('id', user.id)
+      .single();
+      
+    if (profile?.onboarding_complete) {
+      navigate('/dashboard');
+    }
+  };
+
+  const handleInterestToggle = (interest: string) => {
+    setInterests(prev => 
+      prev.includes(interest) 
+        ? prev.filter(i => i !== interest)
+        : [...prev, interest]
     );
   };
 
-  const handleCompleteOnboarding = async () => {
-    if (!user) {
-      toast.error('You must be logged in to complete onboarding.');
-      return;
-    }
-    if (!screenName || !location || selectedInterests.length === 0) {
-      toast.error('Please fill out all fields to continue.');
-      return;
-    }
-
+  const handleComplete = async () => {
+    if (!user) return;
+    
     setIsLoading(true);
-
     try {
-      const { data, error } = await supabase
+      // Update profile with onboarding data
+      const { error } = await supabase
         .from('profiles')
         .update({
           screen_name: screenName,
-          location_text: location,
-          interests: selectedInterests,
+          full_name: fullName,
+          language_preference: languagePreference,
+          interests,
+          location_text: locationText,
           onboarding_complete: true,
-          updated_at: new Date().toISOString(),
-          language_preference: i18n.language,
+          updated_at: new Date().toISOString()
         })
-        .eq('id', user.id)
-        .select()
-        .single();
+        .eq('id', user.id);
 
       if (error) throw error;
 
-      if (data) {
-        setProfile(data as Profile);
-      }
-
-      toast.success('Profile setup complete! Welcome to TagnetIQ.');
-      navigate('/dashboard', { replace: true });
-
-    } catch (error) {
-      toast.error('Failed to save profile.', { description: (error as Error).message });
+      toast.success('Welcome to TagnetIQ!', {
+        description: 'Your profile has been set up successfully.'
+      });
+      
+      navigate('/dashboard');
+    } catch (error: any) {
+      console.error('Onboarding error:', error);
+      toast.error('Failed to complete onboarding', {
+        description: error.message
+      });
     } finally {
       setIsLoading(false);
     }
   };
 
-  return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-background">
-      <Card className="w-full max-w-2xl">
-        <CardHeader>
-          <CardTitle className="text-2xl">{t('onboarding_title')}</CardTitle>
-          <CardDescription>{t('onboarding_description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="space-y-2">
-            <Label>{t('select_language')}</Label>
-            <LanguageSelector />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+  const renderStep = () => {
+    switch(step) {
+      case 1:
+        return (
+          <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="screen-name">{t('screen_name_label')}</Label>
+              <Label htmlFor="screenName">Screen Name</Label>
               <Input
-                id="screen-name"
-                placeholder={t('screen_name_placeholder')}
+                id="screenName"
+                placeholder="Choose a unique username"
                 value={screenName}
                 onChange={(e) => setScreenName(e.target.value)}
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                This is how other users will see you
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="fullName">Full Name</Label>
+              <Input
+                id="fullName"
+                placeholder="Your full name"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="location">{t('location_label')}</Label>
+              <Label htmlFor="language">Preferred Language</Label>
+              <Select value={languagePreference} onValueChange={setLanguagePreference}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LANGUAGES.map(lang => (
+                    <SelectItem key={lang.code} value={lang.code}>
+                      {lang.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        );
+        
+      case 2:
+        return (
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>What are you interested in?</Label>
+              <p className="text-sm text-muted-foreground">
+                Select all that apply - this helps us personalize your experience
+              </p>
+              <div className="grid grid-cols-2 gap-3 mt-4">
+                {INTERESTS_OPTIONS.map(interest => (
+                  <div key={interest} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={interest}
+                      checked={interests.includes(interest)}
+                      onCheckedChange={() => handleInterestToggle(interest)}
+                    />
+                    <Label
+                      htmlFor={interest}
+                      className="text-sm font-normal cursor-pointer"
+                    >
+                      {interest}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="location">Location (Optional)</Label>
               <Input
                 id="location"
-                placeholder={t('location_placeholder')}
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
+                placeholder="City, Country"
+                value={locationText}
+                onChange={(e) => setLocationText(e.target.value)}
               />
             </div>
+          </CardContent>
+        );
+        
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <Card className="w-full max-w-2xl">
+        <CardHeader>
+          <CardTitle>Welcome to TagnetIQ!</CardTitle>
+          <CardDescription>
+            Let's set up your profile to get you started
+          </CardDescription>
+          <div className="flex justify-center space-x-2 mt-4">
+            <div className={`h-2 w-16 rounded ${step >= 1 ? 'bg-primary' : 'bg-muted'}`} />
+            <div className={`h-2 w-16 rounded ${step >= 2 ? 'bg-primary' : 'bg-muted'}`} />
           </div>
-          <div className="space-y-2">
-            <Label>{t('interests_label')}</Label>
-            <p className="text-sm text-muted-foreground">{t('interests_description')}</p>
-            <div className="flex flex-wrap gap-2 pt-2">
-              {CATEGORIES.map(category => (
-                <Toggle
-                  key={category.id}
-                  pressed={selectedInterests.includes(category.id)}
-                  onPressedChange={() => handleInterestToggle(category.id)}
-                  variant="outline"
-                >
-                  {category.name}
-                </Toggle>
-              ))}
-            </div>
-          </div>
-          <Button onClick={handleCompleteOnboarding} disabled={isLoading} className="w-full">
-            {isLoading ? 'Saving...' : t('complete_setup_button')}
+        </CardHeader>
+        
+        {renderStep()}
+        
+        <div className="flex justify-between p-6">
+          <Button
+            variant="ghost"
+            onClick={() => setStep(Math.max(1, step - 1))}
+            disabled={step === 1}
+          >
+            Back
           </Button>
-        </CardContent>
+          {step < 2 ? (
+            <Button
+              onClick={() => setStep(step + 1)}
+              disabled={step === 1 && (!screenName || !fullName)}
+            >
+              Next
+            </Button>
+          ) : (
+            <Button
+              onClick={handleComplete}
+              disabled={isLoading || interests.length === 0}
+            >
+              {isLoading ? 'Setting up...' : 'Complete Setup'}
+            </Button>
+          )}
+        </div>
       </Card>
     </div>
   );
 };
 
-export default OnboardingPage;
+export default Onboarding;

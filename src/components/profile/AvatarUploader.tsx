@@ -47,7 +47,7 @@ export const AvatarUploader: React.FC = () => {
       // Upload to Supabase Storage
       const fileExt = file.name.split('.').pop();
       const fileName = `${profile.id}-${Date.now()}.${fileExt}`;
-      const filePath = `avatars/${fileName}`;
+      const filePath = `avatars/${profile.id}/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('user-uploads')
@@ -77,7 +77,7 @@ export const AvatarUploader: React.FC = () => {
 
       // Clean up old avatar if exists
       if (profile.avatar_url && profile.avatar_url.includes('user-uploads')) {
-        const oldPath = profile.avatar_url.split('/').slice(-2).join('/');
+        const oldPath = profile.avatar_url.split('/').slice(-3).join('/');
         await supabase.storage.from('user-uploads').remove([oldPath]);
       }
     } catch (error) {
@@ -99,7 +99,7 @@ export const AvatarUploader: React.FC = () => {
     try {
       // Remove from storage if it's a custom upload
       if (profile.avatar_url.includes('user-uploads')) {
-        const filePath = profile.avatar_url.split('/').slice(-2).join('/');
+        const filePath = profile.avatar_url.split('/').slice(-3).join('/');
         await supabase.storage.from('user-uploads').remove([filePath]);
       }
 

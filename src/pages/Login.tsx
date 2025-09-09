@@ -24,12 +24,26 @@ const Login: React.FC = () => {
       return;
     }
     setIsLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       toast.error('Login Failed', { description: error.message });
     } else {
-      toast.success('Login successful!');
-      navigate('/dashboard');
+      // Check if user has completed onboarding
+      if (data.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('onboarding_complete')
+          .eq('id', data.user.id)
+          .single();
+        
+        if (profile?.onboarding_complete) {
+          toast.success('Login successful!');
+          navigate('/dashboard');
+        } else {
+          toast.success('Welcome! Please complete your profile.');
+          navigate('/onboarding');
+        }
+      }
     }
     setIsLoading(false);
   };

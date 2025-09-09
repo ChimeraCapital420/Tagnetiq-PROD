@@ -54,7 +54,7 @@ async function searchNumistaCoins(searchTerm: string) {
   }
 }
 
-// --- NEW: PCGS Coin Grading & Population Data ---
+// --- PCGS Coin Grading & Population Data ---
 async function searchPCGSCoins(searchTerm: string) {
   const apiKey = process.env.PCGS_API_KEY;
   if (!apiKey) return [];
@@ -193,6 +193,66 @@ async function searchChrono24Watches(searchTerm: string) {
   }
 }
 
+// --- NEW: GoCollect Multi-Category Integration ---
+async function searchGoCollect(searchTerm: string, collectibleType: string = 'all') {
+  const apiKey = process.env.GOCOLLECT_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    // GoCollect API endpoint - adjust based on their actual documentation
+    const endpoint = collectibleType === 'all' 
+      ? `https://api.gocollect.com/v1/collectibles/search?q=${encodeURIComponent(searchTerm)}`
+      : `https://api.gocollect.com/v1/collectibles/${collectibleType}/search?q=${encodeURIComponent(searchTerm)}`;
+
+    const response = await fetch(endpoint, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!response.ok) return [];
+    const data = await response.json();
+    
+    return (data.results || data.items || []).map((item: any) => ({
+      source: 'GoCollect',
+      type: item.type || collectibleType,
+      title: item.title || item.name,
+      issue_number: item.issue,
+      publisher: item.publisher,
+      set_name: item.set_name,
+      card_number: item.card_number,
+      year: item.year,
+      // Price data by condition/grade
+      prices: {
+        mint: item.prices?.mint || item.prices?.['9.8'],
+        near_mint: item.prices?.near_mint || item.prices?.['9.6'],
+        excellent: item.prices?.excellent || item.prices?.['9.4'],
+        very_good: item.prices?.very_good || item.prices?.['9.0'],
+        good: item.prices?.good || item.prices?.['8.0'],
+        fair: item.prices?.fair || item.prices?.['6.0']
+      },
+      // Market trends
+      trend_30_day: item.trends?.thirty_day,
+      trend_90_day: item.trends?.ninety_day,
+      trend_1_year: item.trends?.one_year,
+      // Population/Census data for rarity
+      census: {
+        total_graded: item.census?.total,
+        high_grade_count: item.census?.high_grade
+      },
+      // Additional metadata
+      rarity: item.rarity,
+      first_appearance: item.first_appearance,
+      key_issue: item.key_issue,
+      hot_item: item.hot_item
+    }));
+  } catch (error) {
+    console.error('GoCollect error:', error);
+    return [];
+  }
+}
+
 // --- Perplexity API Integration ---
 async function searchPerplexity(query: string, category: string) {
   const apiKey = process.env.PERPLEXITY_API_KEY;
@@ -270,24 +330,62 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Determine search query from item name or refinement text
     const searchQuery = analysis.itemName || refinement_text;
 
-    // Category-specific API calls
-    if (category === 'Toys & Collectibles' && subcategory === 'LEGO Sets') {
-      apiData = await searchBricksetLego(searchQuery);
-      perplexityData = await searchPerplexity(searchQuery, 'LEGO collectibles');
+    // Category-specific API calls with GoCollect integration
+    if (category === 'Toys & Collectibles') {
+      if (subcategory === 'LEGO Sets') {
+        apiData = await searchBricksetLego(searchQuery);
+        perplexityData = await searchPerplexity(searchQuery, 'LEGO collectibles');
+      } else if (subcategory === 'Action Figures' || subcategory === 'Vintage Toys') {
+        apiData = await searchGoCollect(searchQuery, 'toys');
+        perplexityData = await searchPerplexity(searchQuery, 'vintage toys action figures');
+      }
+    } else if (category === 'Trading Cards') {
+      // Handle specific trading card types
+      if (subcategory === 'Pokemon Cards' || searchQuery.toLowerCase().includes('pokemon')) {
+        apiData = await searchGoCollect(searchQuery, 'pokemon');
+        perplexityData = await searchPerplexity(searchQuery, 'Pokemon TCG card values PSA BGS');
+      } else if (subcategory === 'Magic: The Gathering' || searchQuery.toLowerCase().includes('mtg') || searchQuery.toLowerCase().includes('magic')) {
+        apiData = await searchGoCollect(searchQuery, 'mtg');
+        perplexityData = await searchPerplexity(searchQuery, 'Magic the Gathering card prices');
+      } else if (subcategory === 'Sports Cards') {
+        const goCollectData = await searchGoCollect(searchQuery, 'sports');
+        apiData = [...goCollectData];
+        perplexityData = await searchPerplexity(searchQuery, 'sports cards PSA BGS pricing');
+      } else {
+        // General trading cards
+        apiData = await searchGoCollect(searchQuery, 'cards');
+        perplexityData = await searchPerplexity(searchQuery, 'trading card values');
+      }
+    } else if (category === 'Comics & Graphic Novels' || category === 'Comic Books') {
+      apiData = await searchGoCollect(searchQuery, 'comics');
+      perplexityData = await searchPerplexity(searchQuery, 'comic book values CGC CBCS');
     } else if (category === 'Coins & Currency') {
-      // UPDATED: Call both Numista and PCGS for coins
+      // Call both Numista and PCGS for coins
       const [numistaData, pcgsData] = await Promise.all([
         searchNumistaCoins(searchQuery),
         searchPCGSCoins(searchQuery)
       ]);
       apiData = [...numistaData, ...pcgsData];
-      perplexityData = await searchPerplexity(searchQuery, 'numismatic coins grading PCGS');
+      perplexityData = await searchPerplexity(searchQuery, 'numismatic coins grading PCGS NGC');
     } else if (category === 'Jewelry & Watches' && (subcategory === 'Luxury Watches' || subcategory === 'Watches')) {
-      // Chrono24 integration for watches
       apiData = await searchChrono24Watches(searchQuery);
-      perplexityData = await searchPerplexity(searchQuery, 'luxury watches market');
+      perplexityData = await searchPerplexity(searchQuery, 'luxury watches market Chrono24');
+    } else if (category === 'Video Games' || category === 'Gaming') {
+      const goCollectData = await searchGoCollect(searchQuery, 'videogames');
+      apiData = [...goCollectData];
+      perplexityData = await searchPerplexity(searchQuery, 'video game values WATA VGA sealed');
+    } else if (category === 'Magazines' || category === 'Publications') {
+      apiData = await searchGoCollect(searchQuery, 'magazines');
+      perplexityData = await searchPerplexity(searchQuery, 'vintage magazine values');
+    } else if (category === 'Music & Memorabilia' && subcategory === 'Concert Posters') {
+      apiData = await searchGoCollect(searchQuery, 'posters');
+      perplexityData = await searchPerplexity(searchQuery, 'concert poster rock memorabilia values');
     } else {
-      // For other categories, just use Perplexity
+      // For any other categories, try general GoCollect search plus Perplexity
+      const goCollectData = await searchGoCollect(searchQuery, 'all');
+      if (goCollectData.length > 0) {
+        apiData = goCollectData;
+      }
       perplexityData = await searchPerplexity(searchQuery, category || 'collectibles');
     }
 
@@ -313,15 +411,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       Your Task:
       1. Analyze how the new information and market data impact the item's value.
-      2. If specific API data is provided (Numista for coins, Brickset for LEGO, Chrono24 for watches, PCGS for coin grading), prioritize this authoritative data.
-      3. For coins specifically: 
-         - PCGS population data indicates rarity (lower populations = higher value)
-         - Grade differences dramatically affect value (MS65 vs MS67 can be 10x difference)
-         - Consider both Numista's global data and PCGS's US-focused grading data
-      4. For watches specifically, consider factors like: brand prestige, reference rarity, condition, box/papers completeness, and current market trends.
-      5. Determine a new, adjusted estimated value as a single number.
-      6. Create a new list of the top 5 key valuation factors incorporating market data.
-      7. Generate a new summary that reflects both the refinement and the market data.
+      2. If specific API data is provided, prioritize this authoritative data:
+         - GoCollect: Provides graded prices, population census, and trend data
+         - Numista: Global coin specifications and varieties
+         - PCGS: US coin grading populations and price guides
+         - Brickset: LEGO set details and current market values
+         - Chrono24: Watch market prices and trends
+      3. For graded items (cards, comics, coins): Grade dramatically affects value
+         - Pokemon/MTG: PSA 10 vs PSA 9 can be 5-10x difference
+         - Comics: CGC 9.8 vs 9.6 can be 3-5x difference
+         - Coins: MS67 vs MS65 can be 10x+ difference
+      4. Consider market trends: 30-day, 90-day, and 1-year trends from GoCollect
+      5. Factor in rarity: population/census data indicates scarcity premiums
+      6. Determine a new, adjusted estimated value as a single number.
+      7. Create a new list of the top 5 key valuation factors incorporating market data.
+      8. Generate a new summary that reflects both the refinement and the market data.
 
       Respond ONLY with a valid JSON object in the following format, with no other text or explanation.
       {
