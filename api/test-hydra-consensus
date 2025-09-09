@@ -35,7 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const startTime = Date.now();
     
     // Call your analyze endpoint
-    const response = await fetch(`${process.env.VERCEL_URL}/api/analyze`, {
+    const response = await fetch(`https://${process.env.VERCEL_URL}/api/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -52,8 +52,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     // Check which sources responded
     const activeSources = {
-      apis: [], // Parse from response
-      ais: [], // Parse from response
+      apis: analysis.apiSources || [],
+      ais: analysis.aiProviders || [],
     };
     
     results.push({
@@ -81,4 +81,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       aiCoverage: calculateCoverage(results, 'ais')
     }
   });
+}
+
+function calculateCoverage(results: any[], type: string): number {
+  const total = results.reduce((sum, r) => sum + r[`expected${type.charAt(0).toUpperCase() + type.slice(1)}`].length, 0);
+  const actual = results.reduce((sum, r) => sum + r[`actual${type.charAt(0).toUpperCase() + type.slice(1)}`].length, 0);
+  return total > 0 ? (actual / total) * 100 : 0;
 }
