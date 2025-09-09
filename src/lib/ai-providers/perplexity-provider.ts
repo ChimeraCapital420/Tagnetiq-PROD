@@ -1,3 +1,5 @@
+// FILE: src/lib/ai-providers/perplexity-provider.ts
+
 import { BaseAIProvider } from './base-provider.js';
 import { AIProvider, AIAnalysisResponse } from '@/types/hydra.js';
 
@@ -23,10 +25,10 @@ export class PerplexityProvider extends BaseAIProvider {
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: this.provider.model || 'llama-3.1-sonar-large-128k-online',
+          model: 'llama-3.1-sonar-small-128k-online', // Updated to valid model
           messages: [{
             role: 'system',
-            content: 'You are a market research assistant. Always search for recent sold prices on eBay, current retail prices, and provide specific examples with dates. Focus on actual sold prices, not listing prices.'
+            content: 'You are a market research assistant. Always search for recent sold prices on eBay, current retail prices, and provide specific examples with dates. Focus on actual sold prices, not listing prices. Respond with a JSON object containing: itemName, estimatedValue (as a number), decision (BUY or SELL), valuation_factors (array of 5 factors), summary_reasoning, and confidence (0-1).'
           }, {
             role: 'user',
             content: enhancedPrompt
@@ -40,7 +42,7 @@ export class PerplexityProvider extends BaseAIProvider {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({ error: { message: 'Unknown error' } }));
         throw new Error(`Perplexity API error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
       }
 
@@ -62,7 +64,19 @@ export class PerplexityProvider extends BaseAIProvider {
         hasRealPrices = pricePatterns.some(pattern => pattern.test(content));
       }
       
-      const parsed = this.parseAnalysisResult(content);
+      // Clean the response before parsing
+      let cleanedContent = content;
+      if (typeof content === 'string') {
+        // Remove any markdown code blocks
+        cleanedContent = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+        // Extract JSON if embedded in text
+        const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          cleanedContent = jsonMatch[0];
+        }
+      }
+      
+      const parsed = this.parseAnalysisResult(cleanedContent);
       
       // Boost confidence if real market data was found
       let confidence = parsed?.confidence || 0.85;

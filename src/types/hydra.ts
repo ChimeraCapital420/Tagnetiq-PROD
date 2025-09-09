@@ -1,3 +1,5 @@
+// FILE: src/types/hydra.ts
+
 // AI Provider configuration
 export interface AIProvider {
   id: string;
@@ -20,6 +22,7 @@ export interface ModelVote {
   responseTime: number;
   weight: number;
   rawResponse?: any;
+  success?: boolean; // Added this field
 }
 
 // Consensus result from Hydra
@@ -35,7 +38,7 @@ export interface HydraConsensus {
     analysisQuality: 'OPTIMAL' | 'DEGRADED' | 'FALLBACK';
   };
   processingTime: number;
-  authorityData?: any; // THIS LINE WAS MISSING
+  authorityData?: any;
 }
 
 // Analysis request/response types
