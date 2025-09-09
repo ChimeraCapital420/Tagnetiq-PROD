@@ -1,5 +1,3 @@
-// FILE: src/lib/ai-providers/perplexity-provider.ts
-
 import { BaseAIProvider } from './base-provider.js';
 import { AIProvider, AIAnalysisResponse } from '@/types/hydra.js';
 
@@ -25,7 +23,7 @@ export class PerplexityProvider extends BaseAIProvider {
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: 'llama-3.1-sonar-small-128k-online', // Updated to valid model
+          model: 'llama-3.1-sonar-small-128k-chat', // FIXED: Changed from -online to -chat
           messages: [{
             role: 'system',
             content: 'You are a market research assistant. Always search for recent sold prices on eBay, current retail prices, and provide specific examples with dates. Focus on actual sold prices, not listing prices. Respond with a JSON object containing: itemName, estimatedValue (as a number), decision (BUY or SELL), valuation_factors (array of 5 factors), summary_reasoning, and confidence (0-1).'

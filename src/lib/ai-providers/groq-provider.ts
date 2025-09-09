@@ -1,5 +1,3 @@
-// FILE: src/lib/ai-providers/groq-provider.ts
-
 import { BaseAIProvider } from './base-provider.js';
 import { AIProvider, AIAnalysisResponse } from '@/types/hydra.js';
 
@@ -24,7 +22,7 @@ export class GroqProvider extends BaseAIProvider {
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: this.provider.model || 'llama-3.1-70b-versatile',
+          model: 'llama-3.1-70b-versatile', // FIXED: Updated to non-deprecated model
           messages: [{
             role: 'system',
             content: 'You are a valuation expert. Always respond with ONLY a valid JSON object in the exact format requested. Never include any other text, markdown, or explanations.'
@@ -34,7 +32,6 @@ export class GroqProvider extends BaseAIProvider {
           }],
           temperature: 0.1,
           max_tokens: 800,
-          // Remove response_format as it might cause issues with Groq
           stream: false
         })
       });

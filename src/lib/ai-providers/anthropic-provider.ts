@@ -10,6 +10,21 @@ export class AnthropicProvider extends BaseAIProvider {
     const startTime = Date.now();
     
     try {
+      const messages = [{
+        role: 'user' as const,
+        content: images.length > 0 ? [
+          ...images.map(img => ({
+            type: 'image' as const,
+            source: {
+              type: 'base64' as const,
+              media_type: 'image/jpeg' as const,
+              data: img.replace(/^data:image\/[a-z]+;base64,/, '')
+            }
+          })),
+          { type: 'text' as const, text: prompt }
+        ] : prompt
+      }];
+
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -18,26 +33,15 @@ export class AnthropicProvider extends BaseAIProvider {
           'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify({
-          model: this.provider.model,
+          model: this.provider.model || 'claude-3-haiku-20240307',
           max_tokens: 1024,
-          messages: [{
-            role: 'user',
-            content: [
-              ...images.map(img => ({
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: 'image/jpeg',
-                  data: img.replace(/^data:image\/[a-z]+;base64,/, '')
-                }
-              })),
-              { type: 'text', text: prompt }
-            ]
-          }]
+          messages: messages
         })
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Anthropic API error:', response.status, errorText);
         throw new Error(`Claude API error: ${response.status}`);
       }
 

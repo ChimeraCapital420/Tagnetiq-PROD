@@ -8,14 +8,14 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // --- Initialize AI Clients ---
 const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
+  apiKey: process.env.ANTHROPIC_SECRET || process.env.ANTHROPIC_API_KEY,
 });
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPEN_AI_API_KEY || process.env.OPENAI_API_KEY,
 });
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_TOKEN || process.env.GOOGLE_API_KEY!);
 const googleModel = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest"});
 
 // --- API Integration Functions ---
