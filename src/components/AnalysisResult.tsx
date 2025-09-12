@@ -1,5 +1,5 @@
 // FILE: src/components/AnalysisResult.tsx
-// STATUS: Hydra-enhanced with multi-AI consensus display and Authority verification
+// STATUS: Chronos-enhanced with time-travel UI and multi-image carousel - COMPLETE VERSION
 
 import React, { useState } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
@@ -12,11 +12,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { CheckCircle, Star, WandSparkles, Loader2, Shield } from 'lucide-react';
+import { CheckCircle, Star, WandSparkles, Loader2, Shield, Trash2 } from 'lucide-react';
 import { HydraConsensusDisplay } from './HydraConsensusDisplay';
+import { AnalysisHistoryNavigator } from './AnalysisHistoryNavigator';
+import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
 
 const AnalysisResult: React.FC = () => {
-  const { lastAnalysisResult, setLastAnalysisResult } = useAppContext();
+  const { 
+    lastAnalysisResult, 
+    setLastAnalysisResult,
+    currentAnalysisIndex,
+    analysisHistory,
+    deleteFromHistory
+  } = useAppContext();
   const { user } = useAuth();
 
   // --- Nexus State Management ---
@@ -42,8 +50,21 @@ const AnalysisResult: React.FC = () => {
     category,
   } = lastAnalysisResult;
 
+  // --- PROJECT CHRONOS: Determine if viewing history ---
+  const isViewingHistory = currentAnalysisIndex !== null;
+  const historyItem = isViewingHistory ? analysisHistory[currentAnalysisIndex] : null;
+
   const handleClear = () => {
     setLastAnalysisResult(null);
+  };
+
+  // --- PROJECT CHRONOS: Delete from history ---
+  const handleDeleteFromHistory = async () => {
+    if (historyItem) {
+      if (confirm('Remove this analysis from your history?')) {
+        await deleteFromHistory(historyItem.id);
+      }
+    }
   };
 
   // --- Core Feature: Refine Analysis Loop ---
@@ -82,7 +103,7 @@ const AnalysisResult: React.FC = () => {
 
   // --- Core Feature: Learning Feedback Loop ---
   const handleFeedbackSubmit = async (rating: number) => {
-    if (feedbackSubmitted || !user) return;
+    if (feedbackSubmitted || !user || isViewingHistory) return;
     setGivenRating(rating);
 
     try {
@@ -110,12 +131,22 @@ const AnalysisResult: React.FC = () => {
 
   return (
     <>
-      <Card className="w-full max-w-4xl mx-auto border-border/50 bg-background/50 backdrop-blur-sm animate-fade-in">
+      <Card className="w-full max-w-4xl mx-auto border-border/50 bg-background/50 backdrop-blur-sm animate-fade-in relative">
+        {/* PROJECT CHRONOS: History Navigator */}
+        <AnalysisHistoryNavigator />
+        
         <CardHeader>
           <div className="flex justify-between items-start">
             <div>
               <CardTitle className="text-2xl">{itemName}</CardTitle>
-              <CardDescription>{category}</CardDescription>
+              <CardDescription className="flex items-center gap-2">
+                {category}
+                {isViewingHistory && historyItem && (
+                  <Badge variant="secondary" className="text-xs">
+                    {new Date(historyItem.created_at).toLocaleDateString()}
+                  </Badge>
+                )}
+              </CardDescription>
             </div>
             <Badge className={`${confidenceColor} text-white`}>
               Confidence: {confidenceScore.toFixed(0)}%
@@ -129,7 +160,7 @@ const AnalysisResult: React.FC = () => {
             </div>
           )}
 
-          {/* AUTHORITY VERIFICATION DISPLAY */}
+          {/* AUTHORITY VERIFICATION DISPLAY - COMPLETE VERSION */}
           {lastAnalysisResult.authorityData && (
             <Card className="mt-4 border-green-500/20 bg-green-50/50 dark:bg-green-950/20">
               <CardHeader className="pb-3">
@@ -262,11 +293,62 @@ const AnalysisResult: React.FC = () => {
         
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <img
-              src={imageUrl || '/placeholder.svg'}
-              alt={itemName}
-              className="rounded-lg object-cover aspect-square w-full"
-            />
+            {/* PROJECT CHRONOS: Enhanced Image Carousel */}
+            <div className="relative">
+              {lastAnalysisResult.imageUrls && lastAnalysisResult.imageUrls.length > 0 ? (
+                <Carousel className="w-full">
+                  <CarouselContent>
+                    {lastAnalysisResult.imageUrls.map((url, index) => (
+                      <CarouselItem key={index}>
+                        <div className="p-1">
+                          <Card className="overflow-hidden">
+                            <CardContent className="flex aspect-square items-center justify-center p-0">
+                              <img 
+                                src={url} 
+                                alt={`${itemName} view ${index + 1}`} 
+                                className="w-full h-full object-cover"
+                                loading="lazy"
+                              />
+                            </CardContent>
+                          </Card>
+                        </div>
+                      </CarouselItem>
+                    ))}
+                  </CarouselContent>
+                  {lastAnalysisResult.imageUrls.length > 1 && (
+                    <>
+                      <CarouselPrevious />
+                      <CarouselNext />
+                    </>
+                  )}
+                </Carousel>
+              ) : imageUrl ? (
+                <Card className="overflow-hidden">
+                  <CardContent className="flex aspect-square items-center justify-center p-0">
+                    <img 
+                      src={imageUrl} 
+                      alt={itemName} 
+                      className="w-full h-full object-cover"
+                    />
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card>
+                  <CardContent className="flex aspect-square items-center justify-center">
+                    <span className="text-muted-foreground">No images available</span>
+                  </CardContent>
+                </Card>
+              )}
+              
+              {lastAnalysisResult.imageUrls && lastAnalysisResult.imageUrls.length > 1 && (
+                <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 bg-background/80 backdrop-blur-sm rounded-full px-2 py-1">
+                  <span className="text-xs text-muted-foreground">
+                    {lastAnalysisResult.imageUrls.length} images
+                  </span>
+                </div>
+              )}
+            </div>
+
             <div className="space-y-6">
               <div className="text-center md:text-left">
                 <p className="text-sm text-muted-foreground">Estimated Value</p>
@@ -276,10 +358,12 @@ const AnalysisResult: React.FC = () => {
               <div>
                 <div className="flex justify-between items-center mb-2">
                   <h3 className="text-lg font-semibold">Key Valuation Factors</h3>
-                  <Button variant="outline" size="sm" onClick={() => setIsRefineOpen(true)}>
-                    <WandSparkles className="h-4 w-4 mr-2" />
-                    Refine Analysis
-                  </Button>
+                  {!isViewingHistory && (
+                    <Button variant="outline" size="sm" onClick={() => setIsRefineOpen(true)}>
+                      <WandSparkles className="h-4 w-4 mr-2" />
+                      Refine Analysis
+                    </Button>
+                  )}
                 </div>
                 <ul className="space-y-2 text-sm text-muted-foreground">
                   {valuation_factors.map((factor, index) => (
@@ -300,40 +384,58 @@ const AnalysisResult: React.FC = () => {
           <div className="w-full p-4 border rounded-lg bg-background">
             <h3 className="text-sm font-semibold mb-3 text-center text-muted-foreground">ACTION HUB</h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <AddToVaultButton analysisResult={lastAnalysisResult} onSuccess={handleClear} />
-              <Button variant="secondary" className="w-full" onClick={() => toast.info('Marketplace listing coming soon!')}>
-                List on Marketplace
-              </Button>
-              <Button variant="secondary" className="w-full" onClick={() => toast.info('Social sharing coming soon!')}>
-                Share to Social
-              </Button>
-              <Button variant="outline" onClick={handleClear} className="w-full">
-                Clear & Scan Next
-              </Button>
+              {!isViewingHistory ? (
+                <>
+                  <AddToVaultButton analysisResult={lastAnalysisResult} onSuccess={handleClear} />
+                  <Button variant="secondary" className="w-full" onClick={() => toast.info('Marketplace listing coming soon!')}>
+                    List on Marketplace
+                  </Button>
+                  <Button variant="secondary" className="w-full" onClick={() => toast.info('Social sharing coming soon!')}>
+                    Share to Social
+                  </Button>
+                  <Button variant="outline" onClick={handleClear} className="w-full">
+                    Clear & Scan Next
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <AddToVaultButton analysisResult={lastAnalysisResult} />
+                  <Button 
+                    variant="destructive" 
+                    className="w-full col-span-1" 
+                    onClick={handleDeleteFromHistory}
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete from History
+                  </Button>
+                </>
+              )}
             </div>
           </div>
           
           {/* --- Core Feature: Learning Feedback Loop --- */}
-          <div className="w-full text-center">
-            <p className="text-xs text-muted-foreground mb-2">
-              {feedbackSubmitted ? "Thank you for your feedback!" : "Rate Analysis Accuracy"}
-            </p>
-            <div className="flex justify-center gap-1">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <Star
-                  key={star}
-                  className={`cursor-pointer transition-colors ${
-                    (hoveredRating || givenRating) >= star
-                      ? 'text-yellow-400 fill-yellow-400'
-                      : 'text-gray-300'
-                  } ${feedbackSubmitted ? 'cursor-not-allowed opacity-50' : ''}`}
-                  onMouseEnter={() => !feedbackSubmitted && setHoveredRating(star)}
-                  onMouseLeave={() => setHoveredRating(0)}
-                  onClick={() => handleFeedbackSubmit(star)}
-                />
-              ))}
+          {!isViewingHistory && (
+            <div className="w-full text-center">
+              <p className="text-xs text-muted-foreground mb-2">
+                {feedbackSubmitted ? "Thank you for your feedback!" : "Rate Analysis Accuracy"}
+              </p>
+              <div className="flex justify-center gap-1">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <Star
+                    key={star}
+                    className={`cursor-pointer transition-colors ${
+                      (hoveredRating || givenRating) >= star
+                        ? 'text-yellow-400 fill-yellow-400'
+                        : 'text-gray-300'
+                    } ${feedbackSubmitted ? 'cursor-not-allowed opacity-50' : ''}`}
+                    onMouseEnter={() => !feedbackSubmitted && setHoveredRating(star)}
+                    onMouseLeave={() => setHoveredRating(0)}
+                    onClick={() => handleFeedbackSubmit(star)}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </CardFooter>
       </Card>
 
