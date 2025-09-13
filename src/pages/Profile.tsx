@@ -1,4 +1,4 @@
-// FILE: src/pages/Profile.tsx (COMPLETE OVERHAUL)
+// FILE: src/pages/Profile.tsx (COMPLETE)
 
 import React, { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,6 +15,8 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { User, Palette, Volume2, Globe, Shield, Sparkles } from 'lucide-react';
 import PremiumVoiceSelector from '@/components/PremiumVoiceSelector';
+import OracleVisualizerSelector from '@/components/profile/OracleVisualizerSelector';
+import UserInterestsManager from '@/components/profile/UserInterestsManager';
 import { LanguageSelector } from '@/components/LanguageSelector';
 import { AvatarUploader } from '@/components/profile/AvatarUploader';
 import { BackgroundUploader } from '@/components/profile/BackgroundUploader';
@@ -262,6 +264,14 @@ const ProfilePage: React.FC = () => {
                       </p>
                       <PremiumVoiceSelector />
                     </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4 border-t">
+                    <OracleVisualizerSelector />
+                  </div>
+
+                  <div className="space-y-4 pt-4 border-t">
+                    <UserInterestsManager />
                   </div>
                 </>
               )}

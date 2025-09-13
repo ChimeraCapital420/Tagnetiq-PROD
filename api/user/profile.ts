@@ -5,17 +5,22 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUser } from '../_lib/security';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
+  if (req.method !== 'POST' && req.method !== 'PUT') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
   try {
     const user = await verifyUser(req);
-    const { fullName } = req.body;
+    const { fullName, settings } = req.body;
+
+    // Build update object
+    const updateData: any = {};
+    if (fullName !== undefined) updateData.full_name = fullName;
+    if (settings !== undefined) updateData.settings = settings;
 
     const { data, error } = await supaAdmin
       .from('profiles')
-      .update({ full_name: fullName })
+      .update(updateData)
       .eq('id', user.id)
       .select()
       .single();

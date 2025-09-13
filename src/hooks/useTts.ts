@@ -1,23 +1,17 @@
 // FILE: src/hooks/useTts.ts
-// STATUS: Surgically updated to support premium, server-generated AI voices.
+// Enhanced TTS hook with premium voice support
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-// --- ORACLE SURGICAL ADDITION START ---
-// We need the AuthContext to get the user's token for secure API calls.
 import { useAuth } from '@/contexts/AuthContext';
-// --- ORACLE SURGICAL ADDITION END ---
 
 export const useTts = () => {
   const { i18n } = useTranslation();
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [preferredVoice, setPreferredVoice] = useState<SpeechSynthesisVoice | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  // --- ORACLE SURGICAL ADDITION START ---
   const { session } = useAuth();
-  // State to manage the Audio object for premium voices, allowing us to pause/cancel it.
-  const [audio, setAudio] = useState<HTMLAudioElement | null>(null);
-  // --- ORACLE SURGICAL ADDITION END ---
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     const handleVoicesChanged = () => {
@@ -33,19 +27,15 @@ export const useTts = () => {
     };
   }, []);
 
-  // --- ORACLE SURGICAL MODIFICATION START ---
-  // The `speak` function is upgraded to accept an optional `premiumVoiceId`.
-  const speak = useCallback(async (text: string, voiceURI?: string | null, premiumVoiceId?: string | null) => {
-    if (isSpeaking) {
-      // Prevent new speech from starting while another is in progress.
-      return;
-    }
+  const speak = useCallback(async (
+    text: string, 
+    voiceURI?: string | null, 
+    premiumVoiceId?: string | null
+  ) => {
+    // Cancel any ongoing speech
+    cancel();
 
-    // Always cancel previous speech, whether it's native or premium.
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
-    if (audio) audio.pause();
-
-    // **PATH 1: Premium AI Voice Generation**
+    // Use premium voice if specified
     if (premiumVoiceId && session) {
       setIsSpeaking(true);
       try {
@@ -59,68 +49,72 @@ export const useTts = () => {
         });
 
         if (!response.ok) {
-          throw new Error('Failed to generate premium voice audio.');
+          throw new Error('Failed to generate premium voice audio');
         }
 
         const audioBlob = await response.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
-        const newAudio = new Audio(audioUrl);
+        const audio = new Audio(audioUrl);
         
-        setAudio(newAudio); // Store the audio object so it can be cancelled.
+        audioRef.current = audio;
         
-        newAudio.play();
-        newAudio.onended = () => {
-            setIsSpeaking(false);
-            setAudio(null);
-        };
-        newAudio.onerror = () => {
-            console.error("Error playing premium voice audio.");
-            setIsSpeaking(false);
-            setAudio(null);
-        };
+        audio.addEventListener('ended', () => {
+          setIsSpeaking(false);
+          audioRef.current = null;
+          URL.revokeObjectURL(audioUrl);
+        });
+        
+        audio.addEventListener('error', () => {
+          console.error('Error playing premium voice audio');
+          setIsSpeaking(false);
+          audioRef.current = null;
+          URL.revokeObjectURL(audioUrl);
+        });
+        
+        await audio.play();
       } catch (error) {
-        console.error(error);
+        console.error('Premium voice error:', error);
         setIsSpeaking(false);
-        // Fallback to native TTS on error
-        speak(text, voiceURI, null);
+        // Fallback to browser TTS
+        speak(text, voiceURI);
       }
-    // **PATH 2: Standard Browser Voice (Fallback)**
     } else {
-        if (!window.speechSynthesis) {
-            console.warn('Speech Synthesis not supported in this browser.');
-            return;
-        }
+      // Use browser's speech synthesis
+      if (!window.speechSynthesis) {
+        console.warn('Speech Synthesis not supported');
+        return;
+      }
 
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = i18n.language;
-        const voiceToUse = voices.find(v => v.voiceURI === voiceURI) || preferredVoice || voices.find(v => v.lang.startsWith(i18n.language)) || voices[0];
-        
-        if (voiceToUse) {
-            utterance.voice = voiceToUse;
-        }
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = i18n.language;
+      
+      const voiceToUse = voices.find(v => v.voiceURI === voiceURI) || 
+                        preferredVoice || 
+                        voices.find(v => v.lang.startsWith(i18n.language)) || 
+                        voices[0];
+      
+      if (voiceToUse) {
+        utterance.voice = voiceToUse;
+      }
 
-        utterance.onstart = () => setIsSpeaking(true);
-        utterance.onend = () => setIsSpeaking(false);
-        utterance.onerror = () => setIsSpeaking(false);
+      utterance.onstart = () => setIsSpeaking(true);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
 
-        window.speechSynthesis.speak(utterance);
+      window.speechSynthesis.speak(utterance);
     }
-  }, [voices, preferredVoice, i18n.language, session, audio, isSpeaking]);
-  // --- ORACLE SURGICAL MODIFICATION END ---
+  }, [voices, preferredVoice, i18n.language, session]);
 
   const cancel = useCallback(() => {
-    // --- ORACLE SURGICAL MODIFICATION START ---
-    // The cancel function is now upgraded to stop both types of audio.
-    if (audio) {
-        audio.pause();
-        setAudio(null);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
     }
     if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
+      window.speechSynthesis.cancel();
     }
     setIsSpeaking(false);
-    // --- ORACLE SURGICAL MODIFICATION END ---
-  }, [audio]);
+  }, []);
 
   const setVoiceByURI = useCallback((uri: string) => {
     const foundVoice = voices.find(v => v.voiceURI === uri);
@@ -138,4 +132,3 @@ export const useTts = () => {
     preferredVoice,
   };
 };
-

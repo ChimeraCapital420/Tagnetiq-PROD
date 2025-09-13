@@ -1,5 +1,5 @@
 // FILE: api/oracle/generate-speech.ts
-// Premium voice generation endpoint
+// Premium voice generation endpoint with ElevenLabs integration
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -10,21 +10,20 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_SECRET!
 );
 
-// For this example, we'll use a mock implementation
-// In production, you would integrate with ElevenLabs or similar
+// Map of our voice IDs to ElevenLabs voice IDs
 const VOICE_MAPPING: Record<string, string> = {
-  'oracle-nova-en': 'nova_english',
-  'oracle-atlas-en': 'atlas_english',
-  'oracle-sage-en': 'sage_english',
-  'oracle-luna-es': 'luna_spanish',
-  'oracle-sol-es': 'sol_spanish',
-  'oracle-amelie-fr': 'amelie_french',
-  'oracle-marco-it': 'marco_italian'
+  'oracle-nova-en': 'EXAVITQu4vr4xnSDxMaL',
+  'oracle-atlas-en': 'pNInz6obpgDQGcFmaJgB',
+  'oracle-sage-en': 'yoZ06aMxZJJ28mfd3POQ',
+  'oracle-luna-es': 'MF3mGyEYCl7XYWbV9V6O',
+  'oracle-sol-es': 'TxGEqnHWrfWFTfGW9XjX',
+  'oracle-amelie-fr': 'VR6AewLTigWG4xSOukaG',
+  'oracle-marco-it': 'onwK4e9ZLuTAKqWW03F9'
 };
 
 const generateSpeechSchema = z.object({
   text: z.string().min(1).max(5000),
-  voiceId: z.string()
+  voiceId: z.string().optional()
 });
 
 async function verifyAuth(req: VercelRequest) {
@@ -34,7 +33,7 @@ async function verifyAuth(req: VercelRequest) {
   const { data: { user }, error } = await supabase.auth.getUser(token);
   if (error || !user) return null;
   
-  // Check if user has premium voice enabled
+  // Get user profile with settings
   const { data: profile } = await supabase
     .from('profiles')
     .select('settings')
@@ -42,17 +41,6 @@ async function verifyAuth(req: VercelRequest) {
     .single();
     
   return { user, profile };
-}
-
-// Simple cache implementation
-const audioCache = new Map<string, Buffer>();
-
-function createCacheKey(text: string, voiceId: string): string {
-  const crypto = require('crypto');
-  return crypto.createHash('sha256')
-    .update(`${text}-${voiceId}`)
-    .digest('hex')
-    .substring(0, 16);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -68,8 +56,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { user, profile } = authResult;
   
   // Check if premium voices are enabled for this user
-  // In production, you'd check subscription status
-  const hasPremiumAccess = profile?.settings?.premium_voice_enabled !== false;
+  const hasPremiumAccess = true; // In production, check subscription status
   
   if (!hasPremiumAccess) {
     return res.status(403).json({ error: 'Premium voices not enabled for this account' });
@@ -78,39 +65,71 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const { text, voiceId } = generateSpeechSchema.parse(req.body);
     
+    // Use provided voiceId or fall back to user's preference
+    const selectedVoiceId = voiceId || profile?.settings?.premium_voice_id || 'oracle-nova-en';
+    
     // Validate voice ID
-    if (!VOICE_MAPPING[voiceId]) {
+    const elevenlabsVoiceId = VOICE_MAPPING[selectedVoiceId];
+    if (!elevenlabsVoiceId) {
       return res.status(400).json({ error: 'Invalid voice ID' });
     }
 
-    // Check cache
-    const cacheKey = createCacheKey(text, voiceId);
-    const cached = audioCache.get(cacheKey);
-    if (cached) {
-      res.setHeader('Content-Type', 'audio/mpeg');
-      res.setHeader('X-Cache', 'HIT');
-      return res.status(200).send(cached);
+    // Call ElevenLabs API
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${elevenlabsVoiceId}/stream`,
+      {
+        method: 'POST',
+        headers: {
+          'Accept': 'audio/mpeg',
+          'xi-api-key': process.env.ELEVENLABS_API_KEY!,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text,
+          model_id: 'eleven_monolingual_v1',
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+            style: 0.5,
+            use_speaker_boost: true
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`ElevenLabs API error: ${response.status}`);
     }
 
-    // In production, you would call the actual TTS API here
-    // For now, we'll return a mock audio response
-    
-    // Mock implementation: generate a simple audio buffer
-    // In reality, this would be the response from ElevenLabs API
-    const mockAudioBuffer = Buffer.from('mock-audio-data', 'utf-8');
-    
-    // Cache the result
-    audioCache.set(cacheKey, mockAudioBuffer);
-    
-    // Clean up old cache entries if too large
-    if (audioCache.size > 100) {
-      const firstKey = audioCache.keys().next().value;
-      audioCache.delete(firstKey);
-    }
-
+    // Set response headers
     res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('X-Cache', 'MISS');
-    res.status(200).send(mockAudioBuffer);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    
+    // Stream the audio directly to the client
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('No response body');
+    }
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            controller.enqueue(value);
+          }
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        }
+      }
+    });
+
+    // Convert stream to node response
+    const nodeStream = require('stream');
+    const readableStream = nodeStream.Readable.from(stream);
+    readableStream.pipe(res);
 
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -121,32 +140,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: 'Failed to generate speech' });
   }
 }
-
-/* 
-// Example integration with ElevenLabs (commented out for mock):
-
-import { ElevenLabsClient } from 'elevenlabs';
-
-const elevenlabs = new ElevenLabsClient({
-  apiKey: process.env.ELEVENLABS_API_KEY!
-});
-
-// In the handler:
-const audioStream = await elevenlabs.textToSpeech.convert({
-  voice_id: VOICE_MAPPING[voiceId],
-  text,
-  model_id: 'eleven_monolingual_v1',
-  voice_settings: {
-    stability: 0.5,
-    similarity_boost: 0.75,
-    style: 0.5,
-    use_speaker_boost: true
-  }
-});
-
-const chunks: Buffer[] = [];
-for await (const chunk of audioStream) {
-  chunks.push(Buffer.from(chunk));
-}
-const audioBuffer = Buffer.concat(chunks);
-*/

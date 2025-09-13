@@ -1,15 +1,38 @@
 // FILE: src/components/OracleVisualizer.tsx
-// STATUS: A new, self-contained component to visually represent the Oracle's voice.
+// Oracle Visual Presence - Enhanced with user preference support
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, lazy, Suspense } from 'react';
 import { useTts } from '@/hooks/useTts';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
+
+// Lazy load visualizers for better performance
+const CymaticVisualizer = lazy(() => import('./oracle/CymaticVisualizer'));
+const GenerativeVisualizer = lazy(() => import('./oracle/GenerativeVisualizer'));
 
 const OracleVisualizer: React.FC = () => {
   const { isSpeaking } = useTts();
+  const { profile } = useAuth();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameId = useRef<number>();
+  
+  // Get user's visualizer preference
+  const visualizerType = profile?.settings?.oracle_visualizer_preference || 'default';
 
+  // If user has selected a specific visualizer, use that
+  if (visualizerType !== 'default' && isSpeaking) {
+    return (
+      <Suspense fallback={null}>
+        {visualizerType === 'cymatic' ? (
+          <CymaticVisualizer />
+        ) : visualizerType === 'generative' ? (
+          <GenerativeVisualizer />
+        ) : null}
+      </Suspense>
+    );
+  }
+
+  // Otherwise, use the default visualizer
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !isSpeaking) {
@@ -76,7 +99,10 @@ const OracleVisualizer: React.FC = () => {
         cancelAnimationFrame(animationFrameId.current);
       }
     };
-  }, [isSpeaking]);
+  }, [isSpeaking, visualizerType]);
+
+  // Don't render if using a custom visualizer
+  if (visualizerType !== 'default') return null;
 
   return (
     <div className={cn(

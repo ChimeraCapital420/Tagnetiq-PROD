@@ -7,6 +7,7 @@ import { useAppContext } from '@/contexts/AppContext';
 import { CATEGORIES } from '@/lib/constants';
 import AnalysisResult from '@/components/AnalysisResult';
 import SubCategoryModal from '@/components/SubCategoryModal';
+import OracleVisualizer from '@/components/OracleVisualizer';
 import { ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -113,6 +114,8 @@ const Dashboard: React.FC = () => {
           categoryName={currentCategory.name}
         />
       )}
+      
+      <OracleVisualizer />
     </>
   );
 };

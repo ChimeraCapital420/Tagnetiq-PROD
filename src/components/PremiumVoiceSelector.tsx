@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Play, Pause, Sparkles, Globe, Mic } from 'lucide-react';
+import { Play, Pause, Sparkles, Globe, Mic, Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTts } from '@/hooks/useTts';
 import { supabase } from '@/lib/supabase';
@@ -19,105 +19,55 @@ interface PremiumVoice {
   gender: 'male' | 'female' | 'neutral';
   accent?: string;
   description: string;
-  preview_text: string;
   tier: 'standard' | 'premium' | 'ultra';
 }
 
-const PREMIUM_VOICES: PremiumVoice[] = [
-  // English voices
-  {
-    id: 'oracle-nova-en',
-    name: 'Nova',
-    language: 'en',
-    gender: 'female',
-    accent: 'American',
-    description: 'Confident and professional with a modern edge',
-    preview_text: 'Hello, I am Nova, your Tagnetiq Oracle. Let me analyze this asset for you.',
-    tier: 'premium'
-  },
-  {
-    id: 'oracle-atlas-en',
-    name: 'Atlas',
-    language: 'en',
-    gender: 'male',
-    accent: 'British',
-    description: 'Distinguished and authoritative with refined articulation',
-    preview_text: 'Greetings, I am Atlas. Together, we shall uncover the true value of your assets.',
-    tier: 'premium'
-  },
-  {
-    id: 'oracle-sage-en',
-    name: 'Sage',
-    language: 'en',
-    gender: 'neutral',
-    accent: 'International',
-    description: 'Wise and calming with perfect clarity',
-    preview_text: 'Welcome. I am Sage, here to guide you through your asset evaluation journey.',
-    tier: 'ultra'
-  },
-  // Spanish voices
-  {
-    id: 'oracle-luna-es',
-    name: 'Luna',
-    language: 'es',
-    gender: 'female',
-    accent: 'Castilian',
-    description: 'Elegante y sofisticada con calidez natural',
-    preview_text: 'Hola, soy Luna, tu Oráculo de Tagnetiq. Permíteme analizar este activo para ti.',
-    tier: 'premium'
-  },
-  {
-    id: 'oracle-sol-es',
-    name: 'Sol',
-    language: 'es',
-    gender: 'male',
-    accent: 'Latin American',
-    description: 'Amigable y confiable con energía positiva',
-    preview_text: 'Saludos, soy Sol. Juntos descubriremos el verdadero valor de tus activos.',
-    tier: 'standard'
-  },
-  // French voices
-  {
-    id: 'oracle-amelie-fr',
-    name: 'Amélie',
-    language: 'fr',
-    gender: 'female',
-    accent: 'Parisian',
-    description: 'Sophistiquée et précise avec une touche d\'élégance',
-    preview_text: 'Bonjour, je suis Amélie, votre Oracle Tagnetiq. Laissez-moi analyser cet actif pour vous.',
-    tier: 'premium'
-  },
-  // Italian voices
-  {
-    id: 'oracle-marco-it',
-    name: 'Marco',
-    language: 'it',
-    gender: 'male',
-    accent: 'Tuscan',
-    description: 'Carismatico e professionale con passione italiana',
-    preview_text: 'Ciao, sono Marco, il tuo Oracolo Tagnetiq. Analizziamo insieme questo bene.',
-    tier: 'premium'
-  }
-];
-
 const PremiumVoiceSelector: React.FC = () => {
-  const { profile, setProfile } = useAuth();
+  const { profile, setProfile, session } = useAuth();
   const { speak, cancel, isSpeaking } = useTts();
   const { i18n, t } = useTranslation();
   const [selectedVoice, setSelectedVoice] = useState<string | null>(
     profile?.settings?.premium_voice_id || null
   );
   const [playingVoice, setPlayingVoice] = useState<string | null>(null);
+  const [voices, setVoices] = useState<PremiumVoice[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch available voices from API
+  useEffect(() => {
+    const fetchVoices = async () => {
+      if (!session) return;
+      
+      try {
+        const response = await fetch('/api/oracle/voices', {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          setVoices(data.voices);
+        }
+      } catch (error) {
+        console.error('Failed to fetch voices:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchVoices();
+  }, [session]);
 
   // Filter voices by current language
-  const availableVoices = PREMIUM_VOICES.filter(
+  const availableVoices = voices.filter(
     voice => voice.language === i18n.language
   );
 
   const handleVoiceSelect = async (voiceId: string) => {
     if (!profile) return;
 
-    const oldSettings = profile.settings;
+    const oldSettings = profile.settings || {};
     const newSettings = { ...oldSettings, premium_voice_id: voiceId };
     
     // Optimistic update
@@ -149,8 +99,18 @@ const PremiumVoiceSelector: React.FC = () => {
     cancel();
     setPlayingVoice(voice.id);
     
+    // Generate preview text based on language
+    const previewTexts: Record<string, string> = {
+      en: `Hello, I am ${voice.name}, your Tagnetiq Oracle. Let me analyze this asset for you.`,
+      es: `Hola, soy ${voice.name}, tu Oráculo de Tagnetiq. Permíteme analizar este activo para ti.`,
+      fr: `Bonjour, je suis ${voice.name}, votre Oracle Tagnetiq. Laissez-moi analyser cet actif pour vous.`,
+      it: `Ciao, sono ${voice.name}, il tuo Oracolo Tagnetiq. Analizziamo insieme questo bene.`,
+    };
+    
+    const previewText = previewTexts[voice.language] || previewTexts.en;
+    
     // Use the premium voice for preview
-    await speak(voice.preview_text, null, voice.id);
+    await speak(previewText, null, voice.id);
   };
 
   useEffect(() => {
@@ -174,6 +134,16 @@ const PremiumVoiceSelector: React.FC = () => {
       default: return <Globe className="h-3 w-3" />;
     }
   };
+
+  if (loading) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="flex items-center justify-center py-8">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (availableVoices.length === 0) {
     return (
