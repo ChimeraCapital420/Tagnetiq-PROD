@@ -10,6 +10,7 @@ const supabase = createClient(
 );
 
 // Premium voice catalog with ElevenLabs voice IDs
+// REPLACE THESE IDs WITH YOUR ACTUAL ELEVENLABS VOICE IDs
 const PREMIUM_VOICES = [
   // English voices
   {
@@ -21,7 +22,7 @@ const PREMIUM_VOICES = [
     description: 'Confident and professional with a modern edge',
     preview_text: 'Hello, I am Nova, your Tagnetiq Oracle. Let me analyze this asset for you.',
     tier: 'premium',
-    elevenlabs_id: 'EXAVITQu4vr4xnSDxMaL' // Example - replace with actual
+    elevenlabs_id: '21m00Tcm4TlvDq8ikWAM' // Rachel voice - REPLACE WITH YOUR CHOSEN VOICE ID
   },
   {
     id: 'oracle-atlas-en',
@@ -32,7 +33,7 @@ const PREMIUM_VOICES = [
     description: 'Distinguished and authoritative with refined articulation',
     preview_text: 'Greetings, I am Atlas. Together, we shall uncover the true value of your assets.',
     tier: 'premium',
-    elevenlabs_id: 'pNInz6obpgDQGcFmaJgB' // Example - replace with actual
+    elevenlabs_id: 'ErXwobaYiN019PkySvjV' // Antoni voice - REPLACE WITH YOUR CHOSEN VOICE ID
   },
   {
     id: 'oracle-sage-en',
@@ -43,7 +44,7 @@ const PREMIUM_VOICES = [
     description: 'Wise and calming with perfect clarity',
     preview_text: 'Welcome. I am Sage, here to guide you through your asset evaluation journey.',
     tier: 'ultra',
-    elevenlabs_id: 'yoZ06aMxZJJ28mfd3POQ' // Example - replace with actual
+    elevenlabs_id: 'EXAVITQu4vr4xnSDxMaL' // Bella voice - REPLACE WITH YOUR CHOSEN VOICE ID
   },
   // Spanish voices
   {
@@ -55,7 +56,7 @@ const PREMIUM_VOICES = [
     description: 'Elegante y sofisticada con calidez natural',
     preview_text: 'Hola, soy Luna, tu Oráculo de Tagnetiq. Permíteme analizar este activo para ti.',
     tier: 'premium',
-    elevenlabs_id: 'MF3mGyEYCl7XYWbV9V6O' // Example - replace with actual
+    elevenlabs_id: 'MF3mGyEYCl7XYWbV9V6O' // REPLACE WITH YOUR SPANISH VOICE ID
   },
   {
     id: 'oracle-sol-es',
@@ -66,7 +67,7 @@ const PREMIUM_VOICES = [
     description: 'Amigable y confiable con energía positiva',
     preview_text: 'Saludos, soy Sol. Juntos descubriremos el verdadero valor de tus activos.',
     tier: 'standard',
-    elevenlabs_id: 'TxGEqnHWrfWFTfGW9XjX' // Example - replace with actual
+    elevenlabs_id: 'TxGEqnHWrfWFTfGW9XjX' // REPLACE WITH YOUR SPANISH VOICE ID
   },
   // French voices
   {
@@ -78,7 +79,7 @@ const PREMIUM_VOICES = [
     description: 'Sophistiquée et précise avec une touche d\'élégance',
     preview_text: 'Bonjour, je suis Amélie, votre Oracle Tagnetiq. Laissez-moi analyser cet actif pour vous.',
     tier: 'premium',
-    elevenlabs_id: 'VR6AewLTigWG4xSOukaG' // Example - replace with actual
+    elevenlabs_id: 'VR6AewLTigWG4xSOukaG' // REPLACE WITH YOUR FRENCH VOICE ID
   },
   // Italian voices
   {
@@ -90,7 +91,7 @@ const PREMIUM_VOICES = [
     description: 'Carismatico e professionale con passione italiana',
     preview_text: 'Ciao, sono Marco, il tuo Oracolo Tagnetiq. Analizziamo insieme questo bene.',
     tier: 'premium',
-    elevenlabs_id: 'onwK4e9ZLuTAKqWW03F9' // Example - replace with actual
+    elevenlabs_id: 'onwK4e9ZLuTAKqWW03F9' // REPLACE WITH YOUR ITALIAN VOICE ID
   }
 ];
 
@@ -115,12 +116,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // In production, you might also fetch voices from ElevenLabs API
-    // const response = await fetch('https://api.elevenlabs.io/v1/voices', {
-    //   headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY! }
-    // });
-    // const elevenLabsVoices = await response.json();
-
     // Return simplified voice list
     const voices = PREMIUM_VOICES.map(voice => ({
       id: voice.id,

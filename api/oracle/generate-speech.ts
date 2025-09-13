@@ -11,14 +11,15 @@ const supabase = createClient(
 );
 
 // Map of our voice IDs to ElevenLabs voice IDs
+// REPLACE THESE WITH THE SAME IDs YOU USED IN voices.ts
 const VOICE_MAPPING: Record<string, string> = {
-  'oracle-nova-en': 'EXAVITQu4vr4xnSDxMaL',
-  'oracle-atlas-en': 'pNInz6obpgDQGcFmaJgB',
-  'oracle-sage-en': 'yoZ06aMxZJJ28mfd3POQ',
-  'oracle-luna-es': 'MF3mGyEYCl7XYWbV9V6O',
-  'oracle-sol-es': 'TxGEqnHWrfWFTfGW9XjX',
-  'oracle-amelie-fr': 'VR6AewLTigWG4xSOukaG',
-  'oracle-marco-it': 'onwK4e9ZLuTAKqWW03F9'
+  'oracle-nova-en': '21m00Tcm4TlvDq8ikWAM',     // Rachel voice - REPLACE
+  'oracle-atlas-en': 'ErXwobaYiN019PkySvjV',    // Antoni voice - REPLACE
+  'oracle-sage-en': 'EXAVITQu4vr4xnSDxMaL',     // Bella voice - REPLACE
+  'oracle-luna-es': 'MF3mGyEYCl7XYWbV9V6O',     // Spanish voice - REPLACE
+  'oracle-sol-es': 'TxGEqnHWrfWFTfGW9XjX',      // Spanish voice - REPLACE
+  'oracle-amelie-fr': 'VR6AewLTigWG4xSOukaG',   // French voice - REPLACE
+  'oracle-marco-it': 'onwK4e9ZLuTAKqWW03F9'     // Italian voice - REPLACE
 };
 
 const generateSpeechSchema = z.object({
