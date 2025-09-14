@@ -13,13 +13,16 @@ const supabase = createClient(
 // Map of our voice IDs to ElevenLabs voice IDs
 // REPLACE THESE WITH THE SAME IDs YOU USED IN voices.ts
 const VOICE_MAPPING: Record<string, string> = {
-  'oracle-nova-en': '21m00Tcm4TlvDq8ikWAM',     // Rachel voice - REPLACE
-  'oracle-atlas-en': 'ErXwobaYiN019PkySvjV',    // Antoni voice - REPLACE
-  'oracle-sage-en': 'EXAVITQu4vr4xnSDxMaL',     // Bella voice - REPLACE
-  'oracle-luna-es': 'MF3mGyEYCl7XYWbV9V6O',     // Spanish voice - REPLACE
-  'oracle-sol-es': 'TxGEqnHWrfWFTfGW9XjX',      // Spanish voice - REPLACE
-  'oracle-amelie-fr': 'VR6AewLTigWG4xSOukaG',   // French voice - REPLACE
-  'oracle-marco-it': 'onwK4e9ZLuTAKqWW03F9'     // Italian voice - REPLACE
+  'oracle-nova-en': '21m00Tcm4TlvDq8ikWAM',
+  'oracle-will-en': 'bIHbv24MWmeRgasZH58o',
+  'oracle-sage-en': 'EXAVITQu4vr4xnSDxMaL',
+  'oracle-luna-es': 'MF3mGyEYCl7XYWbV9V6O',
+  'oracle-will-es': 'bIHbv24MWmeRgasZH58o',
+  'oracle-sol-es': 'TxGEqnHWrfWFTfGW9XjX',
+  'oracle-will-fr': 'bIHbv24MWmeRgasZH58o',
+  'oracle-amelie-fr': 'VR6AewLTigWG4xSOukaG',
+  'oracle-marco-it': 'onwK4e9ZLuTAKqWW03F9',
+  'oracle-will-it': 'bIHbv24MWmeRgasZH58o'
 };
 
 const generateSpeechSchema = z.object({

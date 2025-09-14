@@ -25,15 +25,15 @@ const PREMIUM_VOICES = [
     elevenlabs_id: '21m00Tcm4TlvDq8ikWAM' // Rachel voice - REPLACE WITH YOUR CHOSEN VOICE ID
   },
   {
-    id: 'oracle-atlas-en',
-    name: 'Atlas',
-    language: 'en',
-    gender: 'male',
-    accent: 'British',
-    description: 'Distinguished and authoritative with refined articulation',
-    preview_text: 'Greetings, I am Atlas. Together, we shall uncover the true value of your assets.',
-    tier: 'premium',
-    elevenlabs_id: 'ErXwobaYiN019PkySvjV' // Antoni voice - REPLACE WITH YOUR CHOSEN VOICE ID
+   id: 'oracle-will-en',
+   name: 'Will',
+   language: 'en',  // Must be just 'en' for English
+   gender: 'male',
+   accent: 'American',  // Fixed spelling
+   description: 'Distinguished and authoritative with refined articulation',
+   preview_text: 'Greetings, I am Will. Together, we shall uncover the true value of your assets.',
+   tier: 'premium',
+   elevenlabs_id: 'bIHbv24MWmeRgasZH58o'
   },
   {
     id: 'oracle-sage-en',
@@ -69,7 +69,29 @@ const PREMIUM_VOICES = [
     tier: 'standard',
     elevenlabs_id: 'TxGEqnHWrfWFTfGW9XjX' // REPLACE WITH YOUR SPANISH VOICE ID
   },
+  {
+   id: 'oracle-will-es',
+   name: 'Will',
+   language: 'es',  // Spanish
+   gender: 'male',
+   accent: 'American',
+   description: 'Distinguido y autoritario con articulación refinada',
+   preview_text: 'Saludos, soy Will, tu Oráculo Tagnetiq.',
+   tier: 'premium',
+   elevenlabs_id: 'bIHbv24MWmeRgasZH58o'  // Same voice ID
+  },
   // French voices
+  {
+   id: 'oracle-will-fr',
+   name: 'Will',
+   language: 'fr',  // French
+   gender: 'male',
+   accent: 'American',
+   description: 'Distingué et autoritaire avec une articulation raffinée',
+   preview_text: 'Bonjour, je suis Will, votre Oracle Tagnetiq.',
+   tier: 'premium',
+   elevenlabs_id: 'bIHbv24MWmeRgasZH58o'  // Same voice ID
+  },
   {
     id: 'oracle-amelie-fr',
     name: 'Amélie',
@@ -82,6 +104,17 @@ const PREMIUM_VOICES = [
     elevenlabs_id: 'VR6AewLTigWG4xSOukaG' // REPLACE WITH YOUR FRENCH VOICE ID
   },
   // Italian voices
+  {
+   id: 'oracle-will-it',
+   name: 'Will',
+   language: 'it',  
+   gender: 'male',
+   accent: 'American',
+   description: 'Distinto e autorevole con articolazione raffinata', // Italian translation
+   preview_text: 'Saluti, sono Will, il tuo Oracolo Tagnetiq.', // Italian greeting
+   tier: 'premium',
+   elevenlabs_id: 'bIHbv24MWmeRgasZH58o'
+  },
   {
     id: 'oracle-marco-it',
     name: 'Marco',
