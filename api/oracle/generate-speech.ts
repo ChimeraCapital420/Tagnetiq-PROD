@@ -6,8 +6,8 @@ import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 
 const supabase = createClient(
-  process.env.VITE_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_SECRET!
+  process.env.VITE_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_ANON_KEY_KEY!
 );
 
 // Map of our voice IDs to ElevenLabs voice IDs

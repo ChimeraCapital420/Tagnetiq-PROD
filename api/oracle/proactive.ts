@@ -7,12 +7,12 @@ import OpenAI from 'openai';
 import { z } from 'zod';
 
 const supabase = createClient(
-  process.env.VITE_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_SECRET!
+  process.env.VITE_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_ANON_KEY_KEY!
 );
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!
+  apiKey: process.env.OPENAI_API_2_KEY!
 });
 
 // Schema validation
