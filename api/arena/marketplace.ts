@@ -4,6 +4,8 @@
 import { supaAdmin } from '../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUser } from '../_lib/security';
+import { cache, cacheKey } from '../_lib/cache';
+import { rateLimit } from '../_lib/rateLimit';
 
 export const config = {
   runtime: 'nodejs',
@@ -26,12 +28,14 @@ const CACHE_DURATION = 60; // Cache for 60 seconds
 const MAX_LIMIT = 50;
 const DEFAULT_LIMIT = 20;
 
-// Simple in-memory cache for frequently accessed marketplace data
-const cache = new Map<string, { data: any; timestamp: number }>();
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method Not Allowed' });
+  }
+
+  // Apply rate limiting
+  if (!await rateLimit(req, res, { max: 60, windowMs: 60000 })) {
+    return; // Request blocked by rate limiter
   }
 
   try {
@@ -57,15 +61,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Minimum price cannot be greater than maximum price.' });
     }
 
-    // PERFORMANCE: Generate cache key based on filters
-    const cacheKey = JSON.stringify(filters);
-    const cached = cache.get(cacheKey);
+    // PERFORMANCE: Check cache
+    const cacheKeyStr = cacheKey(
+      'marketplace',
+      filters.searchQuery,
+      filters.category,
+      filters.minPrice,
+      filters.maxPrice,
+      filters.verified,
+      filters.sortBy,
+      filters.sortOrder,
+      filters.page,
+      filters.limit
+    );
     
-    if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION * 1000) {
+    const cached = cache.get(cacheKeyStr);
+    if (cached) {
       return res.status(200).json({
-        ...cached.data,
+        ...cached,
         cached: true,
-        cache_age: Math.floor((Date.now() - cached.timestamp) / 1000)
+        cache_age: 'fresh'
       });
     }
 
@@ -88,7 +103,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           user_id,
           profiles:user_id(screen_name)
         )
-      `)
+      `, { count: 'exact' })
       // PERFORMANCE: Use inner join and filter for active challenges only
       .eq('challenge.status', 'active');
 
@@ -134,17 +149,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // PERFORMANCE: Get total count for pagination (only when needed)
-    let totalCount = 0;
-    if (filters.page === 1) {
-      const { count: fullCount, error: countError } = await supaAdmin
-        .from('marketplace_listings')
-        .select('id', { count: 'exact', head: true })
-        .eq('challenge.status', 'active');
-      
-      if (!countError) {
-        totalCount = fullCount || 0;
-      }
-    }
+    let totalCount = count || 0;
 
     // PERFORMANCE: Transform data for optimal frontend consumption
     const transformedListings = listings?.map(listing => ({
@@ -175,17 +180,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     // PERFORMANCE: Cache the response
-    cache.set(cacheKey, { data: response, timestamp: Date.now() });
-
-    // PERFORMANCE: Clean old cache entries periodically
-    if (cache.size > 100) {
-      const cutoff = Date.now() - (CACHE_DURATION * 2 * 1000);
-      for (const [key, value] of cache.entries()) {
-        if (value.timestamp < cutoff) {
-          cache.delete(key);
-        }
-      }
-    }
+    cache.set(cacheKeyStr, response, CACHE_DURATION);
 
     return res.status(200).json(response);
 

@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+// FILE: src/components/vault/VaultItemCard.tsx
+
+import React, { useState, useRef, useEffect } from 'react';
 import type { VaultItem } from '@/pages/Vault';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -14,12 +16,84 @@ interface VaultItemCardProps {
 }
 
 const cardVariants = {
-    hidden: { y: 20, opacity: 0 },
-    show: { y: 0, opacity: 1 },
+  hidden: { y: 20, opacity: 0 },
+  show: { y: 0, opacity: 1 },
+};
+
+// PERFORMANCE: Lazy loading image component
+const LazyVaultImage: React.FC<{ 
+  src?: string; 
+  alt: string;
+  onLoad?: () => void;
+  onError?: () => void;
+}> = ({ src, alt, onLoad, onError }) => {
+  const [isInView, setIsInView] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [hasError, setHasError] = useState(false);
+  const imgRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsInView(true);
+          observer.disconnect();
+        }
+      },
+      {
+        // Start loading when image is 50px away from viewport
+        rootMargin: '50px',
+        threshold: 0
+      }
+    );
+
+    if (imgRef.current) {
+      observer.observe(imgRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
+  const handleImageLoad = () => {
+    setHasLoaded(true);
+    onLoad?.();
+  };
+
+  const handleImageError = () => {
+    setHasError(true);
+    onError?.();
+  };
+
+  const imageSrc = src || '/placeholder.svg';
+
+  return (
+    <div ref={imgRef} className="aspect-square w-full overflow-hidden relative bg-muted">
+      {/* Loading skeleton */}
+      {!hasLoaded && !hasError && (
+        <div className="absolute inset-0 bg-muted animate-pulse" />
+      )}
+      
+      {/* Actual image - only render when in view */}
+      {isInView && (
+        <img
+          src={hasError ? '/placeholder.svg' : imageSrc}
+          alt={alt}
+          className={`w-full h-full object-cover transition-all duration-300 ${
+            hasLoaded ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
+          }`}
+          loading="lazy"
+          decoding="async"
+          onLoad={handleImageLoad}
+          onError={handleImageError}
+        />
+      )}
+    </div>
+  );
 };
 
 export const VaultItemCard: React.FC<VaultItemCardProps> = ({ item, onSelect, onStartChallenge }) => {
   const [isHovered, setIsHovered] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
   
   const displayValue = item.owner_valuation
     ? item.owner_valuation.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
@@ -100,32 +174,30 @@ export const VaultItemCard: React.FC<VaultItemCardProps> = ({ item, onSelect, on
              title={`Arena Readiness: ${challengePotential.level}`} />
         
         <CardHeader className="p-0 relative">
-          <div className="aspect-square w-full overflow-hidden relative">
-            <img
-              src={item.photos?.[0] || '/placeholder.svg'}
-              alt={item.asset_name}
-              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
-              onError={(e) => { e.currentTarget.src = '/placeholder.svg'; }}
-            />
-            
-            {/* SYMBIOSIS: Quick action overlay on hover */}
-            {isHovered && (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="absolute inset-0 bg-black/50 flex items-center justify-center gap-2"
-              >
-                <Button size="sm" variant="secondary" onClick={handleQuickView}>
-                  <Eye className="h-4 w-4 mr-1" />
-                  View
-                </Button>
-                <Button size="sm" onClick={handleChallengeClick}>
-                  <Swords className="h-4 w-4 mr-1" />
-                  Arena
-                </Button>
-              </motion.div>
-            )}
-          </div>
+          {/* PERFORMANCE: Lazy loaded image */}
+          <LazyVaultImage
+            src={item.photos?.[0]}
+            alt={item.asset_name}
+            onLoad={() => setImageLoaded(true)}
+          />
+          
+          {/* SYMBIOSIS: Quick action overlay on hover - only show after image loads */}
+          {isHovered && imageLoaded && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="absolute inset-0 bg-black/50 flex items-center justify-center gap-2"
+            >
+              <Button size="sm" variant="secondary" onClick={handleQuickView}>
+                <Eye className="h-4 w-4 mr-1" />
+                View
+              </Button>
+              <Button size="sm" onClick={handleChallengeClick}>
+                <Swords className="h-4 w-4 mr-1" />
+                Arena
+              </Button>
+            </motion.div>
+          )}
         </CardHeader>
 
         <CardContent className="p-4 flex flex-col flex-grow space-y-3">

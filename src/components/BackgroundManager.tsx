@@ -1,6 +1,6 @@
 // FILE: src/components/BackgroundManager.tsx
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { getThemeConfig } from '@/lib/themes';
@@ -37,20 +37,79 @@ const FallOverlay = () => <div className="particles-overlay">{[...Array(20)].map
 
 // --- END: Self-Contained Components ---
 
+// PERFORMANCE: Blur-up placeholder for instant loading feel
+const BlurUpImage: React.FC<{ src: string; alt?: string }> = ({ src, alt = '' }) => {
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Create a tiny 20x20 blurred placeholder
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    canvas.width = 20;
+    canvas.height = 20;
+    
+    // Generate a simple gradient placeholder based on the URL
+    const gradient = ctx.createLinearGradient(0, 0, 20, 20);
+    const hue = src.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % 360;
+    gradient.addColorStop(0, `hsl(${hue}, 50%, 40%)`);
+    gradient.addColorStop(1, `hsl(${hue}, 50%, 20%)`);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 20, 20);
+    
+    setImageSrc(canvas.toDataURL());
+
+    // Load the actual image
+    const img = new Image();
+    img.onload = () => {
+      setImageSrc(src);
+      setImageLoaded(true);
+    };
+    img.src = src;
+  }, [src]);
+
+  return (
+    <>
+      {imageSrc && (
+        <div
+          className="fixed inset-0 z-[-2] bg-cover bg-center"
+          style={{
+            backgroundImage: `url(${imageSrc})`,
+            filter: imageLoaded ? 'none' : 'blur(40px)',
+            transform: imageLoaded ? 'none' : 'scale(1.2)',
+            transition: 'filter 0.8s ease-out, transform 0.8s ease-out',
+          }}
+          aria-hidden="true"
+        />
+      )}
+    </>
+  );
+};
 
 const BackgroundManager: React.FC = () => {
   const { theme, themeMode, seasonalMode } = useAppContext();
-  const { profile } = useAuth(); // Import useAuth to get profile
+  const { profile } = useAuth();
   const themeConfig = getThemeConfig(theme, themeMode);
 
+  // PERFORMANCE: Convert to WebP when available
   const staticThemeImageMap: { [key: string]: string } = {
-    executive: '/images/executive-bg.jpg',
-    safari: '/images/safari-bg.jpg',
-    darkKnight: '/images/dark-knight-bg.jpg',
-    cyberpunk: '/images/cyberpunk-bg.jpg',
-    ocean: '/images/ocean-bg.jpg',
-    forest: '/images/forest-bg.jpg',
-    sunset: '/images/sunset-bg.jpg',
+    executive: '/images/executive-bg.webp',
+    safari: '/images/safari-bg.webp',
+    darkKnight: '/images/dark-knight-bg.webp',
+    cyberpunk: '/images/cyberpunk-bg.webp',
+    ocean: '/images/ocean-bg.webp',
+    forest: '/images/forest-bg.webp',
+    sunset: '/images/sunset-bg.webp',
+  };
+
+  // Fallback to JPG if WebP doesn't exist
+  const getImageUrl = (theme: string): string => {
+    const webpUrl = staticThemeImageMap[theme];
+    if (webpUrl) return webpUrl;
+    // Fallback to JPG
+    return `/images/${theme}-bg.jpg`;
   };
 
   const renderSeasonalOverlay = () => {
@@ -63,46 +122,65 @@ const BackgroundManager: React.FC = () => {
     }
   };
   
-  const getBackgroundImageUrl = () => {
+  const getBackgroundImageUrl = (): string | null => {
     // 1. Prioritize user's custom background URL
     if (profile?.custom_background_url) {
-      return `url(${profile.custom_background_url})`;
+      return profile.custom_background_url;
     }
     // 2. Fallback to the theme-based image if seasonal is off
     if (seasonalMode === 'off' && staticThemeImageMap[theme]) {
-        return `url(${staticThemeImageMap[theme]})`;
+      return getImageUrl(theme);
     }
     // 3. No image if a seasonal mode is on or no theme image exists
-    return 'none';
+    return null;
   };
 
   const backgroundImageUrl = getBackgroundImageUrl();
   
   const seasonalGradientMap = {
-      winter: 'linear-gradient(to bottom, rgba(161, 196, 253, 0.5), rgba(194, 233, 251, 0.5))',
-      spring: 'linear-gradient(to bottom, rgba(212, 252, 121, 0.4), rgba(150, 230, 161, 0.4))',
-      summer: 'linear-gradient(to bottom, rgba(248, 54, 0, 0.3), rgba(249, 212, 35, 0.3))',
-      fall:   'linear-gradient(to bottom, rgba(247, 151, 30, 0.4), rgba(255, 210, 0, 0.4))',
+    winter: 'linear-gradient(to bottom, rgba(161, 196, 253, 0.5), rgba(194, 233, 251, 0.5))',
+    spring: 'linear-gradient(to bottom, rgba(212, 252, 121, 0.4), rgba(150, 230, 161, 0.4))',
+    summer: 'linear-gradient(to bottom, rgba(248, 54, 0, 0.3), rgba(249, 212, 35, 0.3))',
+    fall:   'linear-gradient(to bottom, rgba(247, 151, 30, 0.4), rgba(255, 210, 0, 0.4))',
   };
   const seasonalGradient = seasonalMode !== 'off' ? seasonalGradientMap[seasonalMode] : undefined;
 
   return (
     <>
       <SeasonalCSS />
+      
+      {/* PERFORMANCE: Base color layer for instant load */}
       <div
-        className="fixed inset-0 z-[-2] transition-all duration-500 bg-cover bg-center"
+        className="fixed inset-0 z-[-3] transition-colors duration-500"
         style={{
           backgroundColor: themeConfig.colors.background,
-          backgroundImage: backgroundImageUrl,
-          opacity: themeMode === 'dark' ? 1 : 0.6,
         }}
       />
+      
+      {/* PERFORMANCE: Blur-up image layer */}
+      {backgroundImageUrl && (
+        <BlurUpImage src={backgroundImageUrl} alt="Background" />
+      )}
+      
+      {/* PERFORMANCE: Opacity layer */}
+      {backgroundImageUrl && (
+        <div
+          className="fixed inset-0 z-[-1] bg-black transition-opacity duration-500"
+          style={{
+            opacity: themeMode === 'dark' ? 0 : 0.4,
+          }}
+        />
+      )}
+      
+      {/* Seasonal gradient overlay */}
       {seasonalGradient && (
         <div 
           className="fixed inset-0 z-[-1]"
           style={{ backgroundImage: seasonalGradient }}
         />
       )}
+      
+      {/* Seasonal particles */}
       {renderSeasonalOverlay()}
     </>
   );
