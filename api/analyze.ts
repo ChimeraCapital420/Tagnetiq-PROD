@@ -64,6 +64,10 @@ interface AnalysisResult {
     finalConfidence: number;
   };
   authorityData?: any;
+  debug_info?: {
+    reason: string;
+    details: string;
+  };
 }
 
 // Auth verification
@@ -85,7 +89,27 @@ async function verifyUser(req: VercelRequest) {
 
 // Main analysis function using Hydra Engine with Authority
 async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult> {
-  const jsonPrompt = `Analyze the item. Respond in JSON format ONLY: {"itemName": "specific name", "estimatedValue": "25.99", "decision": "BUY", "valuation_factors": ["Factor 1", "Factor 2", "Factor 3", "Factor 4", "Factor 5"], "summary_reasoning": "A brief summary.", "confidence": 0.85}`;
+  // Enhanced JSON-only prompt with guardrail
+  const jsonPrompt = `Analyze the item and provide a precise valuation. 
+
+CRITICAL INSTRUCTIONS:
+1. You MUST respond with ONLY a valid JSON object - no other text, no markdown, no explanations
+2. The JSON must have EXACTLY this structure:
+{
+  "itemName": "specific item name",
+  "estimatedValue": 25.99,
+  "decision": "BUY",
+  "valuation_factors": ["Factor 1", "Factor 2", "Factor 3", "Factor 4", "Factor 5"],
+  "summary_reasoning": "Brief explanation of valuation",
+  "confidence": 0.85
+}
+3. If you cannot analyze the item for ANY reason, respond with: {"error": "Brief explanation of why analysis failed"}
+4. estimatedValue must be a number (not a string)
+5. decision must be exactly "BUY" or "SELL" (uppercase)
+6. confidence must be between 0 and 1
+7. Include exactly 5 valuation_factors
+
+Begin analysis now. Respond with JSON only:`;
   
   let imageData = '';
   
@@ -128,15 +152,15 @@ async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult
   const summaryReasoning = bestVote?.rawResponse?.summary_reasoning || 
     `Consensus reached by ${consensus.consensus.totalVotes} AI models with ${consensus.consensus.confidence}% agreement.`;
   
-  // NEW: Build enhanced source tracking data
+  // Build enhanced source tracking data
   const respondedAIs = consensus.votes
     .filter(vote => vote.success)
-    .map(vote => vote.provider);
+    .map(vote => vote.providerName);
   
   const aiWeights: Record<string, number> = {};
   consensus.votes.forEach(vote => {
-    if (vote.success && vote.provider) {
-      aiWeights[vote.provider] = vote.weight;
+    if (vote.success && vote.providerName) {
+      aiWeights[vote.providerName] = vote.weight;
     }
   });
   
@@ -189,8 +213,16 @@ async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult
       consensusMethod: 'weighted_average',
       finalConfidence: consensus.consensus.confidence / 100
     },
-    authorityData: consensus.authorityData // Include authority data if available
+    authorityData: consensus.authorityData
   };
+  
+  // Add debug info if analysis quality is FALLBACK
+  if (consensus.consensus.analysisQuality === 'FALLBACK') {
+    fullResult.debug_info = {
+      reason: 'Multi-AI consensus degraded',
+      details: `Only ${consensus.votes.length} AI model(s) responded. A minimum of 3 models is required for reliable consensus. Check API keys and provider initialization.`
+    };
+  }
   
   return fullResult;
 }

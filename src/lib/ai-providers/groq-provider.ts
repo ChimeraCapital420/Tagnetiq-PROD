@@ -13,7 +13,9 @@ export class GroqProvider extends BaseAIProvider {
       // Groq doesn't support images directly yet
       // Clean up the prompt to ensure valid JSON response
       const cleanPrompt = prompt.replace(/\n+/g, ' ').trim();
-      const textPrompt = `${cleanPrompt} Note: Performing analysis based on description. Respond with ONLY a valid JSON object, no other text.`;
+      const jsonEnforcedPrompt = `${cleanPrompt}
+
+CRITICAL INSTRUCTION: You MUST respond with ONLY a valid JSON object. Do not include ANY other text, markdown formatting, code blocks, or explanations. The response must be parseable JSON and nothing else.`;
       
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -22,13 +24,13 @@ export class GroqProvider extends BaseAIProvider {
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: 'llama-3.1-70b-versatile', // FIXED: Updated to non-deprecated model
+          model: 'llama-3.1-70b-versatile',
           messages: [{
             role: 'system',
-            content: 'You are a valuation expert. Always respond with ONLY a valid JSON object in the exact format requested. Never include any other text, markdown, or explanations.'
+            content: 'You are a valuation expert that outputs ONLY valid JSON. Never include any text outside the JSON object. Never use markdown formatting. Just output the raw JSON object.'
           }, {
             role: 'user',
-            content: textPrompt
+            content: jsonEnforcedPrompt
           }],
           temperature: 0.1,
           max_tokens: 800,
@@ -49,7 +51,7 @@ export class GroqProvider extends BaseAIProvider {
       let cleanedContent = content;
       if (typeof content === 'string') {
         // Remove any markdown code blocks
-        cleanedContent = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+        cleanedContent = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
         // Remove any text before the first {
         const jsonStart = cleanedContent.indexOf('{');
         if (jsonStart > 0) {

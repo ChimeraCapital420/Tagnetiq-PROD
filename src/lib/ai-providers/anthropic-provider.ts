@@ -10,6 +10,11 @@ export class AnthropicProvider extends BaseAIProvider {
     const startTime = Date.now();
     
     try {
+      // Enhanced prompt with strict JSON enforcement
+      const jsonEnforcedPrompt = `SYSTEM: You are a valuation expert. You MUST respond with ONLY a valid JSON object. No other text, no markdown code blocks, no explanations outside the JSON.
+
+${prompt}`;
+
       const messages = [{
         role: 'user' as const,
         content: images.length > 0 ? [
@@ -21,8 +26,8 @@ export class AnthropicProvider extends BaseAIProvider {
               data: img.replace(/^data:image\/[a-z]+;base64,/, '')
             }
           })),
-          { type: 'text' as const, text: prompt }
-        ] : prompt
+          { type: 'text' as const, text: jsonEnforcedPrompt }
+        ] : jsonEnforcedPrompt
       }];
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -35,7 +40,8 @@ export class AnthropicProvider extends BaseAIProvider {
         body: JSON.stringify({
           model: this.provider.model || 'claude-3-haiku-20240307',
           max_tokens: 1024,
-          messages: messages
+          messages: messages,
+          system: "You are a JSON-only response bot. Never include any text outside of a single valid JSON object. Do not use markdown code blocks."
         })
       });
 

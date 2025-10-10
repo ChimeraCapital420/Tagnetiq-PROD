@@ -11,8 +11,9 @@ export class XAIProvider extends BaseAIProvider {
     
     try {
       // xAI Grok API (requires special access)
-      // Note: This is speculative as xAI hasn't released public API docs yet
-      const textPrompt = `${prompt}\n\nNote: Analyze this item for resale value.`;
+      const jsonEnforcedPrompt = `${prompt}
+
+IMPORTANT: You must output ONLY a valid JSON object. No other text, no markdown, no code blocks. Just the JSON.`;
       
       const response = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
@@ -22,9 +23,12 @@ export class XAIProvider extends BaseAIProvider {
         },
         body: JSON.stringify({
           model: this.provider.model || 'grok-1',
-          messages: [{ 
+          messages: [{
+            role: 'system',
+            content: 'You are a JSON-only response assistant. Never output anything except a valid JSON object.'
+          }, { 
             role: 'user', 
-            content: textPrompt 
+            content: jsonEnforcedPrompt 
           }],
           temperature: 0.1,
           max_tokens: 800
@@ -37,7 +41,14 @@ export class XAIProvider extends BaseAIProvider {
 
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content || null;
-      const parsed = this.parseAnalysisResult(content);
+      
+      // Clean response if needed
+      let cleanedContent = content;
+      if (typeof content === 'string' && content.includes('```')) {
+        cleanedContent = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+      }
+      
+      const parsed = this.parseAnalysisResult(cleanedContent);
       
       return {
         response: parsed,

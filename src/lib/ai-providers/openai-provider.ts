@@ -10,6 +10,9 @@ export class OpenAIProvider extends BaseAIProvider {
     const startTime = Date.now();
     
     try {
+      // Enhanced prompt with JSON enforcement
+      const jsonEnforcedPrompt = `You are a JSON-only response assistant. ${prompt}`;
+      
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -21,9 +24,12 @@ export class OpenAIProvider extends BaseAIProvider {
           max_tokens: 800,
           response_format: { type: "json_object" },
           messages: [{
+            role: 'system',
+            content: 'You are a valuation expert. Always respond with ONLY a valid JSON object. Never include markdown formatting or any text outside the JSON structure.'
+          }, {
             role: 'user',
             content: [
-              { type: 'text', text: prompt },
+              { type: 'text', text: jsonEnforcedPrompt },
               ...images.map(img => ({
                 type: 'image_url',
                 image_url: { url: img }

@@ -8,7 +8,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import AlertsDropdown from '@/components/arena/AlertsDropdown';
 
-const ResponsiveNavigation: React.FC = () => {
+// PROJECT CERULEAN: Added props interface
+interface ResponsiveNavigationProps {
+  onOpenDevicePairing?: () => void;
+}
+
+const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevicePairing }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { profile } = useAuth();
@@ -64,7 +69,7 @@ const ResponsiveNavigation: React.FC = () => {
                     </Link>
                 </Button>
                 <AlertsDropdown />
-                <SettingsDropdown />
+                <SettingsDropdown onOpenDevicePairing={onOpenDevicePairing} />
             </nav>
         </div>
       </div>

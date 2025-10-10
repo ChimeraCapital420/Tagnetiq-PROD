@@ -1,7 +1,7 @@
 // FILE: src/pages/Settings.tsx
 // STATUS: Surgically updated to add the PremiumVoiceSelector. No other functionality was altered.
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -17,12 +17,17 @@ import { useTranslation } from 'react-i18next';
 // This is the only new import required for this operation.
 import PremiumVoiceSelector from '@/components/PremiumVoiceSelector';
 // --- ORACLE SURGICAL ADDITION END ---
+import { Bluetooth, Camera, Wifi, WifiOff, Plus } from 'lucide-react'; // PROJECT CERULEAN: Added imports
+import { useBluetoothManager } from '@/hooks/useBluetoothManager'; // PROJECT CERULEAN: Added import
+import DevicePairingModal from '@/components/DevicePairingModal'; // PROJECT CERULEAN: Added import
 
 const Settings: React.FC = () => {
   const { theme, setTheme, themeMode, setThemeMode } = useAppContext();
   const { profile, setProfile } = useAuth();
   const { voices } = useTts();
   const { i18n } = useTranslation();
+  const { connectedDevice, disconnect } = useBluetoothManager(); // PROJECT CERULEAN: Added hook
+  const [showPairingModal, setShowPairingModal] = useState(false); // PROJECT CERULEAN: Added state
 
   const handleTtsEnabledChange = async (enabled: boolean) => {
     if (!profile) return;
@@ -70,107 +75,208 @@ const Settings: React.FC = () => {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <Card className="max-w-2xl mx-auto">
-        <CardHeader>
-          <CardTitle>Settings</CardTitle>
-          <CardDescription>Manage your application settings and preferences.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-8">
-          {/* --- Theme Settings (Unaffected by this operation) --- */}
-          <div className="space-y-4">
-            <h3 className="text-lg font-medium">Appearance</h3>
-            <div className="space-y-2">
-              <Label>Theme</Label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {['executive', 'matrix', 'safari', 'darkKnight', 'cyberpunk', 'ocean', 'forest', 'sunset'].map((themeId) => (
+      <div className="max-w-2xl mx-auto space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Settings</CardTitle>
+            <CardDescription>Manage your application settings and preferences.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-8">
+            {/* --- Theme Settings (Unaffected by this operation) --- */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-medium">Appearance</h3>
+              <div className="space-y-2">
+                <Label>Theme</Label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {['executive', 'matrix', 'safari', 'darkKnight', 'cyberpunk', 'ocean', 'forest', 'sunset'].map((themeId) => (
+                    <Button
+                      key={themeId}
+                      variant={theme === themeId ? 'default' : 'outline'}
+                      onClick={() => setTheme(themeId as any)}
+                    >
+                      {themeId.charAt(0).toUpperCase() + themeId.slice(1).replace(/([A-Z])/g, ' $1').trim()}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Theme Mode</Label>
+                <div className="flex gap-2">
                   <Button
-                    key={themeId}
-                    variant={theme === themeId ? 'default' : 'outline'}
-                    onClick={() => setTheme(themeId as any)}
+                    variant={themeMode === 'light' ? 'default' : 'outline'}
+                    onClick={() => setThemeMode('light')}
                   >
-                    {themeId.charAt(0).toUpperCase() + themeId.slice(1).replace(/([A-Z])/g, ' $1').trim()}
+                    Light
                   </Button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Theme Mode</Label>
-              <div className="flex gap-2">
-                <Button
-                  variant={themeMode === 'light' ? 'default' : 'outline'}
-                  onClick={() => setThemeMode('light')}
-                >
-                  Light
-                </Button>
-                <Button
-                  variant={themeMode === 'dark' ? 'default' : 'outline'}
-                  onClick={() => setThemeMode('dark')}
-                >
-                  Dark
-                </Button>
-              </div>
-            </div>
-          </div>
-          
-          {/* --- Voice Assistant Settings (Surgically Updated) --- */}
-          <div className="space-y-4">
-            <h3 className="text-lg font-medium">Voice Assistant (Oracle)</h3>
-            <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm">
-              <Label htmlFor="tts-enabled" className="flex flex-col gap-1">
-                <span>Enable Voice Readouts</span>
-                <span className="font-normal leading-snug text-muted-foreground">
-                  Allow the Oracle to speak analysis results and provide feedback.
-                </span>
-              </Label>
-              <Switch
-                id="tts-enabled"
-                checked={profile?.settings?.tts_enabled ?? false}
-                onCheckedChange={handleTtsEnabledChange}
-              />
-            </div>
-            {profile?.settings?.tts_enabled && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="tts-voice">Standard System Voice</Label>
-                   <p className="text-xs text-muted-foreground">
-                        A generic voice from your browser or operating system.
-                    </p>
-                  <Select
-                    value={profile?.settings?.tts_voice_uri || ''}
-                    onValueChange={handleVoiceChange}
-                    disabled={filteredVoices.length === 0}
+                  <Button
+                    variant={themeMode === 'dark' ? 'default' : 'outline'}
+                    onClick={() => setThemeMode('dark')}
                   >
-                    <SelectTrigger id="tts-voice">
-                      <SelectValue placeholder="Select a default voice for your language..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {filteredVoices.map((voice) => (
-                        <SelectItem key={voice.voiceURI} value={voice.voiceURI}>
-                          {voice.name} ({voice.lang})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    Dark
+                  </Button>
                 </div>
+              </div>
+            </div>
+            
+            {/* --- Voice Assistant Settings (Surgically Updated) --- */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-medium">Voice Assistant (Oracle)</h3>
+              <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm">
+                <Label htmlFor="tts-enabled" className="flex flex-col gap-1">
+                  <span>Enable Voice Readouts</span>
+                  <span className="font-normal leading-snug text-muted-foreground">
+                    Allow the Oracle to speak analysis results and provide feedback.
+                  </span>
+                </Label>
+                <Switch
+                  id="tts-enabled"
+                  checked={profile?.settings?.tts_enabled ?? false}
+                  onCheckedChange={handleTtsEnabledChange}
+                />
+              </div>
+              {profile?.settings?.tts_enabled && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="tts-voice">Standard System Voice</Label>
+                     <p className="text-xs text-muted-foreground">
+                          A generic voice from your browser or operating system.
+                      </p>
+                    <Select
+                      value={profile?.settings?.tts_voice_uri || ''}
+                      onValueChange={handleVoiceChange}
+                      disabled={filteredVoices.length === 0}
+                    >
+                      <SelectTrigger id="tts-voice">
+                        <SelectValue placeholder="Select a default voice for your language..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {filteredVoices.map((voice) => (
+                          <SelectItem key={voice.voiceURI} value={voice.voiceURI}>
+                            {voice.name} ({voice.lang})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-                {/* --- START: ORACLE SURGICAL ADDITION --- */}
-                {/* This block adds the premium voice selection UI without altering the standard voice selector above. */}
-                <div className="space-y-2 pt-4">
-                    <Label>Premium Oracle Voice</Label>
-                    <p className="text-sm text-muted-foreground">
-                        Choose a high-quality, natural-sounding voice for your AI partner.
-                    </p>
-                    <PremiumVoiceSelector />
+                  {/* --- START: ORACLE SURGICAL ADDITION --- */}
+                  {/* This block adds the premium voice selection UI without altering the standard voice selector above. */}
+                  <div className="space-y-2 pt-4">
+                      <Label>Premium Oracle Voice</Label>
+                      <p className="text-sm text-muted-foreground">
+                          Choose a high-quality, natural-sounding voice for your AI partner.
+                      </p>
+                      <PremiumVoiceSelector />
+                  </div>
+                  {/* --- END: ORACLE SURGICAL ADDITION --- */}
+                </>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* PROJECT CERULEAN: Connected Devices Section */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Bluetooth className="w-5 h-5 text-blue-500" />
+              Connected Devices
+            </CardTitle>
+            <CardDescription>
+              Manage your connected external cameras and smart devices
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {connectedDevice ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-4 border rounded-lg bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded-full">
+                      <Wifi className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                    </div>
+                    <div>
+                      <p className="font-medium">{connectedDevice.name}</p>
+                      <p className="text-sm text-muted-foreground">
+                        Connected via Bluetooth • Active
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      disconnect();
+                      toast.success('Device disconnected');
+                    }}
+                  >
+                    Disconnect
+                  </Button>
                 </div>
-                {/* --- END: ORACLE SURGICAL ADDITION --- */}
-              </>
+                <p className="text-sm text-muted-foreground">
+                  This device is available as a camera source in the scanner.
+                </p>
+              </div>
+            ) : (
+              <div className="text-center py-8 space-y-4">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="p-3 bg-muted rounded-full">
+                    <WifiOff className="w-8 h-8 text-muted-foreground" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="font-medium">No devices connected</p>
+                    <p className="text-sm text-muted-foreground">
+                      Connect smart glasses, external cameras, or other Bluetooth devices
+                    </p>
+                  </div>
+                </div>
+              </div>
             )}
-          </div>
-        </CardContent>
-      </Card>
+            
+            <Button
+              onClick={() => setShowPairingModal(true)}
+              className="w-full"
+              variant={connectedDevice ? "outline" : "default"}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              {connectedDevice ? 'Pair Another Device' : 'Pair New Device'}
+            </Button>
+            
+            <div className="pt-4 border-t">
+              <h4 className="font-medium mb-2 text-sm">Compatible Devices</h4>
+              <ul className="space-y-1 text-xs text-muted-foreground">
+                <li className="flex items-center gap-2">
+                  <Camera className="w-3 h-3" />
+                  Ray-Ban Meta Smart Glasses
+                </li>
+                <li className="flex items-center gap-2">
+                  <Camera className="w-3 h-3" />
+                  GoPro cameras (Bluetooth enabled)
+                </li>
+                <li className="flex items-center gap-2">
+                  <Camera className="w-3 h-3" />
+                  DJI Pocket cameras
+                </li>
+                <li className="flex items-center gap-2">
+                  <Camera className="w-3 h-3" />
+                  Other Bluetooth video devices
+                </li>
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+      
+      {/* PROJECT CERULEAN: Device Pairing Modal */}
+      <DevicePairingModal
+        isOpen={showPairingModal}
+        onClose={() => setShowPairingModal(false)}
+        onDeviceConnected={() => {
+          setShowPairingModal(false);
+          toast.success('Device paired successfully');
+        }}
+      />
     </div>
   );
 };
 
 export default Settings;
-

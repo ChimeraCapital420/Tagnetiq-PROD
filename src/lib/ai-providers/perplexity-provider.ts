@@ -16,6 +16,10 @@ export class PerplexityProvider extends BaseAIProvider {
         ? prompt 
         : `${prompt}\n\nIMPORTANT: Search for recent eBay sold listings, current Amazon prices, StockX prices, and other marketplace data for this exact item. Include specific prices from the last 30 days with dates. Look for completed/sold listings on eBay to determine actual market value, not just asking prices.`;
       
+      const jsonEnforcedPrompt = `${enhancedPrompt}
+
+CRITICAL: Output ONLY a valid JSON object with no additional text, markdown, or explanations.`;
+      
       const response = await fetch('https://api.perplexity.ai/chat/completions', {
         method: 'POST',
         headers: {
@@ -23,13 +27,13 @@ export class PerplexityProvider extends BaseAIProvider {
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: 'llama-3.1-sonar-small-128k-chat', // FIXED: Changed from -online to -chat
+          model: 'llama-3.1-sonar-small-128k-chat',
           messages: [{
             role: 'system',
-            content: 'You are a market research assistant. Always search for recent sold prices on eBay, current retail prices, and provide specific examples with dates. Focus on actual sold prices, not listing prices. Respond with a JSON object containing: itemName, estimatedValue (as a number), decision (BUY or SELL), valuation_factors (array of 5 factors), summary_reasoning, and confidence (0-1).'
+            content: 'You are a market research assistant that outputs ONLY valid JSON. Never include any text outside the JSON object. Always search for recent sold prices on eBay, current retail prices, and provide specific examples with dates. Focus on actual sold prices, not listing prices. The JSON must contain: itemName, estimatedValue (as a number), decision (BUY or SELL), valuation_factors (array of 5 factors), summary_reasoning, and confidence (0-1).'
           }, {
             role: 'user',
-            content: enhancedPrompt
+            content: jsonEnforcedPrompt
           }],
           temperature: 0.1,
           max_tokens: 1000,
@@ -66,7 +70,7 @@ export class PerplexityProvider extends BaseAIProvider {
       let cleanedContent = content;
       if (typeof content === 'string') {
         // Remove any markdown code blocks
-        cleanedContent = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+        cleanedContent = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
         // Extract JSON if embedded in text
         const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {

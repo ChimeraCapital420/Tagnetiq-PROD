@@ -10,6 +10,11 @@ export class DeepSeekProvider extends BaseAIProvider {
     const startTime = Date.now();
     
     try {
+      // Enhanced prompt with JSON enforcement
+      const jsonEnforcedPrompt = `CRITICAL: Respond with ONLY a valid JSON object. No markdown, no explanations outside JSON.
+
+${prompt}`;
+
       // DeepSeek uses OpenAI-compatible API
       const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
         method: 'POST',
@@ -20,9 +25,12 @@ export class DeepSeekProvider extends BaseAIProvider {
         body: JSON.stringify({
           model: this.provider.model || 'deepseek-chat',
           messages: [{
+            role: 'system',
+            content: 'You must respond with ONLY a valid JSON object. Never include any text, markdown formatting, or code blocks outside the JSON structure.'
+          }, {
             role: 'user',
             content: [
-              { type: 'text', text: prompt },
+              { type: 'text', text: jsonEnforcedPrompt },
               ...images.map(img => ({
                 type: 'image_url',
                 image_url: { 

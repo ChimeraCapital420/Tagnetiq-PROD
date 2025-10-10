@@ -1,15 +1,16 @@
-// FILE: src/components/DualScanner.tsx (ENHANCED MULTI-MODAL ANALYSIS SYSTEM)
+// FILE: src/components/DualScanner.tsx (ENHANCED MULTI-MODAL ANALYSIS SYSTEM WITH BLUETOOTH)
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useZxing } from 'react-zxing';
 import { v4 as uuidv4 } from 'uuid';
-import { X, FlipHorizontal, Upload, Circle, Zap, Loader2, ScanLine, ImageIcon, Video, Settings as SettingsIcon, Focus, Check, FileText, Award, ShieldCheck, Plus, Trash2, Search, Eye } from 'lucide-react';
+import { X, FlipHorizontal, Upload, Circle, Zap, Loader2, ScanLine, ImageIcon, Video, Settings as SettingsIcon, Focus, Check, FileText, Award, ShieldCheck, Plus, Trash2, Search, Eye, Bluetooth } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import CameraSettingsModal from './CameraSettingsModal';
+import DevicePairingModal from './DevicePairingModal'; // NEW IMPORT
 import './DualScanner.css';
 import { AnalysisResult } from '@/types';
 
@@ -44,6 +45,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const [capturedItems, setCapturedItems] = useState<CapturedItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isDevicePairingOpen, setIsDevicePairingOpen] = useState(false); // NEW STATE
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
   const [isRecording, setIsRecording] = useState(false);
@@ -304,6 +306,14 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       videoRef.current.focus();
       toast.info("Attempting to focus camera.");
     }
+  };
+
+  // NEW: Handle Bluetooth device connected
+  const handleBluetoothDeviceConnected = (device: any) => {
+    toast.success(`Connected to ${device.name}`, {
+      description: "Device is now available as a camera source"
+    });
+    setIsDevicePairingOpen(false);
   };
   
   const captureImage = () => {
@@ -699,9 +709,15 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
           <canvas ref={canvasRef} style={{ display: 'none' }} />
           <canvas ref={hiddenCanvasRef} style={{ display: 'none' }} />
           <header className="dual-scanner-header">
-            <Button variant="ghost" size="icon" onClick={() => setIsSettingsOpen(true)}>
-              <SettingsIcon />
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="ghost" size="icon" onClick={() => setIsSettingsOpen(true)}>
+                <SettingsIcon />
+              </Button>
+              {/* NEW: Bluetooth button */}
+              <Button variant="ghost" size="icon" onClick={() => setIsDevicePairingOpen(true)}>
+                <Bluetooth />
+              </Button>
+            </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">
                 {selectedCount}/{totalItems} selected
@@ -954,6 +970,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         availableDevices={devices}
         currentDeviceId={selectedDeviceId}
         onDeviceChange={setSelectedDeviceId}
+      />
+      {/* NEW: Device Pairing Modal */}
+      <DevicePairingModal
+        isOpen={isDevicePairingOpen}
+        onClose={() => setIsDevicePairingOpen(false)}
+        onDeviceConnected={handleBluetoothDeviceConnected}
       />
     </>
   );

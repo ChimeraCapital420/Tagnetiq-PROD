@@ -10,6 +10,13 @@ export class GoogleProvider extends BaseAIProvider {
     const startTime = Date.now();
     
     try {
+      // Enhanced prompt with strict JSON enforcement
+      const jsonEnforcedPrompt = `IMPORTANT: You must respond with ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or text outside the JSON structure.
+
+${prompt}
+
+Remember: Output ONLY the JSON object, nothing else.`;
+
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${this.provider.model}:generateContent?key=${this.apiKey}`,
         {
@@ -18,7 +25,7 @@ export class GoogleProvider extends BaseAIProvider {
           body: JSON.stringify({
             contents: [{
               parts: [
-                { text: prompt },
+                { text: jsonEnforcedPrompt },
                 ...images.map(img => ({
                   inline_data: {
                     mime_type: 'image/jpeg',
@@ -29,8 +36,15 @@ export class GoogleProvider extends BaseAIProvider {
             }],
             generationConfig: {
               maxOutputTokens: 1024,
-              temperature: 0.1
-            }
+              temperature: 0.1,
+              candidateCount: 1
+            },
+            safetySettings: [
+              {
+                category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+                threshold: "BLOCK_NONE"
+              }
+            ]
           })
         }
       );
