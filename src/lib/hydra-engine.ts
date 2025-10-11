@@ -1,15 +1,21 @@
 // FILE: src/lib/hydra-engine.ts
 
 import { createClient } from '@supabase/supabase-js';
-import { AIProvider, ModelVote, HydraConsensus, ParsedAnalysis } from '@/types/hydra.js';
-import { ProviderFactory } from './ai-providers/provider-factory.js';
-import { BaseAIProvider } from './ai-providers/base-provider.js';
-import { AuthorityManager } from './authorities/authority-manager.js';
+import { AIProvider, ModelVote, HydraConsensus, ParsedAnalysis } from '../types/hydra';
+import { ProviderFactory } from './ai-providers/provider-factory';
+import { BaseAIProvider } from './ai-providers/base-provider';
+import { AuthorityManager } from './authorities/authority-manager';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Match your supaAdmin.ts environment variable pattern
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_SECRET || '';
+
+const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+});
 
 interface ProviderStatus {
   name: string;
@@ -113,7 +119,7 @@ export class HydraEngine {
         'OPEN_AI_TOKEN',
         'OPENAI_SECRET',
         'OPEN_AI_SECRET',
-        'OPENAI_KEY' // Generic fallback
+        'OPENAI_KEY'
       ],
       'Anthropic': [
         'ANTHROPIC_API_KEY',
@@ -121,7 +127,7 @@ export class HydraEngine {
         'ANTHROPIC_TOKEN',
         'CLAUDE_API_KEY',
         'CLAUDE_SECRET',
-        'ANTHROPIC_KEY' // Generic fallback
+        'ANTHROPIC_KEY'
       ],
       'Google': [
         'GOOGLE_API_KEY',
@@ -130,21 +136,21 @@ export class HydraEngine {
         'GEMINI_API_KEY',
         'GEMINI_TOKEN',
         'GOOGLE_GEMINI_KEY',
-        'GOOGLE_KEY' // Generic fallback
+        'GOOGLE_KEY'
       ],
       'Mistral': [
         'MISTRAL_API_KEY',
         'MISTRAL_TOKEN',
         'MISTRAL_SECRET',
         'MISTRAL_AI_KEY',
-        'MISTRAL_KEY' // Generic fallback
+        'MISTRAL_KEY'
       ],
       'Groq': [
         'GROQ_API_KEY',
         'GROQ_TOKEN',
         'GROQ_SECRET',
         'GROQ_CLOUD_KEY',
-        'GROQ_KEY' // Generic fallback
+        'GROQ_KEY'
       ],
       'DeepSeek': [
         'DEEPSEEK_API_KEY',
@@ -152,7 +158,7 @@ export class HydraEngine {
         'DEEP_SEEK_API_KEY',
         'DEEP_SEEK_TOKEN',
         'DEEPSEEK_SECRET',
-        'DEEPSEEK_KEY' // Generic fallback
+        'DEEPSEEK_KEY'
       ],
       'xAI': [
         'XAI_API_KEY',
@@ -161,7 +167,7 @@ export class HydraEngine {
         'X_AI_API_KEY',
         'X_AI_SECRET',
         'GROK_API_KEY',
-        'XAI_KEY' // Generic fallback
+        'XAI_KEY'
       ],
       'Perplexity': [
         'PERPLEXITY_API_KEY',
@@ -169,14 +175,14 @@ export class HydraEngine {
         'PERPLEXITY_SECRET',
         'PPLX_API_KEY',
         'PPLX_TOKEN',
-        'PERPLEXITY_KEY' // Generic fallback
+        'PERPLEXITY_KEY'
       ],
       'Cohere': [
         'COHERE_API_KEY',
         'COHERE_TOKEN',
         'COHERE_SECRET',
         'CO_API_KEY',
-        'COHERE_KEY' // Generic fallback
+        'COHERE_KEY'
       ],
       'HuggingFace': [
         'HUGGINGFACE_API_KEY',
@@ -184,21 +190,21 @@ export class HydraEngine {
         'HF_API_KEY',
         'HF_TOKEN',
         'HUGGINGFACE_TOKEN',
-        'HUGGINGFACE_KEY' // Generic fallback
+        'HUGGINGFACE_KEY'
       ],
       'Replicate': [
         'REPLICATE_API_KEY',
         'REPLICATE_TOKEN',
         'REPLICATE_API_TOKEN',
         'REPLICATE_SECRET',
-        'REPLICATE_KEY' // Generic fallback
+        'REPLICATE_KEY'
       ],
       'Together': [
         'TOGETHER_API_KEY',
         'TOGETHER_AI_API_KEY',
         'TOGETHER_TOKEN',
         'TOGETHER_SECRET',
-        'TOGETHER_KEY' // Generic fallback
+        'TOGETHER_KEY'
       ]
     };
   }

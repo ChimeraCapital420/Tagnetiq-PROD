@@ -61,9 +61,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           analysis_result: analysis_result,
           item_name: analysis_result.itemName,
           estimated_value: parseFloat(analysis_result.estimatedValue) || 0,
-          thumbnail_url: analysis_result.imageUrls?.[0] || null,
+          thumbnail_url: analysis_result.imageUrls?.[0] || analysis_result.imageUrl || null,
           category: analysis_result.category || 'uncategorized',
-          confidence: analysis_result.confidence,
+          confidence: analysis_result.confidenceScore || analysis_result.confidence,
           decision: analysis_result.decision,
           consensus_data: analysis_result.hydraConsensus || null,
           authority_data: analysis_result.authorityData || null
