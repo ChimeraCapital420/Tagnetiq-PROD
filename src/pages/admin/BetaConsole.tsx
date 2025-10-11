@@ -21,12 +21,21 @@ const BetaConsole: React.FC = () => {
       const { data, error } = await supabase
         .from('feedback')
         .select('*')
-        .eq('type', 'ai_synthetic_test')
+        .or('comment.ilike.%AI Test%,comment.ilike.%ai_synthetic_test%')
         .order('created_at', { ascending: false })
         .limit(10);
 
       if (error) throw error;
-      setAiTestResults(data || []);
+      
+      // Filter for AI tests based on metadata or comment markers
+      const aiTests = (data || []).filter(item => 
+        item.metadata?.test_scenario || 
+        item.metadata?.ai_evaluator ||
+        item.comment?.includes('AI Test') ||
+        item.comment?.includes('ai_synthetic_test')
+      );
+      
+      setAiTestResults(aiTests);
     } catch (error) {
       console.error('Error fetching AI test results:', error);
     } finally {

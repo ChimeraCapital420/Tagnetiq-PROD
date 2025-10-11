@@ -5,7 +5,7 @@ import { verifyUserIsAdmin } from '../../_lib/security';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    // Only admins can create AI agents
+    // Use your existing security - admin only
     await verifyUserIsAdmin(req);
 
     if (req.method !== 'POST') {
