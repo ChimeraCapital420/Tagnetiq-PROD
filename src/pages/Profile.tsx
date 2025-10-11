@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { User, Palette, Volume2, Globe, Shield, Sparkles } from 'lucide-react';
+import { User, Palette, Volume2, Globe, Shield, Sparkles, Badge } from 'lucide-react';
 import PremiumVoiceSelector from '@/components/PremiumVoiceSelector';
 import OracleVisualizerSelector from '@/components/profile/OracleVisualizerSelector';
 import UserInterestsManager from '@/components/profile/UserInterestsManager';
@@ -26,7 +26,7 @@ import { NotificationPreferences } from '@/components/profile/NotificationPrefer
 const ProfilePage: React.FC = () => {
   const { profile, setProfile } = useAuth();
   const { theme, setTheme, themeMode, setThemeMode, seasonalMode, setSeasonalMode } = useAppContext();
-  const { voices } = useTts();
+  const { voices, speak } = useTts();
   const { i18n, t } = useTranslation();
   const [activeTab, setActiveTab] = useState('profile');
 
@@ -55,6 +55,24 @@ const ProfilePage: React.FC = () => {
       setProfile(oldProfile);
     } else {
       toast.success(t('settings.voice.saved'));
+    }
+  };
+
+  const handleVoiceSettingChange = async (key: string, value: any) => {
+    if (!profile) return;
+    const newSettings = { 
+      ...profile.settings, 
+      voice_settings: {
+        ...profile.settings.voice_settings,
+        [key]: value
+      }
+    };
+    const oldProfile = profile;
+    setProfile({ ...profile, settings: newSettings });
+    const { error } = await supabase.from('profiles').update({ settings: newSettings }).eq('id', profile.id);
+    if (error) {
+      toast.error(t('settings.voice.saveFailed'));
+      setProfile(oldProfile);
     }
   };
 
@@ -231,6 +249,26 @@ const ProfilePage: React.FC = () => {
 
               {profile?.settings?.tts_enabled && (
                 <>
+                  {/* Voice Commands Info */}
+                  <Card className="bg-muted/50">
+                    <CardContent className="pt-6">
+                      <h4 className="font-medium mb-3">{t('oracle.commands.title', 'Voice Commands')}</h4>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">Ctrl+Shift+J</Badge>
+                          <span className="text-muted-foreground">{t('oracle.commands.activate', 'Activate voice control')}</span>
+                        </div>
+                        <div className="grid gap-1 mt-3 text-xs text-muted-foreground">
+                          <p>• "{t('oracle.commands.sweep', 'Start sweep')}" - {t('oracle.commands.sweepDesc', 'Begin hunting mode')}</p>
+                          <p>• "{t('oracle.commands.triage', 'Oracle, triage this')}" - {t('oracle.commands.triageDesc', 'Quick evaluation')}</p>
+                          <p>• "{t('oracle.commands.analyze', 'Deep dive')}" - {t('oracle.commands.analyzeDesc', 'Full analysis')}</p>
+                          <p>• "{t('oracle.commands.vault', 'Vault this')}" - {t('oracle.commands.vaultDesc', 'Save to collection')}</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* System Voice Selection */}
                   <div className="space-y-4">
                     <div>
                       <Label htmlFor="tts-voice" className="mb-2">{t('oracle.systemVoice.title', 'System Voice')}</Label>
@@ -256,23 +294,95 @@ const ProfilePage: React.FC = () => {
                     </div>
                   </div>
 
+                  {/* Premium Voice Selection */}
                   <div className="space-y-4 pt-4 border-t">
                     <div>
                       <Label className="mb-2">{t('oracle.premiumVoice.title', 'Premium Oracle Voice')}</Label>
                       <p className="text-sm text-muted-foreground mb-3">
-                        {t('oracle.premiumVoice.description', 'High-quality, natural AI voices')}
+                        {t('oracle.premiumVoice.description', 'High-quality, natural AI voices with emotion and personality')}
                       </p>
                       <PremiumVoiceSelector />
                     </div>
                   </div>
 
+                  {/* Voice Settings */}
+                  <div className="space-y-4 pt-4 border-t">
+                    <Label>{t('oracle.settings.title', 'Voice Settings')}</Label>
+                    <div className="grid gap-4">
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="voice-speed" className="text-sm font-normal">
+                          {t('oracle.settings.speed', 'Speaking Speed')}
+                        </Label>
+                        <Select 
+                          defaultValue={profile?.settings?.voice_settings?.speed || "1.0"}
+                          onValueChange={(value) => handleVoiceSettingChange('speed', value)}
+                        >
+                          <SelectTrigger className="w-32">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="0.8">0.8x</SelectItem>
+                            <SelectItem value="0.9">0.9x</SelectItem>
+                            <SelectItem value="1.0">1.0x</SelectItem>
+                            <SelectItem value="1.1">1.1x</SelectItem>
+                            <SelectItem value="1.2">1.2x</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="voice-priority" className="text-sm font-normal">
+                          {t('oracle.settings.priority', 'Alert Priority')}
+                        </Label>
+                        <Select 
+                          defaultValue={profile?.settings?.voice_settings?.priority || "high"}
+                          onValueChange={(value) => handleVoiceSettingChange('priority', value)}
+                        >
+                          <SelectTrigger className="w-32">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">{t('oracle.priority.all', 'All Alerts')}</SelectItem>
+                            <SelectItem value="high">{t('oracle.priority.high', 'High Only')}</SelectItem>
+                            <SelectItem value="critical">{t('oracle.priority.critical', 'Critical Only')}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Visualizer Selection */}
                   <div className="space-y-4 pt-4 border-t">
                     <OracleVisualizerSelector />
                   </div>
 
+                  {/* User Interests */}
                   <div className="space-y-4 pt-4 border-t">
                     <UserInterestsManager />
                   </div>
+
+                  {/* Test Oracle Button */}
+                  <Card className="bg-primary/5 border-primary/20">
+                    <CardContent className="pt-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-medium">{t('oracle.test.title', 'Test Oracle Voice')}</h4>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            {t('oracle.test.description', 'Hear how your Oracle sounds')}
+                          </p>
+                        </div>
+                        <Button
+                          onClick={() => {
+                            speak(t('oracle.test.message', 'Hello, I am your Tagnetiq Oracle assistant. I\'m here to help you identify valuable opportunities.'));
+                          }}
+                          variant="outline"
+                        >
+                          <Volume2 className="w-4 h-4 mr-2" />
+                          {t('oracle.test.button', 'Test Voice')}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
                 </>
               )}
             </CardContent>

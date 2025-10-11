@@ -1,5 +1,4 @@
-// FILE: src/components/AppLayout.tsx
-// STATUS: Final integration point. Surgically validated to connect all Oracle components without altering existing functionality.
+// FILE: src/components/AppLayout.tsx (CORRECTED - Old GlobalVoiceControl removed, keeping new JarvisVoiceInterface)
 
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -8,27 +7,26 @@ import { useAppContext } from '@/contexts/AppContext';
 import ResponsiveNavigation from './ResponsiveNavigation';
 import NewMarketingNavigation from './NewMarketingNavigation';
 import DualScanner from './DualScanner';
-import GlobalVoiceControl from './GlobalVoiceControl';
-// --- ORACLE SURGICAL INTEGRATION START ---
+// REMOVED OLD: import GlobalVoiceControl from './GlobalVoiceControl';
 import { useOracleCommandHandler } from '@/lib/command-handler';
 import OracleVisualizer from './OracleVisualizer';
 import OracleResponseDisplay from './OracleResponseDisplay';
-// --- ORACLE SURGICAL INTEGRATION END ---
-import DevicePairingModal from './DevicePairingModal'; // PROJECT CERULEAN: Added import
+import JarvisVoiceInterface from './oracle/JarvisVoiceInterface'; // NEW - KEEPING THIS
+
+import DevicePairingModal from './DevicePairingModal';
 
 const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const appContext = useAppContext();
   const navigate = useNavigate();
   const location = useLocation();
-  const [isDevicePairingOpen, setIsDevicePairingOpen] = useState(false); // PROJECT CERULEAN: Added state
+  const [isDevicePairingOpen, setIsDevicePairingOpen] = useState(false);
 
   const isHomePage = location.pathname === '/';
   
   const showAppNav = user && !isHomePage;
   const showMarketingNav = !user || isHomePage;
   
-  // --- ORACLE SURGICAL INTEGRATION START ---
   const { handleVoiceCommand } = useOracleCommandHandler();
 
   const onVoiceCommand = (command: string, ttsContext: { speak: Function, voiceURI: string | null }) => {
@@ -40,7 +38,6 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
     };
     handleVoiceCommand(command, commandContext);
   };
-  // --- ORACLE SURGICAL INTEGRATION END ---
 
   return (
     <div className="relative z-10">
@@ -49,7 +46,6 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
       
       <DualScanner isOpen={appContext.isScannerOpen} onClose={() => appContext.setIsScannerOpen(false)} />
       
-      {/* PROJECT CERULEAN: Device Pairing Modal */}
       <DevicePairingModal 
         isOpen={isDevicePairingOpen} 
         onClose={() => setIsDevicePairingOpen(false)}
@@ -59,16 +55,18 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
         {children}
       </main>
       
-      {/* --- ORACLE SURGICAL INTEGRATION START --- */}
-      {/* The core Oracle UI components are added here. They are self-contained and only render for authenticated users. */}
+      {/* Oracle UI Components */}
       {user && (
         <>
-            <GlobalVoiceControl onCommand={onVoiceCommand} />
-            <OracleVisualizer />
-            <OracleResponseDisplay />
+          {/* REMOVED OLD: <GlobalVoiceControl onCommand={onVoiceCommand} /> */}
+          <OracleVisualizer />
+          <OracleResponseDisplay />
+          {/* NEW JARVIS VOICE INTERFACE - KEEPING THIS */}
+          {profile?.settings?.tts_enabled && (
+            <JarvisVoiceInterface />
+          )}
         </>
       )}
-      {/* --- ORACLE SURGICAL INTEGRATION END --- */}
     </div>
   );
 };

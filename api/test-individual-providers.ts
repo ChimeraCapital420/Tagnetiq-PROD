@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { ProviderFactory } from '../src/lib/ai-providers/provider-factory.js';
+import { AIProvider } from '../src/types/hydra.js';
 
 export const config = {
   maxDuration: 60,
@@ -47,16 +48,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-      // Create provider instance
-      const providerInstance = ProviderFactory.create({
+      // Create provider instance with proper AIProvider type
+      const providerConfig: AIProvider = {
         id: `test-${provider.name}`,
         name: provider.name,
         apiKey: provider.key,
         baseWeight: 1,
         isActive: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
+        model: '',
+        specialty: ''
+      };
+
+      const providerInstance = ProviderFactory.create(providerConfig);
 
       // Test with simple text prompt (no images)
       const response = await providerInstance.analyze([], testPrompt);

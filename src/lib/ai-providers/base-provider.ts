@@ -116,4 +116,24 @@ export abstract class BaseAIProvider {
     if (analysis.summary_reasoning?.length > 50) confidence += 0.1;
     
     // Check decision validity
-    if (['BUY', 'SELL'].includes(analysis.decision?.toUpperCase())) conf
+    if (['BUY', 'SELL'].includes(analysis.decision?.toUpperCase())) confidence += 0.05;
+    
+    return Math.min(confidence, 0.95);
+  }
+  
+  getProvider(): AIProvider {
+    return this.provider;
+  }
+  
+  // New utility method to help debug provider issues
+  protected logProviderStatus(success: boolean, responseTime?: number, error?: any) {
+    const status = success ? '✅' : '❌';
+    const timeStr = responseTime ? `${responseTime}ms` : 'N/A';
+    
+    if (success) {
+      console.log(`${status} ${this.provider.name} responded in ${timeStr}`);
+    } else {
+      console.error(`${status} ${this.provider.name} failed:`, error?.message || 'Unknown error');
+    }
+  }
+}
