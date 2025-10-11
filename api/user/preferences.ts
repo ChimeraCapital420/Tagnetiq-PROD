@@ -1,9 +1,9 @@
 // FILE: api/user/preferences.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../auth/[...nextauth]/route';
-import { supabase } from '../../src/lib/supabase';
+import { authOptions } from '../auth/[...nextauth]/route.js';
+import { supabase } from '../../src/lib/supabase.js';
+import { supabase } from '../../src/lib/supabase.js'; // Added .js
 
 export async function PATCH(req: NextRequest) {
   try {

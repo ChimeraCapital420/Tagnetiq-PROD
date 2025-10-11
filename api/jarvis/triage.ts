@@ -1,9 +1,10 @@
-// api/jarvis/triage.ts (NOT src/pages/api/jarvis/triage.ts)
+// FILE: api/jarvis/triage.ts (COMPLETE CORRECTED VERSION)
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../auth/[...nextauth]/route';
-import { anthropic } from '@anthropic-ai/sdk';
-import { db } from '../../src/server/db';
+import { authOptions } from '../auth/[...nextauth]/route.js';
+import { Anthropic } from '@anthropic-ai/sdk';
+import { db } from '../../src/server/db/index.js';
 import { sql } from 'drizzle-orm';
 
 interface TriageContext {
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest) {
 }
 
 async function performRapidTriage(context: any) {
-  const client = new anthropic.Anthropic({
+  const client = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY!
   });
 
@@ -97,7 +98,12 @@ async function performRapidTriage(context: any) {
     }]
   });
 
-  return JSON.parse(response.content[0].text);
+  // Fixed: Properly handle Anthropic response
+  const textContent = response.content[0];
+  if (textContent.type === 'text') {
+    return JSON.parse(textContent.text);
+  }
+  throw new Error('Unexpected response format from Anthropic');
 }
 
 function makeTriageDecision(triageResult: any) {
@@ -208,4 +214,5 @@ async function prepareDeepDive(triageResult: any, userId: string) {
   // Store triage result for quick access during deep dive
   // This could be in Redis or a temporary database table
   console.log('Preparing deep dive for:', triageResult.identification);
-  // Implementation dep
+  // Implementation depends on your caching strategy
+}
