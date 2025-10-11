@@ -23,3 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+
+# Cerberus AI Testing
+cerberus-credentials.json
+cerberus-test-results-*.json
