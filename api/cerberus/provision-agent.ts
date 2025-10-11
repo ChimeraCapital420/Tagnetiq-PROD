@@ -1,4 +1,3 @@
-// api/admin/cerberus/provision-agent.ts
 import { supaAdmin } from '../../_lib/supaAdmin';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUserIsAdmin } from '../../_lib/security';
