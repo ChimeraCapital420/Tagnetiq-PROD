@@ -27,7 +27,7 @@ CRITICAL: Output ONLY a valid JSON object with no additional text, markdown, or 
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: 'llama-3.1-sonar-small-128k-chat',
+          model: 'llama-3.1-sonar-small-128k-online', // Correct model name
           messages: [{
             role: 'system',
             content: 'You are a market research assistant that outputs ONLY valid JSON. Never include any text outside the JSON object. Always search for recent sold prices on eBay, current retail prices, and provide specific examples with dates. Focus on actual sold prices, not listing prices. The JSON must contain: itemName, estimatedValue (as a number), decision (BUY or SELL), valuation_factors (array of 5 factors), summary_reasoning, and confidence (0-1).'
@@ -36,16 +36,14 @@ CRITICAL: Output ONLY a valid JSON object with no additional text, markdown, or 
             content: jsonEnforcedPrompt
           }],
           temperature: 0.1,
-          max_tokens: 1000,
-          return_citations: true,
-          search_domain_filter: ['ebay.com', 'amazon.com', 'stockx.com', 'goat.com', 'mercari.com'],
-          search_recency_filter: 'month' // Only recent results
+          max_tokens: 1000
         })
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: { message: 'Unknown error' } }));
-        throw new Error(`Perplexity API error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+        const errorText = await response.text();
+        console.error('Perplexity API error:', response.status, errorText);
+        throw new Error(`Perplexity API error: ${response.status}`);
       }
 
       const data = await response.json();
@@ -92,13 +90,15 @@ CRITICAL: Output ONLY a valid JSON object with no additional text, markdown, or 
         console.log('📊 Market data sources:', data.choices[0].citations);
       }
       
+      this.logProviderStatus(true, Date.now() - startTime);
+      
       return {
         response: parsed,
         confidence,
         responseTime: Date.now() - startTime
       };
     } catch (error) {
-      console.error(`Perplexity analysis error:`, error);
+      this.logProviderStatus(false, Date.now() - startTime, error);
       throw error;
     }
   }

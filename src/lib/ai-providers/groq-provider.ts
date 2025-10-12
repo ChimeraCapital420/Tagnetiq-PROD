@@ -24,7 +24,7 @@ CRITICAL INSTRUCTION: You MUST respond with ONLY a valid JSON object. Do not inc
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: 'llama-3.2-90b-text-preview', // UPDATED MODEL!
+          model: 'llama3-70b-8192', // UPDATED: Use supported model
           messages: [{
             role: 'system',
             content: 'You are a valuation expert that outputs ONLY valid JSON. Never include any text outside the JSON object. Never use markdown formatting. Just output the raw JSON object.'
@@ -41,12 +41,6 @@ CRITICAL INSTRUCTION: You MUST respond with ONLY a valid JSON object. Do not inc
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Groq API error response:', errorText);
-        
-        // Check for specific error types
-        if (errorText.includes('model_decommissioned')) {
-          throw new Error('Groq model decommissioned - please contact support to update model configuration');
-        }
-        
         throw new Error(`Groq API error: ${response.status}`);
       }
 

@@ -10,7 +10,7 @@ export class XAIProvider extends BaseAIProvider {
     const startTime = Date.now();
     
     try {
-      // xAI Grok API (requires special access)
+      // xAI Grok API - update to correct endpoint and model
       const jsonEnforcedPrompt = `${prompt}
 
 IMPORTANT: You must output ONLY a valid JSON object. No other text, no markdown, no code blocks. Just the JSON.`;
@@ -22,7 +22,7 @@ IMPORTANT: You must output ONLY a valid JSON object. No other text, no markdown,
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: this.provider.model || 'grok-1',
+          model: 'grok-beta', // Updated model name
           messages: [{
             role: 'system',
             content: 'You are a JSON-only response assistant. Never output anything except a valid JSON object.'
@@ -36,6 +36,14 @@ IMPORTANT: You must output ONLY a valid JSON object. No other text, no markdown,
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('xAI API error:', response.status, errorText);
+        
+        // If xAI is not available, fail gracefully
+        if (response.status === 404) {
+          console.warn('xAI API endpoint not found - provider may not be available yet');
+        }
+        
         throw new Error(`xAI API error: ${response.status}`);
       }
 
@@ -50,13 +58,15 @@ IMPORTANT: You must output ONLY a valid JSON object. No other text, no markdown,
       
       const parsed = this.parseAnalysisResult(cleanedContent);
       
+      this.logProviderStatus(true, Date.now() - startTime);
+      
       return {
         response: parsed,
         confidence: parsed?.confidence || 0.80,
         responseTime: Date.now() - startTime
       };
     } catch (error) {
-      console.error(`xAI analysis error:`, error);
+      this.logProviderStatus(false, Date.now() - startTime, error);
       throw error;
     }
   }
