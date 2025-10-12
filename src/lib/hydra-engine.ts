@@ -105,100 +105,64 @@ export class HydraEngine {
   }
   
   private getKeyMap(): Record<string, string[]> {
+    // UPDATED: Match your actual Vercel environment variable names
     return {
       'OpenAI': [
+        'OPEN_AI_API_KEY',   // You have this!
+        'OPEN_AI_TOKEN',     // You have this!
         'OPENAI_API_KEY',
-        'OPEN_AI_API_KEY',
         'OPENAI_TOKEN',
-        'OPEN_AI_TOKEN',
         'OPENAI_SECRET',
-        'OPEN_AI_SECRET',
-        'OPENAI_KEY' // Generic fallback
+        'OPEN_AI_SECRET'
       ],
       'Anthropic': [
+        'ANTHROPIC_SECRET',  // You have this!
         'ANTHROPIC_API_KEY',
-        'ANTHROPIC_SECRET',
         'ANTHROPIC_TOKEN',
         'CLAUDE_API_KEY',
-        'CLAUDE_SECRET',
-        'ANTHROPIC_KEY' // Generic fallback
+        'CLAUDE_SECRET'
       ],
       'Google': [
+        'GOOGLE_AI_TOKEN',   // You have this!
         'GOOGLE_API_KEY',
-        'GOOGLE_AI_TOKEN',
         'GOOGLE_AI_KEY',
         'GEMINI_API_KEY',
         'GEMINI_TOKEN',
-        'GOOGLE_GEMINI_KEY',
-        'GOOGLE_KEY' // Generic fallback
+        'GOOGLE_GEMINI_KEY'
       ],
       'Mistral': [
-        'MISTRAL_API_KEY',
+        'MISTRAL_API_KEY',   // You have this!
         'MISTRAL_TOKEN',
         'MISTRAL_SECRET',
-        'MISTRAL_AI_KEY',
-        'MISTRAL_KEY' // Generic fallback
+        'MISTRAL_AI_KEY'
       ],
       'Groq': [
-        'GROQ_API_KEY',
+        'GROQ_API_KEY',      // You have this!
         'GROQ_TOKEN',
         'GROQ_SECRET',
-        'GROQ_CLOUD_KEY',
-        'GROQ_KEY' // Generic fallback
+        'GROQ_CLOUD_KEY'
       ],
       'DeepSeek': [
+        'DEEPSEEK_TOKEN',    // You have this!
         'DEEPSEEK_API_KEY',
-        'DEEPSEEK_TOKEN',
         'DEEP_SEEK_API_KEY',
         'DEEP_SEEK_TOKEN',
-        'DEEPSEEK_SECRET',
-        'DEEPSEEK_KEY' // Generic fallback
+        'DEEPSEEK_SECRET'
       ],
       'xAI': [
+        'XAI_SECRET',        // You have this!
         'XAI_API_KEY',
-        'XAI_SECRET',
         'XAI_TOKEN',
         'X_AI_API_KEY',
         'X_AI_SECRET',
-        'GROK_API_KEY',
-        'XAI_KEY' // Generic fallback
+        'GROK_API_KEY'
       ],
       'Perplexity': [
-        'PERPLEXITY_API_KEY',
+        'PERPLEXITY_API_KEY', // You have this!
         'PERPLEXITY_TOKEN',
         'PERPLEXITY_SECRET',
         'PPLX_API_KEY',
-        'PPLX_TOKEN',
-        'PERPLEXITY_KEY' // Generic fallback
-      ],
-      'Cohere': [
-        'COHERE_API_KEY',
-        'COHERE_TOKEN',
-        'COHERE_SECRET',
-        'CO_API_KEY',
-        'COHERE_KEY' // Generic fallback
-      ],
-      'HuggingFace': [
-        'HUGGINGFACE_API_KEY',
-        'HUGGING_FACE_API_KEY',
-        'HF_API_KEY',
-        'HF_TOKEN',
-        'HUGGINGFACE_TOKEN',
-        'HUGGINGFACE_KEY' // Generic fallback
-      ],
-      'Replicate': [
-        'REPLICATE_API_KEY',
-        'REPLICATE_TOKEN',
-        'REPLICATE_API_TOKEN',
-        'REPLICATE_SECRET',
-        'REPLICATE_KEY' // Generic fallback
-      ],
-      'Together': [
-        'TOGETHER_API_KEY',
-        'TOGETHER_AI_API_KEY',
-        'TOGETHER_TOKEN',
-        'TOGETHER_SECRET',
-        'TOGETHER_KEY' // Generic fallback
+        'PPLX_TOKEN'
       ]
     };
   }
@@ -230,6 +194,15 @@ export class HydraEngine {
       await this.initialize();
     }
     
+    // Track provider failures for debugging
+    const providerFailures: Record<string, string> = {};
+    
+    // If we have very few providers, use fallback mode immediately
+    if (this.providers.length < 2) {
+      console.warn('⚠️  Less than 2 providers available - using fallback mode');
+      return await this.emergencyFallback(images, prompt);
+    }
+    
     // Log which providers were successfully initialized
     console.log(`🚀 Active AI Providers: ${this.providers.map(p => p.getProvider().name).join(', ')}`);
     
@@ -239,7 +212,7 @@ export class HydraEngine {
     );
     
     const textOnlyProviders = this.providers.filter(p => 
-      ['Mistral', 'Groq', 'xAI', 'Cohere', 'Together'].includes(p.getProvider().name)
+      ['Mistral', 'Groq', 'xAI'].includes(p.getProvider().name)
     );
     
     const searchProviders = this.providers.filter(p => 
@@ -255,8 +228,23 @@ export class HydraEngine {
       try {
         const result = await provider.analyze(images, prompt);
         return { provider: provider.getProvider(), result };
-      } catch (error) {
-        console.error(`${provider.getProvider().name} image analysis failed:`, error);
+      } catch (error: any) {
+        const errorMsg = error.message || 'Unknown error';
+        providerFailures[provider.getProvider().name] = errorMsg;
+        
+        console.error(`${provider.getProvider().name} analysis error:`, error);
+        
+        // Log specific error types for debugging
+        if (errorMsg.includes('401') || errorMsg.includes('authentication')) {
+          console.error(`❌ ${provider.getProvider().name}: Authentication failed - check API key`);
+        } else if (errorMsg.includes('429') || errorMsg.includes('rate limit')) {
+          console.error(`⚠️ ${provider.getProvider().name}: Rate limit hit`);
+        } else if (errorMsg.includes('404')) {
+          console.error(`❌ ${provider.getProvider().name}: Endpoint not found - check API URL`);
+        } else if (errorMsg.includes('400')) {
+          console.error(`❌ ${provider.getProvider().name}: Bad request - check model or parameters`);
+        }
+        
         return null;
       }
     });
@@ -314,7 +302,9 @@ export class HydraEngine {
         // Text-only providers get empty image array but enhanced prompt
         const result = await provider.analyze([], enhancedPrompt);
         return { provider: provider.getProvider(), result };
-      } catch (error) {
+      } catch (error: any) {
+        const errorMsg = error.message || 'Unknown error';
+        providerFailures[provider.getProvider().name] = errorMsg;
         console.error(`${provider.getProvider().name} text analysis failed:`, error);
         return null;
       }
@@ -367,7 +357,9 @@ export class HydraEngine {
         try {
           const result = await provider.analyze([], marketPrompt);
           return { provider: provider.getProvider(), result };
-        } catch (error) {
+        } catch (error: any) {
+          const errorMsg = error.message || 'Unknown error';
+          providerFailures[provider.getProvider().name] = errorMsg;
           console.error(`${provider.getProvider().name} market search failed:`, error);
           return null;
         }
@@ -410,6 +402,17 @@ export class HydraEngine {
     
     console.log(`🎯 Total votes collected: ${allVotes.length} from ${this.providers.length} AI providers`);
     
+    // Add failure report to logs
+    if (Object.keys(providerFailures).length > 0) {
+      console.warn('⚠️ Provider Failure Report:', providerFailures);
+    }
+    
+    // If no votes were collected, use emergency fallback
+    if (allVotes.length === 0) {
+      console.error('❌ No AI providers successfully responded. Using emergency fallback...');
+      return await this.emergencyFallback(images, prompt);
+    }
+    
     // Calculate consensus
     const consensus = this.calculateConsensus(allVotes, allAnalyses);
     
@@ -421,8 +424,74 @@ export class HydraEngine {
       votes: allVotes,
       consensus,
       processingTime: Date.now() - startTime,
-      authorityData: this.authorityData
+      authorityData: this.authorityData,
+      providerFailures // Include failures in response for debugging
     };
+  }
+  
+  // NEW: Emergency fallback method
+  private async emergencyFallback(images: string[], prompt: string): Promise<HydraConsensus> {
+    console.warn('⚠️ EMERGENCY FALLBACK MODE - Attempting single-provider analysis');
+    
+    // Try each provider one by one until one succeeds
+    for (const provider of this.providers) {
+      try {
+        console.log(`🔄 Trying fallback with ${provider.getProvider().name}...`);
+        const result = await provider.analyze(images, prompt);
+        
+        if (result.response) {
+          // Create minimal consensus from single provider
+          const vote: ModelVote = {
+            providerId: provider.getProvider().id,
+            providerName: provider.getProvider().name,
+            itemName: result.response.itemName || 'Unknown Item',
+            estimatedValue: parseFloat(result.response.estimatedValue?.toString() || '0'),
+            decision: result.response.decision || 'SELL',
+            confidence: result.confidence * 0.5, // Reduce confidence for single-provider
+            responseTime: result.responseTime,
+            weight: 1,
+            rawResponse: result.response,
+            success: true
+          };
+          
+          await this.saveVote(vote);
+          
+          const consensus = {
+            itemName: vote.itemName,
+            estimatedValue: vote.estimatedValue,
+            decision: vote.decision,
+            confidence: Math.min(50, Math.round(vote.confidence * 100)), // Cap at 50% for fallback
+            totalVotes: 1,
+            analysisQuality: 'FALLBACK' as const,
+            consensusMetrics: {
+              avgAIConfidence: vote.confidence,
+              decisionAgreement: 1,
+              valueAgreement: 1,
+              participationRate: 1 / this.providers.length,
+              authorityVerified: false
+            }
+          };
+          
+          await this.saveConsensus(consensus);
+          
+          console.log(`✅ Fallback successful with ${provider.getProvider().name}`);
+          
+          return {
+            analysisId: this.analysisId,
+            votes: [vote],
+            consensus,
+            processingTime: Date.now(),
+            authorityData: undefined
+          };
+        }
+      } catch (error) {
+        console.error(`❌ Fallback failed with ${provider.getProvider().name}:`, error);
+        continue;
+      }
+    }
+    
+    // If all providers fail, return error result
+    throw new Error('All AI providers failed - cannot perform analysis. Please check API keys and provider status.');
   }
   
   async analyzeWithAuthority(images: string[], prompt: string, category?: string): Promise<HydraConsensus> {

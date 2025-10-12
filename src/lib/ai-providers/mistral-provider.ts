@@ -1,61 +1,48 @@
-import { BaseAIProvider } from './base-provider.js';
-import { AIProvider, AIAnalysisResponse } from '@/types/hydra.js';
-
-export class MistralProvider extends BaseAIProvider {
-  constructor(config: AIProvider) {
-    super(config);
-  }
-  
-  async analyze(images: string[], prompt: string): Promise<AIAnalysisResponse> {
-    const startTime = Date.now();
+// src/lib/ai-providers/mistral-provider.ts
+protected parseResponse(response: string): any {
+  try {
+    const cleaned = response.replace(/```json\n?/g, '')
+                          .replace(/```\n?/g, '')
+                          .trim();
     
-    try {
-      // Mistral currently doesn't support images directly, so we'll use a workaround
-      const jsonEnforcedPrompt = `You MUST respond with ONLY a valid JSON object. Do not include any markdown formatting, explanations, or text outside the JSON.
-
-${prompt}
-
-Note: Analyzing based on visual inspection.
-
-Output JSON only:`;
+    const parsed = JSON.parse(cleaned);
+    
+    // Validate required fields
+    const required = ['itemName', 'estimatedValue', 'decision', 'valuation_factors', 'summary_reasoning'];
+    const missing = required.filter(field => !parsed[field]);
+    
+    if (missing.length > 0) {
+      console.warn('Mistral: Parsed JSON missing required fields:', missing);
       
-      const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`
-        },
-        body: JSON.stringify({
-          model: this.provider.model,
-          messages: [{
-            role: 'system',
-            content: 'You are a JSON-only response bot. Always output valid JSON without any surrounding text or markdown.'
-          }, {
-            role: 'user', 
-            content: jsonEnforcedPrompt
-          }],
-          temperature: 0.1,
-          max_tokens: 800,
-          response_format: { type: 'json_object' }
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Mistral API error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      const content = data.choices?.[0]?.message?.content || null;
-      const parsed = this.parseAnalysisResult(content);
+      // Attempt to fix common issues
+      if (!parsed.itemName && parsed.item_name) parsed.itemName = parsed.item_name;
+      if (!parsed.estimatedValue && parsed.estimated_value) parsed.estimatedValue = parsed.estimated_value;
+      if (!parsed.valuation_factors && parsed.factors) parsed.valuation_factors = parsed.factors;
+      if (!parsed.summary_reasoning && parsed.summary) parsed.summary_reasoning = parsed.summary;
       
-      return {
-        response: parsed,
-        confidence: parsed?.confidence || 0.78, // Lower confidence without direct image support
-        responseTime: Date.now() - startTime
-      };
-    } catch (error) {
-      console.error(`Mistral analysis error:`, error);
-      throw error;
+      // Set defaults for still-missing fields
+      parsed.itemName = parsed.itemName || 'Unknown Item';
+      parsed.estimatedValue = parsed.estimatedValue || 0;
+      parsed.decision = parsed.decision || 'SELL';
+      parsed.valuation_factors = parsed.valuation_factors || ['Unable to analyze'];
+      parsed.summary_reasoning = parsed.summary_reasoning || 'Analysis incomplete';
+      parsed.confidence = parsed.confidence || 0.1;
     }
+    
+    return parsed;
+  } catch (error) {
+    console.error('Mistral JSON parse error:', error);
+    console.error('Raw response:', response);
+    
+    // Return minimal valid structure
+    return {
+      itemName: 'Parse Error',
+      estimatedValue: 0,
+      decision: 'SELL',
+      valuation_factors: ['Parsing failed'],
+      summary_reasoning: 'Failed to parse Mistral response',
+      confidence: 0.1,
+      error: true
+    };
   }
 }

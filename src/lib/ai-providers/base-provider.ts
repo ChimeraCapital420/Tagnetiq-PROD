@@ -48,30 +48,17 @@ export abstract class BaseAIProvider {
       // Validate the parsed result has required fields
       if (!this.isValidAnalysis(parsed)) {
         console.warn(`${this.provider.name}: Parsed JSON missing required fields`);
+        
+        // Try to fix common field name variations
+        const fixed = this.attemptFieldFix(parsed);
+        if (this.isValidAnalysis(fixed)) {
+          return this.normalizeAnalysis(fixed);
+        }
+        
         return null;
       }
       
-      // Ensure numeric types
-      if (typeof parsed.estimatedValue === 'string') {
-        parsed.estimatedValue = parseFloat(parsed.estimatedValue);
-      }
-      
-      // Ensure decision is uppercase
-      if (parsed.decision) {
-        parsed.decision = parsed.decision.toUpperCase();
-      }
-      
-      // Ensure valuation_factors is an array
-      if (!Array.isArray(parsed.valuation_factors)) {
-        parsed.valuation_factors = [];
-      }
-      
-      // Add confidence if missing
-      if (typeof parsed.confidence !== 'number') {
-        parsed.confidence = this.calculateConfidence(parsed);
-      }
-      
-      return parsed;
+      return this.normalizeAnalysis(parsed);
       
     } catch (error) {
       // Log detailed parsing error for debugging
@@ -90,6 +77,77 @@ export abstract class BaseAIProvider {
     }
     
     return null;
+  }
+  
+  private attemptFieldFix(obj: any): any {
+    if (!obj || typeof obj !== 'object') return obj;
+    
+    const fixed = { ...obj };
+    
+    // Common field name variations
+    const fieldMappings = {
+      itemName: ['item_name', 'item', 'name', 'product_name', 'productName'],
+      estimatedValue: ['estimated_value', 'value', 'price', 'estimated_price', 'estimatedPrice'],
+      decision: ['recommendation', 'action', 'buy_sell', 'buySell'],
+      valuation_factors: ['factors', 'reasons', 'valuation_reasons', 'valuationFactors', 'key_factors'],
+      summary_reasoning: ['summary', 'reasoning', 'explanation', 'analysis', 'summaryReasoning']
+    };
+    
+    // Apply mappings
+    for (const [standard, variations] of Object.entries(fieldMappings)) {
+      if (!fixed[standard]) {
+        for (const variation of variations) {
+          if (obj[variation] !== undefined) {
+            fixed[standard] = obj[variation];
+            break;
+          }
+        }
+      }
+    }
+    
+    return fixed;
+  }
+  
+  private normalizeAnalysis(parsed: any): ParsedAnalysis {
+    // Ensure numeric types
+    if (typeof parsed.estimatedValue === 'string') {
+      parsed.estimatedValue = parseFloat(parsed.estimatedValue);
+    }
+    
+    // Ensure decision is uppercase
+    if (parsed.decision) {
+      parsed.decision = parsed.decision.toUpperCase();
+      // Fix common variations
+      if (parsed.decision === 'BUY IT' || parsed.decision === 'PURCHASE') {
+        parsed.decision = 'BUY';
+      } else if (parsed.decision === 'PASS' || parsed.decision === 'SKIP') {
+        parsed.decision = 'SELL';
+      }
+    }
+    
+    // Ensure valuation_factors is an array
+    if (!Array.isArray(parsed.valuation_factors)) {
+      if (typeof parsed.valuation_factors === 'string') {
+        parsed.valuation_factors = [parsed.valuation_factors];
+      } else {
+        parsed.valuation_factors = [];
+      }
+    }
+    
+    // Ensure we have exactly 5 factors
+    while (parsed.valuation_factors.length < 5) {
+      parsed.valuation_factors.push(`Factor ${parsed.valuation_factors.length + 1}`);
+    }
+    if (parsed.valuation_factors.length > 5) {
+      parsed.valuation_factors = parsed.valuation_factors.slice(0, 5);
+    }
+    
+    // Add confidence if missing
+    if (typeof parsed.confidence !== 'number') {
+      parsed.confidence = this.calculateConfidence(parsed);
+    }
+    
+    return parsed;
   }
   
   private isValidAnalysis(obj: any): boolean {
