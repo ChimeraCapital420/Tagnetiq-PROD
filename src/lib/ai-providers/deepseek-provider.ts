@@ -1,5 +1,5 @@
-import { BaseAIProvider } from './base-provider.js';
-import { AIProvider, AIAnalysisResponse } from '@/types/hydra.js';
+import { BaseAIProvider } from './base-provider';
+import { AIProvider, AIAnalysisResponse } from '@/types/hydra';
 
 export class DeepSeekProvider extends BaseAIProvider {
   constructor(config: AIProvider) {

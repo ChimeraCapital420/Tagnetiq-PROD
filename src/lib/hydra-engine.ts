@@ -1,10 +1,10 @@
 // FILE: src/lib/hydra-engine.ts
 
 import { createClient } from '@supabase/supabase-js';
-import { AIProvider, ModelVote, HydraConsensus, ParsedAnalysis } from '@/types/hydra.js';
-import { ProviderFactory } from './ai-providers/provider-factory.js';
-import { BaseAIProvider } from './ai-providers/base-provider.js';
-import { AuthorityManager } from './authorities/authority-manager.js';
+import { AIProvider, ModelVote, HydraConsensus, ParsedAnalysis } from '@/types/hydra';
+import { ProviderFactory } from './ai-providers/provider-factory';
+import { BaseAIProvider } from './ai-providers/base-provider';
+import { AuthorityManager } from './authorities/authority-manager';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
