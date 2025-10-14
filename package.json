@@ -1,14 +1,18 @@
 {
-  "name": "vite_react_shadcn_ts",
+  "name": "tagnetiq-v8",
   "private": true,
-  "version": "0.0.0",
+  "version": "8.3.0",
   "type": "module",
+  "engines": {
+    "node": ">=18.17.0"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc && vite build",
     "build:dev": "vite build --mode development",
-    "lint": "eslint .",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
+    "type-check": "tsc --noEmit",
     "cerberus:provision": "tsx scripts/provision-test-agent.ts",
     "cerberus:test": "tsx scripts/run-cerberus-test.ts"
   },
