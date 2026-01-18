@@ -22,7 +22,7 @@ IMPORTANT: You must output ONLY a valid JSON object. No other text, no markdown,
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: 'grok-beta', // Updated model name
+          model: 'grok-3', // Updated to current model
           messages: [{
             role: 'system',
             content: 'You are a JSON-only response assistant. Never output anything except a valid JSON object.'
