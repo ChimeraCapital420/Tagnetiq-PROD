@@ -10,8 +10,6 @@ export class GroqProvider extends BaseAIProvider {
     const startTime = Date.now();
     
     try {
-      // Groq doesn't support images directly yet
-      // Clean up the prompt to ensure valid JSON response
       const cleanPrompt = prompt.replace(/\n+/g, ' ').trim();
       const jsonEnforcedPrompt = `${cleanPrompt}
 
@@ -24,7 +22,7 @@ CRITICAL INSTRUCTION: You MUST respond with ONLY a valid JSON object. Do not inc
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: 'mixtral-8x7b-32768', // Try Mixtral model
+          model: 'llama-3.1-8b-instant', // Try this current model
           messages: [{
             role: 'system',
             content: 'You are a valuation expert that outputs ONLY valid JSON. Never include any text outside the JSON object. Never use markdown formatting. Just output the raw JSON object.'
@@ -47,17 +45,13 @@ CRITICAL INSTRUCTION: You MUST respond with ONLY a valid JSON object. Do not inc
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content || null;
       
-      // Clean the response before parsing
       let cleanedContent = content;
       if (typeof content === 'string') {
-        // Remove any markdown code blocks
         cleanedContent = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-        // Remove any text before the first {
         const jsonStart = cleanedContent.indexOf('{');
         if (jsonStart > 0) {
           cleanedContent = cleanedContent.substring(jsonStart);
         }
-        // Remove any text after the last }
         const jsonEnd = cleanedContent.lastIndexOf('}');
         if (jsonEnd > -1 && jsonEnd < cleanedContent.length - 1) {
           cleanedContent = cleanedContent.substring(0, jsonEnd + 1);
@@ -70,7 +64,7 @@ CRITICAL INSTRUCTION: You MUST respond with ONLY a valid JSON object. Do not inc
       
       return {
         response: parsed,
-        confidence: parsed?.confidence || 0.75, // Lower confidence without images
+        confidence: parsed?.confidence || 0.75,
         responseTime: Date.now() - startTime
       };
     } catch (error) {
