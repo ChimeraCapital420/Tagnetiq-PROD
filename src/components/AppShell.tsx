@@ -5,8 +5,8 @@ import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import { getThemeConfig } from '@/lib/themes';
-import ThemeAnimationManager from './ThemeAnimationManager';
-import SeasonalManager from './SeasonalManager';
+import ThemeAnimationManager from './ThemeAnimationManager.js';
+import SeasonalManager from './SeasonalManager.js';
 
 const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();

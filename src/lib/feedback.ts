@@ -1,5 +1,5 @@
 import { toast } from 'sonner';
-import { APP_VERSION } from './constants';
+import { APP_VERSION } from './constants.js';
 
 interface FeedbackPayload {
   tester_id: string;

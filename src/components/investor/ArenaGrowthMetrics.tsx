@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { Users, BarChart2, MessageCircle, ShieldCheck, Sword, Store, BellRing } from 'lucide-react';
-import AnimatedCounter from './AnimatedCounter';
+import AnimatedCounter from './AnimatedCounter.js';
 
 // Define the structure of the data we expect from our new API endpoint
 interface ArenaMetrics {

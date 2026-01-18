@@ -1,13 +1,13 @@
 import { AIProvider } from '@/types/hydra';
-import { BaseAIProvider } from './base-provider.js';
-import { OpenAIProvider } from './openai-provider.js';
-import { AnthropicProvider } from './anthropic-provider.js';
-import { GoogleProvider } from './google-provider.js';
-import { MistralProvider } from './mistral-provider.js';
-import { GroqProvider } from './groq-provider.js';
-import { DeepSeekProvider } from './deepseek-provider.js';
-import { XAIProvider } from './xai-provider.js';
-import { PerplexityProvider } from './perplexity-provider.js';
+import { BaseAIProvider } from './base-provider.js.js';
+import { OpenAIProvider } from './openai-provider.js.js';
+import { AnthropicProvider } from './anthropic-provider.js.js';
+import { GoogleProvider } from './google-provider.js.js';
+import { MistralProvider } from './mistral-provider.js.js';
+import { GroqProvider } from './groq-provider.js.js';
+import { DeepSeekProvider } from './deepseek-provider.js.js';
+import { XAIProvider } from './xai-provider.js.js';
+import { PerplexityProvider } from './perplexity-provider.js.js';
 
 export class ProviderFactory {
   static create(config: AIProvider): BaseAIProvider {

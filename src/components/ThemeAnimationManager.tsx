@@ -1,10 +1,10 @@
 // src/components/ThemeAnimationManager.tsx
 import React from 'react';
 import { useAppContext } from '@/contexts/AppContext';
-import DarkKnightBackground from './backgrounds/DarkKnightBackground';
-import OceanBackground from './backgrounds/OceanBackground';
-import ForestBackground from './backgrounds/ForestBackground';
-import MatrixBackground from './backgrounds/MatrixBackground';
+import DarkKnightBackground from './backgrounds/DarkKnightBackground.js';
+import OceanBackground from './backgrounds/OceanBackground.js';
+import ForestBackground from './backgrounds/ForestBackground.js';
+import MatrixBackground from './backgrounds/MatrixBackground.js';
 
 const ThemeAnimationManager: React.FC = () => {
   const { theme } = useAppContext();

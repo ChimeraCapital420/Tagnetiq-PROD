@@ -1,7 +1,7 @@
 // FILE: src/lib/analytics.ts
 // A helper for firing off tracking events from the client-side.
 
-import { getInvestorToken } from './investorAuth';
+import { getInvestorToken } from './investorAuth.js';
 
 type EventType = 'portal_view'; // Add more as needed: 'doc_click', etc.
 

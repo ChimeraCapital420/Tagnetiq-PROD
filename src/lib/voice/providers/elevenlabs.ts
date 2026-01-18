@@ -1,5 +1,5 @@
 // src/lib/voice/providers/elevenlabs.ts
-import { VoiceProvider, VoiceOption, VoiceSynthesisOptions, VoiceDetails } from './base';
+import { VoiceProvider, VoiceOption, VoiceSynthesisOptions, VoiceDetails } from './base.js';
 
 export class ElevenLabsProvider implements VoiceProvider {
   id = 'elevenlabs';

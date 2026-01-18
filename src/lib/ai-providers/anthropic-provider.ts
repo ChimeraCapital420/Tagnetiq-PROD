@@ -1,5 +1,5 @@
 // src/lib/ai-providers/anthropic-provider.ts
-import { BaseAIProvider } from './base-provider';
+import { BaseAIProvider } from './base-provider.js.js';
 import { AIProvider } from '@/types/hydra';
 
 export class AnthropicProvider extends BaseAIProvider {

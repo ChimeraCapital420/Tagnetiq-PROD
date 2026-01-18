@@ -13,7 +13,7 @@ import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { Upload, FileText, Trash2, Loader2, ImageOff } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
-import { QrCodeGenerator } from './QrCodeGenerator';
+import { QrCodeGenerator } from './QrCodeGenerator.js';
 import { motion } from 'framer-motion';
 
 interface ItemDetailModalProps {

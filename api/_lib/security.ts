@@ -1,7 +1,7 @@
 // FILE: api/_lib/security.ts
 // STATUS: EDGE RUNTIME COMPATIBLE - Web Crypto API instead of Node.js crypto
 
-import { supaAdmin } from './supaAdmin';
+import { supaAdmin } from './supaAdmin.js';
 import type { VercelRequest } from '@vercel/node';
 import { User } from '@supabase/supabase-js';
 

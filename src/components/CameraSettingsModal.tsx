@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Slider } from '@/components/ui/slider';
 import { toast } from 'sonner';
 import { useBluetoothManager } from '@/hooks/useBluetoothManager'; // PROJECT CERULEAN: Added import
-import DevicePairingModal from './DevicePairingModal'; // PROJECT CERULEAN: Added import
+import DevicePairingModal from './DevicePairingModal.js'; // PROJECT CERULEAN: Added import
 
 interface CameraSettingsModalProps {
   isOpen: boolean;

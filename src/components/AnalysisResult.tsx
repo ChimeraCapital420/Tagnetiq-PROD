@@ -7,14 +7,14 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { AddToVaultButton } from './vault/AddToVaultButton';
+import { AddToVaultButton } from './vault/AddToVaultButton.js';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { CheckCircle, Star, WandSparkles, Loader2, Shield, Trash2 } from 'lucide-react';
-import { HydraConsensusDisplay } from './HydraConsensusDisplay';
-import { AnalysisHistoryNavigator } from './AnalysisHistoryNavigator';
+import { HydraConsensusDisplay } from './HydraConsensusDisplay.js';
+import { AnalysisHistoryNavigator } from './AnalysisHistoryNavigator.js';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
 
 const AnalysisResult: React.FC = () => {

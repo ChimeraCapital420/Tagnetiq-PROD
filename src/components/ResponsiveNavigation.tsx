@@ -1,7 +1,7 @@
 // FILE: src/components/ResponsiveNavigation.tsx
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import SettingsDropdown from './SettingsDropdown';
+import SettingsDropdown from './SettingsDropdown.js';
 import { Button } from '@/components/ui/button';
 import { Shield, Scan, Sword } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';

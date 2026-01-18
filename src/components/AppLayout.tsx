@@ -4,16 +4,16 @@ import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
-import ResponsiveNavigation from './ResponsiveNavigation';
-import NewMarketingNavigation from './NewMarketingNavigation';
-import DualScanner from './DualScanner';
-// REMOVED OLD: import GlobalVoiceControl from './GlobalVoiceControl';
+import ResponsiveNavigation from './ResponsiveNavigation.js';
+import NewMarketingNavigation from './NewMarketingNavigation.js';
+import DualScanner from './DualScanner.js';
+// REMOVED OLD: import GlobalVoiceControl from './GlobalVoiceControl.js';
 import { useOracleCommandHandler } from '@/lib/command-handler';
-import OracleVisualizer from './OracleVisualizer';
-import OracleResponseDisplay from './OracleResponseDisplay';
-import JarvisVoiceInterface from './oracle/JarvisVoiceInterface'; // NEW - KEEPING THIS
+import OracleVisualizer from './OracleVisualizer.js';
+import OracleResponseDisplay from './OracleResponseDisplay.js';
+import JarvisVoiceInterface from './oracle/JarvisVoiceInterface.js'; // NEW - KEEPING THIS
 
-import DevicePairingModal from './DevicePairingModal';
+import DevicePairingModal from './DevicePairingModal.js';
 
 const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { user, profile } = useAuth();

@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Users, Activity, ScanLine } from 'lucide-react';
-import AnimatedCounter from './AnimatedCounter';
+import AnimatedCounter from './AnimatedCounter.js';
 import { toast } from 'sonner';
 
 interface KpiData {

@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { VoiceManager, VoiceManagerConfig } from '../lib/voice/voice-manager';
 import { VoiceOption } from '../lib/voice/providers/base';
-import { useAuth } from './useAuth';
+import { useAuth } from './useAuth.js';
 import { toast } from 'sonner';
 
 export function useVoiceManager() {

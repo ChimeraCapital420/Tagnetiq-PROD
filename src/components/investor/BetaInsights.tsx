@@ -3,10 +3,10 @@
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Users, Mail, CheckCircle } from 'lucide-react';
-import AnimatedCounter from './AnimatedCounter'; // Corrected: Import without curly braces for a default export
-import { SentimentChart } from './SentimentChart';
+import AnimatedCounter from './AnimatedCounter.js'; // Corrected: Import without curly braces for a default export
+import { SentimentChart } from './SentimentChart.js';
 import { Separator } from '@/components/ui/separator';
-import { TopFeatures } from './TopFeatures';
+import { TopFeatures } from './TopFeatures.js';
 
 interface BetaInsightsProps {
   data: {

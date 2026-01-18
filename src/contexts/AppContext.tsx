@@ -2,7 +2,7 @@
 // STATUS: Forged by Hephaestus v2.2 - Now with Project Chronos time-travel capabilities
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { useAuth } from './AuthContext';
+import { useAuth } from './AuthContext.js';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';

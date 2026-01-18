@@ -1,7 +1,7 @@
 // FILE: src/contexts/AppContext.tsx
 
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { useAuth } from './AuthContext';
+import { useAuth } from './AuthContext.js';
 import { useFeatureFlags } from '@/hooks/useFeatureFlags';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
 

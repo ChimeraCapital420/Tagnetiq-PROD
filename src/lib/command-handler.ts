@@ -3,7 +3,7 @@
 
 import { NavigateFunction } from 'react-router-dom';
 import { toast } from 'sonner';
-import { supabase } from './supabase';
+import { supabase } from './supabase.js';
 // --- ORACLE SURGICAL ADDITION ---
 // Import useTranslation to access the current language.
 import { useTranslation } from 'react-i18next';

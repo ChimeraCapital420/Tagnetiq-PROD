@@ -1,1 +1,1 @@
-export * from './authority-manager';
+export * from './authority-manager.js';

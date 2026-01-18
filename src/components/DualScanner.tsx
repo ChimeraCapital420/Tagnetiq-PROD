@@ -9,8 +9,8 @@ import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
-import CameraSettingsModal from './CameraSettingsModal';
-import DevicePairingModal from './DevicePairingModal'; // NEW IMPORT
+import CameraSettingsModal from './CameraSettingsModal.js';
+import DevicePairingModal from './DevicePairingModal.js'; // NEW IMPORT
 import './DualScanner.css';
 import { AnalysisResult } from '@/types';
 

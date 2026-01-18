@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { Handshake, Target, Users, Percent } from 'lucide-react';
-import AnimatedCounter from './AnimatedCounter';
+import AnimatedCounter from './AnimatedCounter.js';
 
 interface PartnershipKpis {
   total_opportunities: number;

@@ -1,4 +1,4 @@
-import { BaseAIProvider } from './base-provider';
+import { BaseAIProvider } from './base-provider.js.js';
 import { AIProvider, AIAnalysisResponse } from '@/types/hydra';
 
 export class GoogleProvider extends BaseAIProvider {

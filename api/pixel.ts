@@ -1,6 +1,6 @@
 // FILE: api/pixel.ts
-import { supaAdmin } from './_lib/supaAdmin';
-import { verifySignature } from './_lib/crypto';
+import { supaAdmin } from './_lib/supaAdmin.js';
+import { verifySignature } from './_lib/crypto.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

@@ -1,10 +1,10 @@
 // src/lib/voice/voice-manager.ts
-import { VoiceProvider } from './providers/base';
-import { ElevenLabsProvider } from './providers/elevenlabs';
-import { GoogleCloudProvider } from './providers/google-cloud';
-import { AzureProvider } from './providers/azure';
-import { OpenAIProvider } from './providers/openai';
-import { WebSpeechProvider } from './providers/web-speech';
+import { VoiceProvider } from './providers/base.js';
+import { ElevenLabsProvider } from './providers/elevenlabs.js';
+import { GoogleCloudProvider } from './providers/google-cloud.js';
+import { AzureProvider } from './providers/azure.js';
+import { OpenAIProvider } from './providers/openai.js';
+import { WebSpeechProvider } from './providers/web-speech.js';
 
 export interface VoiceManagerConfig {
   defaultProvider?: string;

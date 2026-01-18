@@ -14,7 +14,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { LanguageSelector } from './LanguageSelector';
+import { LanguageSelector } from './LanguageSelector.js';
 import DevicePairingModal from '@/components/DevicePairingModal';
 
 const themeNames = ['executive', 'matrix', 'safari', 'darkKnight', 'cyberpunk', 'ocean', 'forest', 'sunset'];

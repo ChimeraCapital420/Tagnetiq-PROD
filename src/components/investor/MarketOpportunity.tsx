@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { MarketSizeChart } from './MarketSizeChart'; // Import the new chart component
+import { MarketSizeChart } from './MarketSizeChart.js'; // Import the new chart component
 
 interface MarketOpportunityProps {
   data: {
