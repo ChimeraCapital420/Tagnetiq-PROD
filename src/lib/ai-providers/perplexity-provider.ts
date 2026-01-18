@@ -12,11 +12,7 @@ export class PerplexityProvider extends BaseAIProvider {
     try {
       const enhancedPrompt = prompt.includes('eBay') || prompt.includes('market') 
         ? prompt 
-        : `${prompt}\n\nIMPORTANT: Search for recent eBay sold listings, current Amazon prices, StockX prices, and other marketplace data for this exact item. Include specific prices from the last 30 days with dates. Look for completed/sold listings on eBay to determine actual market value, not just asking prices.`;
-      
-      const jsonEnforcedPrompt = `${enhancedPrompt}
-
-CRITICAL: Output ONLY a valid JSON object with no additional text, markdown, or explanations.`;
+        : `${prompt}\n\nIMPORTANT: Search for recent eBay sold listings, current Amazon prices, StockX prices, and other marketplace data for this exact item.`;
       
       const response = await fetch('https://api.perplexity.ai/chat/completions', {
         method: 'POST',
@@ -25,13 +21,13 @@ CRITICAL: Output ONLY a valid JSON object with no additional text, markdown, or 
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: 'sonar-small-online', // Try this simplified model name
+          model: 'sonar', // Try the simplest model name
           messages: [{
             role: 'system',
-            content: 'You are a market research assistant that outputs ONLY valid JSON. Never include any text outside the JSON object. Always search for recent sold prices on eBay, current retail prices, and provide specific examples with dates. Focus on actual sold prices, not listing prices. The JSON must contain: itemName, estimatedValue (as a number), decision (BUY or SELL), valuation_factors (array of 5 factors), summary_reasoning, and confidence (0-1).'
+            content: 'You are a market research assistant that outputs ONLY valid JSON. Search for real market prices.'
           }, {
             role: 'user',
-            content: jsonEnforcedPrompt
+            content: enhancedPrompt
           }],
           temperature: 0.1,
           max_tokens: 1000
@@ -46,50 +42,15 @@ CRITICAL: Output ONLY a valid JSON object with no additional text, markdown, or 
 
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content || null;
-      
-      let hasRealPrices = false;
-      if (content) {
-        const pricePatterns = [
-          /sold for \$/i,
-          /sold at \$/i,
-          /final price.*\$/i,
-          /winning bid.*\$/i,
-          /completed.*\$/i,
-          /\d+ sold.*\$/i
-        ];
-        hasRealPrices = pricePatterns.some(pattern => pattern.test(content));
-      }
-      
-      let cleanedContent = content;
-      if (typeof content === 'string') {
-        cleanedContent = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-        const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          cleanedContent = jsonMatch[0];
-        }
-      }
-      
-      const parsed = this.parseAnalysisResult(cleanedContent);
-      
-      let confidence = parsed?.confidence || 0.85;
-      if (hasRealPrices) {
-        confidence = Math.min(confidence * 1.25, 0.95);
-        console.log('💰 Perplexity found real market prices!');
-      }
-      
-      if (data.choices?.[0]?.citations) {
-        console.log('📊 Market data sources:', data.choices[0].citations);
-      }
-      
-      this.logProviderStatus(true, Date.now() - startTime);
+      const parsed = this.parseAnalysisResult(content);
       
       return {
         response: parsed,
-        confidence,
+        confidence: parsed?.confidence || 0.85,
         responseTime: Date.now() - startTime
       };
     } catch (error) {
-      this.logProviderStatus(false, Date.now() - startTime, error);
+      console.error(`Perplexity analysis error:`, error);
       throw error;
     }
   }

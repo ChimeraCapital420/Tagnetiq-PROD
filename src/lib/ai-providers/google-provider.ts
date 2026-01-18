@@ -10,22 +10,15 @@ export class GoogleProvider extends BaseAIProvider {
     const startTime = Date.now();
     
     try {
-      const jsonEnforcedPrompt = `IMPORTANT: You must respond with ONLY a valid JSON object. Do not include any markdown formatting, code blocks, or text outside the JSON structure.
-
-${prompt}
-
-Remember: Output ONLY the JSON object, nothing else.`;
-
-      // Use Gemini 3 model that matches your subscription
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.0-flash:generateContent?key=${this.apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${this.apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{
               parts: [
-                { text: jsonEnforcedPrompt },
+                { text: prompt },
                 ...images.map(img => ({
                   inline_data: {
                     mime_type: 'image/jpeg',
@@ -36,22 +29,13 @@ Remember: Output ONLY the JSON object, nothing else.`;
             }],
             generationConfig: {
               maxOutputTokens: 1024,
-              temperature: 0.1,
-              candidateCount: 1
-            },
-            safetySettings: [
-              {
-                category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-                threshold: "BLOCK_NONE"
-              }
-            ]
+              temperature: 0.1
+            }
           })
         }
       );
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Google API error details:', errorText);
         throw new Error(`Gemini API error: ${response.status}`);
       }
 
@@ -61,7 +45,7 @@ Remember: Output ONLY the JSON object, nothing else.`;
       
       return {
         response: parsed,
-        confidence: parsed?.confidence || 0.84, // Higher confidence with Gemini 3 + images
+        confidence: parsed?.confidence || 0.84,
         responseTime: Date.now() - startTime
       };
     } catch (error) {
