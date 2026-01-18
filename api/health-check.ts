@@ -1,6 +1,6 @@
 // api/health-check.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { HydraEngine } from '../src/lib/hydra-engine';
+import { HydraEngine } from '../src/lib/hydra-engine.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
