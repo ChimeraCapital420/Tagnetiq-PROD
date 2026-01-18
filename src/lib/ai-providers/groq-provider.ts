@@ -24,7 +24,7 @@ CRITICAL INSTRUCTION: You MUST respond with ONLY a valid JSON object. Do not inc
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: 'llama-3.1-70b-versatile', // Current supported model
+          model: 'llama3-8b-8192', // Try this current model instead
           messages: [{
             role: 'system',
             content: 'You are a valuation expert that outputs ONLY valid JSON. Never include any text outside the JSON object. Never use markdown formatting. Just output the raw JSON object.'

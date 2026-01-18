@@ -27,7 +27,7 @@ CRITICAL: Output ONLY a valid JSON object with no additional text, markdown, or 
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: 'llama-3.1-sonar-huge-128k-online', // Updated model name
+          model: 'llama-3.1-sonar-large-128k-online', // Try 'large' instead of 'huge'
           messages: [{
             role: 'system',
             content: 'You are a market research assistant that outputs ONLY valid JSON. Never include any text outside the JSON object. Always search for recent sold prices on eBay, current retail prices, and provide specific examples with dates. Focus on actual sold prices, not listing prices. The JSON must contain: itemName, estimatedValue (as a number), decision (BUY or SELL), valuation_factors (array of 5 factors), summary_reasoning, and confidence (0-1).'
