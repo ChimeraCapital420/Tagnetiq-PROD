@@ -1,31 +1,35 @@
 import { AIProvider } from '@/types/hydra';
-import { BaseAIProvider } from './base-provider';
-
-// Simple provider implementations for now
-class SimpleProvider extends BaseAIProvider {
-  constructor(config: AIProvider) {
-    super(config);
-  }
-  
-  async analyze(images: string[], prompt: string) {
-    return {
-      response: {
-        itemName: 'Test Item',
-        estimatedValue: 100,
-        decision: 'SELL' as const,
-        valuation_factors: ['Factor 1', 'Factor 2', 'Factor 3', 'Factor 4', 'Factor 5'],
-        summary_reasoning: 'This is a test analysis',
-        confidence: 0.8
-      },
-      confidence: 0.8,
-      responseTime: 1000
-    };
-  }
-}
+import { BaseAIProvider } from './base-provider.js';
+import { OpenAIProvider } from './openai-provider.js';
+import { AnthropicProvider } from './anthropic-provider.js';
+import { GoogleProvider } from './google-provider.js';
+import { MistralProvider } from './mistral-provider.js';
+import { GroqProvider } from './groq-provider.js';
+import { DeepSeekProvider } from './deepseek-provider.js';
+import { XAIProvider } from './xai-provider.js';
+import { PerplexityProvider } from './perplexity-provider.js';
 
 export class ProviderFactory {
   static create(config: AIProvider): BaseAIProvider {
-    // For now, return the same simple provider for all types
-    return new SimpleProvider(config);
+    switch (config.name.toLowerCase()) {
+      case 'openai':
+        return new OpenAIProvider(config);
+      case 'anthropic':
+        return new AnthropicProvider(config);
+      case 'google':
+        return new GoogleProvider(config);
+      case 'mistral':
+        return new MistralProvider(config);
+      case 'groq':
+        return new GroqProvider(config);
+      case 'deepseek':
+        return new DeepSeekProvider(config);
+      case 'xai':
+        return new XAIProvider(config);
+      case 'perplexity':
+        return new PerplexityProvider(config);
+      default:
+        throw new Error(`Unknown provider: ${config.name}`);
+    }
   }
 }
