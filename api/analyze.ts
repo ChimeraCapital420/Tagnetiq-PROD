@@ -1,4 +1,4 @@
-// FORCE REDEPLOY v2.1 - Updated AI providers
+// FORCE REDEPLOY v2.2 - Fixed brand identification bias
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -104,8 +104,8 @@ async function verifyUser(req: VercelRequest) {
 
 // Main analysis function using dynamic import
 async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult> {
-  // IMPROVED PROMPT: Focus on product, not AI capabilities
-  const jsonPrompt = `You are a professional appraiser analyzing an item for resale value. Focus ONLY on the item itself.
+  // IMPROVED PROMPT: Focus on observable features, prevent brand guessing
+  const jsonPrompt = `You are a professional appraiser analyzing an item for resale value. Focus ONLY on what you can actually observe.
 
 CRITICAL INSTRUCTIONS:
 1. You MUST respond with ONLY a valid JSON object - no other text, no markdown, no explanations
@@ -120,17 +120,19 @@ CRITICAL INSTRUCTIONS:
 }
 
 IMPORTANT RULES:
-- Focus on the ITEM being analyzed, not on AI capabilities or analysis methods
-- valuation_factors should describe the ITEM'S characteristics (condition, rarity, market demand, brand value, etc.)
+- ONLY identify brands you can CLEARLY see and verify from logos, tags, or distinctive features
+- DO NOT guess or assume luxury brands like "Louis Vuitton" unless you see clear LV monogram or authentic markings
+- If you cannot clearly identify the brand, use generic descriptions like "leather handbag" or "designer-style purse"
+- Be specific about what you observe: "brown leather bag with gold hardware" not "Louis Vuitton bag"
+- Focus on actual visible characteristics: condition, materials, construction quality
+- valuation_factors should describe observable ITEM characteristics (condition, materials, craftsmanship, etc.)
 - Do NOT mention "AI analysis", "machine learning", "image recognition", or similar technical terms
-- Base your analysis on what you observe about the actual product
-- Give specific, product-focused factors like "excellent condition", "high brand recognition", "strong resale demand"
-- estimatedValue must be a number (not a string)
+- estimatedValue must be a realistic number based on what you can actually see
 - decision must be exactly "BUY" or "SELL" (uppercase)
 - confidence must be between 0 and 1
-- Include exactly 5 valuation_factors focused on the product
+- Include exactly 5 valuation_factors focused on observable product features
 
-Analyze this item for resale potential:`;
+Analyze this item for resale potential based only on what you can clearly observe:`;
   
   let imageData = '';
   
