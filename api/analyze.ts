@@ -1,3 +1,4 @@
+// FORCE REDEPLOY v2.1 - Updated AI providers
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -94,7 +95,7 @@ async function verifyUser(req: VercelRequest) {
   const token = authHeader.split(' ')[1];
   const { data: { user }, error } = await supabase.auth.getUser(token);
   
-  if (error || not user) {
+  if (error || !user) {
     throw new Error('Authentication failed');
   }
 
