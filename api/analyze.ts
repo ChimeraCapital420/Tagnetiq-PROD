@@ -94,7 +94,7 @@ async function verifyUser(req: VercelRequest) {
   const token = authHeader.split(' ')[1];
   const { data: { user }, error } = await supabase.auth.getUser(token);
   
-  if (error || !user) {
+  if (error || not user) {
     throw new Error('Authentication failed');
   }
 
@@ -103,27 +103,33 @@ async function verifyUser(req: VercelRequest) {
 
 // Main analysis function using dynamic import
 async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult> {
-  // Enhanced JSON-only prompt with guardrail
-  const jsonPrompt = `Analyze the item and provide a precise valuation. 
+  // IMPROVED PROMPT: Focus on product, not AI capabilities
+  const jsonPrompt = `You are a professional appraiser analyzing an item for resale value. Focus ONLY on the item itself.
 
 CRITICAL INSTRUCTIONS:
 1. You MUST respond with ONLY a valid JSON object - no other text, no markdown, no explanations
 2. The JSON must have EXACTLY this structure:
 {
-  "itemName": "specific item name",
+  "itemName": "specific item name based on what you see",
   "estimatedValue": 25.99,
   "decision": "BUY",
-  "valuation_factors": ["Factor 1", "Factor 2", "Factor 3", "Factor 4", "Factor 5"],
-  "summary_reasoning": "Brief explanation of valuation",
+  "valuation_factors": ["Market demand for this item", "Physical condition observed", "Brand reputation and value", "Rarity or collectibility", "Current market price trends"],
+  "summary_reasoning": "Brief explanation of why this specific item is worth the estimated value",
   "confidence": 0.85
 }
-3. If you cannot analyze the item for ANY reason, respond with: {"error": "Brief explanation of why analysis failed"}
-4. estimatedValue must be a number (not a string)
-5. decision must be exactly "BUY" or "SELL" (uppercase)
-6. confidence must be between 0 and 1
-7. Include exactly 5 valuation_factors
 
-Begin analysis now. Respond with JSON only:`;
+IMPORTANT RULES:
+- Focus on the ITEM being analyzed, not on AI capabilities or analysis methods
+- valuation_factors should describe the ITEM'S characteristics (condition, rarity, market demand, brand value, etc.)
+- Do NOT mention "AI analysis", "machine learning", "image recognition", or similar technical terms
+- Base your analysis on what you observe about the actual product
+- Give specific, product-focused factors like "excellent condition", "high brand recognition", "strong resale demand"
+- estimatedValue must be a number (not a string)
+- decision must be exactly "BUY" or "SELL" (uppercase)
+- confidence must be between 0 and 1
+- Include exactly 5 valuation_factors focused on the product
+
+Analyze this item for resale potential:`;
   
   let imageData = '';
   
