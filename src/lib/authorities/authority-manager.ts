@@ -1,4 +1,4 @@
-import { BookAuthority, OpenLibraryAuthority } from './book-authority.js.js';
+import { BookAuthority, OpenLibraryAuthority } from './book-authority.js';
 
 export class AuthorityManager {
   private bookAuthority = new BookAuthority();

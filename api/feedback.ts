@@ -1,6 +1,6 @@
 // FILE: api/feedback.ts
 
-import { supaAdmin } from './_lib/supaAdmin.js.js.js.js.js.js.js.js.js.js';
+import { supaAdmin } from './_lib/supaAdmin.js.js.js.js.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUser } from './_lib/security.js';
 

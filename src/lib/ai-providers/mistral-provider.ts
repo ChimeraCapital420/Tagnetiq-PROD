@@ -1,4 +1,4 @@
-import { BaseAIProvider } from './base-provider.js.js';
+import { BaseAIProvider } from './base-provider.js';
 import { AIProvider, AIAnalysisResponse } from '@/types/hydra';
 
 export class MistralProvider extends BaseAIProvider {
