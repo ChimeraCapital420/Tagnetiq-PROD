@@ -1,7 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { HydraEngine } from '../src/lib/hydra-engine.js';
-import { HydraConsensus } from '../src/types/hydra.js';
 
 // Node.js runtime configuration
 export const config = {
@@ -15,7 +13,23 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 // Create Supabase admin client
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-// Types
+// Types (moved inline to avoid import issues)
+interface HydraConsensus {
+  analysisId: string;
+  votes: any[];
+  consensus: {
+    itemName: string;
+    estimatedValue: number;
+    decision: 'BUY' | 'SELL';
+    confidence: number;
+    totalVotes: number;
+    analysisQuality: 'OPTIMAL' | 'DEGRADED' | 'FALLBACK';
+    consensusMetrics: any;
+  };
+  processingTime: number;
+  authorityData?: any;
+}
+
 interface AnalysisRequest {
   scanType: 'barcode' | 'image' | 'vin' | 'multi-modal';
   data?: string;
@@ -87,7 +101,7 @@ async function verifyUser(req: VercelRequest) {
   return user;
 }
 
-// Main analysis function using Hydra Engine with Authority
+// Main analysis function using dynamic import
 async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult> {
   // Enhanced JSON-only prompt with guardrail
   const jsonPrompt = `Analyze the item and provide a precise valuation. 
@@ -120,8 +134,9 @@ Begin analysis now. Respond with JSON only:`;
     imageData = request.data;
   }
   
-  // Initialize and run Hydra Engine
+  // Dynamic import of HydraEngine
   console.log('🚀 Initializing Hydra Consensus Engine...');
+  const { HydraEngine } = await import('../src/lib/hydra-engine.js');
   const hydra = new HydraEngine();
   await hydra.initialize();
   
