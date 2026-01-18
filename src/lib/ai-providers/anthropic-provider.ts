@@ -1,4 +1,3 @@
-// src/lib/ai-providers/anthropic-provider.ts
 import { BaseAIProvider } from './base-provider.js';
 import { AIProvider } from '@/types/hydra';
 
@@ -12,8 +11,7 @@ export class AnthropicProvider extends BaseAIProvider {
   async initialize() {
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     this.anthropic = new Anthropic({ 
-      apiKey: this.provider.apiKey,
-      // Add timeout and retry configuration
+      apiKey: this.apiKey, // Use this.apiKey directly
       timeout: 30000,
       maxRetries: 2
     });
@@ -30,7 +28,6 @@ export class AnthropicProvider extends BaseAIProvider {
       let messages = [];
       
       if (images.length > 0) {
-        // Handle image analysis
         messages = [{
           role: 'user',
           content: [
@@ -53,7 +50,7 @@ export class AnthropicProvider extends BaseAIProvider {
       }
       
       const response = await this.anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022', // Latest model
+        model: 'claude-3-5-sonnet-20241022', // Keep current model for now
         max_tokens: 1024,
         messages,
         temperature: 0.1,
@@ -61,17 +58,18 @@ export class AnthropicProvider extends BaseAIProvider {
       });
       
       const responseText = response.content[0]?.text || '';
-      const parsed = this.parseResponse(responseText);
+      const parsed = this.parseAnalysisResult(responseText);
       
       return {
         response: parsed,
-        confidence: this.assessConfidence(parsed),
+        confidence: parsed?.confidence || 0.88,
         responseTime: Date.now() - startTime
       };
     } catch (error: any) {
-      console.error('Anthropic API error response:', error.response);
+      console.error('Anthropic analysis error:', error);
       
-      if (error.status === 401) {
+      // Better error handling
+      if (error.status === 401 || error.message?.includes('invalid')) {
         throw new Error('Anthropic API key is invalid or not properly set');
       }
       

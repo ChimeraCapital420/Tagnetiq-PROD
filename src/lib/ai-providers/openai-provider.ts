@@ -10,9 +10,6 @@ export class OpenAIProvider extends BaseAIProvider {
     const startTime = Date.now();
     
     try {
-      // Enhanced prompt with JSON enforcement
-      const jsonEnforcedPrompt = `You are a JSON-only response assistant. ${prompt}`;
-      
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -20,26 +17,32 @@ export class OpenAIProvider extends BaseAIProvider {
           'Authorization': `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: this.provider.model,
+          model: this.provider.model || 'gpt-4o-mini', // Use cheaper model to avoid rate limits
           max_tokens: 800,
           response_format: { type: "json_object" },
           messages: [{
             role: 'system',
-            content: 'You are a valuation expert. Always respond with ONLY a valid JSON object. Never include markdown formatting or any text outside the JSON structure.'
+            content: 'You are a valuation expert. Always respond with ONLY a valid JSON object.'
           }, {
             role: 'user',
             content: [
-              { type: 'text', text: jsonEnforcedPrompt },
+              { type: 'text', text: prompt },
               ...images.map(img => ({
                 type: 'image_url',
-                image_url: { url: img }
+                image_url: { 
+                  url: img,
+                  detail: 'low' // Use low detail to reduce costs and rate limits
+                }
               }))
             ]
-          }]
+          }],
+          temperature: 0.1
         })
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('OpenAI API error:', response.status, errorText);
         throw new Error(`OpenAI API error: ${response.status}`);
       }
 
