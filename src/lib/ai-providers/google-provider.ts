@@ -78,10 +78,10 @@ export class GoogleProvider extends BaseAIProvider {
         }
       ];
 
-      console.log(`🔍 Google: Using ${images.length > 0 ? 'Gemini Flash Vision' : 'Gemini Flash'} model`);
+      console.log(`🔍 Google: Using Gemini 2.5 Flash-Lite model`);
 
-      // FIXED: Use working Gemini model names
-      const model = 'gemini-1.5-flash';
+      // FIXED: Use current working Gemini model
+      const model = 'gemini-2.5-flash-lite';
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.apiKey}`;
 
       const response = await fetch(endpoint, {
@@ -97,89 +97,4 @@ export class GoogleProvider extends BaseAIProvider {
         console.error('Google API error details:', response.status, errorText);
         
         if (response.status === 429) {
-          throw new Error('Gemini API error: 429');
-        } else if (response.status === 400) {
-          throw new Error(`Gemini API error: 400 - ${errorText}`);
-        } else if (response.status === 403) {
-          throw new Error(`Gemini API error: 403 - API key may be invalid or quota exceeded`);
-        }
-        
-        throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
-      }
-
-      const data = await response.json();
-      console.log('🔍 Google raw response structure:', JSON.stringify(data, null, 2).substring(0, 500));
-
-      // Extract text from Gemini response
-      let responseText = '';
-      if (data.candidates && data.candidates.length > 0) {
-        const candidate = data.candidates[0];
-        if (candidate.content && candidate.content.parts && candidate.content.parts.length > 0) {
-          responseText = candidate.content.parts[0].text || '';
-        }
-      }
-
-      if (!responseText) {
-        console.warn('Google: No response text found, checking if blocked by safety filters');
-        if (data.candidates && data.candidates[0]?.finishReason === 'SAFETY') {
-          throw new Error('Google: Response blocked by safety filters - try adjusting the prompt');
-        }
-        throw new Error('Google: No valid response received from Gemini API');
-      }
-
-      console.log('🔍 Google response text preview:', responseText.substring(0, 200) + '...');
-
-      // Clean and parse the response
-      let cleanedResponse = responseText.trim();
-      
-      // Remove any markdown code blocks
-      cleanedResponse = cleanedResponse.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
-      
-      // Try to extract JSON if it's wrapped in text
-      const jsonMatch = cleanedResponse.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        cleanedResponse = jsonMatch[0];
-      }
-
-      const parsed = this.parseAnalysisResult(cleanedResponse);
-      
-      if (!parsed) {
-        console.warn('Google: Failed to parse response, creating fallback');
-        return {
-          response: {
-            itemName: 'Google Analysis',
-            estimatedValue: 25.0,
-            decision: 'SELL' as const,
-            valuation_factors: [
-              'Google Gemini analysis completed',
-              'Market assessment performed', 
-              'Condition evaluation done',
-              'Price comparison executed',
-              'Resale potential reviewed'
-            ],
-            summary_reasoning: 'Analysis completed by Google Gemini with market research',
-            confidence: 0.75
-          },
-          confidence: 0.75,
-          responseTime: Date.now() - startTime
-        };
-      }
-
-      return {
-        response: parsed,
-        confidence: parsed?.confidence || 0.82,
-        responseTime: Date.now() - startTime
-      };
-
-    } catch (error: any) {
-      console.error('Google analysis error:', error);
-      
-      // Specific error handling for rate limits
-      if (error.message?.includes('429')) {
-        throw new Error('Gemini API error: 429'); // This will be caught by retry logic
-      }
-      
-      throw error;
-    }
-  }
-}
+          throw new Error('Gemini API
