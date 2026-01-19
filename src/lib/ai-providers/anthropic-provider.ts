@@ -4,14 +4,29 @@ import { AIProvider, AIAnalysisResponse } from '@/types/hydra';
 export class AnthropicProvider extends BaseAIProvider {
   constructor(config: AIProvider) {
     super(config);
-    // Override apiKey to use correct environment variable
-    this.apiKey = process.env.ANTHROPIC_SECRET || config.apiKey;
+    // Try multiple possible environment variable names
+    this.apiKey = process.env.ANTHROPIC_SECRET || 
+                  process.env.ANTHROPIC_API_KEY || 
+                  config.apiKey;
+    
+    // Debug logging (remove after testing)
+    console.log('🔍 Anthropic API Key check:', {
+      hasAnthropicSecret: !!process.env.ANTHROPIC_SECRET,
+      hasAnthropicApiKey: !!process.env.ANTHROPIC_API_KEY,
+      keyLength: this.apiKey?.length,
+      keyPrefix: this.apiKey?.substring(0, 15) + '...',
+      configKeyLength: config.apiKey?.length
+    });
   }
   
   async analyze(images: string[], prompt: string): Promise<AIAnalysisResponse> {
     const startTime = Date.now();
     
     try {
+      if (!this.apiKey || this.apiKey.length < 50) {
+        throw new Error('Anthropic API key is missing or too short');
+      }
+      
       let messages;
       
       if (images.length > 0) {
