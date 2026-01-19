@@ -221,12 +221,25 @@ export class HydraEngine {
     
     console.log(`🔍 Stage 1: Running ${imageProviders.length} image-capable AIs...`);
     
+    // CRITICAL DEBUG LOGGING FOR IMAGE PIPELINE
+    console.log('🔍 Image data debug info:', {
+      imageCount: images.length,
+      firstImageExists: !!images[0],
+      firstImageLength: images[0]?.length || 0,
+      firstImagePrefix: images[0]?.substring(0, 100) + '...',
+      hasDataPrefix: images[0]?.startsWith('data:image/') || false,
+      isBase64: images[0]?.includes('base64') || false,
+      imageType: images[0]?.substring(0, 30) || 'No image data'
+    });
+    
     // STAGE 1: Get descriptions from image-capable AIs
     let bestDescription = '';
     let itemName = '';
     const imageAnalysisPromises = imageProviders.map(async (provider) => {
       try {
+        console.log(`📸 ${provider.getProvider().name}: Processing image data (${images[0]?.length || 0} chars)`);
         const result = await provider.analyze(images, prompt);
+        console.log(`✅ ${provider.getProvider().name} responded in ${result.responseTime}ms`);
         return { provider: provider.getProvider(), result };
       } catch (error: any) {
         const errorMsg = error.message || 'Unknown error';
@@ -259,6 +272,9 @@ export class HydraEngine {
       if (result.status === 'fulfilled' && result.value?.result?.response) {
         const { provider, result: aiResult } = result.value;
         const analysis = aiResult.response as ParsedAnalysis;
+        
+        // LOG WHAT EACH AI ACTUALLY SAW
+        console.log(`🎯 ${provider.name} identified: "${analysis.itemName}" (confidence: ${aiResult.confidence})`);
         
         // Capture the best description for text-only AIs
         if (!bestDescription && analysis.itemName && analysis.summary_reasoning) {
@@ -301,6 +317,7 @@ export class HydraEngine {
       try {
         // Text-only providers get empty image array but enhanced prompt
         const result = await provider.analyze([], enhancedPrompt);
+        console.log(`✅ ${provider.getProvider().name} responded in ${result.responseTime}ms`);
         return { provider: provider.getProvider(), result };
       } catch (error: any) {
         const errorMsg = error.message || 'Unknown error';
@@ -320,6 +337,8 @@ export class HydraEngine {
       if (result.status === 'fulfilled' && result.value?.result?.response) {
         const { provider, result: aiResult } = result.value;
         const analysis = aiResult.response as ParsedAnalysis;
+        
+        console.log(`🎯 ${provider.name} analyzed: "${analysis.itemName}" (confidence: ${aiResult.confidence})`);
         
         const vote: ModelVote = {
           providerId: provider.id,
@@ -665,36 +684,6 @@ export class HydraEngine {
       console.log(`   Authority Verification: ✅ +5% boost`);
     }
     console.log(`   Final Confidence: ${confidence}% (Target: 97%+)`);
-    
-    // Detailed diagnostics if below 97% threshold
-    if (confidence < 97) {
-      console.warn(`⚠️  Confidence below 97% threshold - refinement recommended`);
-      console.warn(`   Root causes:`);
-      
-      if (criticallyLowVotes) {
-        console.error(`   ❌ CRITICAL: Low AI Participation: ${votes.length}/10 - Only ${votes.length} AI(s) responded!`);
-      } else if (participationRate < 0.8) {
-        console.warn(`   - Low AI Participation: ${votes.length}/10 (${(participationRate * 100).toFixed(1)}%)`);
-      }
-      
-      if (valueAgreement < 0.8) {
-        console.warn(`   - High Value Variance: ${(valueAgreement * 100).toFixed(1)}% agreement (CV: ${coefficientOfVariation.toFixed(2)})`);
-      }
-      
-      if (decisionAgreement < 0.8) {
-        console.warn(`   - Low Decision Agreement: ${(decisionAgreement * 100).toFixed(1)}% (${Math.round(buyWeight / totalWeight * 100)}% BUY vs ${Math.round(sellWeight / totalWeight * 100)}% SELL)`);
-      }
-      
-      if (avgConfidence < 0.85) {
-        console.warn(`   - Low Average AI Confidence: ${(avgConfidence * 100).toFixed(1)}%`);
-      }
-      
-      if (!this.authorityData) {
-        console.warn(`   - No Authority Verification: Could add +5% with Numista/PCGS/etc`);
-      }
-    } else {
-      console.log(`✅ Achieved ${confidence}% confidence - meets 97% target!`);
-    }
     
     // Most common item name (weighted by confidence)
     const nameVotes = votes.reduce((acc, v) => {
