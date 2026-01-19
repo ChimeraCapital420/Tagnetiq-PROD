@@ -78,10 +78,10 @@ export class GoogleProvider extends BaseAIProvider {
         }
       ];
 
-      console.log(`🔍 Google: Using ${images.length > 0 ? 'Gemini Pro Vision' : 'Gemini Pro'} model`);
+      console.log(`🔍 Google: Using ${images.length > 0 ? 'Gemini Flash Vision' : 'Gemini Flash'} model`);
 
-      // Choose the right Gemini model based on whether we have images
-      const model = images.length > 0 ? 'gemini-1.5-flash' : 'gemini-1.5-flash';
+      // FIXED: Use working Gemini model names
+      const model = 'gemini-1.5-flash';
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.apiKey}`;
 
       const response = await fetch(endpoint, {
