@@ -8,15 +8,6 @@ export class AnthropicProvider extends BaseAIProvider {
     this.apiKey = process.env.ANTHROPIC_SECRET || 
                   process.env.ANTHROPIC_API_KEY || 
                   config.apiKey;
-    
-    // Debug logging (remove after testing)
-    console.log('🔍 Anthropic API Key check:', {
-      hasAnthropicSecret: !!process.env.ANTHROPIC_SECRET,
-      hasAnthropicApiKey: !!process.env.ANTHROPIC_API_KEY,
-      keyLength: this.apiKey?.length,
-      keyPrefix: this.apiKey?.substring(0, 15) + '...',
-      configKeyLength: config.apiKey?.length
-    });
   }
   
   async analyze(images: string[], prompt: string): Promise<AIAnalysisResponse> {
@@ -59,7 +50,7 @@ export class AnthropicProvider extends BaseAIProvider {
           'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify({
-          model: 'claude-3-5-sonnet-20241022',
+          model: 'claude-3-5-sonnet-latest', // Updated to current model
           max_tokens: 1024,
           messages,
           temperature: 0.1,
