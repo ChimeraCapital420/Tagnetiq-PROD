@@ -1,4 +1,4 @@
-// FORCE REDEPLOY v2.2 - Fixed brand identification bias
+// FORCE REDEPLOY v2.3 - Enhanced anti-bragging prompt
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -104,8 +104,8 @@ async function verifyUser(req: VercelRequest) {
 
 // Main analysis function using dynamic import
 async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult> {
-  // IMPROVED PROMPT: Focus on observable features, prevent brand guessing
-  const jsonPrompt = `You are a professional appraiser analyzing an item for resale value. Focus ONLY on what you can actually observe.
+  // ENHANCED ANTI-BRAGGING PROMPT: Focus strictly on physical item characteristics
+  const jsonPrompt = `You are a professional appraiser analyzing an item for resale value. Focus ONLY on what you can actually observe about the PHYSICAL ITEM.
 
 CRITICAL INSTRUCTIONS:
 1. You MUST respond with ONLY a valid JSON object - no other text, no markdown, no explanations
@@ -114,25 +114,34 @@ CRITICAL INSTRUCTIONS:
   "itemName": "specific item name based on what you see",
   "estimatedValue": 25.99,
   "decision": "BUY",
-  "valuation_factors": ["Market demand for this item", "Physical condition observed", "Brand reputation and value", "Rarity or collectibility", "Current market price trends"],
+  "valuation_factors": ["Physical condition: excellent/good/fair/poor", "Material quality: leather/fabric/metal/etc", "Brand recognition: visible/none", "Market demand: high/medium/low", "Resale potential: strong/weak"],
   "summary_reasoning": "Brief explanation of why this specific item is worth the estimated value",
   "confidence": 0.85
 }
+
+FORBIDDEN - NEVER mention these in valuation_factors:
+❌ "AI analysis" ❌ "Professional analysis" ❌ "Machine learning" ❌ "Image recognition" 
+❌ "Advanced algorithms" ❌ "Technical assessment" ❌ "AI-powered evaluation"
+❌ "Detailed analysis" ❌ "Comprehensive evaluation" ❌ "Professional presentation"
+❌ "High-demand AI valuation services" ❌ "Advanced analytical capabilities"
+
+REQUIRED - valuation_factors must ONLY describe the PHYSICAL ITEM:
+✅ "Excellent physical condition" ✅ "High-quality leather construction" ✅ "Recognizable brand logo"
+✅ "Strong market demand for this type" ✅ "Good resale potential" ✅ "Minimal wear visible"
+✅ "Premium materials used" ✅ "Popular style/design" ✅ "Collectible appeal"
 
 IMPORTANT RULES:
 - ONLY identify brands you can CLEARLY see and verify from logos, tags, or distinctive features
 - DO NOT guess or assume luxury brands like "Louis Vuitton" unless you see clear LV monogram or authentic markings
 - If you cannot clearly identify the brand, use generic descriptions like "leather handbag" or "designer-style purse"
 - Be specific about what you observe: "brown leather bag with gold hardware" not "Louis Vuitton bag"
-- Focus on actual visible characteristics: condition, materials, construction quality
-- valuation_factors should describe observable ITEM characteristics (condition, materials, craftsmanship, etc.)
-- Do NOT mention "AI analysis", "machine learning", "image recognition", or similar technical terms
+- Focus on: condition, materials, craftsmanship, brand visibility, market appeal, rarity, functionality
 - estimatedValue must be a realistic number based on what you can actually see
 - decision must be exactly "BUY" or "SELL" (uppercase)
 - confidence must be between 0 and 1
 - Include exactly 5 valuation_factors focused on observable product features
 
-Analyze this item for resale potential based only on what you can clearly observe:`;
+Analyze this item for resale potential based on physical characteristics only:`;
   
   let imageData = '';
   
