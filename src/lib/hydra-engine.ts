@@ -22,15 +22,21 @@ interface ProviderStatus {
 export class HydraEngine {
   private providers: BaseAIProvider[] = [];
   private analysisId: string;
+  private userId?: string;
+  private userTier: string = 'FREE';
+  private maxProviders: number = 8;
   private authorityData?: any;
   private providerStatuses: ProviderStatus[] = [];
   
-  constructor() {
-    this.analysisId = `analysis_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  constructor(userId?: string, userTier: string = 'FREE') {
+    this.userId = userId;
+    this.userTier = userTier;
+    this.analysisId = `analysis_${userId || 'anon'}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
   
   async initialize() {
     console.log('🔧 Initializing Hydra Engine...');
+    console.log(`👤 User tier: ${this.userTier} (max ${this.maxProviders} AI providers)`);
     
     // Load active providers from database
     const { data: providerConfigs, error } = await supabase
@@ -206,9 +212,13 @@ export class HydraEngine {
     // Log which providers were successfully initialized
     console.log(`🚀 Active AI Providers: ${this.providers.map(p => p.getProvider().name).join(', ')}`);
     
-    // Separate providers by capability
-    const imageProviders = this.providers.filter(p => 
-      ['OpenAI', 'Anthropic', 'Google', 'DeepSeek'].includes(p.getProvider().name)
+    // UPDATED: Separate providers by capability and priority
+    const primaryImageProviders = this.providers.filter(p => 
+      ['OpenAI', 'Anthropic', 'Google'].includes(p.getProvider().name)
+    );
+    
+    const backupImageProviders = this.providers.filter(p => 
+      ['DeepSeek'].includes(p.getProvider().name)
     );
     
     const textOnlyProviders = this.providers.filter(p => 
@@ -219,7 +229,7 @@ export class HydraEngine {
       ['Perplexity'].includes(p.getProvider().name)
     );
     
-    console.log(`🔍 Stage 1: Running ${imageProviders.length} image-capable AIs...`);
+    console.log(`🔍 Stage 1A: Running ${primaryImageProviders.length} PRIMARY image AIs...`);
     
     // CRITICAL DEBUG LOGGING FOR IMAGE PIPELINE
     console.log('🔍 Image data debug info:', {
@@ -232,20 +242,20 @@ export class HydraEngine {
       imageType: images[0]?.substring(0, 30) || 'No image data'
     });
     
-    // STAGE 1: Get descriptions from image-capable AIs
+    // STAGE 1A: Primary image providers (OpenAI, Anthropic, Google)
     let bestDescription = '';
     let itemName = '';
-    const imageAnalysisPromises = imageProviders.map(async (provider) => {
+    const primaryImageAnalysisPromises = primaryImageProviders.map(async (provider) => {
       try {
-        console.log(`📸 ${provider.getProvider().name}: Processing image data (${images[0]?.length || 0} chars)`);
+        console.log(`📸 PRIMARY ${provider.getProvider().name}: Processing image data (${images[0]?.length || 0} chars)`);
         const result = await provider.analyze(images, prompt);
-        console.log(`✅ ${provider.getProvider().name} responded in ${result.responseTime}ms`);
+        console.log(`✅ PRIMARY ${provider.getProvider().name} responded in ${result.responseTime}ms`);
         return { provider: provider.getProvider(), result };
       } catch (error: any) {
         const errorMsg = error.message || 'Unknown error';
         providerFailures[provider.getProvider().name] = errorMsg;
         
-        console.error(`${provider.getProvider().name} analysis error:`, error);
+        console.error(`❌ PRIMARY ${provider.getProvider().name} failed:`, error);
         
         // Log specific error types for debugging
         if (errorMsg.includes('401') || errorMsg.includes('authentication')) {
@@ -262,21 +272,21 @@ export class HydraEngine {
       }
     });
     
-    const imageResults = await Promise.allSettled(imageAnalysisPromises);
+    const primaryResults = await Promise.allSettled(primaryImageAnalysisPromises);
     
-    // Extract best description from image AI results
-    const imageVotes: ModelVote[] = [];
-    const imageAnalyses: ParsedAnalysis[] = [];
+    // Extract results from primary image AI results
+    const primaryImageVotes: ModelVote[] = [];
+    const primaryImageAnalyses: ParsedAnalysis[] = [];
     
-    for (const result of imageResults) {
+    for (const result of primaryResults) {
       if (result.status === 'fulfilled' && result.value?.result?.response) {
         const { provider, result: aiResult } = result.value;
         const analysis = aiResult.response as ParsedAnalysis;
         
-        // LOG WHAT EACH AI ACTUALLY SAW
-        console.log(`🎯 ${provider.name} identified: "${analysis.itemName}" (confidence: ${aiResult.confidence})`);
+        // LOG WHAT EACH PRIMARY AI ACTUALLY SAW
+        console.log(`🎯 PRIMARY ${provider.name} identified: "${analysis.itemName}" (confidence: ${aiResult.confidence})`);
         
-        // Capture the best description for text-only AIs
+        // Capture the best description for other AIs
         if (!bestDescription && analysis.itemName && analysis.summary_reasoning) {
           bestDescription = `${analysis.itemName}: ${analysis.summary_reasoning}`;
           itemName = analysis.itemName;
@@ -295,15 +305,78 @@ export class HydraEngine {
           success: true
         };
         
-        imageVotes.push(vote);
-        imageAnalyses.push(analysis);
+        primaryImageVotes.push(vote);
+        primaryImageAnalyses.push(analysis);
         
         // Save vote to database
         await this.saveVote(vote);
       }
     }
     
-    console.log(`✅ Stage 1 complete: ${imageVotes.length} image AIs voted`);
+    console.log(`✅ Stage 1A complete: ${primaryImageVotes.length} PRIMARY image AIs voted`);
+    
+    // STAGE 1B: Backup image providers (DeepSeek) - ONLY if primary failed
+    let backupImageVotes: ModelVote[] = [];
+    let backupImageAnalyses: ParsedAnalysis[] = [];
+    
+    if (primaryImageVotes.length === 0 && backupImageProviders.length > 0) {
+      console.warn(`⚠️ All primary vision AIs failed! Running ${backupImageProviders.length} BACKUP image AIs...`);
+      
+      const backupImageAnalysisPromises = backupImageProviders.map(async (provider) => {
+        try {
+          console.log(`📸 BACKUP ${provider.getProvider().name}: Processing image data (${images[0]?.length || 0} chars)`);
+          const result = await provider.analyze(images, prompt);
+          console.log(`✅ BACKUP ${provider.getProvider().name} responded in ${result.responseTime}ms`);
+          return { provider: provider.getProvider(), result };
+        } catch (error: any) {
+          const errorMsg = error.message || 'Unknown error';
+          providerFailures[provider.getProvider().name] = errorMsg;
+          console.error(`❌ BACKUP ${provider.getProvider().name} failed:`, error);
+          return null;
+        }
+      });
+      
+      const backupResults = await Promise.allSettled(backupImageAnalysisPromises);
+      
+      for (const result of backupResults) {
+        if (result.status === 'fulfilled' && result.value?.result?.response) {
+          const { provider, result: aiResult } = result.value;
+          const analysis = aiResult.response as ParsedAnalysis;
+          
+          // LOG WHAT BACKUP AI SAW (with warning)
+          console.warn(`🎯 BACKUP ${provider.name} identified: "${analysis.itemName}" (confidence: ${aiResult.confidence}) - BACKUP ONLY!`);
+          
+          // Capture description if still needed
+          if (!bestDescription && analysis.itemName && analysis.summary_reasoning) {
+            bestDescription = `${analysis.itemName}: ${analysis.summary_reasoning}`;
+            itemName = analysis.itemName;
+          }
+          
+          const vote: ModelVote = {
+            providerId: provider.id,
+            providerName: provider.name,
+            itemName: analysis.itemName,
+            estimatedValue: parseFloat(analysis.estimatedValue.toString()),
+            decision: analysis.decision,
+            confidence: aiResult.confidence * 0.7, // Reduce confidence for backup
+            responseTime: aiResult.responseTime,
+            weight: this.calculateWeight(provider, aiResult.confidence) * 0.7, // Reduce weight for backup
+            rawResponse: analysis,
+            success: true
+          };
+          
+          backupImageVotes.push(vote);
+          backupImageAnalyses.push(analysis);
+          
+          // Save vote to database
+          await this.saveVote(vote);
+        }
+      }
+      
+      console.log(`✅ Stage 1B complete: ${backupImageVotes.length} BACKUP image AIs voted`);
+    } else if (primaryImageVotes.length > 0) {
+      console.log(`✅ Stage 1B skipped: Primary vision AIs succeeded, backup not needed`);
+    }
     
     // STAGE 2: Enhanced prompt for text-only AIs with description
     const enhancedPrompt = bestDescription 
@@ -415,11 +488,15 @@ export class HydraEngine {
       console.log(`✅ Stage 3 complete: ${searchVotes.length} market search results`);
     }
     
-    // Combine all votes
-    const allVotes = [...imageVotes, ...textVotes, ...searchVotes];
-    const allAnalyses = [...imageAnalyses, ...textAnalyses, ...searchAnalyses];
+    // Combine all votes (primary gets priority over backup)
+    const allVotes = [...primaryImageVotes, ...backupImageVotes, ...textVotes, ...searchVotes];
+    const allAnalyses = [...primaryImageAnalyses, ...backupImageAnalyses, ...textAnalyses, ...searchAnalyses];
     
     console.log(`🎯 Total votes collected: ${allVotes.length} from ${this.providers.length} AI providers`);
+    console.log(`   └── Primary vision: ${primaryImageVotes.length}`);
+    console.log(`   └── Backup vision: ${backupImageVotes.length}`);
+    console.log(`   └── Text analysis: ${textVotes.length}`);
+    console.log(`   └── Market search: ${searchVotes.length}`);
     
     // Add failure report to logs
     if (Object.keys(providerFailures).length > 0) {
