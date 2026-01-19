@@ -50,7 +50,7 @@ export class AnthropicProvider extends BaseAIProvider {
           'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify({
-          model: 'claude-3-5-sonnet-20241022', // FIXED: Use working model name
+          model: 'claude-sonnet-4-20250514', // FIXED: Current working Claude Sonnet 4
           max_tokens: 1024,
           messages,
           temperature: 0.1,
