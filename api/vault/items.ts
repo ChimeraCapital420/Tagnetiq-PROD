@@ -10,25 +10,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     switch (req.method) {
       case 'GET':
-        const { vaultId, page = '1', limit = '20' } = req.query;
+        const { vaultId } = req.query;
 
         if (!vaultId || typeof vaultId !== 'string') {
           return res.status(400).json({ error: 'vaultId query parameter is required.' });
         }
-
-        // Parse pagination parameters
-        const pageNum = parseInt(page as string, 10);
-        const limitNum = Math.min(parseInt(limit as string, 10), 50); // Max 50 items per page
-        
-        if (isNaN(pageNum) || pageNum < 1) {
-          return res.status(400).json({ error: 'Invalid page parameter.' });
-        }
-        
-        if (isNaN(limitNum) || limitNum < 1) {
-          return res.status(400).json({ error: 'Invalid limit parameter.' });
-        }
-
-        const offset = (pageNum - 1) * limitNum;
 
         // Verify vault ownership
         const { data: vault, error: vaultError } = await supaAdmin
@@ -45,45 +31,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(403).json({ error: 'Access denied.' });
         }
 
-        // Fetch total count and items with pagination
-        const [
-          { count: totalCount, error: countError },
-          { data: items, error: itemsError }
-        ] = await Promise.all([
-          // Get total count
-          supaAdmin
-            .from('vault_items')
-            .select('*', { count: 'exact', head: true })
-            .eq('vault_id', vaultId),
-          // Get paginated items
-          supaAdmin
-            .from('vault_items')
-            .select('*')
-            .eq('vault_id', vaultId)
-            .order('created_at', { ascending: false })
-            .range(offset, offset + limitNum - 1)
-        ]);
+        // Fetch all items for this vault
+        const { data: items, error: itemsError } = await supaAdmin
+          .from('vault_items')
+          .select('*')
+          .eq('vault_id', vaultId)
+          .order('created_at', { ascending: false });
 
-        if (countError || itemsError) {
-          throw countError || itemsError;
-        }
+        if (itemsError) throw itemsError;
 
-        return res.status(200).json({
-          items: items || [],
-          pagination: {
-            page: pageNum,
-            limit: limitNum,
-            total: totalCount || 0,
-            pages: Math.ceil((totalCount || 0) / limitNum)
-          }
-        });
+        // Return items array directly (frontend expects array, not paginated object)
+        return res.status(200).json(items || []);
 
       case 'POST':
-        const { vault_id, asset_name, valuation_data, photos } = req.body;
+        const { vault_id, asset_name, valuation_data, photos, notes, serial_number } = req.body;
 
-        if (!vault_id || !asset_name || !valuation_data) {
+        if (!vault_id || !asset_name) {
           return res.status(400).json({ 
-            error: 'Missing required fields: vault_id, asset_name, and valuation_data.' 
+            error: 'Missing required fields: vault_id and asset_name are required.' 
           });
         }
 
@@ -102,23 +67,109 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(403).json({ error: 'Cannot add items to a vault you do not own.' });
         }
 
+        // Insert with user_id included
         const { data: newItem, error: itemError } = await supaAdmin
           .from('vault_items')
           .insert({
             vault_id,
+            user_id: user.id,  // <-- THIS WAS MISSING
             asset_name,
-            valuation_data,
+            valuation_data: valuation_data || null,
             photos: photos || [],
+            notes: notes || null,
+            serial_number: serial_number || null,
           })
           .select()
           .single();
 
-        if (itemError) throw itemError;
+        if (itemError) {
+          console.error('Insert error:', itemError);
+          throw itemError;
+        }
 
         return res.status(201).json(newItem);
 
+      case 'PUT':
+        // Update a vault item
+        const { id } = req.query;
+        const updateData = req.body;
+
+        if (!id || typeof id !== 'string') {
+          return res.status(400).json({ error: 'Item ID is required.' });
+        }
+
+        // Verify item ownership
+        const { data: existingItem, error: fetchItemError } = await supaAdmin
+          .from('vault_items')
+          .select('user_id')
+          .eq('id', id)
+          .single();
+
+        if (fetchItemError || !existingItem) {
+          return res.status(404).json({ error: 'Item not found.' });
+        }
+
+        if (existingItem.user_id !== user.id) {
+          return res.status(403).json({ error: 'Access denied.' });
+        }
+
+        // Build update object with only allowed fields
+        const allowedFields = ['asset_name', 'valuation_data', 'photos', 'notes', 'serial_number', 'receipt_url', 'owner_valuation', 'provenance_documents'];
+        const updates: Record<string, any> = {};
+        
+        for (const field of allowedFields) {
+          if (updateData[field] !== undefined) {
+            updates[field] = updateData[field];
+          }
+        }
+
+        updates.updated_at = new Date().toISOString();
+
+        const { data: updatedItem, error: updateError } = await supaAdmin
+          .from('vault_items')
+          .update(updates)
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (updateError) throw updateError;
+
+        return res.status(200).json(updatedItem);
+
+      case 'DELETE':
+        // Delete a vault item
+        const { id: deleteId } = req.query;
+
+        if (!deleteId || typeof deleteId !== 'string') {
+          return res.status(400).json({ error: 'Item ID is required.' });
+        }
+
+        // Verify item ownership
+        const { data: itemToDelete, error: verifyItemError } = await supaAdmin
+          .from('vault_items')
+          .select('user_id')
+          .eq('id', deleteId)
+          .single();
+
+        if (verifyItemError || !itemToDelete) {
+          return res.status(404).json({ error: 'Item not found.' });
+        }
+
+        if (itemToDelete.user_id !== user.id) {
+          return res.status(403).json({ error: 'Access denied.' });
+        }
+
+        const { error: deleteError } = await supaAdmin
+          .from('vault_items')
+          .delete()
+          .eq('id', deleteId);
+
+        if (deleteError) throw deleteError;
+
+        return res.status(200).json({ success: true, message: 'Item deleted successfully.' });
+
       default:
-        res.setHeader('Allow', ['GET', 'POST']);
+        res.setHeader('Allow', ['GET', 'POST', 'PUT', 'DELETE']);
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
