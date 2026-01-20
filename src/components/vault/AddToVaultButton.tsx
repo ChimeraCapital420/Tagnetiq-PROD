@@ -8,10 +8,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { ShieldCheck, Loader2, Plus, Vault, ChevronLeft, CheckCircle2, AlertCircle, FolderPlus } from 'lucide-react';
+import { ShieldCheck, Loader2, Plus, Vault, ChevronLeft, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface AddToVaultButtonProps {
   analysisResult: any;
@@ -74,7 +73,6 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
       setAddedToVault(null);
       setNewVaultName('');
     } else {
-      // Reset selection when dialog closes
       setSelectedVaultId('');
     }
   }, [isDialogOpen]);
@@ -112,7 +110,7 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
       setSelectedVaultId(newVault.id);
       setDialogStep('select');
       setNewVaultName('');
-      toast.success(`"${newVault.name}" created`);
+      toast.success(`"${newVault.name}" created!`);
     } catch (error: any) {
       toast.error('Failed to create vault', { description: error.message });
     } finally {
@@ -170,6 +168,7 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
   };
 
   const selectedVault = vaults?.find(v => v.id === selectedVaultId);
+  const hasVaults = vaults && vaults.length > 0;
 
   const renderSelectStep = () => (
     <>
@@ -184,78 +183,92 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
       </DialogHeader>
 
       <div className="space-y-4 py-4">
-        {isLoadingVaults ? (
-          <div className="flex items-center justify-center py-6">
-            <Loader2 className="h-6 w-6 animate-spin text-purple-400" />
-            <span className="ml-2 text-gray-400">Loading vaults...</span>
-          </div>
-        ) : vaultsError ? (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription className="flex items-center justify-between">
-              <span>Failed to load vaults</span>
-              <Button variant="link" className="p-0 h-auto" onClick={() => refetch()}>
+        {/* Vault Selection Dropdown */}
+        <div className="space-y-2">
+          <Label htmlFor="vault-select">Select Vault</Label>
+          
+          {isLoadingVaults ? (
+            <div className="flex items-center justify-center py-4 border rounded-md bg-gray-800/30">
+              <Loader2 className="h-5 w-5 animate-spin text-purple-400" />
+              <span className="ml-2 text-gray-400 text-sm">Loading vaults...</span>
+            </div>
+          ) : vaultsError ? (
+            <div className="flex items-center justify-between p-3 border border-yellow-500/30 rounded-md bg-yellow-500/10">
+              <div className="flex items-center gap-2 text-yellow-400">
+                <AlertCircle className="h-4 w-4" />
+                <span className="text-sm">Couldn't load vaults</span>
+              </div>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => refetch()}
+                className="h-7 text-yellow-400 hover:text-yellow-300"
+              >
+                <RefreshCw className="h-3 w-3 mr-1" />
                 Retry
               </Button>
-            </AlertDescription>
-          </Alert>
-        ) : (
-          <>
-            <div className="space-y-2">
-              <Label htmlFor="vault-select">Select Vault</Label>
-              <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
-                <SelectTrigger id="vault-select" className="w-full">
-                  <SelectValue placeholder="Choose a vault...">
-                    {selectedVault && (
-                      <div className="flex items-center gap-2">
-                        <Vault className="h-4 w-4 text-purple-400" />
-                        <span>{selectedVault.name}</span>
-                        {selectedVault.item_count !== undefined && (
-                          <span className="text-gray-400 text-sm">
-                            ({selectedVault.item_count})
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {vaults && vaults.length > 0 ? (
-                    vaults.map((vault) => (
-                      <SelectItem key={vault.id} value={vault.id}>
-                        <div className="flex items-center justify-between w-full gap-4">
-                          <div className="flex items-center gap-2">
-                            <Vault className="h-4 w-4 text-purple-400" />
-                            <span>{vault.name}</span>
-                          </div>
-                          {vault.item_count !== undefined && (
-                            <span className="text-gray-400 text-sm">
-                              {vault.item_count} {vault.item_count === 1 ? 'item' : 'items'}
-                            </span>
-                          )}
-                        </div>
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <div className="p-2 text-center text-gray-400 text-sm">
-                      No vaults yet. Create one below.
+            </div>
+          ) : hasVaults ? (
+            <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
+              <SelectTrigger id="vault-select" className="w-full">
+                <SelectValue placeholder="Choose a vault...">
+                  {selectedVault && (
+                    <div className="flex items-center gap-2">
+                      <Vault className="h-4 w-4 text-purple-400" />
+                      <span>{selectedVault.name}</span>
+                      {selectedVault.item_count !== undefined && (
+                        <span className="text-gray-400 text-sm">
+                          ({selectedVault.item_count})
+                        </span>
+                      )}
                     </div>
                   )}
-                </SelectContent>
-              </Select>
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {vaults.map((vault) => (
+                  <SelectItem key={vault.id} value={vault.id}>
+                    <div className="flex items-center gap-3">
+                      <Vault className="h-4 w-4 text-purple-400 flex-shrink-0" />
+                      <span className="flex-1">{vault.name}</span>
+                      {vault.item_count !== undefined && (
+                        <span className="text-gray-400 text-xs">
+                          {vault.item_count} {vault.item_count === 1 ? 'item' : 'items'}
+                        </span>
+                      )}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <div className="p-4 border border-dashed border-gray-600 rounded-md text-center bg-gray-800/20">
+              <Vault className="h-8 w-8 text-gray-500 mx-auto mb-2" />
+              <p className="text-gray-400 text-sm">No vaults yet</p>
+              <p className="text-gray-500 text-xs">Create your first vault below</p>
             </div>
+          )}
+        </div>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full text-purple-400 hover:text-purple-300 hover:bg-purple-500/10"
-              onClick={() => setDialogStep('create')}
-            >
-              <FolderPlus className="mr-2 h-4 w-4" />
-              Create New Vault
-            </Button>
-          </>
-        )}
+        {/* Divider */}
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t border-gray-700" />
+          </div>
+          <div className="relative flex justify-center text-xs uppercase">
+            <span className="bg-gray-900 px-2 text-gray-500">or</span>
+          </div>
+        </div>
+
+        {/* Create New Vault Button - Always Visible */}
+        <Button
+          variant="outline"
+          className="w-full border-purple-500/50 text-purple-400 hover:bg-purple-500/10 hover:text-purple-300 hover:border-purple-500"
+          onClick={() => setDialogStep('create')}
+        >
+          <Plus className="mr-2 h-4 w-4" />
+          Create New Vault
+        </Button>
       </div>
 
       <DialogFooter>
@@ -342,7 +355,7 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
           ) : (
             <>
               <Plus className="mr-2 h-4 w-4" />
-              Create
+              Create Vault
             </>
           )}
         </Button>
@@ -390,7 +403,7 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
       </Button>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[400px]">
+        <DialogContent className="sm:max-w-[425px]">
           {dialogStep === 'select' && renderSelectStep()}
           {dialogStep === 'create' && renderCreateStep()}
           {dialogStep === 'success' && renderSuccessStep()}
