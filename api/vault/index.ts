@@ -14,35 +14,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Fetch all vaults for the authenticated user
         const { data: vaults, error: vaultsError } = await supaAdmin
           .from('vaults')
-          .select(`
-            *,
-            vault_items (count)
-          `)
+          .select('*')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false });
 
         if (vaultsError) throw vaultsError;
 
-        // Calculate total value for each vault
+        // Calculate item count and total value for each vault
         const vaultsWithStats = await Promise.all(
           (vaults || []).map(async (vault) => {
-            const { data: items } = await supaAdmin
+            const { data: items, error: itemsError } = await supaAdmin
               .from('vault_items')
-              .select('valuation_data')
+              .select('id, valuation_data')
               .eq('vault_id', vault.id);
 
+            if (itemsError) {
+              console.error(`Error fetching items for vault ${vault.id}:`, itemsError);
+              return {
+                ...vault,
+                item_count: 0,
+                total_value: 0
+              };
+            }
+
+            const itemCount = items?.length || 0;
+            
             const totalValue = items?.reduce((sum, item) => {
               const value = item.valuation_data?.estimatedValue;
               if (value && typeof value === 'string') {
                 const numValue = parseFloat(value.replace(/[^0-9.-]+/g, ''));
                 return sum + (isNaN(numValue) ? 0 : numValue);
+              } else if (value && typeof value === 'number') {
+                return sum + value;
               }
               return sum;
             }, 0) || 0;
 
             return {
               ...vault,
-              item_count: vault.vault_items?.[0]?.count || 0,
+              item_count: itemCount,
               total_value: totalValue
             };
           })
