@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { Loader2, AlertTriangle } from 'lucide-react';
+import { Loader2, AlertTriangle, ShieldCheck } from 'lucide-react';
 import {
   Alert,
   AlertDescription,
@@ -28,13 +28,15 @@ interface MfaSetupProps {
 
 export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
   const [qrCode, setQrCode] = useState<string | null>(null);
-  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [factorId, setFactorId] = useState<string | null>(null);
   const [verificationCode, setVerificationCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState('Initializing MFA Setup...');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [existingFactorId, setExistingFactorId] = useState<string | null>(null);
 
+  // Skip MFA setup and mark as enrolled (user can enable later)
   const handleSkipMFA = async () => {
     setIsLoading(true);
     try {
@@ -58,49 +60,63 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     }
   };
 
-  const handleConfirmReset = useCallback(async () => {
+  // Unenroll existing factor and re-enroll
+  const handleResetAndReenroll = useCallback(async () => {
     setIsLoading(true);
-    setStatusMessage('Resetting MFA configuration...');
+    setShowResetConfirm(false);
+    setStatusMessage('Removing existing MFA factor...');
+    
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Authentication session not found.");
-
-      const response = await fetch('/api/user/reset-mfa', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({ token: session.access_token }),
-      });
-
-      const responseText = await response.text();
+      // First, try to unenroll existing factors using the client-side API
+      const { data: factorsData } = await supabase.auth.mfa.listFactors();
       
-      if (!response.ok) {
-        console.error('MFA Reset API Error:', {
-          status: response.status,
-          statusText: response.statusText,
-          responseText: responseText.substring(0, 200)
-        });
-        
-        let errorMessage = `Server error (${response.status})`;
-        try {
-          const errorData = JSON.parse(responseText);
-          errorMessage = errorData.error || errorMessage;
-        } catch (e) {
-          if (response.status === 500) {
-            errorMessage = "Server error occurred. Try the 'Skip MFA Setup' option instead.";
+      if (factorsData && factorsData.totp && factorsData.totp.length > 0) {
+        for (const factor of factorsData.totp) {
+          try {
+            // Unenroll each factor
+            const { error: unenrollError } = await supabase.auth.mfa.unenroll({
+              factorId: factor.id,
+            });
+            
+            if (unenrollError) {
+              console.warn(`Could not unenroll factor ${factor.id}:`, unenrollError.message);
+            } else {
+              console.log(`Successfully unenrolled factor: ${factor.id}`);
+            }
+          } catch (e: any) {
+            console.warn(`Error unenrolling factor ${factor.id}:`, e.message);
           }
         }
-        throw new Error(errorMessage);
       }
+
+      // Also call the server-side reset for profile sync
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        try {
+          await fetch('/api/user/reset-mfa', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session.access_token}`
+            },
+            body: JSON.stringify({ token: session.access_token }),
+          });
+        } catch (e) {
+          // Server-side reset is optional, continue anyway
+          console.log('Server-side MFA reset optional - continuing with client-side');
+        }
+      }
+
+      toast.success("Existing MFA removed. Setting up new MFA...");
       
-      const data = JSON.parse(responseText);
+      // Small delay to let Supabase sync
+      await new Promise(resolve => setTimeout(resolve, 500));
       
-      toast.success("MFA has been reset. Setting up new MFA...");
-      setShowResetConfirm(false);
-      enrollMfa(true);
+      // Now enroll fresh
+      await enrollMfa(true);
+      
     } catch (err: any) {
+      console.error('Reset MFA error:', err);
       setError(err.message);
       toast.error("MFA Reset Failed", { 
         description: err.message,
@@ -113,40 +129,97 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     }
   }, []);
 
+  // Main enrollment function
   const enrollMfa = useCallback(async (skipCheck = false) => {
     setIsLoading(true);
     setError(null);
+    setQrCode(null);
+    setFactorId(null);
     
     try {
       if (!skipCheck) {
         setStatusMessage('Checking existing MFA setup...');
         const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
-        if (factorsError) throw new Error(`Could not verify MFA status: ${factorsError.message}`);
-
-        const existingFactor = factorsData.totp.find(f => f.status === 'verified');
-        if (existingFactor) {
-          setShowResetConfirm(true);
-          setIsLoading(false);
-          return;
+        
+        if (factorsError) {
+          console.warn('Could not list MFA factors:', factorsError.message);
+          // Continue anyway - try to enroll
+        } else if (factorsData && factorsData.totp && factorsData.totp.length > 0) {
+          // Check for verified factors
+          const verifiedFactor = factorsData.totp.find(f => f.status === 'verified');
+          
+          if (verifiedFactor) {
+            // User already has verified MFA
+            setExistingFactorId(verifiedFactor.id);
+            setShowResetConfirm(true);
+            setIsLoading(false);
+            return;
+          }
+          
+          // Check for unverified factors (incomplete setup)
+          const unverifiedFactor = factorsData.totp.find(f => f.status === 'unverified');
+          if (unverifiedFactor) {
+            console.log('Found unverified factor, removing it first...');
+            try {
+              await supabase.auth.mfa.unenroll({ factorId: unverifiedFactor.id });
+            } catch (e) {
+              console.warn('Could not remove unverified factor:', e);
+            }
+          }
         }
       }
 
       setStatusMessage('Generating secure QR code...');
+      
       const { data, error: enrollError } = await supabase.auth.mfa.enroll({
         factorType: 'totp',
+        friendlyName: 'TagnetIQ Authenticator'
       });
 
-      if (enrollError) throw enrollError;
+      if (enrollError) {
+        // Handle specific error codes
+        if (enrollError.message.includes('factor already exists') || 
+            enrollError.message.includes('422') ||
+            enrollError.status === 422) {
+          // Factor exists - show reset dialog
+          setShowResetConfirm(true);
+          setIsLoading(false);
+          return;
+        }
+        throw enrollError;
+      }
 
-      setChallengeId(data.id);
+      if (!data || !data.totp) {
+        throw new Error('Failed to generate MFA enrollment data');
+      }
+
+      setFactorId(data.id);
       setQrCode(data.totp.qr_code);
       setStatusMessage('');
+      console.log('MFA enrollment initiated, factor ID:', data.id);
 
     } catch (err: any) {
+      console.error('MFA enrollment error:', err);
+      
+      // Check if error indicates existing factor
+      if (err.message?.includes('already') || err.status === 422) {
+        setShowResetConfirm(true);
+        setIsLoading(false);
+        return;
+      }
+      
       setError(err.message);
-      toast.error("MFA Setup Failed", { description: err.message });
+      toast.error("MFA Setup Failed", { 
+        description: err.message,
+        action: {
+          label: "Skip Setup",
+          onClick: handleSkipMFA
+        }
+      });
     } finally {
-      setIsLoading(false);
+      if (!showResetConfirm) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
@@ -154,10 +227,17 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     enrollMfa();
   }, [enrollMfa]);
 
+  // Verify the TOTP code
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!challengeId || !verificationCode) {
-      toast.error("Please enter the verification code.");
+    
+    if (!factorId) {
+      toast.error("MFA setup not initialized. Please refresh and try again.");
+      return;
+    }
+    
+    if (!verificationCode || verificationCode.length !== 6) {
+      toast.error("Please enter a valid 6-digit verification code.");
       return;
     }
 
@@ -165,40 +245,60 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     setError(null);
 
     try {
+      // Create a challenge
       const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
-        factorId: challengeId,
+        factorId: factorId,
       });
-      if (challengeError) throw challengeError;
+      
+      if (challengeError) {
+        throw new Error(`Challenge failed: ${challengeError.message}`);
+      }
 
+      // Verify the code
       const { error: verifyError } = await supabase.auth.mfa.verify({
-        factorId: challengeId,
+        factorId: factorId,
         challengeId: challengeData.id,
         code: verificationCode,
       });
-      if (verifyError) throw verifyError;
       
+      if (verifyError) {
+        throw new Error(`Verification failed: ${verifyError.message}`);
+      }
+      
+      // Update profile to mark MFA as enrolled
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Could not get user to update profile.");
+      if (user) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({ mfa_enrolled: true })
+          .eq('id', user.id);
+
+        if (profileError) {
+          console.warn('Could not update profile:', profileError.message);
+        }
+      }
+
+      toast.success("MFA Enabled Successfully!", {
+        description: "Your account is now protected with two-factor authentication."
+      });
       
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({ mfa_enrolled: true })
-        .eq('id', user.id);
-
-      if (profileError) throw profileError;
-
-      toast.success("MFA Enabled Successfully!");
       onSuccess();
 
     } catch (err: any) {
+      console.error('MFA verification error:', err);
       setError(err.message);
-      toast.error("Verification Failed", { description: err.message });
+      toast.error("Verification Failed", { 
+        description: err.message.includes('Invalid') 
+          ? "The code you entered is incorrect. Please try again."
+          : err.message
+      });
     } finally {
       setIsLoading(false);
     }
   };
 
-  if (isLoading && !qrCode) {
+  // Loading state
+  if (isLoading && !qrCode && !showResetConfirm) {
     return (
       <div className="flex flex-col items-center justify-center p-8">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -207,7 +307,8 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     );
   }
 
-  if (error) {
+  // Error state with recovery options
+  if (error && !qrCode) {
     return (
       <div className="p-8 space-y-4">
         <Alert variant="destructive">
@@ -216,7 +317,12 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
         <div className="flex gap-2 justify-center">
-          <Button onClick={() => window.location.reload()}>Retry</Button>
+          <Button onClick={() => {
+            setError(null);
+            enrollMfa();
+          }}>
+            Retry Setup
+          </Button>
           <Button variant="outline" onClick={handleSkipMFA}>
             Skip MFA Setup
           </Button>
@@ -227,39 +333,53 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
 
   return (
     <>
+      {/* Reset Confirmation Dialog */}
       <AlertDialog open={showResetConfirm} onOpenChange={setShowResetConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Existing MFA Detected</AlertDialogTitle>
-            <AlertDialogDescription>
-              An existing MFA setup was found for your account. You can either reset it or skip MFA setup for now.
+            <AlertDialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-primary" />
+              Existing MFA Detected
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>
+                An existing MFA setup was found for your account. To set up a new authenticator, 
+                we need to remove the existing one first.
+              </p>
+              <p className="text-sm text-amber-600 dark:text-amber-400">
+                You will need to scan a new QR code with your authenticator app.
+              </p>
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setShowResetConfirm(false)}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleSkipMFA} variant="outline">
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel onClick={() => setShowResetConfirm(false)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleSkipMFA} 
+              className="bg-secondary text-secondary-foreground hover:bg-secondary/80"
+            >
               Skip MFA Setup
             </AlertDialogAction>
-            <AlertDialogAction onClick={handleConfirmReset}>
-              Reset MFA
+            <AlertDialogAction onClick={handleResetAndReenroll}>
+              Reset & Setup New MFA
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Main Setup UI */}
       <div className="flex flex-col items-center p-4 max-w-md mx-auto">
         <h3 className="text-lg font-semibold">Set Up Authenticator App</h3>
         <p className="text-sm text-muted-foreground mt-1 text-center">
           Scan this QR code with your authenticator app (e.g., Google Authenticator, Authy).
         </p>
 
-        {qrCode && (
-          <div className="p-4 my-4 bg-white rounded-lg">
+        {qrCode ? (
+          <div className="p-4 my-4 bg-white rounded-lg shadow-sm">
             <img src={qrCode} alt="TOTP QR Code" className="w-48 h-48" />
           </div>
-        )}
-
-        {!qrCode && (
+        ) : (
           <Alert className="my-4">
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>QR Code Not Available</AlertTitle>
@@ -278,19 +398,24 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
               id="verification-code"
               type="text"
               inputMode="numeric"
-              pattern="\\d{6}"
+              pattern="\d{6}"
+              maxLength={6}
               placeholder="123456"
               value={verificationCode}
-              onChange={(e) => setVerificationCode(e.target.value)}
+              onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, ''))}
               required
               disabled={isLoading || !qrCode}
+              className="text-center text-lg tracking-widest"
             />
+            <p className="text-xs text-muted-foreground text-center">
+              Enter the 6-digit code from your authenticator app
+            </p>
           </div>
           
           <Button 
             type="submit" 
             className="w-full" 
-            disabled={isLoading || !qrCode}
+            disabled={isLoading || !qrCode || verificationCode.length !== 6}
           >
             {isLoading ? (
               <>
