@@ -66,18 +66,22 @@ export async function verifyUser(req: VercelRequest, options: SecurityOptions = 
     throw new Error('Authentication error: User profile not found.');
   }
 
+  // SECURITY: Normalize NULL values to safe defaults
+  const accountStatus = profile.account_status || 'active';
+  const failedLoginAttempts = profile.failed_login_attempts ?? 0;
+
   // SECURITY: Account status checks
-  if (profile.account_status === 'suspended') {
+  if (accountStatus === 'suspended') {
     throw new Error('Authentication error: Account suspended.');
   }
 
-  if (profile.account_status === 'locked') {
+  if (accountStatus === 'locked') {
     throw new Error('Authentication error: Account locked due to security concerns.');
   }
 
   // SECURITY: Failed login attempt monitoring
-  if (profile.failed_login_attempts >= 5) {
-    const lockDuration = Math.min(Math.pow(2, profile.failed_login_attempts - 5), 3600); // Exponential backoff, max 1 hour
+  if (failedLoginAttempts >= 5) {
+    const lockDuration = Math.min(Math.pow(2, failedLoginAttempts - 5), 3600); // Exponential backoff, max 1 hour
     await supaAdmin
       .from('profiles')
       .update({ account_status: 'temporarily_locked', locked_until: new Date(Date.now() + lockDuration * 1000) })
@@ -287,28 +291,3 @@ setInterval(() => {
     }
   }
 }, 60000); // Clean up every minute
-
-/* 
-REQUIRED DATABASE SCHEMA UPDATES:
-
--- Add audit logging table
-CREATE TABLE IF NOT EXISTS audit_logs (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id),
-  action TEXT NOT NULL,
-  resource TEXT NOT NULL,
-  details JSONB DEFAULT '{}',
-  ip_address TEXT,
-  timestamp TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Add security fields to profiles
-ALTER TABLE profiles ADD COLUMN IF NOT EXISTS account_status TEXT DEFAULT 'active';
-ALTER TABLE profiles ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER DEFAULT 0;
-ALTER TABLE profiles ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ;
-ALTER TABLE profiles ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ;
-
--- Create indexes for security queries
-CREATE INDEX IF NOT EXISTS idx_audit_logs_user_timestamp ON audit_logs(user_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_profiles_account_status ON profiles(account_status);
-*/
