@@ -1,9 +1,9 @@
 // FILE: api/vault/export-pdf.ts
 // STATUS: SERVER-SIDE PDF GENERATION - Memory optimized with streaming
 
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../_lib/security';
+import { verifyUser } from '../_lib/security.js';
 import PDFDocument from 'pdfkit';
 
 export const config = {

@@ -1,8 +1,8 @@
 // FILE: api/arena/complete-verification.ts
 
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../_lib/security'; // CORRECTED: Use standard user verification
+import { verifyUser } from '../_lib/security.js'; // CORRECTED: Use standard user verification
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {

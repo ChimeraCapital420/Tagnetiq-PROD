@@ -1,8 +1,8 @@
 // FILE: api/user/background-upload.ts
 
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../_lib/security';
+import { verifyUser } from '../_lib/security.js';
 
 const BACKGROUNDS_BUCKET = 'backgrounds';
 

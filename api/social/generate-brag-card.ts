@@ -1,7 +1,7 @@
 // FILE: api/social/generate-brag-card.ts
 
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 
 export const config = {
   runtime: 'edge',

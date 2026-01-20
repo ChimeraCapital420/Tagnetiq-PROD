@@ -1,5 +1,5 @@
 // FILE: api/beta/pixel.ts
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import { verifySignature } from '../_lib/crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 

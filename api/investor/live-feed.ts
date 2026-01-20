@@ -1,6 +1,6 @@
 // FILE: api/investor/live-feed.ts (CREATE THIS NEW FILE)
 
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // Helper to format time since an event occurred

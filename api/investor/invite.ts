@@ -1,7 +1,7 @@
 // FILE: api/investor/invite.ts
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../_lib/security'; // Import the standard user verification
+import { verifyUser } from '../_lib/security.js'; // Import the standard user verification
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {

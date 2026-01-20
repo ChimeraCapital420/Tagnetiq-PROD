@@ -3,7 +3,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
-import { verifyUser } from '../_lib/security';
+import { verifyUser } from '../_lib/security.js';
 
 export const config = {
   runtime: 'edge',

@@ -2,8 +2,8 @@
 // Create arena listing endpoint - REPLACE YOUR EXISTING FILE WITH THIS
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { supaAdmin } from '../_lib/supaAdmin';
-import { verifyUser } from '../_lib/security';
+import { supaAdmin } from '../_lib/supaAdmin.js';
+import { verifyUser } from '../_lib/security.js';
 import { z } from 'zod';
 
 export const config = {

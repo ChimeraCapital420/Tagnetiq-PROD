@@ -1,8 +1,8 @@
 // FILE: api/arena/log-sale.ts
 
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../_lib/security';
+import { verifyUser } from '../_lib/security.js';
 import { z } from 'zod';
 
 // Define the schema for input validation

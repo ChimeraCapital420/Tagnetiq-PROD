@@ -1,8 +1,8 @@
 // FILE: api/arena/watchlist.ts
 
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../_lib/security';
+import { verifyUser } from '../_lib/security.js';
 import { z } from 'zod'; // HEPHAESTUS NOTE: Added zod for robust validation
 
 // HEPHAESTUS NOTE: Schemas for validating incoming request bodies.

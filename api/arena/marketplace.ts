@@ -1,9 +1,9 @@
 // FILE: api/arena/marketplace.ts
 // STATUS: QUERY PERFORMANCE OPTIMIZED - Pagination + Indexing + Caching
 
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../_lib/security';
+import { verifyUser } from '../_lib/security.js';
 import { cache, cacheKey } from '../_lib/cache';
 import { rateLimit } from '../_lib/rateLimit';
 

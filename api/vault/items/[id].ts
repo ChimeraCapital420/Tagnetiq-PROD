@@ -1,9 +1,9 @@
 // FILE: api/vault/items/[id].ts
 // Updated to verify ownership through vaults
 
-import { supaAdmin } from '../../_lib/supaAdmin';
+import { supaAdmin } from '../../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../../_lib/security';
+import { verifyUser } from '../../_lib/security.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { id } = req.query;

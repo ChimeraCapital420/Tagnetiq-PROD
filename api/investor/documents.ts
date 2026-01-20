@@ -1,8 +1,8 @@
 // FILE: api/investor/documents.ts
 
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUserIsAdmin } from '../_lib/security';
+import { verifyUserIsAdmin } from '../_lib/security.js';
 
 const BUCKET_NAME = 'investor-documents';
 

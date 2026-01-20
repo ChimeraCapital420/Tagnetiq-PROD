@@ -1,6 +1,6 @@
 // FILE: api/map/data.ts (COMPLETELY REVISED)
 
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // A simple in-memory cache for geocoded locations to reduce redundant API calls.

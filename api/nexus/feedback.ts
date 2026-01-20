@@ -1,8 +1,8 @@
 // api/nexus/feedback.ts
 
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { supaAdmin } from '../_lib/supaAdmin'; // Assuming shared supaAdmin client
-import { verifyUser } from '../_lib/security'; // Assuming shared user verification
+import { supaAdmin } from '../_lib/supaAdmin.js';
+import { verifyUser } from '../_lib/security.js';
 
 /**
  * This endpoint logs user feedback on the accuracy of a specific analysis

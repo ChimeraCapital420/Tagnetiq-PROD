@@ -1,9 +1,9 @@
 // FILE: api/arena/challenge.ts
 // STATUS: PERFORMANCE OPTIMIZED - Transaction-based with comprehensive validation
 
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../_lib/security';
+import { verifyUser } from '../_lib/security.js';
 
 export const config = {
   runtime: 'nodejs', // Changed from edge to nodejs for transaction support

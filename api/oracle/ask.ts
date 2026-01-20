@@ -3,7 +3,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
-import { verifyUser } from '../_lib/security';
+import { verifyUser } from '../_lib/security.js';
 // Hephaestus Note: SupaAdmin is not needed for this endpoint as it only uses passed context.
 
 export const config = {

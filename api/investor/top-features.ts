@@ -1,6 +1,6 @@
 // FILE: api/investor/top-features.ts (REPLACE ENTIRE FILE)
 
-import { supaAdmin } from '../_lib/supaAdmin';
+import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // In-memory cache to manage costs and performance

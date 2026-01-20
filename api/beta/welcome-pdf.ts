@@ -1,7 +1,7 @@
 // FILE: api/beta/welcome-pdf.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { supaAdmin } from '../_lib/supaAdmin'; 
-import { verifyUser } from '../_lib/security';
+import { supaAdmin } from '../_lib/supaAdmin.js'; 
+import { verifyUser } from '../_lib/security.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
