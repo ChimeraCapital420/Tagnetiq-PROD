@@ -5,10 +5,10 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { ShieldCheck, Loader2, Plus, Vault, ChevronLeft, CheckCircle2, AlertCircle } from 'lucide-react';
+import { ShieldCheck, Loader2, Plus, Vault, ChevronLeft, CheckCircle2, AlertCircle, FolderPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -60,9 +60,9 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
     retry: 1,
   });
 
-  // Auto-select first vault if only one exists and none selected
+  // Auto-select first vault if available and none selected
   useEffect(() => {
-    if (vaults && vaults.length === 1 && !selectedVaultId) {
+    if (vaults && vaults.length > 0 && !selectedVaultId) {
       setSelectedVaultId(vaults[0].id);
     }
   }, [vaults, selectedVaultId]);
@@ -73,6 +73,9 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
       setDialogStep('select');
       setAddedToVault(null);
       setNewVaultName('');
+    } else {
+      // Reset selection when dialog closes
+      setSelectedVaultId('');
     }
   }, [isDialogOpen]);
 
@@ -95,7 +98,7 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
         },
         body: JSON.stringify({
           name: newVaultName.trim(),
-          description: `Created for ${analysisResult.itemName || 'new item'}`,
+          description: null,
         }),
       });
 
@@ -109,9 +112,7 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
       setSelectedVaultId(newVault.id);
       setDialogStep('select');
       setNewVaultName('');
-      toast.success(`Vault "${newVault.name}" created!`, {
-        description: 'Now click "Add to Vault" to secure your item.',
-      });
+      toast.success(`"${newVault.name}" created`);
     } catch (error: any) {
       toast.error('Failed to create vault', { description: error.message });
     } finally {
@@ -166,87 +167,95 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
 
   const handleClose = () => {
     setIsDialogOpen(false);
-    setSelectedVaultId('');
-    setDialogStep('select');
-    setAddedToVault(null);
   };
+
+  const selectedVault = vaults?.find(v => v.id === selectedVaultId);
 
   const renderSelectStep = () => (
     <>
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
           <Vault className="h-5 w-5 text-purple-400" />
-          Select Vault
+          Secure in Vault
         </DialogTitle>
         <DialogDescription>
-          Choose which vault to store "{analysisResult.itemName || 'this item'}" in.
+          Choose a vault to store "{analysisResult.itemName || 'this item'}".
         </DialogDescription>
       </DialogHeader>
 
       <div className="space-y-4 py-4">
         {isLoadingVaults ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
-            <span className="ml-2 text-gray-400">Loading your vaults...</span>
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-6 w-6 animate-spin text-purple-400" />
+            <span className="ml-2 text-gray-400">Loading vaults...</span>
           </div>
         ) : vaultsError ? (
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              Failed to load vaults: {vaultsError.message}
-              <Button variant="link" className="p-0 h-auto ml-2" onClick={() => refetch()}>
+            <AlertDescription className="flex items-center justify-between">
+              <span>Failed to load vaults</span>
+              <Button variant="link" className="p-0 h-auto" onClick={() => refetch()}>
                 Retry
               </Button>
             </AlertDescription>
           </Alert>
-        ) : vaults && vaults.length > 0 ? (
-          <RadioGroup value={selectedVaultId} onValueChange={setSelectedVaultId} className="space-y-2">
-            {vaults.map((vault) => (
-              <div 
-                key={vault.id} 
-                className={`flex items-center space-x-3 p-3 rounded-lg border transition-colors cursor-pointer ${
-                  selectedVaultId === vault.id 
-                    ? 'border-purple-500 bg-purple-500/10' 
-                    : 'border-gray-700 hover:border-gray-600 hover:bg-gray-800/50'
-                }`}
-                onClick={() => setSelectedVaultId(vault.id)}
-              >
-                <RadioGroupItem value={vault.id} id={vault.id} />
-                <Label htmlFor={vault.id} className="flex-1 cursor-pointer">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Vault className="h-4 w-4 text-purple-400" />
-                      <span className="font-medium">{vault.name}</span>
-                    </div>
-                    {vault.item_count !== undefined && (
-                      <span className="text-sm text-gray-400">
-                        {vault.item_count} {vault.item_count === 1 ? 'item' : 'items'}
-                      </span>
-                    )}
-                  </div>
-                  {vault.description && (
-                    <p className="text-sm text-gray-400 mt-1">{vault.description}</p>
-                  )}
-                </Label>
-              </div>
-            ))}
-          </RadioGroup>
         ) : (
-          <div className="text-center py-6 border-2 border-dashed border-gray-700 rounded-lg">
-            <Vault className="mx-auto h-12 w-12 text-gray-500 mb-3" />
-            <p className="text-gray-400 mb-2">You don't have any vaults yet</p>
-            <p className="text-sm text-gray-500">Create your first vault to start securing items</p>
-          </div>
-        )}
+          <>
+            <div className="space-y-2">
+              <Label htmlFor="vault-select">Select Vault</Label>
+              <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
+                <SelectTrigger id="vault-select" className="w-full">
+                  <SelectValue placeholder="Choose a vault...">
+                    {selectedVault && (
+                      <div className="flex items-center gap-2">
+                        <Vault className="h-4 w-4 text-purple-400" />
+                        <span>{selectedVault.name}</span>
+                        {selectedVault.item_count !== undefined && (
+                          <span className="text-gray-400 text-sm">
+                            ({selectedVault.item_count})
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {vaults && vaults.length > 0 ? (
+                    vaults.map((vault) => (
+                      <SelectItem key={vault.id} value={vault.id}>
+                        <div className="flex items-center justify-between w-full gap-4">
+                          <div className="flex items-center gap-2">
+                            <Vault className="h-4 w-4 text-purple-400" />
+                            <span>{vault.name}</span>
+                          </div>
+                          {vault.item_count !== undefined && (
+                            <span className="text-gray-400 text-sm">
+                              {vault.item_count} {vault.item_count === 1 ? 'item' : 'items'}
+                            </span>
+                          )}
+                        </div>
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <div className="p-2 text-center text-gray-400 text-sm">
+                      No vaults yet. Create one below.
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
 
-        <Button
-          variant="outline"
-          className="w-full"
-          onClick={() => setDialogStep('create')}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          Create New Vault
-        </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full text-purple-400 hover:text-purple-300 hover:bg-purple-500/10"
+              onClick={() => setDialogStep('create')}
+            >
+              <FolderPlus className="mr-2 h-4 w-4" />
+              Create New Vault
+            </Button>
+          </>
+        )}
       </div>
 
       <DialogFooter>
@@ -255,7 +264,7 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
         </Button>
         <Button
           onClick={handleAddToVault}
-          disabled={isLoading || !selectedVaultId}
+          disabled={isLoading || !selectedVaultId || isLoadingVaults}
         >
           {isLoading ? (
             <>
@@ -280,7 +289,7 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 mr-1"
+            className="h-8 w-8 -ml-2"
             onClick={() => setDialogStep('select')}
           >
             <ChevronLeft className="h-4 w-4" />
@@ -288,30 +297,26 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
           Create New Vault
         </DialogTitle>
         <DialogDescription>
-          Give your vault a name to organize your collection.
+          Organize your collection with custom vaults.
         </DialogDescription>
       </DialogHeader>
 
-      <div className="space-y-4 py-4">
-        <div>
-          <Label htmlFor="new-vault-name">Vault Name</Label>
-          <Input
-            id="new-vault-name"
-            value={newVaultName}
-            onChange={(e) => setNewVaultName(e.target.value)}
-            placeholder="e.g., Luxury Watches, Trading Cards"
-            maxLength={100}
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && newVaultName.trim()) {
-                handleCreateVault();
-              }
-            }}
-          />
-          <p className="text-xs text-gray-500 mt-1">
-            You can organize items by category, theme, or any way you like.
-          </p>
-        </div>
+      <div className="py-4">
+        <Label htmlFor="new-vault-name">Vault Name</Label>
+        <Input
+          id="new-vault-name"
+          value={newVaultName}
+          onChange={(e) => setNewVaultName(e.target.value)}
+          placeholder="e.g., Watches, Trading Cards, Sneakers"
+          maxLength={100}
+          autoFocus
+          className="mt-1.5"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && newVaultName.trim()) {
+              handleCreateVault();
+            }
+          }}
+        />
       </div>
 
       <DialogFooter>
@@ -323,7 +328,7 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
           }}
           disabled={isLoading}
         >
-          Back
+          Cancel
         </Button>
         <Button
           onClick={handleCreateVault}
@@ -337,7 +342,7 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
           ) : (
             <>
               <Plus className="mr-2 h-4 w-4" />
-              Create Vault
+              Create
             </>
           )}
         </Button>
@@ -347,30 +352,25 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
 
   const renderSuccessStep = () => (
     <>
-      <DialogHeader>
-        <DialogTitle className="flex items-center gap-2 text-green-400">
-          <CheckCircle2 className="h-5 w-5" />
-          Item Secured!
-        </DialogTitle>
-      </DialogHeader>
-
-      <div className="py-6 text-center">
-        <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-          <ShieldCheck className="h-8 w-8 text-green-400" />
+      <div className="py-8 text-center">
+        <div className="w-14 h-14 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+          <CheckCircle2 className="h-7 w-7 text-green-400" />
         </div>
-        <h3 className="text-lg font-semibold mb-2">
-          {analysisResult.itemName || 'Item'} has been secured
+        <h3 className="text-lg font-semibold mb-1">
+          Item Secured!
         </h3>
-        <p className="text-gray-400">
-          Added to <span className="text-purple-400 font-medium">{addedToVault?.name}</span>
+        <p className="text-gray-400 text-sm">
+          <span className="text-white">{analysisResult.itemName || 'Item'}</span>
+          {' '}added to{' '}
+          <span className="text-purple-400">{addedToVault?.name}</span>
         </p>
       </div>
 
-      <DialogFooter className="flex-col sm:flex-row gap-2">
-        <Button variant="outline" onClick={handleClose} className="w-full sm:w-auto">
-          Continue Analyzing
+      <DialogFooter className="sm:justify-center gap-2">
+        <Button variant="outline" onClick={handleClose}>
+          Done
         </Button>
-        <Button onClick={() => navigate('/vault')} className="w-full sm:w-auto">
+        <Button onClick={() => navigate('/vault')}>
           <Vault className="mr-2 h-4 w-4" />
           View Vault
         </Button>
@@ -390,7 +390,7 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
       </Button>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-[400px]">
           {dialogStep === 'select' && renderSelectStep()}
           {dialogStep === 'create' && renderCreateStep()}
           {dialogStep === 'success' && renderSuccessStep()}
