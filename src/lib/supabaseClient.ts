@@ -1,21 +1,12 @@
-// src/lib/supabaseClient.ts
-import { createClient } from '@supabase/supabase-js';
+// FILE: src/lib/supabaseClient.ts
+// 
+// IMPORTANT: This file re-exports from supabase.ts to avoid duplicate clients.
+// The warning "Multiple GoTrueClient instances detected" occurs when multiple
+// Supabase clients are created. By re-exporting, we ensure a single instance.
+//
+// If you need the Supabase client, import from either file:
+//   import { supabase } from '@/lib/supabase';
+//   import { supabase } from '@/lib/supabaseClient';
+// Both will use the same client instance.
 
-// Support multiple env var formats
-const supabaseUrl = 
-  import.meta.env.VITE_SUPABASE_URL || 
-  import.meta.env.VITE_PUBLIC_SUPABASE_URL ||
-  import.meta.env.VITE_NEXT_PUBLIC_SUPABASE_URL ||
-  '';
-
-const supabaseAnonKey = 
-  import.meta.env.VITE_SUPABASE_ANON_KEY || 
-  import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY ||
-  import.meta.env.VITE_NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  '';
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase environment variables are not set');
-}
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export { supabase, DatabaseHelper } from './supabase';
