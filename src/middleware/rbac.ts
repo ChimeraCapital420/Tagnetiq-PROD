@@ -1,13 +1,29 @@
 // FILE: src/middleware/rbac.ts
 // A reusable role-based access control middleware for all API endpoints
+// 
+// NOTE: This is server-side middleware - runs in Vercel API routes
+// Uses standard environment variables (no VITE_ prefix needed)
 
 import { createClient } from '@supabase/supabase-js';
 import type { Request, Response, NextFunction } from 'express';
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY!
-);
+// Server-side Supabase client
+// Supports multiple env var naming conventions for compatibility
+const supabaseUrl = 
+  process.env.SUPABASE_URL || 
+  process.env.VITE_SUPABASE_URL || 
+  '';
+
+const supabaseAnonKey = 
+  process.env.SUPABASE_ANON_KEY || 
+  process.env.VITE_SUPABASE_ANON_KEY || 
+  '';
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('RBAC Middleware: Missing Supabase environment variables');
+}
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -50,6 +66,7 @@ export const requireAuth = async (req: AuthenticatedRequest, res: Response, next
 
     next();
   } catch (error) {
+    console.error('RBAC authentication error:', error);
     return res.status(500).json({ error: 'Authentication failed' });
   }
 };
@@ -68,6 +85,7 @@ export const requireRole = (allowedRoles: string[]) => {
   };
 };
 
+// Pre-configured role checks for common use cases
 export const requireAdmin = requireRole(['admin']);
 export const requireInvestor = requireRole(['investor', 'admin']);
 export const requireBeta = requireRole(['user', 'retail', 'developer', 'investor', 'admin']);

@@ -1,4 +1,7 @@
 // FILE: src/lib/hydra-engine.ts
+// Hydra Engine - Multi-AI Consensus System for Item Valuation
+// 
+// This file runs SERVER-SIDE (in API routes) so uses process.env directly
 
 import { createClient } from '@supabase/supabase-js';
 import { AIProvider, ModelVote, HydraConsensus, ParsedAnalysis } from '@/types/hydra';
@@ -6,10 +9,27 @@ import { ProviderFactory } from './ai-providers/provider-factory.js';
 import { BaseAIProvider } from './ai-providers/base-provider.js';
 import { AuthorityManager } from './authorities/authority-manager.js';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Server-side Supabase client with service role for database operations
+// Supports multiple env var naming conventions for compatibility
+const supabaseUrl = 
+  process.env.SUPABASE_URL || 
+  process.env.VITE_SUPABASE_URL || 
+  process.env.NEXT_PUBLIC_SUPABASE_URL || 
+  '';
+
+const supabaseServiceKey = 
+  process.env.SUPABASE_SERVICE_ROLE_KEY || 
+  process.env.SUPABASE_SERVICE_SECRET ||
+  '';
+
+if (!supabaseUrl) {
+  console.error('❌ HYDRA ENGINE: Missing SUPABASE_URL environment variable');
+}
+if (!supabaseServiceKey) {
+  console.error('❌ HYDRA ENGINE: Missing SUPABASE_SERVICE_ROLE_KEY environment variable');
+}
+
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 interface ProviderStatus {
   name: string;

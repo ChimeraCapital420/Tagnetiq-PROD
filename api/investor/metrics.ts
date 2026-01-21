@@ -1,37 +1,59 @@
 // FILE: api/investor/metrics.ts
-// Investor metrics endpoint
+// Investor metrics endpoint - Vercel Serverless Function
+// 
+// NOTE: This file belongs in api/investor/metrics.ts (NOT src/components/)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-  process.env.VITE_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_SECRET!
-);
+// Server-side Supabase client with service role for elevated permissions
+// Uses standard Vercel environment variables (no VITE_ prefix needed server-side)
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_SECRET || '';
 
-// Verify auth token
+if (!supabaseUrl || !supabaseServiceKey) {
+  console.error('Missing Supabase environment variables for investor metrics API');
+}
+
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+// Verify auth token and check investor/admin role
 async function verifyAuth(req: VercelRequest) {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return null;
   
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error || !user) return null;
-  
-  // Check if user is investor or admin
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single();
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) return null;
     
-  if (!profile || !['investor', 'admin'].includes(profile.role)) {
+    // Check if user is investor or admin
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+      
+    if (!profile || !['investor', 'admin'].includes(profile.role)) {
+      return null;
+    }
+    
+    return user;
+  } catch (err) {
+    console.error('Auth verification error:', err);
     return null;
   }
-  
-  return user;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
   // Only allow GET
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -39,7 +61,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const user = await verifyAuth(req);
   if (!user) {
-    return res.status(403).json({ error: 'Unauthorized' });
+    return res.status(403).json({ error: 'Unauthorized - Investor or Admin role required' });
   }
 
   try {
@@ -59,11 +81,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .from('profiles')
         .select('id, last_sign_in_at', { count: 'exact' }),
       
-      // Scan metrics
+      // Scan metrics - try multiple table names for compatibility
       supabase
-        .from('scans')
+        .from('scan_history')
         .select('id', { count: 'exact' })
-        .gte('created_at', startDate.toISOString()),
+        .gte('created_at', startDate.toISOString())
+        .then(result => {
+          // Fallback to 'scans' table if scan_history doesn't exist
+          if (result.error?.code === '42P01') {
+            return supabase
+              .from('scans')
+              .select('id', { count: 'exact' })
+              .gte('created_at', startDate.toISOString());
+          }
+          return result;
+        }),
       
       // Beta metrics
       supabase
@@ -95,22 +127,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return acc;
     }, {} as Record<string, any>) || {};
 
-    // Get beta invites count
-    const { count: betaInvites } = await supabase
-      .from('beta_invites')
-      .select('*', { count: 'exact', head: true });
+    // Get beta invites count (handle missing table gracefully)
+    let betaInvites = 0;
+    try {
+      const { count } = await supabase
+        .from('beta_invites')
+        .select('*', { count: 'exact', head: true });
+      betaInvites = count || 0;
+    } catch (err) {
+      console.warn('beta_invites table not found, using 0');
+    }
 
     const metrics = {
       totalUsers: userStats.count || 0,
       dau,
       totalScans: scanStats.count || 0,
       feedbackVolume: 0, // TODO: implement feedback counting
-      totalBetaInvites: betaInvites || 0,
+      totalBetaInvites: betaInvites,
       totalBetaTesters: betaStats.count || 0,
       betaConversionRate: betaInvites ? ((betaStats.count || 0) / betaInvites * 100) : 0,
       growthData: Object.values(growthByDay),
       tam: { total: '$1.3T', serviceable: '$125B', obtainable: '$1B' },
-      projections: { q4_2025: '$5M ARR', q1_2026: '$12M ARR' }
+      projections: { q4_2025: '$5M ARR', q1_2026: '$12M ARR' },
+      generatedAt: new Date().toISOString()
     };
 
     res.status(200).json(metrics);
