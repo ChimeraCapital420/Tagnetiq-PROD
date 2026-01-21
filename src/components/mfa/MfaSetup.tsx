@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { Loader2, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Loader2, AlertTriangle, ShieldCheck, CheckCircle } from 'lucide-react';
 import {
   Alert,
   AlertDescription,
@@ -35,6 +35,7 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
   const [statusMessage, setStatusMessage] = useState('Initializing MFA Setup...');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [existingFactorId, setExistingFactorId] = useState<string | null>(null);
+  const [setupComplete, setSetupComplete] = useState(false);
 
   // Skip MFA setup and mark as enrolled (user can enable later)
   const handleSkipMFA = async () => {
@@ -51,7 +52,11 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
       if (profileError) throw profileError;
 
       toast.warning("MFA setup skipped. You can enable it later from your profile settings.");
-      onSuccess();
+      
+      // Small delay then trigger success
+      setTimeout(() => {
+        onSuccess();
+      }, 500);
     } catch (err: any) {
       setError(err.message);
       toast.error("Skip Failed", { description: err.message });
@@ -67,13 +72,11 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     setStatusMessage('Removing existing MFA factor...');
     
     try {
-      // First, try to unenroll existing factors using the client-side API
       const { data: factorsData } = await supabase.auth.mfa.listFactors();
       
       if (factorsData && factorsData.totp && factorsData.totp.length > 0) {
         for (const factor of factorsData.totp) {
           try {
-            // Unenroll each factor
             const { error: unenrollError } = await supabase.auth.mfa.unenroll({
               factorId: factor.id,
             });
@@ -89,7 +92,6 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
         }
       }
 
-      // Also call the server-side reset for profile sync
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         try {
@@ -102,17 +104,13 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
             body: JSON.stringify({ token: session.access_token }),
           });
         } catch (e) {
-          // Server-side reset is optional, continue anyway
           console.log('Server-side MFA reset optional - continuing with client-side');
         }
       }
 
       toast.success("Existing MFA removed. Setting up new MFA...");
       
-      // Small delay to let Supabase sync
       await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Now enroll fresh
       await enrollMfa(true);
       
     } catch (err: any) {
@@ -143,20 +141,16 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
         
         if (factorsError) {
           console.warn('Could not list MFA factors:', factorsError.message);
-          // Continue anyway - try to enroll
         } else if (factorsData && factorsData.totp && factorsData.totp.length > 0) {
-          // Check for verified factors
           const verifiedFactor = factorsData.totp.find(f => f.status === 'verified');
           
           if (verifiedFactor) {
-            // User already has verified MFA
             setExistingFactorId(verifiedFactor.id);
             setShowResetConfirm(true);
             setIsLoading(false);
             return;
           }
           
-          // Check for unverified factors (incomplete setup)
           const unverifiedFactor = factorsData.totp.find(f => f.status === 'unverified');
           if (unverifiedFactor) {
             console.log('Found unverified factor, removing it first...');
@@ -177,11 +171,9 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
       });
 
       if (enrollError) {
-        // Handle specific error codes
         if (enrollError.message.includes('factor already exists') || 
             enrollError.message.includes('422') ||
             enrollError.status === 422) {
-          // Factor exists - show reset dialog
           setShowResetConfirm(true);
           setIsLoading(false);
           return;
@@ -201,7 +193,6 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     } catch (err: any) {
       console.error('MFA enrollment error:', err);
       
-      // Check if error indicates existing factor
       if (err.message?.includes('already') || err.status === 422) {
         setShowResetConfirm(true);
         setIsLoading(false);
@@ -278,11 +269,25 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
         }
       }
 
+      // Show success state
+      setSetupComplete(true);
+      setIsLoading(false);
+      
       toast.success("MFA Enabled Successfully!", {
-        description: "Your account is now protected with two-factor authentication."
+        description: "Your vault is now protected with two-factor authentication."
       });
       
-      onSuccess();
+      // Wait a moment to show success state, then proceed
+      setTimeout(() => {
+        console.log('[MfaSetup] Calling onSuccess callback...');
+        onSuccess();
+        
+        // Force page reload as backup to ensure clean state
+        setTimeout(() => {
+          console.log('[MfaSetup] Forcing page reload for clean state...');
+          window.location.reload();
+        }, 500);
+      }, 1500);
 
     } catch (err: any) {
       console.error('MFA verification error:', err);
@@ -292,10 +297,24 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
           ? "The code you entered is incorrect. Please try again."
           : err.message
       });
-    } finally {
       setIsLoading(false);
     }
   };
+
+  // Success state - show confirmation before proceeding
+  if (setupComplete) {
+    return (
+      <div className="flex flex-col items-center justify-center p-8 min-h-[300px]">
+        <CheckCircle className="h-16 w-16 text-green-500 mb-4" />
+        <h3 className="text-xl font-semibold text-green-600">MFA Setup Complete!</h3>
+        <p className="text-muted-foreground mt-2">Your vault is now protected.</p>
+        <div className="mt-4 flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-sm text-muted-foreground">Redirecting to vault...</span>
+        </div>
+      </div>
+    );
+  }
 
   // Loading state
   if (isLoading && !qrCode && !showResetConfirm) {

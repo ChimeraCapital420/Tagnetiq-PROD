@@ -42,7 +42,7 @@ export interface VaultItem {
   updated_at: string;
 }
 
-interface Vault {
+interface VaultType {
   id: string;
   user_id: string;
   name: string;
@@ -66,7 +66,7 @@ const VaultSkeletonLoader = () => (
 );
 
 const VaultCard: React.FC<{
-  vault: Vault;
+  vault: VaultType;
   onSelect: () => void;
 }> = ({ vault, onSelect }) => (
   <motion.div
@@ -100,19 +100,35 @@ const VaultCard: React.FC<{
 );
 
 const VaultPage: React.FC = () => {
-  const { profile, loading: authLoading, session } = useAuth();
+  const { profile, loading: authLoading, session, refreshProfile } = useAuth();
   const { isUnlocked, unlockVault } = useMfa();
   const queryClient = useQueryClient();
 
-  const [selectedVault, setSelectedVault] = useState<Vault | null>(null);
+  const [selectedVault, setSelectedVault] = useState<VaultType | null>(null);
   const [selectedItem, setSelectedItem] = useState<VaultItem | null>(null);
   const [itemToChallenge, setItemToChallenge] = useState<VaultItem | null>(null);
   const [isCreateVaultOpen, setIsCreateVaultOpen] = useState(false);
   const [newVaultName, setNewVaultName] = useState('');
   const [newVaultDescription, setNewVaultDescription] = useState('');
 
+  // Handler for successful MFA setup
+  const handleMfaSetupSuccess = async () => {
+    console.log('[Vault] MFA setup success callback triggered');
+    
+    // Invalidate profile query to refetch
+    await queryClient.invalidateQueries({ queryKey: ['profile'] });
+    
+    // If refreshProfile exists in AuthContext, call it
+    if (typeof refreshProfile === 'function') {
+      await refreshProfile();
+    }
+    
+    // Force a small delay then reload to ensure clean state
+    toast.success("Redirecting to your vault...");
+  };
+
   // Fetch all vaults
-  const fetchVaults = async (): Promise<Vault[]> => {
+  const fetchVaults = async (): Promise<VaultType[]> => {
     if (!session?.access_token) {
       throw new Error('Authentication token not found.');
     }
@@ -131,7 +147,7 @@ const VaultPage: React.FC = () => {
     return response.json();
   };
 
-  const { data: vaults, isLoading: isVaultsLoading, error: vaultsError } = useQuery<Vault[], Error>({
+  const { data: vaults, isLoading: isVaultsLoading, error: vaultsError } = useQuery<VaultType[], Error>({
     queryKey: ['vaults'],
     queryFn: fetchVaults,
     enabled: !!session?.access_token && isUnlocked,
@@ -245,6 +261,7 @@ const VaultPage: React.FC = () => {
     toast.success("Vault item updated successfully.");
   };
 
+  // Loading state
   if (authLoading || !profile) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -256,12 +273,36 @@ const VaultPage: React.FC = () => {
     );
   }
 
+  // MFA Setup required
   if (!profile.mfa_enrolled) {
-    return <MfaSetup onSuccess={() => queryClient.invalidateQueries({ queryKey: ['profile'] })} />;
+    return (
+      <div className="container mx-auto p-4 md:p-8 max-w-lg">
+        <div className="text-center mb-6">
+          <Vault className="mx-auto h-12 w-12 text-primary mb-2" />
+          <h1 className="text-2xl font-bold">Secure Your Vault</h1>
+          <p className="text-muted-foreground">Set up two-factor authentication to access your vault.</p>
+        </div>
+        <div className="bg-card rounded-lg border p-6">
+          <MfaSetup onSuccess={handleMfaSetupSuccess} />
+        </div>
+      </div>
+    );
   }
 
+  // MFA Unlock required
   if (profile.mfa_enrolled && !isUnlocked) {
-    return <MfaUnlock onSuccess={unlockVault} />;
+    return (
+      <div className="container mx-auto p-4 md:p-8 max-w-lg">
+        <div className="text-center mb-6">
+          <Vault className="mx-auto h-12 w-12 text-primary mb-2" />
+          <h1 className="text-2xl font-bold">Unlock Your Vault</h1>
+          <p className="text-muted-foreground">Enter your authentication code to continue.</p>
+        </div>
+        <div className="bg-card rounded-lg border p-6">
+          <MfaUnlock onSuccess={unlockVault} />
+        </div>
+      </div>
+    );
   }
 
   // Show vault lobby if no vault is selected
