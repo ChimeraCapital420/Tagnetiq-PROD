@@ -130,12 +130,22 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Not authenticated");
 
+      // Extract category from analysis result
+      const category = analysisResult.category || 
+                      analysisResult.primaryCategory || 
+                      analysisResult.item_category ||
+                      analysisResult.valuation_data?.category ||
+                      'Uncategorized';
+
       const payload = {
         vault_id: selectedVaultId,
         asset_name: analysisResult.itemName || 'Untitled Asset',
+        category: category,
         valuation_data: analysisResult,
-        photos: analysisResult.imageUrls || [],
+        photos: analysisResult.imageUrls || analysisResult.images || [],
       };
+
+      console.log('Adding to vault with payload:', payload); // Debug log
 
       const response = await fetch('/api/vault/items', {
         method: 'POST',
@@ -146,9 +156,18 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
         body: JSON.stringify(payload),
       });
 
+      // Handle non-JSON responses
+      const responseText = await response.text();
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch {
+        console.error('Non-JSON response:', responseText);
+        throw new Error(`Server error: ${responseText.substring(0, 100)}`);
+      }
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to add item to vault.');
+        throw new Error(responseData.error || 'Failed to add item to vault.');
       }
 
       const selectedVault = vaults?.find(v => v.id === selectedVaultId);
@@ -157,7 +176,11 @@ export const AddToVaultButton: React.FC<AddToVaultButtonProps> = ({ analysisResu
       onSuccess();
 
     } catch (error: any) {
-      toast.error("Failed to secure item", { description: error.message });
+      console.error('Add to vault error:', error);
+      toast.error("Failed to secure item", { 
+        description: error.message,
+        duration: 10000
+      });
     } finally {
       setIsLoading(false);
     }

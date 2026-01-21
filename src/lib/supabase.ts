@@ -2,13 +2,22 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Support multiple env var formats
+const supabaseUrl = 
+  import.meta.env.VITE_SUPABASE_URL || 
+  import.meta.env.VITE_PUBLIC_SUPABASE_URL ||
+  '';
+
+const supabaseAnonKey = 
+  import.meta.env.VITE_SUPABASE_ANON_KEY || 
+  import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY ||
+  '';
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('CRITICAL ERROR: Supabase keys not found. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your Environment Variables in Vercel.');
+  console.error('CRITICAL ERROR: Supabase keys not found. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your Environment Variables.');
 }
 
+// Single Supabase client instance
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
@@ -17,7 +26,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   }
 });
 
-// This is now the single source of truth for the Profile type.
+// Profile types
 export type AppRole = 'admin' | 'developer' | 'investor' | 'retail' | 'user';
 
 export interface Profile {

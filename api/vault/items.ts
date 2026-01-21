@@ -40,11 +40,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (itemsError) throw itemsError;
 
-        // Return items array directly (frontend expects array, not paginated object)
         return res.status(200).json(items || []);
 
       case 'POST':
-        const { vault_id, asset_name, valuation_data, photos, notes, serial_number } = req.body;
+        const { 
+          vault_id, 
+          asset_name, 
+          valuation_data, 
+          photos, 
+          notes, 
+          serial_number,
+          category: providedCategory 
+        } = req.body;
 
         if (!vault_id || !asset_name) {
           return res.status(400).json({ 
@@ -67,17 +74,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(403).json({ error: 'Cannot add items to a vault you do not own.' });
         }
 
-        // Insert with user_id included
+        // Extract category from valuation_data if not provided directly
+        const category = providedCategory || 
+                        valuation_data?.category || 
+                        valuation_data?.primaryCategory ||
+                        valuation_data?.item_category ||
+                        'Uncategorized';
+
+        // Insert with all required fields
         const { data: newItem, error: itemError } = await supaAdmin
           .from('vault_items')
           .insert({
             vault_id,
-            user_id: user.id,  // <-- THIS WAS MISSING
+            user_id: user.id,
             asset_name,
+            category,  // <-- NOW INCLUDED
             valuation_data: valuation_data || null,
             photos: photos || [],
             notes: notes || null,
             serial_number: serial_number || null,
+            currency: 'USD',
           })
           .select()
           .single();
@@ -90,7 +106,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(201).json(newItem);
 
       case 'PUT':
-        // Update a vault item
         const { id } = req.query;
         const updateData = req.body;
 
@@ -114,7 +129,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // Build update object with only allowed fields
-        const allowedFields = ['asset_name', 'valuation_data', 'photos', 'notes', 'serial_number', 'receipt_url', 'owner_valuation', 'provenance_documents'];
+        const allowedFields = [
+          'asset_name', 
+          'category',
+          'valuation_data', 
+          'photos', 
+          'notes', 
+          'serial_number', 
+          'receipt_url', 
+          'owner_valuation', 
+          'provenance_documents',
+          'currency',
+          'is_insured',
+          'insurance_details'
+        ];
         const updates: Record<string, any> = {};
         
         for (const field of allowedFields) {
@@ -137,7 +165,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json(updatedItem);
 
       case 'DELETE':
-        // Delete a vault item
         const { id: deleteId } = req.query;
 
         if (!deleteId || typeof deleteId !== 'string') {
