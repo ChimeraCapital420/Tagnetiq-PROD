@@ -1,5 +1,5 @@
 // FILE: src/components/vault/VaultExportModal.tsx
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -10,6 +10,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,12 +35,13 @@ import {
   ShoppingBag,
   XCircle,
   AlertOctagon,
-  ChevronRight,
   ArrowLeft,
-  Calendar,
-  User,
-  FileCheck,
-  Shield
+  Shield,
+  Search,
+  X,
+  Filter,
+  CheckCircle2,
+  MinusSquare
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { VaultItem } from '@/pages/Vault';
@@ -57,6 +59,17 @@ interface VaultExportModalProps {
 
 type ActionScreen = 'select' | 'export-pdf' | 'mark-sold' | 'mark-lost' | 'mark-damaged' | 'delete';
 
+// Helper to get status color
+const getStatusColor = (status?: string) => {
+  switch (status) {
+    case 'sold': return 'bg-green-500/20 text-green-500 border-green-500/30';
+    case 'lost': return 'bg-yellow-500/20 text-yellow-500 border-yellow-500/30';
+    case 'damaged': return 'bg-orange-500/20 text-orange-500 border-orange-500/30';
+    case 'stolen': return 'bg-red-500/20 text-red-500 border-red-500/30';
+    default: return '';
+  }
+};
+
 export const VaultExportModal: React.FC<VaultExportModalProps> = ({
   isOpen,
   onClose,
@@ -70,6 +83,10 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
   const [currentScreen, setCurrentScreen] = useState<ActionScreen>('select');
   const [isProcessing, setIsProcessing] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  
+  // Search and filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showInactiveItems, setShowInactiveItems] = useState(true);
 
   // PDF Options
   const [pdfOptions, setPdfOptions] = useState({
@@ -99,23 +116,62 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
     reportNumber: ''
   });
 
+  // Filtered items based on search and status filter
+  const filteredItems = useMemo(() => {
+    let result = items;
+    
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(item => 
+        item.asset_name.toLowerCase().includes(query) ||
+        item.notes?.toLowerCase().includes(query) ||
+        item.serial_number?.toLowerCase().includes(query)
+      );
+    }
+    
+    // Filter out inactive items if toggle is off
+    if (!showInactiveItems) {
+      result = result.filter(item => !item.status || item.status === 'active');
+    }
+    
+    return result;
+  }, [items, searchQuery, showInactiveItems]);
+
+  // Count of inactive items
+  const inactiveCount = useMemo(() => 
+    items.filter(item => item.status && item.status !== 'active').length,
+    [items]
+  );
+
+  // Active items only (for quick select)
+  const activeItems = useMemo(() => 
+    filteredItems.filter(item => !item.status || item.status === 'active'),
+    [filteredItems]
+  );
+
   const selectedItems = items.filter(item => selectedItemIds.includes(item.id));
   
   const totalValue = selectedItems.reduce((sum, item) => {
-    const val = item.valuation_data?.estimatedValue;
+    const val = item.valuation_data?.estimatedValue || item.owner_valuation;
     if (val) {
-      const num = parseFloat(val.replace(/[^0-9.-]/g, ''));
+      const num = typeof val === 'number' ? val : parseFloat(String(val).replace(/[^0-9.-]/g, ''));
       return sum + (isNaN(num) ? 0 : num);
     }
     return sum;
   }, 0);
 
-  const toggleSelectAll = () => {
-    if (selectedItemIds.length === items.length) {
-      onSelectionChange([]);
-    } else {
-      onSelectionChange(items.map(item => item.id));
-    }
+  // Selection handlers
+  const selectAll = () => {
+    onSelectionChange(filteredItems.map(item => item.id));
+  };
+
+  const selectNone = () => {
+    onSelectionChange([]);
+  };
+
+  const selectActiveOnly = () => {
+    onSelectionChange(activeItems.map(item => item.id));
   };
 
   const toggleItem = (itemId: string) => {
@@ -128,6 +184,7 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
 
   const resetAndClose = () => {
     setCurrentScreen('select');
+    setSearchQuery('');
     setSaleDetails({
       salePrice: '',
       saleDate: new Date().toISOString().split('T')[0],
@@ -304,56 +361,153 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
         </DialogDescription>
       </DialogHeader>
 
+      {/* Search and Filter Bar */}
+      <div className="space-y-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search items by name, notes, or serial..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9 pr-9"
+          />
+          {searchQuery && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+              onClick={() => setSearchQuery('')}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+
+        {/* Quick Select & Filter Toggle */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="sm" onClick={selectAll} className="h-8 text-xs">
+              <CheckSquare className="h-3 w-3 mr-1" />
+              All
+            </Button>
+            <Button variant="outline" size="sm" onClick={selectActiveOnly} className="h-8 text-xs">
+              <CheckCircle2 className="h-3 w-3 mr-1" />
+              Active
+            </Button>
+            <Button variant="ghost" size="sm" onClick={selectNone} className="h-8 text-xs">
+              <MinusSquare className="h-3 w-3 mr-1" />
+              None
+            </Button>
+          </div>
+          
+          {inactiveCount > 0 && (
+            <div className="flex items-center gap-2">
+              <Label htmlFor="show-inactive" className="text-xs text-muted-foreground cursor-pointer">
+                Show inactive ({inactiveCount})
+              </Label>
+              <Switch
+                id="show-inactive"
+                checked={showInactiveItems}
+                onCheckedChange={setShowInactiveItems}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Item Selection */}
       <div className="border rounded-lg">
         <div className="p-3 border-b bg-muted/30 flex items-center justify-between">
-          <div>
+          <div className="flex items-center gap-2">
             <span className="font-medium">{selectedItemIds.length}</span>
-            <span className="text-muted-foreground"> of {items.length} selected</span>
-            {totalValue > 0 && selectedItemIds.length > 0 && (
-              <Badge variant="secondary" className="ml-2 text-green-600">
-                ${totalValue.toLocaleString()}
+            <span className="text-muted-foreground">of {filteredItems.length} selected</span>
+            {searchQuery && (
+              <Badge variant="outline" className="text-xs">
+                <Filter className="h-3 w-3 mr-1" />
+                Filtered
               </Badge>
             )}
           </div>
-          <Button variant="ghost" size="sm" onClick={toggleSelectAll}>
-            {selectedItemIds.length === items.length ? (
-              <><CheckSquare className="h-4 w-4 mr-1" /> Deselect All</>
-            ) : (
-              <><Square className="h-4 w-4 mr-1" /> Select All</>
-            )}
-          </Button>
+          {totalValue > 0 && selectedItemIds.length > 0 && (
+            <Badge variant="secondary" className="text-green-600">
+              ${totalValue.toLocaleString()}
+            </Badge>
+          )}
         </div>
         
-        <ScrollArea className="h-[200px] p-2">
-          <div className="space-y-1">
-            {items.map((item) => (
-              <div
-                key={item.id}
-                onClick={() => toggleItem(item.id)}
-                className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${
-                  selectedItemIds.includes(item.id)
-                    ? 'bg-primary/10 border border-primary/50'
-                    : 'hover:bg-muted/50 border border-transparent'
-                }`}
-              >
-                <Checkbox checked={selectedItemIds.includes(item.id)} />
-                {item.photos?.[0] ? (
-                  <img src={item.photos[0]} alt="" className="w-10 h-10 object-cover rounded" />
-                ) : (
-                  <div className="w-10 h-10 bg-muted rounded flex items-center justify-center">
-                    <ImageIcon className="h-5 w-5 text-muted-foreground" />
+        <ScrollArea className="h-[220px] p-2">
+          {filteredItems.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground py-8">
+              <Package className="h-10 w-10 mb-2 opacity-50" />
+              <p className="text-sm">
+                {searchQuery ? 'No items match your search' : 'No items in vault'}
+              </p>
+              {searchQuery && (
+                <Button variant="link" size="sm" onClick={() => setSearchQuery('')}>
+                  Clear search
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {filteredItems.map((item) => {
+                const isSelected = selectedItemIds.includes(item.id);
+                const isInactive = item.status && item.status !== 'active';
+                
+                return (
+                  <div
+                    key={item.id}
+                    onClick={() => toggleItem(item.id)}
+                    className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-all ${
+                      isSelected
+                        ? 'bg-primary/10 border border-primary/50 shadow-sm'
+                        : 'hover:bg-muted/50 border border-transparent'
+                    } ${isInactive ? 'opacity-70' : ''}`}
+                  >
+                    <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 ${
+                      isSelected 
+                        ? 'bg-primary text-primary-foreground' 
+                        : 'border border-muted-foreground/30'
+                    }`}>
+                      {isSelected && <CheckCircle2 className="h-3 w-3" />}
+                    </div>
+                    
+                    {item.photos?.[0] ? (
+                      <img 
+                        src={item.photos[0]} 
+                        alt="" 
+                        className={`w-10 h-10 object-cover rounded flex-shrink-0 ${
+                          isInactive ? 'grayscale' : ''
+                        }`} 
+                      />
+                    ) : (
+                      <div className="w-10 h-10 bg-muted rounded flex items-center justify-center flex-shrink-0">
+                        <ImageIcon className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                    )}
+                    
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium truncate text-sm">{item.asset_name}</p>
+                        {item.status && item.status !== 'active' && (
+                          <Badge 
+                            variant="outline" 
+                            className={`text-[10px] px-1.5 py-0 capitalize ${getStatusColor(item.status)}`}
+                          >
+                            {item.status}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {item.valuation_data?.estimatedValue || 
+                         (item.owner_valuation ? `$${item.owner_valuation.toLocaleString()}` : 'No valuation')}
+                      </p>
+                    </div>
                   </div>
-                )}
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium truncate text-sm">{item.asset_name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {item.valuation_data?.estimatedValue || 'No valuation'}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </ScrollArea>
       </div>
 
@@ -363,42 +517,62 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
       <div className="grid grid-cols-2 gap-3">
         <Button
           variant="outline"
-          className="h-20 flex-col gap-1 hover:bg-blue-500/10 hover:border-blue-500"
+          className="h-20 flex-col gap-1 hover:bg-blue-500/10 hover:border-blue-500 transition-colors"
           onClick={() => setCurrentScreen('export-pdf')}
           disabled={selectedItemIds.length === 0}
         >
           <FileText className="h-6 w-6 text-blue-500" />
           <span>Export PDF</span>
+          {selectedItemIds.length > 0 && (
+            <span className="text-[10px] text-muted-foreground">
+              {selectedItemIds.length} item{selectedItemIds.length !== 1 ? 's' : ''}
+            </span>
+          )}
         </Button>
         
         <Button
           variant="outline"
-          className="h-20 flex-col gap-1 hover:bg-green-500/10 hover:border-green-500"
+          className="h-20 flex-col gap-1 hover:bg-green-500/10 hover:border-green-500 transition-colors"
           onClick={() => setCurrentScreen('mark-sold')}
           disabled={selectedItemIds.length === 0}
         >
           <DollarSign className="h-6 w-6 text-green-500" />
           <span>Mark Sold</span>
+          {selectedItemIds.length > 0 && (
+            <span className="text-[10px] text-muted-foreground">
+              {selectedItemIds.length} item{selectedItemIds.length !== 1 ? 's' : ''}
+            </span>
+          )}
         </Button>
         
         <Button
           variant="outline"
-          className="h-20 flex-col gap-1 hover:bg-yellow-500/10 hover:border-yellow-500"
+          className="h-20 flex-col gap-1 hover:bg-yellow-500/10 hover:border-yellow-500 transition-colors"
           onClick={() => setCurrentScreen('mark-lost')}
           disabled={selectedItemIds.length === 0}
         >
           <XCircle className="h-6 w-6 text-yellow-500" />
           <span>Mark Lost</span>
+          {selectedItemIds.length > 0 && (
+            <span className="text-[10px] text-muted-foreground">
+              {selectedItemIds.length} item{selectedItemIds.length !== 1 ? 's' : ''}
+            </span>
+          )}
         </Button>
         
         <Button
           variant="outline"
-          className="h-20 flex-col gap-1 hover:bg-orange-500/10 hover:border-orange-500"
+          className="h-20 flex-col gap-1 hover:bg-orange-500/10 hover:border-orange-500 transition-colors"
           onClick={() => setCurrentScreen('mark-damaged')}
           disabled={selectedItemIds.length === 0}
         >
           <AlertOctagon className="h-6 w-6 text-orange-500" />
           <span>Mark Damaged</span>
+          {selectedItemIds.length > 0 && (
+            <span className="text-[10px] text-muted-foreground">
+              {selectedItemIds.length} item{selectedItemIds.length !== 1 ? 's' : ''}
+            </span>
+          )}
         </Button>
       </div>
 
@@ -434,6 +608,25 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
         </div>
       </DialogHeader>
 
+      {/* Selected Items Preview */}
+      <div className="bg-muted/30 rounded-lg p-3">
+        <p className="text-xs text-muted-foreground mb-2">Exporting:</p>
+        <div className="flex flex-wrap gap-1">
+          {selectedItems.slice(0, 5).map(item => (
+            <Badge key={item.id} variant="secondary" className="text-xs">
+              {item.asset_name.length > 20 
+                ? item.asset_name.substring(0, 20) + '...' 
+                : item.asset_name}
+            </Badge>
+          ))}
+          {selectedItems.length > 5 && (
+            <Badge variant="outline" className="text-xs">
+              +{selectedItems.length - 5} more
+            </Badge>
+          )}
+        </div>
+      </div>
+
       <div className="space-y-4">
         {/* Format Selection */}
         <div className="space-y-2">
@@ -443,21 +636,21 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
             onValueChange={(v) => setPdfOptions({ ...pdfOptions, format: v as any })}
             className="grid grid-cols-3 gap-2"
           >
-            <div className={`border rounded-lg p-3 cursor-pointer ${pdfOptions.format === 'detailed' ? 'border-primary bg-primary/5' : ''}`}>
+            <div className={`border rounded-lg p-3 cursor-pointer transition-colors ${pdfOptions.format === 'detailed' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}>
               <RadioGroupItem value="detailed" id="detailed" className="sr-only" />
               <Label htmlFor="detailed" className="cursor-pointer">
                 <div className="font-medium">Detailed</div>
                 <div className="text-xs text-muted-foreground">Full information</div>
               </Label>
             </div>
-            <div className={`border rounded-lg p-3 cursor-pointer ${pdfOptions.format === 'summary' ? 'border-primary bg-primary/5' : ''}`}>
+            <div className={`border rounded-lg p-3 cursor-pointer transition-colors ${pdfOptions.format === 'summary' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}>
               <RadioGroupItem value="summary" id="summary" className="sr-only" />
               <Label htmlFor="summary" className="cursor-pointer">
                 <div className="font-medium">Summary</div>
                 <div className="text-xs text-muted-foreground">Quick overview</div>
               </Label>
             </div>
-            <div className={`border rounded-lg p-3 cursor-pointer ${pdfOptions.format === 'insurance' ? 'border-primary bg-primary/5' : ''}`}>
+            <div className={`border rounded-lg p-3 cursor-pointer transition-colors ${pdfOptions.format === 'insurance' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}>
               <RadioGroupItem value="insurance" id="insurance" className="sr-only" />
               <Label htmlFor="insurance" className="cursor-pointer">
                 <div className="font-medium">Insurance</div>
@@ -477,7 +670,7 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
               { key: 'includeNotes', label: 'Notes & Serial #', icon: FileText },
               { key: 'includeProvenance', label: 'Provenance', icon: Shield },
             ].map(({ key, label, icon: Icon }) => (
-              <div key={key} className="flex items-center space-x-2 border rounded-lg p-2">
+              <div key={key} className="flex items-center space-x-2 border rounded-lg p-2 hover:bg-muted/30 transition-colors">
                 <Checkbox
                   id={key}
                   checked={pdfOptions[key as keyof typeof pdfOptions] as boolean}
@@ -521,6 +714,24 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
           </div>
         </div>
       </DialogHeader>
+
+      {/* Selected Items Preview */}
+      <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
+        <div className="flex flex-wrap gap-1">
+          {selectedItems.slice(0, 3).map(item => (
+            <Badge key={item.id} variant="outline" className="text-xs border-green-500/30">
+              {item.asset_name.length > 15 
+                ? item.asset_name.substring(0, 15) + '...' 
+                : item.asset_name}
+            </Badge>
+          ))}
+          {selectedItems.length > 3 && (
+            <Badge variant="outline" className="text-xs">
+              +{selectedItems.length - 3} more
+            </Badge>
+          )}
+        </div>
+      </div>
 
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
@@ -616,7 +827,7 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
   const renderLostDamagedScreen = (type: 'lost' | 'damaged') => {
     const isLost = type === 'lost';
     const Icon = isLost ? XCircle : AlertOctagon;
-    const color = isLost ? 'yellow' : 'orange';
+    const colorClass = isLost ? 'yellow' : 'orange';
 
     return (
       <>
@@ -627,7 +838,7 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
             </Button>
             <div>
               <DialogTitle className="flex items-center gap-2">
-                <Icon className={`h-5 w-5 text-${color}-500`} />
+                <Icon className={`h-5 w-5 text-${colorClass}-500`} />
                 Mark as {isLost ? 'Lost' : 'Damaged'}
               </DialogTitle>
               <DialogDescription>
@@ -636,6 +847,24 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
             </div>
           </div>
         </DialogHeader>
+
+        {/* Selected Items Preview */}
+        <div className={`bg-${colorClass}-500/10 border border-${colorClass}-500/20 rounded-lg p-3`}>
+          <div className="flex flex-wrap gap-1">
+            {selectedItems.slice(0, 3).map(item => (
+              <Badge key={item.id} variant="outline" className={`text-xs border-${colorClass}-500/30`}>
+                {item.asset_name.length > 15 
+                  ? item.asset_name.substring(0, 15) + '...' 
+                  : item.asset_name}
+              </Badge>
+            ))}
+            {selectedItems.length > 3 && (
+              <Badge variant="outline" className="text-xs">
+                +{selectedItems.length - 3} more
+              </Badge>
+            )}
+          </div>
+        </div>
 
         <div className="space-y-4">
           <div className="space-y-2">
@@ -668,7 +897,7 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
                 checked={incidentDetails.insuranceClaim}
                 onCheckedChange={(c) => setIncidentDetails({ ...incidentDetails, insuranceClaim: !!c })}
               />
-              <Label htmlFor="insuranceClaim">Filing insurance claim</Label>
+              <Label htmlFor="insuranceClaim" className="cursor-pointer">Filing insurance claim</Label>
             </div>
             {incidentDetails.insuranceClaim && (
               <Input
@@ -686,7 +915,7 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
                     checked={incidentDetails.policeReport}
                     onCheckedChange={(c) => setIncidentDetails({ ...incidentDetails, policeReport: !!c })}
                   />
-                  <Label htmlFor="policeReport">Filed police report</Label>
+                  <Label htmlFor="policeReport" className="cursor-pointer">Filed police report</Label>
                 </div>
                 {incidentDetails.policeReport && (
                   <Input
@@ -700,9 +929,9 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
           </div>
 
           {totalValue > 0 && (
-            <div className={`bg-${color}-500/10 border border-${color}-500/30 rounded-lg p-3`}>
+            <div className={`bg-${colorClass}-500/10 border border-${colorClass}-500/30 rounded-lg p-3`}>
               <div className="flex items-center gap-2 font-medium">
-                <AlertTriangle className={`h-4 w-4 text-${color}-500`} />
+                <AlertTriangle className={`h-4 w-4 text-${colorClass}-500`} />
                 Value at risk: ${totalValue.toLocaleString()}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
@@ -715,7 +944,7 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
         <Button
           onClick={() => handleMarkLostOrDamaged(type)}
           disabled={isProcessing}
-          className={`w-full bg-${color}-600 hover:bg-${color}-700`}
+          className={`w-full ${isLost ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-orange-600 hover:bg-orange-700'}`}
         >
           {isProcessing ? (
             <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processing...</>
@@ -763,11 +992,12 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
         <ScrollArea className="h-[150px] border rounded-lg p-2">
           {selectedItems.map((item) => (
             <div key={item.id} className="flex items-center gap-2 py-1 text-sm">
-              <XCircle className="h-4 w-4 text-red-500" />
-              <span className="truncate">{item.asset_name}</span>
-              {item.valuation_data?.estimatedValue && (
-                <span className="text-muted-foreground ml-auto">
-                  {item.valuation_data.estimatedValue}
+              <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
+              <span className="truncate flex-1">{item.asset_name}</span>
+              {(item.valuation_data?.estimatedValue || item.owner_valuation) && (
+                <span className="text-muted-foreground text-xs">
+                  {item.valuation_data?.estimatedValue || 
+                   `$${item.owner_valuation?.toLocaleString()}`}
                 </span>
               )}
             </div>
@@ -796,7 +1026,7 @@ export const VaultExportModal: React.FC<VaultExportModalProps> = ({
   return (
     <>
       <Dialog open={isOpen} onOpenChange={resetAndClose}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           {currentScreen === 'select' && renderSelectionScreen()}
           {currentScreen === 'export-pdf' && renderPdfScreen()}
           {currentScreen === 'mark-sold' && renderSoldScreen()}
