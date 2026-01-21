@@ -14,7 +14,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Loader2, ShieldAlert, Plus, Vault, ChevronLeft, DollarSign } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Loader2, ShieldAlert, Plus, Vault, ChevronLeft, DollarSign, ShieldCheck, Smartphone } from 'lucide-react';
 import { ItemDetailModal } from '@/components/vault/ItemDetailModal';
 import ChallengeConfirmationModal from '@/components/arena/ChallengeConfirmationModal';
 import { toast } from 'sonner';
@@ -99,6 +100,26 @@ const VaultCard: React.FC<{
   </motion.div>
 );
 
+// Helper to check if device is trusted (for display purposes)
+const getTrustedDeviceInfo = (): { trusted: boolean; expiresAt?: Date } | null => {
+  try {
+    const stored = localStorage.getItem('mfa_trusted_device');
+    if (!stored) return null;
+    
+    const { fingerprint, expiresAt, userId } = JSON.parse(stored);
+    const expiry = new Date(expiresAt);
+    
+    if (expiry <= new Date()) {
+      localStorage.removeItem('mfa_trusted_device');
+      return null;
+    }
+    
+    return { trusted: true, expiresAt: expiry };
+  } catch {
+    return null;
+  }
+};
+
 const VaultPage: React.FC = () => {
   const { profile, loading: authLoading, session, refreshProfile } = useAuth();
   const { isUnlocked, unlockVault } = useMfa();
@@ -110,6 +131,13 @@ const VaultPage: React.FC = () => {
   const [isCreateVaultOpen, setIsCreateVaultOpen] = useState(false);
   const [newVaultName, setNewVaultName] = useState('');
   const [newVaultDescription, setNewVaultDescription] = useState('');
+  const [trustedDeviceInfo, setTrustedDeviceInfo] = useState<{ trusted: boolean; expiresAt?: Date } | null>(null);
+
+  // Check trusted device status on mount and when unlocked changes
+  useEffect(() => {
+    const info = getTrustedDeviceInfo();
+    setTrustedDeviceInfo(info);
+  }, [isUnlocked]);
 
   // Handler for successful MFA setup
   const handleMfaSetupSuccess = async () => {
@@ -315,7 +343,21 @@ const VaultPage: React.FC = () => {
         transition={{ duration: 0.5 }}
       >
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-4xl font-bold tracking-wider">My Vaults</h1>
+          <div>
+            <h1 className="text-4xl font-bold tracking-wider">My Vaults</h1>
+            {/* Trusted Device Indicator */}
+            {trustedDeviceInfo?.trusted && (
+              <div className="flex items-center gap-2 mt-2">
+                <Badge variant="outline" className="text-green-400 border-green-400/50 bg-green-400/10">
+                  <Smartphone className="h-3 w-3 mr-1" />
+                  Trusted Device
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  until {trustedDeviceInfo.expiresAt?.toLocaleDateString()}
+                </span>
+              </div>
+            )}
+          </div>
           <Button onClick={() => setIsCreateVaultOpen(true)} size="lg">
             <Plus className="mr-2 h-5 w-5" />
             Create New Vault
@@ -431,7 +473,15 @@ const VaultPage: React.FC = () => {
               <ChevronLeft className="h-6 w-6" />
             </Button>
             <div>
-              <h1 className="text-4xl font-bold tracking-wider">{selectedVault.name}</h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-4xl font-bold tracking-wider">{selectedVault.name}</h1>
+                {trustedDeviceInfo?.trusted && (
+                  <Badge variant="outline" className="text-green-400 border-green-400/50 bg-green-400/10">
+                    <ShieldCheck className="h-3 w-3 mr-1" />
+                    Secured
+                  </Badge>
+                )}
+              </div>
               {selectedVault.description && (
                 <p className="text-gray-400 mt-1">{selectedVault.description}</p>
               )}
