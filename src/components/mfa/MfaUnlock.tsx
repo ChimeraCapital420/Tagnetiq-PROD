@@ -4,8 +4,10 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Loader2, ShieldCheck, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Loader2, ShieldCheck, AlertTriangle, RefreshCw, Smartphone } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   AlertDialog,
@@ -19,7 +21,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 interface MfaUnlockProps {
-  onSuccess: () => void;
+  onSuccess: (rememberDevice?: boolean) => void;
 }
 
 export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
@@ -30,6 +32,7 @@ export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
   const [factorId, setFactorId] = useState<string | null>(null);
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [mfaStateMismatch, setMfaStateMismatch] = useState(false);
+  const [rememberDevice, setRememberDevice] = useState(true); // Default checked
 
   useEffect(() => {
     checkMfaStatus();
@@ -42,30 +45,21 @@ export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
     try {
       const { data, error: listError } = await supabase.auth.mfa.listFactors();
       
-      console.log('[MfaUnlock] listFactors result:', { data, error: listError });
-      
       if (listError) {
-        console.error('[MfaUnlock] Error listing factors:', listError);
         setError(`Could not retrieve MFA status: ${listError.message}`);
         toast.error("Error", { description: "Could not retrieve MFA status." });
         return;
       }
 
-      // Check for verified TOTP factors
       const verifiedFactor = data?.totp?.find(factor => factor.status === 'verified');
       
       if (verifiedFactor) {
-        console.log('[MfaUnlock] Found verified factor:', verifiedFactor.id);
         setFactorId(verifiedFactor.id);
         setMfaStateMismatch(false);
       } else {
-        // STATE MISMATCH DETECTED!
-        // Profile says mfa_enrolled=true, but no factors exist in Supabase
-        console.warn('[MfaUnlock] MFA state mismatch - profile enrolled but no factors found');
         setMfaStateMismatch(true);
         setFactorId(null);
         
-        // Check for unverified factors (incomplete setup)
         const unverifiedFactor = data?.totp?.find(factor => factor.status === 'unverified');
         if (unverifiedFactor) {
           setError("Your MFA setup was not completed. Please reset and try again.");
@@ -74,60 +68,42 @@ export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
         }
       }
     } catch (err: any) {
-      console.error('[MfaUnlock] Unexpected error:', err);
       setError(`Unexpected error: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Auto-fix the mismatch by resetting mfa_enrolled to false
   const handleResetMfa = async () => {
     setIsLoading(true);
     setShowResetDialog(false);
     
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        throw new Error('Not authenticated');
-      }
+      if (!user) throw new Error('Not authenticated');
 
-      // First, clean up any orphaned factors in Supabase
       const { data: factorsData } = await supabase.auth.mfa.listFactors();
       if (factorsData?.totp) {
         for (const factor of factorsData.totp) {
           try {
             await supabase.auth.mfa.unenroll({ factorId: factor.id });
-            console.log('[MfaUnlock] Cleaned up factor:', factor.id);
           } catch (e) {
-            console.warn('[MfaUnlock] Could not unenroll factor:', e);
+            // Continue
           }
         }
       }
 
-      // Reset the profile flag
       const { error: profileError } = await supabase
         .from('profiles')
         .update({ mfa_enrolled: false })
         .eq('id', user.id);
 
-      if (profileError) {
-        throw profileError;
-      }
+      if (profileError) throw profileError;
 
-      toast.success("MFA Reset Complete", {
-        description: "Redirecting to MFA setup..."
-      });
-
-      // Reload the page to trigger the MFA setup flow
-      // Since mfa_enrolled is now false, Vault.tsx will show MfaSetup
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+      toast.success("MFA Reset Complete", { description: "Redirecting to MFA setup..." });
+      setTimeout(() => window.location.reload(), 1000);
 
     } catch (err: any) {
-      console.error('[MfaUnlock] Reset error:', err);
       setError(`Reset failed: ${err.message}`);
       toast.error("Reset Failed", { description: err.message });
       setIsLoading(false);
@@ -137,12 +113,7 @@ export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!factorId) {
-      toast.error("MFA factor not found. Please reset your MFA.");
-      return;
-    }
-    
-    if (!verificationCode || verificationCode.length !== 6) {
+    if (!factorId || !verificationCode || verificationCode.length !== 6) {
       toast.error("Please enter a valid 6-digit verification code.");
       return;
     }
@@ -156,12 +127,7 @@ export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
         code: verificationCode,
       });
 
-      console.log('[MfaUnlock] challengeAndVerify result:', { data, error: verifyError });
-
       if (verifyError) {
-        console.error('[MfaUnlock] Verification failed:', verifyError);
-        
-        // User-friendly error messages
         if (verifyError.message.includes('Invalid') || verifyError.message.includes('invalid')) {
           setError("Invalid code. Please check your authenticator app and try again.");
           toast.error("Invalid Code", { 
@@ -174,18 +140,16 @@ export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
           setError(verifyError.message);
           toast.error("Verification Failed", { description: verifyError.message });
         }
-        
-        // Clear the input for retry
         setVerificationCode('');
       } else {
-        console.log('[MfaUnlock] Verification successful!');
         toast.success("Vault Unlocked", {
-          description: "Welcome to your secure vault."
+          description: rememberDevice 
+            ? "This device will be remembered for 30 days."
+            : "Welcome to your secure vault."
         });
-        onSuccess();
+        onSuccess(rememberDevice);
       }
     } catch (err: any) {
-      console.error('[MfaUnlock] Unexpected error:', err);
       setError(`Error: ${err.message}`);
       toast.error("Error", { description: err.message });
     } finally {
@@ -203,7 +167,7 @@ export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
     );
   }
 
-  // MFA State Mismatch - Show Reset Option
+  // MFA State Mismatch
   if (mfaStateMismatch) {
     return (
       <>
@@ -211,8 +175,7 @@ export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
           <AlertTriangle className="h-12 w-12 text-amber-500 mb-4" />
           <h3 className="text-lg font-semibold">MFA Setup Required</h3>
           <p className="text-sm text-muted-foreground mt-2">
-            Your authenticator app is no longer linked to your account. 
-            This can happen if you changed phones or reinstalled your authenticator app.
+            Your authenticator app is no longer linked to your account.
           </p>
           
           <Alert className="mt-4 text-left">
@@ -232,27 +195,19 @@ export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
             <RefreshCw className="mr-2 h-4 w-4" />
             Reset & Setup New MFA
           </Button>
-          
-          <p className="text-xs text-muted-foreground mt-4">
-            You'll scan a new QR code with your authenticator app.
-          </p>
         </div>
 
-        {/* Reset Confirmation Dialog */}
         <AlertDialog open={showResetDialog} onOpenChange={setShowResetDialog}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Reset MFA?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will remove your current MFA enrollment and let you set up a new authenticator. 
-                You'll need to scan a new QR code with your authenticator app.
+                This will remove your current MFA enrollment and let you set up a new authenticator.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={handleResetMfa}>
-                Yes, Reset MFA
-              </AlertDialogAction>
+              <AlertDialogAction onClick={handleResetMfa}>Yes, Reset MFA</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -289,9 +244,23 @@ export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
           />
         </div>
         
-        {error && (
-          <p className="text-sm text-destructive">{error}</p>
-        )}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
+        {/* Remember Device Checkbox */}
+        <div className="flex items-center justify-center space-x-2 py-2">
+          <Checkbox 
+            id="remember-device" 
+            checked={rememberDevice}
+            onCheckedChange={(checked) => setRememberDevice(checked === true)}
+          />
+          <Label 
+            htmlFor="remember-device" 
+            className="text-sm text-muted-foreground cursor-pointer flex items-center gap-1"
+          >
+            <Smartphone className="h-3 w-3" />
+            Trust this device for 30 days
+          </Label>
+        </div>
         
         <Button 
           type="submit" 
@@ -310,11 +279,9 @@ export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
         </Button>
       </form>
 
-      {/* Help text with reset option */}
+      {/* Help text */}
       <div className="mt-6 pt-4 border-t w-full">
-        <p className="text-xs text-muted-foreground mb-2">
-          Lost access to your authenticator?
-        </p>
+        <p className="text-xs text-muted-foreground mb-2">Lost access to your authenticator?</p>
         <Button 
           variant="ghost" 
           size="sm"
@@ -325,21 +292,17 @@ export const MfaUnlock: React.FC<MfaUnlockProps> = ({ onSuccess }) => {
         </Button>
       </div>
 
-      {/* Reset Confirmation Dialog */}
       <AlertDialog open={showResetDialog} onOpenChange={setShowResetDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Reset MFA?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will remove your current authenticator and require you to set up a new one. 
-              Only do this if you've lost access to your authenticator app.
+              This will remove your current authenticator and require you to set up a new one.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleResetMfa}>
-              Yes, Reset MFA
-            </AlertDialogAction>
+            <AlertDialogAction onClick={handleResetMfa}>Yes, Reset MFA</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
