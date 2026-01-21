@@ -319,12 +319,17 @@ export class HydraEngine {
           itemName = analysis.itemName;
         }
         
+        // Safely parse estimatedValue with null checking
+        const safeEstimatedValue = analysis.estimatedValue != null 
+          ? parseFloat(analysis.estimatedValue.toString()) 
+          : 0;
+        
         const vote: ModelVote = {
           providerId: provider.id,
           providerName: provider.name,
-          itemName: analysis.itemName,
-          estimatedValue: parseFloat(analysis.estimatedValue.toString()),
-          decision: analysis.decision,
+          itemName: analysis.itemName || 'Unknown Item',
+          estimatedValue: isNaN(safeEstimatedValue) ? 0 : safeEstimatedValue,
+          decision: analysis.decision || 'SELL',
           confidence: aiResult.confidence,
           responseTime: aiResult.responseTime,
           weight: this.calculateWeight(provider, aiResult.confidence),
@@ -377,12 +382,17 @@ export class HydraEngine {
         
         console.log(`🎯 ${provider.name} analyzed: "${analysis.itemName}" (confidence: ${aiResult.confidence})`);
         
+        // Safely parse estimatedValue with null checking
+        const safeEstimatedValue = analysis.estimatedValue != null 
+          ? parseFloat(analysis.estimatedValue.toString()) 
+          : 0;
+        
         const vote: ModelVote = {
           providerId: provider.id,
           providerName: provider.name,
-          itemName: analysis.itemName || itemName, // Use identified name if text AI doesn't provide one
-          estimatedValue: parseFloat(analysis.estimatedValue.toString()),
-          decision: analysis.decision,
+          itemName: analysis.itemName || itemName || 'Unknown Item', // Use identified name if text AI doesn't provide one
+          estimatedValue: isNaN(safeEstimatedValue) ? 0 : safeEstimatedValue,
+          decision: analysis.decision || 'SELL',
           confidence: aiResult.confidence,
           responseTime: aiResult.responseTime,
           weight: this.calculateWeight(provider, aiResult.confidence),
@@ -428,12 +438,17 @@ export class HydraEngine {
           const { provider, result: aiResult } = result.value;
           const analysis = aiResult.response as ParsedAnalysis;
           
+          // Safely parse estimatedValue with null checking
+          const safeEstimatedValue = analysis.estimatedValue != null 
+            ? parseFloat(analysis.estimatedValue.toString()) 
+            : 0;
+          
           const vote: ModelVote = {
             providerId: provider.id,
             providerName: provider.name,
-            itemName: analysis.itemName || itemName,
-            estimatedValue: parseFloat(analysis.estimatedValue.toString()),
-            decision: analysis.decision,
+            itemName: analysis.itemName || itemName || 'Unknown Item',
+            estimatedValue: isNaN(safeEstimatedValue) ? 0 : safeEstimatedValue,
+            decision: analysis.decision || 'SELL',
             confidence: aiResult.confidence,
             responseTime: aiResult.responseTime,
             weight: this.calculateWeight(provider, aiResult.confidence) * 1.2, // Boost weight for real-time data
@@ -484,12 +499,17 @@ export class HydraEngine {
             const analysis = result.response as ParsedAnalysis;
             console.log(`🎯 TIEBREAKER ${tiebreakerProvider.getProvider().name} decided: "${analysis.decision}" (confidence: ${result.confidence})`);
             
+            // Safely parse estimatedValue with null checking
+            const safeEstimatedValue = analysis.estimatedValue != null 
+              ? parseFloat(analysis.estimatedValue.toString()) 
+              : 0;
+            
             const vote: ModelVote = {
               providerId: tiebreakerProvider.getProvider().id,
               providerName: tiebreakerProvider.getProvider().name + ' (TIEBREAKER)',
-              itemName: analysis.itemName || itemName,
-              estimatedValue: parseFloat(analysis.estimatedValue.toString()),
-              decision: analysis.decision,
+              itemName: analysis.itemName || itemName || 'Unknown Item',
+              estimatedValue: isNaN(safeEstimatedValue) ? 0 : safeEstimatedValue,
+              decision: analysis.decision || 'SELL',
               confidence: result.confidence * 0.8, // Reduced confidence for tiebreaker
               responseTime: result.responseTime,
               weight: this.calculateWeight(tiebreakerProvider.getProvider(), result.confidence) * 0.6, // Reduced weight for tiebreaker
@@ -577,12 +597,17 @@ export class HydraEngine {
         const result = await provider.analyze(images, prompt);
         
         if (result.response) {
+          // Safely parse estimatedValue with null checking
+          const safeEstimatedValue = result.response.estimatedValue != null 
+            ? parseFloat(result.response.estimatedValue.toString()) 
+            : 0;
+          
           // Create minimal consensus from single provider
           const vote: ModelVote = {
             providerId: provider.getProvider().id,
             providerName: provider.getProvider().name + ' (EMERGENCY)',
             itemName: result.response.itemName || 'Unknown Item',
-            estimatedValue: parseFloat(result.response.estimatedValue?.toString() || '0'),
+            estimatedValue: isNaN(safeEstimatedValue) ? 0 : safeEstimatedValue,
             decision: result.response.decision || 'SELL',
             confidence: result.confidence * 0.5, // Reduce confidence for single-provider
             responseTime: result.responseTime,
