@@ -1,128 +1,178 @@
 // FILE: src/contexts/MfaContext.tsx
-
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase } from '@/lib/supabase';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { useAuth } from './AuthContext';
 
 interface MfaContextType {
   isUnlocked: boolean;
+  isLoading: boolean;
+  isTrustedDevice: boolean;
+  trustedUntil: Date | null;
   unlockVault: (rememberDevice?: boolean) => void;
-  lockVault: () => void;
-  isDeviceTrusted: boolean;
+  lockVault: (forgetDevice?: boolean) => void;
+  forgetThisDevice: () => void;
 }
 
 const MfaContext = createContext<MfaContextType | undefined>(undefined);
 
-const TRUSTED_DEVICE_KEY = 'tagnetiq_trusted_device';
-const TRUST_DURATION_DAYS = 30;
-
-export const useMfa = (): MfaContextType => {
-  const context = useContext(MfaContext);
-  if (!context) {
-    throw new Error('useMfa must be used within a MfaProvider');
-  }
-  return context;
-};
-
-interface MfaProviderProps {
-  children: ReactNode;
-}
-
-// Generate a device fingerprint (simple version)
-const getDeviceFingerprint = (): string => {
-  const nav = window.navigator;
-  const screen = window.screen;
-  const fingerprint = [
-    nav.userAgent,
-    nav.language,
+// Simple device fingerprint based on browser characteristics
+const generateDeviceFingerprint = (): string => {
+  const components = [
+    navigator.userAgent,
+    navigator.language,
     screen.width,
     screen.height,
     screen.colorDepth,
     new Date().getTimezoneOffset(),
-  ].join('|');
+    navigator.hardwareConcurrency || 'unknown',
+    // @ts-ignore
+    navigator.deviceMemory || 'unknown',
+  ];
   
-  // Simple hash
+  // Simple hash function
+  const str = components.join('|');
   let hash = 0;
-  for (let i = 0; i < fingerprint.length; i++) {
-    const char = fingerprint.charCodeAt(i);
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
+    hash = hash & hash; // Convert to 32bit integer
   }
   return Math.abs(hash).toString(36);
 };
 
-export const MfaProvider = ({ children }: MfaProviderProps) => {
+const TRUST_DURATION_DAYS = 30;
+const STORAGE_KEY = 'mfa_trusted_device';
+
+export const MfaProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { session } = useAuth();
   const [isUnlocked, setIsUnlocked] = useState(false);
-  const [isDeviceTrusted, setIsDeviceTrusted] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isTrustedDevice, setIsTrustedDevice] = useState(false);
+  const [trustedUntil, setTrustedUntil] = useState<Date | null>(null);
 
   // Check for trusted device on mount
   useEffect(() => {
-    const checkTrustedDevice = async () => {
+    const checkTrustedDevice = () => {
       try {
-        const stored = localStorage.getItem(TRUSTED_DEVICE_KEY);
-        if (!stored) return;
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (!stored) {
+          setIsLoading(false);
+          return;
+        }
 
-        const { token, expires, fingerprint } = JSON.parse(stored);
+        const { fingerprint, expiresAt, userId } = JSON.parse(stored);
+        const currentFingerprint = generateDeviceFingerprint();
+        const expiry = new Date(expiresAt);
         
-        // Verify not expired
-        if (new Date(expires) < new Date()) {
-          localStorage.removeItem(TRUSTED_DEVICE_KEY);
-          return;
-        }
-
-        // Verify fingerprint matches
-        if (fingerprint !== getDeviceFingerprint()) {
-          localStorage.removeItem(TRUSTED_DEVICE_KEY);
-          return;
-        }
-
-        // Verify token with user session
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user && token.includes(user.id.substring(0, 8))) {
-          setIsDeviceTrusted(true);
+        // Validate: fingerprint matches, not expired, and same user
+        if (
+          fingerprint === currentFingerprint &&
+          expiry > new Date() &&
+          userId === session?.user?.id
+        ) {
+          console.log('[MFA] Trusted device detected, auto-unlocking vault');
           setIsUnlocked(true);
+          setIsTrustedDevice(true);
+          setTrustedUntil(expiry);
+        } else {
+          // Clear invalid/expired trust
+          if (expiry <= new Date()) {
+            console.log('[MFA] Trust expired, clearing');
+          } else if (userId !== session?.user?.id) {
+            console.log('[MFA] Different user, clearing trust');
+          }
+          localStorage.removeItem(STORAGE_KEY);
+          setIsTrustedDevice(false);
+          setTrustedUntil(null);
         }
       } catch (e) {
-        localStorage.removeItem(TRUSTED_DEVICE_KEY);
+        console.warn('[MFA] Error checking trusted device:', e);
+        localStorage.removeItem(STORAGE_KEY);
       }
+      setIsLoading(false);
     };
 
-    checkTrustedDevice();
-  }, []);
+    if (session?.user?.id) {
+      checkTrustedDevice();
+    } else {
+      setIsLoading(false);
+    }
+  }, [session?.user?.id]);
 
-  const unlockVault = async (rememberDevice = false) => {
+  // Unlock vault (called after successful TOTP verification)
+  const unlockVault = useCallback((rememberDevice: boolean = false) => {
+    console.log('[MFA] Unlocking vault, remember device:', rememberDevice);
     setIsUnlocked(true);
 
-    if (rememberDevice) {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const expires = new Date();
-          expires.setDate(expires.getDate() + TRUST_DURATION_DAYS);
-          
-          const trustData = {
-            token: `${user.id.substring(0, 8)}_${Date.now()}_${Math.random().toString(36)}`,
-            expires: expires.toISOString(),
-            fingerprint: getDeviceFingerprint(),
-          };
-          
-          localStorage.setItem(TRUSTED_DEVICE_KEY, JSON.stringify(trustData));
-          setIsDeviceTrusted(true);
-        }
-      } catch (e) {
-        console.warn('Could not save trusted device');
-      }
-    }
-  };
+    if (rememberDevice && session?.user?.id) {
+      const fingerprint = generateDeviceFingerprint();
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + TRUST_DURATION_DAYS);
 
-  const lockVault = () => {
+      const trustData = {
+        fingerprint,
+        expiresAt: expiresAt.toISOString(),
+        userId: session.user.id,
+        createdAt: new Date().toISOString(),
+      };
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(trustData));
+      setIsTrustedDevice(true);
+      setTrustedUntil(expiresAt);
+      console.log('[MFA] Device trusted until:', expiresAt);
+    }
+  }, [session?.user?.id]);
+
+  // Lock vault - optionally forget the device too
+  const lockVault = useCallback((forgetDevice: boolean = false) => {
+    console.log('[MFA] Locking vault, forget device:', forgetDevice);
     setIsUnlocked(false);
-    // Note: We don't remove trusted device on lock
-    // User can still re-open without MFA if device is trusted
-  };
+
+    if (forgetDevice) {
+      localStorage.removeItem(STORAGE_KEY);
+      setIsTrustedDevice(false);
+      setTrustedUntil(null);
+      console.log('[MFA] Device trust removed');
+    }
+  }, []);
+
+  // Forget this device (remove trust but don't lock if currently unlocked)
+  const forgetThisDevice = useCallback(() => {
+    console.log('[MFA] Forgetting this device');
+    localStorage.removeItem(STORAGE_KEY);
+    setIsTrustedDevice(false);
+    setTrustedUntil(null);
+  }, []);
+
+  // Lock vault when user logs out
+  useEffect(() => {
+    if (!session) {
+      setIsUnlocked(false);
+      // Don't clear trust on logout - they may want to stay trusted
+      // They can manually "forget device" if needed
+    }
+  }, [session]);
 
   return (
-    <MfaContext.Provider value={{ isUnlocked, unlockVault, lockVault, isDeviceTrusted }}>
+    <MfaContext.Provider
+      value={{
+        isUnlocked,
+        isLoading,
+        isTrustedDevice,
+        trustedUntil,
+        unlockVault,
+        lockVault,
+        forgetThisDevice,
+      }}
+    >
       {children}
     </MfaContext.Provider>
   );
+};
+
+export const useMfa = (): MfaContextType => {
+  const context = useContext(MfaContext);
+  if (context === undefined) {
+    throw new Error('useMfa must be used within a MfaProvider');
+  }
+  return context;
 };

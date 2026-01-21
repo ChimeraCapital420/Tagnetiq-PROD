@@ -15,7 +15,39 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, ShieldAlert, Plus, Vault, ChevronLeft, DollarSign, ShieldCheck, Smartphone } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { 
+  Loader2, 
+  ShieldAlert, 
+  Plus, 
+  Vault, 
+  ChevronLeft, 
+  DollarSign, 
+  ShieldCheck, 
+  Smartphone,
+  Lock,
+  Unlock,
+  Settings,
+  ShieldOff,
+  LogOut
+} from 'lucide-react';
 import { ItemDetailModal } from '@/components/vault/ItemDetailModal';
 import ChallengeConfirmationModal from '@/components/arena/ChallengeConfirmationModal';
 import { toast } from 'sonner';
@@ -100,29 +132,9 @@ const VaultCard: React.FC<{
   </motion.div>
 );
 
-// Helper to check if device is trusted (for display purposes)
-const getTrustedDeviceInfo = (): { trusted: boolean; expiresAt?: Date } | null => {
-  try {
-    const stored = localStorage.getItem('mfa_trusted_device');
-    if (!stored) return null;
-    
-    const { fingerprint, expiresAt, userId } = JSON.parse(stored);
-    const expiry = new Date(expiresAt);
-    
-    if (expiry <= new Date()) {
-      localStorage.removeItem('mfa_trusted_device');
-      return null;
-    }
-    
-    return { trusted: true, expiresAt: expiry };
-  } catch {
-    return null;
-  }
-};
-
 const VaultPage: React.FC = () => {
   const { profile, loading: authLoading, session, refreshProfile } = useAuth();
-  const { isUnlocked, unlockVault } = useMfa();
+  const { isUnlocked, unlockVault, lockVault, forgetThisDevice, isTrustedDevice, trustedUntil, isLoading: mfaLoading } = useMfa();
   const queryClient = useQueryClient();
 
   const [selectedVault, setSelectedVault] = useState<VaultType | null>(null);
@@ -131,13 +143,11 @@ const VaultPage: React.FC = () => {
   const [isCreateVaultOpen, setIsCreateVaultOpen] = useState(false);
   const [newVaultName, setNewVaultName] = useState('');
   const [newVaultDescription, setNewVaultDescription] = useState('');
-  const [trustedDeviceInfo, setTrustedDeviceInfo] = useState<{ trusted: boolean; expiresAt?: Date } | null>(null);
-
-  // Check trusted device status on mount and when unlocked changes
-  useEffect(() => {
-    const info = getTrustedDeviceInfo();
-    setTrustedDeviceInfo(info);
-  }, [isUnlocked]);
+  
+  // Lock confirmation dialogs
+  const [showLockDialog, setShowLockDialog] = useState(false);
+  const [showForgetDeviceDialog, setShowForgetDeviceDialog] = useState(false);
+  const [showLockAndForgetDialog, setShowLockAndForgetDialog] = useState(false);
 
   // Handler for successful MFA setup
   const handleMfaSetupSuccess = async () => {
@@ -153,6 +163,33 @@ const VaultPage: React.FC = () => {
     
     // Force a small delay then reload to ensure clean state
     toast.success("Redirecting to your vault...");
+  };
+
+  // Lock handlers
+  const handleLockVault = () => {
+    lockVault(false); // Lock but keep device trusted
+    setSelectedVault(null);
+    toast.success("Vault locked", { 
+      description: "Your device is still trusted. You'll need to enter your code to unlock again." 
+    });
+    setShowLockDialog(false);
+  };
+
+  const handleForgetDevice = () => {
+    forgetThisDevice();
+    toast.success("Device forgotten", { 
+      description: "This device is no longer trusted. You'll need to verify on next unlock." 
+    });
+    setShowForgetDeviceDialog(false);
+  };
+
+  const handleLockAndForget = () => {
+    lockVault(true); // Lock AND forget device
+    setSelectedVault(null);
+    toast.success("Vault locked & device forgotten", { 
+      description: "You'll need to enter your authenticator code to access your vault again." 
+    });
+    setShowLockAndForgetDialog(false);
   };
 
   // Fetch all vaults
@@ -290,7 +327,7 @@ const VaultPage: React.FC = () => {
   };
 
   // Loading state
-  if (authLoading || !profile) {
+  if (authLoading || mfaLoading || !profile) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
@@ -333,6 +370,81 @@ const VaultPage: React.FC = () => {
     );
   }
 
+  // Vault Security Controls Component
+  const VaultSecurityControls = () => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" className="gap-2">
+          <Settings className="h-4 w-4" />
+          Security
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-green-500" />
+          Vault Security
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        
+        {/* Lock Vault (Keep Trust) */}
+        <DropdownMenuItem 
+          onClick={() => setShowLockDialog(true)}
+          className="cursor-pointer"
+        >
+          <Lock className="h-4 w-4 mr-2" />
+          <div>
+            <div>Lock Vault</div>
+            <div className="text-xs text-muted-foreground">Keep device trusted</div>
+          </div>
+        </DropdownMenuItem>
+
+        {/* Forget Device (Stay Unlocked) */}
+        {isTrustedDevice && (
+          <DropdownMenuItem 
+            onClick={() => setShowForgetDeviceDialog(true)}
+            className="cursor-pointer"
+          >
+            <ShieldOff className="h-4 w-4 mr-2" />
+            <div>
+              <div>Forget This Device</div>
+              <div className="text-xs text-muted-foreground">Remove 30-day trust</div>
+            </div>
+          </DropdownMenuItem>
+        )}
+
+        <DropdownMenuSeparator />
+
+        {/* Lock & Forget (Full Security) */}
+        <DropdownMenuItem 
+          onClick={() => setShowLockAndForgetDialog(true)}
+          className="cursor-pointer text-orange-500 focus:text-orange-500"
+        >
+          <LogOut className="h-4 w-4 mr-2" />
+          <div>
+            <div>Lock & Forget Device</div>
+            <div className="text-xs text-muted-foreground">Maximum security</div>
+          </div>
+        </DropdownMenuItem>
+
+        {/* Status Info */}
+        <DropdownMenuSeparator />
+        <div className="px-2 py-1.5 text-xs text-muted-foreground">
+          {isTrustedDevice ? (
+            <div className="flex items-center gap-1">
+              <Smartphone className="h-3 w-3" />
+              Trusted until {trustedUntil?.toLocaleDateString()}
+            </div>
+          ) : (
+            <div className="flex items-center gap-1">
+              <Lock className="h-3 w-3" />
+              Session-only access
+            </div>
+          )}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   // Show vault lobby if no vault is selected
   if (!selectedVault) {
     return (
@@ -344,24 +456,33 @@ const VaultPage: React.FC = () => {
       >
         <div className="flex justify-between items-center mb-8">
           <div>
-            <h1 className="text-4xl font-bold tracking-wider">My Vaults</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-4xl font-bold tracking-wider">My Vaults</h1>
+              <Badge variant="outline" className="text-green-400 border-green-400/50 bg-green-400/10">
+                <Unlock className="h-3 w-3 mr-1" />
+                Unlocked
+              </Badge>
+            </div>
             {/* Trusted Device Indicator */}
-            {trustedDeviceInfo?.trusted && (
+            {isTrustedDevice && trustedUntil && (
               <div className="flex items-center gap-2 mt-2">
-                <Badge variant="outline" className="text-green-400 border-green-400/50 bg-green-400/10">
+                <Badge variant="secondary" className="text-xs">
                   <Smartphone className="h-3 w-3 mr-1" />
                   Trusted Device
                 </Badge>
                 <span className="text-xs text-muted-foreground">
-                  until {trustedDeviceInfo.expiresAt?.toLocaleDateString()}
+                  until {trustedUntil.toLocaleDateString()}
                 </span>
               </div>
             )}
           </div>
-          <Button onClick={() => setIsCreateVaultOpen(true)} size="lg">
-            <Plus className="mr-2 h-5 w-5" />
-            Create New Vault
-          </Button>
+          <div className="flex items-center gap-3">
+            <VaultSecurityControls />
+            <Button onClick={() => setIsCreateVaultOpen(true)} size="lg">
+              <Plus className="mr-2 h-5 w-5" />
+              Create New Vault
+            </Button>
+          </div>
         </div>
 
         {isVaultsLoading && <VaultSkeletonLoader />}
@@ -450,6 +571,88 @@ const VaultPage: React.FC = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Lock Vault Confirmation */}
+        <AlertDialog open={showLockDialog} onOpenChange={setShowLockDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <Lock className="h-5 w-5" />
+                Lock Vault?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Your vault will be locked and you'll need to enter your authenticator code to access it again.
+                {isTrustedDevice && (
+                  <span className="block mt-2 text-green-600">
+                    ✓ This device will remain trusted for quick unlock next time.
+                  </span>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={handleLockVault}>
+                Lock Vault
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Forget Device Confirmation */}
+        <AlertDialog open={showForgetDeviceDialog} onOpenChange={setShowForgetDeviceDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <ShieldOff className="h-5 w-5" />
+                Forget This Device?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                This device will no longer be trusted. Next time you lock and unlock, you'll need to enter your authenticator code.
+                <span className="block mt-2">
+                  Your vault will remain unlocked for this session.
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={handleForgetDevice}>
+                Forget Device
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Lock & Forget Confirmation */}
+        <AlertDialog open={showLockAndForgetDialog} onOpenChange={setShowLockAndForgetDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2 text-orange-500">
+                <LogOut className="h-5 w-5" />
+                Lock Vault & Forget Device?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                <span className="font-medium">Maximum security option:</span>
+                <ul className="list-disc list-inside mt-2 space-y-1">
+                  <li>Your vault will be locked immediately</li>
+                  <li>This device will no longer be trusted</li>
+                  <li>You'll need your authenticator code to unlock</li>
+                </ul>
+                <span className="block mt-3 text-muted-foreground">
+                  Recommended before traveling or using shared devices.
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction 
+                onClick={handleLockAndForget}
+                className="bg-orange-500 hover:bg-orange-600"
+              >
+                Lock & Forget
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </motion.div>
     );
   }
@@ -475,21 +678,22 @@ const VaultPage: React.FC = () => {
             <div>
               <div className="flex items-center gap-3">
                 <h1 className="text-4xl font-bold tracking-wider">{selectedVault.name}</h1>
-                {trustedDeviceInfo?.trusted && (
-                  <Badge variant="outline" className="text-green-400 border-green-400/50 bg-green-400/10">
-                    <ShieldCheck className="h-3 w-3 mr-1" />
-                    Secured
-                  </Badge>
-                )}
+                <Badge variant="outline" className="text-green-400 border-green-400/50 bg-green-400/10">
+                  <ShieldCheck className="h-3 w-3 mr-1" />
+                  Secured
+                </Badge>
               </div>
               {selectedVault.description && (
                 <p className="text-gray-400 mt-1">{selectedVault.description}</p>
               )}
             </div>
           </div>
-          {vaultItems && vaultItems.length > 0 && (
-            <PdfDownloadButton items={vaultItems} />
-          )}
+          <div className="flex items-center gap-3">
+            <VaultSecurityControls />
+            {vaultItems && vaultItems.length > 0 && (
+              <PdfDownloadButton items={vaultItems} />
+            )}
+          </div>
         </div>
 
         {isItemsLoading && <VaultSkeletonLoader />}
