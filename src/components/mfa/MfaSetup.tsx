@@ -34,10 +34,9 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState('Initializing MFA Setup...');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [existingFactorId, setExistingFactorId] = useState<string | null>(null);
   const [setupComplete, setSetupComplete] = useState(false);
 
-  // Skip MFA setup and mark as enrolled (user can enable later)
+  // Skip MFA setup and mark as enrolled
   const handleSkipMFA = async () => {
     setIsLoading(true);
     try {
@@ -52,11 +51,7 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
       if (profileError) throw profileError;
 
       toast.warning("MFA setup skipped. You can enable it later from your profile settings.");
-      
-      // Small delay then trigger success
-      setTimeout(() => {
-        onSuccess();
-      }, 500);
+      setTimeout(() => onSuccess(), 500);
     } catch (err: any) {
       setError(err.message);
       toast.error("Skip Failed", { description: err.message });
@@ -74,55 +69,36 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     try {
       const { data: factorsData } = await supabase.auth.mfa.listFactors();
       
-      if (factorsData && factorsData.totp && factorsData.totp.length > 0) {
+      if (factorsData?.totp?.length) {
         for (const factor of factorsData.totp) {
           try {
-            const { error: unenrollError } = await supabase.auth.mfa.unenroll({
-              factorId: factor.id,
-            });
-            
-            if (unenrollError) {
-              console.warn(`Could not unenroll factor ${factor.id}:`, unenrollError.message);
-            } else {
-              console.log(`Successfully unenrolled factor: ${factor.id}`);
-            }
-          } catch (e: any) {
-            console.warn(`Error unenrolling factor ${factor.id}:`, e.message);
+            await supabase.auth.mfa.unenroll({ factorId: factor.id });
+          } catch (e) {
+            // Continue even if unenroll fails
           }
         }
       }
 
+      // Optional server-side sync
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        try {
-          await fetch('/api/user/reset-mfa', {
-            method: 'POST',
-            headers: { 
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${session.access_token}`
-            },
-            body: JSON.stringify({ token: session.access_token }),
-          });
-        } catch (e) {
-          console.log('Server-side MFA reset optional - continuing with client-side');
-        }
+        fetch('/api/user/reset-mfa', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({ token: session.access_token }),
+        }).catch(() => {});
       }
 
       toast.success("Existing MFA removed. Setting up new MFA...");
-      
       await new Promise(resolve => setTimeout(resolve, 500));
       await enrollMfa(true);
       
     } catch (err: any) {
-      console.error('Reset MFA error:', err);
       setError(err.message);
-      toast.error("MFA Reset Failed", { 
-        description: err.message,
-        action: {
-          label: "Skip Setup",
-          onClick: handleSkipMFA
-        }
-      });
+      toast.error("MFA Reset Failed", { description: err.message });
       setIsLoading(false);
     }
   }, []);
@@ -135,34 +111,37 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     setFactorId(null);
     
     try {
-      if (!skipCheck) {
-        setStatusMessage('Checking existing MFA setup...');
-        const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
+      // ALWAYS check for existing factors first (prevents 422 errors)
+      setStatusMessage('Checking existing MFA setup...');
+      const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
+      
+      if (factorsError) {
+        console.warn('[MfaSetup] Could not list factors:', factorsError.message);
+      } else if (factorsData?.totp?.length) {
+        const verifiedFactor = factorsData.totp.find(f => f.status === 'verified');
         
-        if (factorsError) {
-          console.warn('Could not list MFA factors:', factorsError.message);
-        } else if (factorsData && factorsData.totp && factorsData.totp.length > 0) {
-          const verifiedFactor = factorsData.totp.find(f => f.status === 'verified');
-          
-          if (verifiedFactor) {
-            setExistingFactorId(verifiedFactor.id);
-            setShowResetConfirm(true);
-            setIsLoading(false);
-            return;
-          }
-          
-          const unverifiedFactor = factorsData.totp.find(f => f.status === 'unverified');
-          if (unverifiedFactor) {
-            console.log('Found unverified factor, removing it first...');
-            try {
-              await supabase.auth.mfa.unenroll({ factorId: unverifiedFactor.id });
-            } catch (e) {
-              console.warn('Could not remove unverified factor:', e);
-            }
-          }
+        if (verifiedFactor) {
+          // User already has verified MFA - skip setup entirely
+          setSetupComplete(true);
+          setIsLoading(false);
+          toast.success("MFA Already Configured", {
+            description: "Redirecting to your vault..."
+          });
+          setTimeout(() => window.location.reload(), 1000);
+          return;
+        }
+        
+        // Handle unverified factors (incomplete previous setup)
+        const unverifiedFactor = factorsData.totp.find(f => f.status === 'unverified');
+        if (unverifiedFactor && !skipCheck) {
+          // Show reset dialog for stale unverified factor
+          setShowResetConfirm(true);
+          setIsLoading(false);
+          return;
         }
       }
 
+      // No existing factor - proceed with enrollment
       setStatusMessage('Generating secure QR code...');
       
       const { data, error: enrollError } = await supabase.auth.mfa.enroll({
@@ -171,9 +150,8 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
       });
 
       if (enrollError) {
-        if (enrollError.message.includes('factor already exists') || 
-            enrollError.message.includes('422') ||
-            enrollError.status === 422) {
+        // Handle edge case where factor was created between check and enroll
+        if (enrollError.status === 422 || enrollError.message?.includes('already exists')) {
           setShowResetConfirm(true);
           setIsLoading(false);
           return;
@@ -181,38 +159,26 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
         throw enrollError;
       }
 
-      if (!data || !data.totp) {
+      if (!data?.totp) {
         throw new Error('Failed to generate MFA enrollment data');
       }
 
       setFactorId(data.id);
       setQrCode(data.totp.qr_code);
       setStatusMessage('');
-      console.log('MFA enrollment initiated, factor ID:', data.id);
 
     } catch (err: any) {
-      console.error('MFA enrollment error:', err);
-      
-      if (err.message?.includes('already') || err.status === 422) {
-        setShowResetConfirm(true);
-        setIsLoading(false);
-        return;
-      }
-      
       setError(err.message);
       toast.error("MFA Setup Failed", { 
         description: err.message,
-        action: {
-          label: "Skip Setup",
-          onClick: handleSkipMFA
-        }
+        action: { label: "Skip Setup", onClick: handleSkipMFA }
       });
     } finally {
       if (!showResetConfirm) {
         setIsLoading(false);
       }
     }
-  }, []);
+  }, [showResetConfirm]);
 
   useEffect(() => {
     enrollMfa();
@@ -222,12 +188,7 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!factorId) {
-      toast.error("MFA setup not initialized. Please refresh and try again.");
-      return;
-    }
-    
-    if (!verificationCode || verificationCode.length !== 6) {
+    if (!factorId || !verificationCode || verificationCode.length !== 6) {
       toast.error("Please enter a valid 6-digit verification code.");
       return;
     }
@@ -236,40 +197,29 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     setError(null);
 
     try {
-      // Create a challenge
       const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
-        factorId: factorId,
+        factorId,
       });
       
-      if (challengeError) {
-        throw new Error(`Challenge failed: ${challengeError.message}`);
-      }
+      if (challengeError) throw new Error(`Challenge failed: ${challengeError.message}`);
 
-      // Verify the code
       const { error: verifyError } = await supabase.auth.mfa.verify({
-        factorId: factorId,
+        factorId,
         challengeId: challengeData.id,
         code: verificationCode,
       });
       
-      if (verifyError) {
-        throw new Error(`Verification failed: ${verifyError.message}`);
-      }
+      if (verifyError) throw new Error(`Verification failed: ${verifyError.message}`);
       
-      // Update profile to mark MFA as enrolled
+      // Update profile
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { error: profileError } = await supabase
+        await supabase
           .from('profiles')
           .update({ mfa_enrolled: true })
           .eq('id', user.id);
-
-        if (profileError) {
-          console.warn('Could not update profile:', profileError.message);
-        }
       }
 
-      // Show success state
       setSetupComplete(true);
       setIsLoading(false);
       
@@ -277,20 +227,12 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
         description: "Your vault is now protected with two-factor authentication."
       });
       
-      // Wait a moment to show success state, then proceed
       setTimeout(() => {
-        console.log('[MfaSetup] Calling onSuccess callback...');
         onSuccess();
-        
-        // Force page reload as backup to ensure clean state
-        setTimeout(() => {
-          console.log('[MfaSetup] Forcing page reload for clean state...');
-          window.location.reload();
-        }, 500);
+        setTimeout(() => window.location.reload(), 500);
       }, 1500);
 
     } catch (err: any) {
-      console.error('MFA verification error:', err);
       setError(err.message);
       toast.error("Verification Failed", { 
         description: err.message.includes('Invalid') 
@@ -301,7 +243,7 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     }
   };
 
-  // Success state - show confirmation before proceeding
+  // Success state
   if (setupComplete) {
     return (
       <div className="flex flex-col items-center justify-center p-8 min-h-[300px]">
@@ -326,7 +268,7 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
     );
   }
 
-  // Error state with recovery options
+  // Error state
   if (error && !qrCode) {
     return (
       <div className="p-8 space-y-4">
@@ -336,15 +278,8 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
         <div className="flex gap-2 justify-center">
-          <Button onClick={() => {
-            setError(null);
-            enrollMfa();
-          }}>
-            Retry Setup
-          </Button>
-          <Button variant="outline" onClick={handleSkipMFA}>
-            Skip MFA Setup
-          </Button>
+          <Button onClick={() => { setError(null); enrollMfa(); }}>Retry Setup</Button>
+          <Button variant="outline" onClick={handleSkipMFA}>Skip MFA Setup</Button>
         </div>
       </div>
     );
@@ -360,20 +295,20 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
               <ShieldCheck className="h-5 w-5 text-primary" />
               Existing MFA Detected
             </AlertDialogTitle>
-            <AlertDialogDescription className="space-y-2">
-              <p>
-                An existing MFA setup was found for your account. To set up a new authenticator, 
-                we need to remove the existing one first.
-              </p>
-              <p className="text-sm text-amber-600 dark:text-amber-400">
-                You will need to scan a new QR code with your authenticator app.
-              </p>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  An existing MFA setup was found for your account. To set up a new authenticator, 
+                  we need to remove the existing one first.
+                </p>
+                <p className="text-sm text-amber-600 dark:text-amber-400">
+                  You will need to scan a new QR code with your authenticator app.
+                </p>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col sm:flex-row gap-2">
-            <AlertDialogCancel onClick={() => setShowResetConfirm(false)}>
-              Cancel
-            </AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction 
               onClick={handleSkipMFA} 
               className="bg-secondary text-secondary-foreground hover:bg-secondary/80"
@@ -467,7 +402,7 @@ export const MfaSetup: React.FC<MfaSetupProps> = ({ onSuccess }) => {
         </form>
         
         <p className="text-xs text-muted-foreground mt-4 text-center">
-          MFA adds an extra layer of security to your account. You can enable it later from your profile settings.
+          MFA adds an extra layer of security to your account.
         </p>
       </div>
     </>
