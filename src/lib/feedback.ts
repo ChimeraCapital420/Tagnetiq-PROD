@@ -1,5 +1,6 @@
 import { toast } from 'sonner';
 import { APP_VERSION } from './constants.js';
+import { supabase } from './supabase';
 
 interface FeedbackPayload {
   tester_id: string;
@@ -17,6 +18,16 @@ interface FeedbackPayload {
  */
 export async function submitFeedback(payload: Omit<FeedbackPayload, 'app_version' | 'device' | 'flags'>) {
   try {
+    // Get the current session for authentication
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (!session?.access_token) {
+      toast.error('Authentication Required', {
+        description: 'Please log in to submit feedback.',
+      });
+      return false;
+    }
+
     const fullPayload: FeedbackPayload = {
       ...payload,
       app_version: APP_VERSION,
@@ -29,7 +40,10 @@ export async function submitFeedback(payload: Omit<FeedbackPayload, 'app_version
 
     const response = await fetch('/api/feedback', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
       body: JSON.stringify(fullPayload),
     });
 
