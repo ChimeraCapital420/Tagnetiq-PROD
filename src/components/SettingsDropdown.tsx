@@ -26,8 +26,6 @@ const SettingsDropdown: React.FC = () => {
 
   const handleSeasonalToggle = (isChecked: boolean) => {
     if (isChecked) {
-      // Set a default season when turning on, e.g., 'fall'.
-      // This could be made more dynamic based on the actual date in the future.
       setSeasonalMode('fall');
     } else {
       setSeasonalMode('off');
@@ -55,6 +53,18 @@ const SettingsDropdown: React.FC = () => {
                   <div>
                     <span>User Control Panel</span>
                     <p className="text-xs text-muted-foreground">Manage your account</p>
+                  </div>
+                </div>
+              </Link>
+            </DropdownMenuItem>
+            
+            <DropdownMenuItem asChild>
+              <Link to="/vault" className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <ShieldCheck className="mr-2 h-4 w-4" />
+                  <div>
+                    <span>Aegis Digital Vault</span>
+                    <p className="text-xs text-muted-foreground">Secure your high-value assets</p>
                   </div>
                 </div>
               </Link>

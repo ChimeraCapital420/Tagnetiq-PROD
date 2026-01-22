@@ -1,14 +1,12 @@
 // FILE: src/pages/Dashboard.tsx
 
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { useAppContext } from '@/contexts/AppContext';
 import { CATEGORIES } from '@/lib/constants';
 import AnalysisResult from '@/components/AnalysisResult';
 import SubCategoryModal from '@/components/SubCategoryModal';
 import OracleVisualizer from '@/components/OracleVisualizer';
-import { ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { subCategories } from '@/lib/subcategories';
@@ -18,7 +16,7 @@ const Dashboard: React.FC = () => {
   const { lastAnalysisResult, selectedCategory, setSelectedCategory } = useAppContext();
   const [isSubCategoryModalOpen, setIsSubCategoryModalOpen] = useState(false);
   const [currentCategory, setCurrentCategory] = useState<{ id: string; name: string } | null>(null);
-  const { user, profile } = useAuth(); // Added profile here
+  const { user, profile } = useAuth();
 
   const handleCategorySelect = (category: { id: string; name: string; }) => {
     setSelectedCategory(category.id);
@@ -66,22 +64,6 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
           </Card>
-
-          <Link to="/vault">
-            <Card className="overflow-hidden border-border/50 bg-background/50 backdrop-blur-sm hover:border-primary transition-all group cursor-pointer">
-              <div className="p-6">
-                  <div className="flex items-center gap-4">
-                      <ShieldCheck className="h-10 w-10 text-primary" />
-                      <div>
-                          <h2 className="text-xl font-bold">Aegis Digital Vault</h2>
-                          <p className="text-muted-foreground">
-                              Secure, manage, and export your high-value assets for insurance, estate planning, and peace of mind.
-                          </p>
-                      </div>
-                  </div>
-              </div>
-            </Card>
-          </Link>
           
           {lastAnalysisResult && (
             <div className="flex justify-center">
