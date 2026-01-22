@@ -1,6 +1,6 @@
 // FILE: src/contexts/AuthContext.tsx
 
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 // Import the single, authoritative Profile type
 import { supabase, Profile } from '../lib/supabase'; 
 import { Session, User } from '@supabase/supabase-js';
@@ -9,14 +9,17 @@ interface AuthContextType {
   session: Session | null;
   user: User | null;
   profile: Profile | null;
-  setProfile: (profile: Profile | null) => void;
+  setProfile: React.Dispatch<React.SetStateAction<Profile | null>>;
+  updateProfile: (updates: Partial<Profile>) => void;
   loading: boolean;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
   isAdmin: boolean;
   isDeveloper: boolean;
   isInvestor: boolean;
   isRetail: boolean;
   isUser: boolean;
+  isOnboarded: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -26,6 +29,25 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const fetchProfile = async (userId: string) => {
+    try {
+      const { data, error, status } = await supabase
+        .from('profiles')
+        .select(`*`) 
+        .eq('id', userId)
+        .single();
+        
+      if (error && status !== 406) {
+        throw error;
+      }
+      if (data) {
+        setProfile(data as Profile);
+      }
+    } catch (error) {
+      console.error('Error fetching profile:', (error as Error).message);
+    }
+  };
 
   const getSessionAndProfile = async () => {
     setLoading(true);
@@ -40,26 +62,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(currentUser);
 
     if (currentUser) {
-      try {
-        // Fetch the entire profile, not just a subset of columns.
-        // This ensures the 'role' and all other data is always present.
-        const { data, error, status } = await supabase
-          .from('profiles')
-          .select(`*`) 
-          .eq('id', currentUser.id)
-          .single();
-        if (error && status !== 406) {
-          throw error;
-        }
-        if (data) {
-          setProfile(data as Profile);
-        }
-      } catch (error) {
-        console.error('Error fetching profile:', (error as Error).message);
-      }
+      await fetchProfile(currentUser.id);
     }
     setLoading(false);
   };
+
+  // Function to refresh profile data from database
+  const refreshProfile = useCallback(async () => {
+    if (user) {
+      await fetchProfile(user.id);
+    }
+  }, [user]);
+
+  // Function to update profile locally (for optimistic updates)
+  const updateProfile = useCallback((updates: Partial<Profile>) => {
+    setProfile(prev => prev ? { ...prev, ...updates } : null);
+  }, []);
 
   useEffect(() => {
     getSessionAndProfile();
@@ -92,13 +110,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     user,
     profile,
     setProfile,
+    updateProfile,
     loading,
     signOut,
+    refreshProfile,
     isAdmin: profile?.role === 'admin',
     isDeveloper: profile?.role === 'developer',
     isInvestor: profile?.role === 'investor',
     isRetail: profile?.role === 'retail',
     isUser: profile?.role === 'user',
+    isOnboarded: profile?.onboarding_complete ?? false,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

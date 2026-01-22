@@ -50,6 +50,15 @@ export interface Profile {
   };
   created_at: string;
   updated_at: string;
+  
+  // Onboarding fields
+  onboarding_complete: boolean;
+  language_preference?: string;
+  interests?: string[];
+  location_text?: string;
+  
+  // Arena intro field
+  has_seen_arena_intro?: boolean;
 }
 
 export interface ScanHistory {

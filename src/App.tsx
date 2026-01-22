@@ -34,38 +34,215 @@ import InvestorSuite from '@/pages/InvestorSuite';
 import BetaConsole from '@/pages/admin/BetaConsole';
 import MapConsole from '@/pages/admin/MapConsole';
 import InvestorPortal from '@/pages/investor/Portal';
-import ProfilePage from '@/pages/Profile'; // Import the new Profile page
+import ProfilePage from '@/pages/Profile';
+import Onboarding from '@/pages/Onboarding'; // NEW: Import Onboarding page
 import { FeedbackModal } from '@/components/beta/FeedbackModal';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
 import DualScanner from '@/components/DualScanner';
 
+// NEW: Component to handle onboarding redirect logic
+const OnboardingGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    const { user, profile, loading } = useAuth();
+    
+    // Still loading - show nothing to prevent flash
+    if (loading) {
+        return null;
+    }
+    
+    // Not logged in - let ProtectedRoute handle it
+    if (!user) {
+        return <>{children}</>;
+    }
+    
+    // Profile loaded and onboarding not complete - redirect to onboarding
+    if (profile && !profile.onboarding_complete) {
+        return <Navigate to="/onboarding" replace />;
+    }
+    
+    // Onboarding complete or profile still loading - show content
+    return <>{children}</>;
+};
+
 const AppRoutes: React.FC = () => {
-    const { user, isAdmin } = useAuth();
+    const { user, profile, isAdmin } = useAuth();
+    
+    // Determine if user needs onboarding (for the onboarding route itself)
+    const needsOnboarding = user && profile && !profile.onboarding_complete;
+    
     return (
         <Routes>
+            {/* Public routes */}
             <Route path="/" element={<Index />} />
             <Route path="/login" element={!user ? <Login /> : <Navigate to="/dashboard" replace />} />
             <Route path="/signup" element={!user ? <SignUp /> : <Navigate to="/dashboard" replace />} />
             <Route path="/certificate/:id" element={<CertificatePage />} />
             <Route path="/investor" element={<InvestorPortal />} />
 
-            <Route path="/dashboard" element={<ProtectedRoute isAllowed={!!user} to="/login"><Dashboard /></ProtectedRoute>} />
-            <Route path="/vault" element={<ProtectedRoute isAllowed={!!user} to="/login"><VaultPage /></ProtectedRoute>} />
-            <Route path="/beta/welcome" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaWelcome /></ProtectedRoute>} />
-            <Route path="/beta/missions" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaMissions /></ProtectedRoute>} />
-            <Route path="/beta/referrals" element={<ProtectedRoute isAllowed={!!user} to="/login"><BetaReferrals /></ProtectedRoute>} />
-            <Route path="/profile" element={<ProtectedRoute isAllowed={!!user} to="/login"><ProfilePage /></ProtectedRoute>} />
+            {/* NEW: Onboarding route - accessible only if user hasn't completed onboarding */}
+            <Route 
+                path="/onboarding" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        {needsOnboarding ? <Onboarding /> : <Navigate to="/dashboard" replace />}
+                    </ProtectedRoute>
+                } 
+            />
 
-            <Route path="/arena/marketplace" element={<ProtectedRoute isAllowed={!!user} to="/login"><Marketplace /></ProtectedRoute>} />
-            <Route path="/arena/challenge/:id" element={<ProtectedRoute isAllowed={!!user} to="/login"><ChallengeDetail /></ProtectedRoute>} />
-            <Route path="/arena/leaderboard" element={<ProtectedRoute isAllowed={!!user} to="/login"><Leaderboard /></ProtectedRoute>} />
-            <Route path="/arena/messages" element={<ProtectedRoute isAllowed={!!user} to="/login"><MessagesPage /></ProtectedRoute>} />
+            {/* Protected routes - wrapped with OnboardingGuard */}
+            <Route 
+                path="/dashboard" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        <OnboardingGuard>
+                            <Dashboard />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/vault" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        <OnboardingGuard>
+                            <VaultPage />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/beta/welcome" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        <OnboardingGuard>
+                            <BetaWelcome />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/beta/missions" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        <OnboardingGuard>
+                            <BetaMissions />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/beta/referrals" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        <OnboardingGuard>
+                            <BetaReferrals />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/profile" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        <OnboardingGuard>
+                            <ProfilePage />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
 
-            <Route path="/beta-controls" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><BetaControls /></ProtectedRoute>} />
-            <Route path="/admin/investors" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><InvestorSuite /></ProtectedRoute>} />
-            <Route path="/admin/investors/manage" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><Investor /></ProtectedRoute>} />
-            <Route path="/admin/beta" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><BetaConsole /></ProtectedRoute>} />
-            <Route path="/admin/map" element={<ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard"><MapConsole /></ProtectedRoute>} />
+            {/* Arena routes */}
+            <Route 
+                path="/arena/marketplace" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        <OnboardingGuard>
+                            <Marketplace />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/arena/challenge/:id" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        <OnboardingGuard>
+                            <ChallengeDetail />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/arena/leaderboard" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        <OnboardingGuard>
+                            <Leaderboard />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/arena/messages" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        <OnboardingGuard>
+                            <MessagesPage />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+
+            {/* Admin routes */}
+            <Route 
+                path="/beta-controls" 
+                element={
+                    <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
+                        <OnboardingGuard>
+                            <BetaControls />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/admin/investors" 
+                element={
+                    <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
+                        <OnboardingGuard>
+                            <InvestorSuite />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/admin/investors/manage" 
+                element={
+                    <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
+                        <OnboardingGuard>
+                            <Investor />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/admin/beta" 
+                element={
+                    <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
+                        <OnboardingGuard>
+                            <BetaConsole />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+            <Route 
+                path="/admin/map" 
+                element={
+                    <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
+                        <OnboardingGuard>
+                            <MapConsole />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
 
             <Route path="*" element={<NotFound />} />
         </Routes>
