@@ -18,7 +18,7 @@ const Dashboard: React.FC = () => {
   const { lastAnalysisResult, selectedCategory, setSelectedCategory } = useAppContext();
   const [isSubCategoryModalOpen, setIsSubCategoryModalOpen] = useState(false);
   const [currentCategory, setCurrentCategory] = useState<{ id: string; name: string } | null>(null);
-  const { user } = useAuth();
+  const { user, profile } = useAuth(); // Added profile here
 
   const handleCategorySelect = (category: { id: string; name: string; }) => {
     setSelectedCategory(category.id);
@@ -45,6 +45,9 @@ const Dashboard: React.FC = () => {
     return parentCategory?.name || 'General';
   };
 
+  // Get display name with fallback chain: screen_name -> full_name -> email -> 'Tester'
+  const displayName = profile?.screen_name || profile?.full_name || user?.email || 'Tester';
+
   return (
     <>
       <div className="relative z-10 p-4 sm:p-8">
@@ -53,7 +56,7 @@ const Dashboard: React.FC = () => {
           <Card className="overflow-hidden border-border/50 bg-background/50 backdrop-blur-sm">
             <div className="grid grid-cols-1 md:grid-cols-2 items-center">
               <div className="p-8">
-                <h1 className="text-3xl font-bold tracking-tight">Welcome, {user?.email || 'Tester'}!</h1>
+                <h1 className="text-3xl font-bold tracking-tight">Welcome, {displayName}!</h1>
                 <p className="mt-2 text-muted-foreground">
                   Current Mode: <span className="font-semibold text-primary">{getCategoryDisplayName()}</span>
                 </p>

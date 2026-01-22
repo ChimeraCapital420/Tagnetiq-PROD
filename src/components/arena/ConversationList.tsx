@@ -7,8 +7,8 @@ import { cn } from '@/lib/utils';
 interface Conversation {
   id: string;
   listing: { item_name: string };
-  buyer: { screen_name: string };
-  seller: { screen_name: string };
+  buyer: { id: string; screen_name: string };
+  seller: { id: string; screen_name: string };
 }
 
 interface ConversationListProps {
@@ -18,7 +18,12 @@ interface ConversationListProps {
   currentUserId: string;
 }
 
-export const ConversationList: React.FC<ConversationListProps> = ({ conversations, selectedConversationId, onSelectConversation, currentUserId }) => {
+export const ConversationList: React.FC<ConversationListProps> = ({ 
+  conversations, 
+  selectedConversationId, 
+  onSelectConversation, 
+  currentUserId 
+}) => {
   return (
     <div className="flex flex-col gap-2">
       {conversations.map(convo => {
