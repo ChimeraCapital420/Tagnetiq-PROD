@@ -2,11 +2,10 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic, MicOff, Activity, Brain, Zap, AlertCircle, Volume2, Settings } from 'lucide-react';
+import { Mic, MicOff, Activity, Brain, Zap, AlertCircle, Volume2 } from 'lucide-react';
 import { useStt } from '@/hooks/useStt';
 import { useTts } from '@/hooks/useTts';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -374,22 +373,6 @@ export default function JarvisVoiceInterface() {
           )}
         </motion.div>
       </motion.button>
-
-      {/* Settings Button */}
-      <motion.div
-        initial={{ opacity: 0, scale: 0 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="absolute -top-2 -left-14"
-      >
-        <Button
-          size="icon"
-          variant="ghost"
-          className="w-10 h-10 rounded-full bg-black/50 backdrop-blur-sm"
-          onClick={() => navigate('/profile?tab=oracle')}
-        >
-          <Settings className="w-4 h-4" />
-        </Button>
-      </motion.div>
 
       {/* Speaking Indicator */}
       {isSpeaking && (
