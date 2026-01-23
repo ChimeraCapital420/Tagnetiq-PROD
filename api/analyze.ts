@@ -164,17 +164,21 @@ async function fetchEbayMarketData(itemName: string): Promise<EbayMarketData> {
     
     const data = await response.json();
     
-    console.log(`✅ eBay data received: ${data.totalListings} listings found`);
+    // Extract listing count from priceAnalysis.sampleSize
+    const listingCount = data.priceAnalysis?.sampleSize || data.totalListings || 0;
+    
+    console.log(`✅ eBay data received: ${listingCount} listings found`);
     
     return {
       available: true,
       query: data.query || searchQuery,
-      totalListings: data.totalListings || 0,
+      totalListings: listingCount,
       priceAnalysis: data.priceAnalysis ? {
-        lowest: data.priceAnalysis.lowest,
-        highest: data.priceAnalysis.highest,
-        average: data.priceAnalysis.average,
-        median: data.priceAnalysis.median
+        // Map the actual field names from the API response
+        lowest: data.priceAnalysis.lowestPrice || data.priceAnalysis.lowest,
+        highest: data.priceAnalysis.highestPrice || data.priceAnalysis.highest,
+        average: data.priceAnalysis.averagePrice || data.priceAnalysis.average,
+        median: data.priceAnalysis.medianPrice || data.priceAnalysis.median
       } : undefined,
       suggestedPrices: data.suggestedPrices ? {
         goodDeal: data.suggestedPrices.goodDeal,
