@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // Brickset LEGO Price Check API
 // Searches for LEGO sets and retrieves pricing data
+// Requires login to get userHash first
 
 const BRICKSET_API_URL = 'https://brickset.com/api/v3.asmx';
 
@@ -65,6 +66,30 @@ interface PriceResult {
   bricksetUrl: string;
 }
 
+// Helper function to get userHash via login
+async function getBricksetUserHash(apiKey: string, username: string, password: string): Promise<string | null> {
+  try {
+    const loginUrl = `${BRICKSET_API_URL}/login?apiKey=${encodeURIComponent(apiKey)}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+    
+    const response = await fetch(loginUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+    });
+
+    const data = await response.json();
+    
+    if (data.status === 'success' && data.hash) {
+      return data.hash;
+    }
+    
+    console.error('Brickset login failed:', data.message);
+    return null;
+  } catch (error) {
+    console.error('Brickset login error:', error);
+    return null;
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -80,9 +105,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const apiKey = process.env.BRICKSET_API_KEY;
+  const username = process.env.BRICKSET_USERNAME;
+  const password = process.env.BRICKSET_PASSWORD;
 
   if (!apiKey) {
     return res.status(500).json({ error: 'Brickset API key not configured' });
+  }
+
+  if (!username || !password) {
+    return res.status(500).json({ 
+      error: 'Brickset login credentials not configured',
+      setup: 'Add BRICKSET_USERNAME and BRICKSET_PASSWORD to environment variables'
+    });
   }
 
   // Parse query parameters
@@ -103,7 +137,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // Build search parameters
+    // Step 1: Login to get userHash
+    const userHash = await getBricksetUserHash(apiKey, username, password);
+    
+    if (!userHash) {
+      return res.status(401).json({
+        error: 'Failed to authenticate with Brickset',
+        message: 'Check BRICKSET_USERNAME and BRICKSET_PASSWORD'
+      });
+    }
+
+    // Step 2: Build search parameters
     const searchParams: Record<string, any> = {
       pageSize: Math.min(parseInt(limit as string) || 10, 50),
       orderBy: 'YearFromDESC', // Newest first
@@ -117,13 +161,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       searchParams.setNumber = setNumber;
     }
 
-    const searchUrl = `${BRICKSET_API_URL}/getSets?apiKey=${encodeURIComponent(apiKey)}&params=${encodeURIComponent(JSON.stringify(searchParams))}`;
+    // Step 3: Execute search
+    const searchUrl = `${BRICKSET_API_URL}/getSets?apiKey=${encodeURIComponent(apiKey)}&userHash=${encodeURIComponent(userHash)}&params=${encodeURIComponent(JSON.stringify(searchParams))}`;
     
     const response = await fetch(searchUrl, {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
+      headers: { 'Accept': 'application/json' },
     });
 
     if (!response.ok) {
@@ -182,8 +225,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           multiplier = 1.0 + (age * 0.1); // 10% per year base
           
           // Theme-based adjustments
-          const premiumThemes = ['Star Wars', 'Harry Potter', 'Marvel', 'Disney', 'Technic'];
-          if (premiumThemes.some(t => set.theme.includes(t))) {
+          const premiumThemes = ['Star Wars', 'Harry Potter', 'Marvel', 'Disney', 'Technic', 'Creator Expert', 'Icons'];
+          if (premiumThemes.some(t => set.theme.includes(t) || (set.themeGroup && set.themeGroup.includes(t)))) {
             multiplier *= 1.2;
           }
           
@@ -196,6 +239,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (set.minifigs && set.minifigs > 5) {
             multiplier *= 1.1;
           }
+          
+          // Cap multiplier at reasonable levels
+          multiplier = Math.min(multiplier, 4.0);
         }
         
         estimatedValue = Math.round(retailPrice * multiplier * 100) / 100;

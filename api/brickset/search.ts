@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // Brickset LEGO Set Search API
 // Searches the Brickset database for LEGO sets
+// Requires login to get userHash first
 
 const BRICKSET_API_URL = 'https://brickset.com/api/v3.asmx';
 
@@ -60,6 +61,30 @@ interface SearchResult {
   reviewCount?: number;
 }
 
+// Helper function to get userHash via login
+async function getBricksetUserHash(apiKey: string, username: string, password: string): Promise<string | null> {
+  try {
+    const loginUrl = `${BRICKSET_API_URL}/login?apiKey=${encodeURIComponent(apiKey)}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+    
+    const response = await fetch(loginUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+    });
+
+    const data = await response.json();
+    
+    if (data.status === 'success' && data.hash) {
+      return data.hash;
+    }
+    
+    console.error('Brickset login failed:', data.message);
+    return null;
+  } catch (error) {
+    console.error('Brickset login error:', error);
+    return null;
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -75,9 +100,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const apiKey = process.env.BRICKSET_API_KEY;
+  const username = process.env.BRICKSET_USERNAME;
+  const password = process.env.BRICKSET_PASSWORD;
 
   if (!apiKey) {
     return res.status(500).json({ error: 'Brickset API key not configured' });
+  }
+
+  if (!username || !password) {
+    return res.status(500).json({ 
+      error: 'Brickset login credentials not configured',
+      setup: 'Add BRICKSET_USERNAME and BRICKSET_PASSWORD to environment variables'
+    });
   }
 
   // Parse query parameters
@@ -101,7 +135,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // Build search parameters
+    // Step 1: Login to get userHash
+    const userHash = await getBricksetUserHash(apiKey, username, password);
+    
+    if (!userHash) {
+      return res.status(401).json({
+        error: 'Failed to authenticate with Brickset',
+        message: 'Check BRICKSET_USERNAME and BRICKSET_PASSWORD'
+      });
+    }
+
+    // Step 2: Build search parameters
     const searchParams: Record<string, any> = {
       pageSize: Math.min(parseInt(limit as string) || 20, 100),
     };
@@ -122,13 +166,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       searchParams.year = year;
     }
 
-    const searchUrl = `${BRICKSET_API_URL}/getSets?apiKey=${encodeURIComponent(apiKey)}&params=${encodeURIComponent(JSON.stringify(searchParams))}`;
+    // Step 3: Execute search
+    const searchUrl = `${BRICKSET_API_URL}/getSets?apiKey=${encodeURIComponent(apiKey)}&userHash=${encodeURIComponent(userHash)}&params=${encodeURIComponent(JSON.stringify(searchParams))}`;
     
     const response = await fetch(searchUrl, {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
+      headers: { 'Accept': 'application/json' },
     });
 
     if (!response.ok) {
