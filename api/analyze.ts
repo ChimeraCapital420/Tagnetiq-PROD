@@ -1,4 +1,4 @@
-// FORCE REDEPLOY v2.4 - eBay Market Data Integration
+// FORCE REDEPLOY v2.5 - eBay Market Data Integration (Fixed URL)
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -129,9 +129,8 @@ async function verifyUser(req: VercelRequest) {
 
 // eBay Market Data Fetcher
 async function fetchEbayMarketData(itemName: string): Promise<EbayMarketData> {
-  const baseUrl = process.env.VERCEL_URL 
-    ? `https://${process.env.VERCEL_URL}` 
-    : process.env.NEXT_PUBLIC_APP_URL || 'https://tagnetiq-prod.vercel.app';
+  // HARDCODE production URL - VERCEL_URL returns preview URLs which are auth-protected
+  const baseUrl = 'https://tagnetiq-prod.vercel.app';
   
   try {
     console.log(`🛒 Fetching eBay market data for: ${itemName}`);
@@ -154,7 +153,7 @@ async function fetchEbayMarketData(itemName: string): Promise<EbayMarketData> {
     
     if (!response.ok) {
       const errorText = await response.text();
-      console.warn(`⚠️ eBay API returned ${response.status}: ${errorText}`);
+      console.warn(`⚠️ eBay API returned ${response.status}: ${errorText.substring(0, 200)}`);
       return {
         available: false,
         query: searchQuery,
