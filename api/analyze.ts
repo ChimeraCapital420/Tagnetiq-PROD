@@ -1,4 +1,4 @@
-// FORCE REDEPLOY v2.3 - Enhanced anti-bragging prompt
+// FORCE REDEPLOY v2.4 - eBay Market Data Integration
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -44,6 +44,30 @@ interface AnalysisRequest {
   subcategory_id?: string;
 }
 
+interface EbayMarketData {
+  available: boolean;
+  query: string;
+  totalListings: number;
+  priceAnalysis?: {
+    lowest: number;
+    highest: number;
+    average: number;
+    median: number;
+  };
+  suggestedPrices?: {
+    goodDeal: number;
+    fairMarket: number;
+    sellPrice: number;
+  };
+  sampleListings?: Array<{
+    title: string;
+    price: number;
+    condition: string;
+    url: string;
+  }>;
+  error?: string;
+}
+
 interface AnalysisResult {
   id: string;
   itemName: string;
@@ -79,6 +103,7 @@ interface AnalysisResult {
     finalConfidence: number;
   };
   authorityData?: any;
+  ebayMarketData?: EbayMarketData;
   debug_info?: {
     reason: string;
     details: string;
@@ -100,6 +125,127 @@ async function verifyUser(req: VercelRequest) {
   }
 
   return user;
+}
+
+// eBay Market Data Fetcher
+async function fetchEbayMarketData(itemName: string): Promise<EbayMarketData> {
+  const baseUrl = process.env.VERCEL_URL 
+    ? `https://${process.env.VERCEL_URL}` 
+    : process.env.NEXT_PUBLIC_APP_URL || 'https://tagnetiq-prod.vercel.app';
+  
+  try {
+    console.log(`🛒 Fetching eBay market data for: ${itemName}`);
+    
+    // Clean up item name for search query
+    const searchQuery = itemName
+      .replace(/[^\w\s]/g, ' ')  // Remove special characters
+      .replace(/\s+/g, ' ')       // Normalize spaces
+      .trim()
+      .substring(0, 100);         // Limit length
+    
+    const url = `${baseUrl}/api/ebay/price-check?q=${encodeURIComponent(searchQuery)}&limit=10`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn(`⚠️ eBay API returned ${response.status}: ${errorText}`);
+      return {
+        available: false,
+        query: searchQuery,
+        totalListings: 0,
+        error: `eBay API error: ${response.status}`
+      };
+    }
+    
+    const data = await response.json();
+    
+    console.log(`✅ eBay data received: ${data.totalListings} listings found`);
+    
+    return {
+      available: true,
+      query: data.query || searchQuery,
+      totalListings: data.totalListings || 0,
+      priceAnalysis: data.priceAnalysis ? {
+        lowest: data.priceAnalysis.lowest,
+        highest: data.priceAnalysis.highest,
+        average: data.priceAnalysis.average,
+        median: data.priceAnalysis.median
+      } : undefined,
+      suggestedPrices: data.suggestedPrices ? {
+        goodDeal: data.suggestedPrices.goodDeal,
+        fairMarket: data.suggestedPrices.fairMarket,
+        sellPrice: data.suggestedPrices.sellPrice
+      } : undefined,
+      sampleListings: data.sampleListings?.slice(0, 5).map((listing: any) => ({
+        title: listing.title,
+        price: listing.price,
+        condition: listing.condition,
+        url: listing.url
+      }))
+    };
+    
+  } catch (error: any) {
+    console.warn(`⚠️ eBay fetch failed: ${error.message}`);
+    return {
+      available: false,
+      query: itemName,
+      totalListings: 0,
+      error: error.message
+    };
+  }
+}
+
+// Blend AI consensus with eBay market data
+function blendWithMarketData(
+  aiEstimate: number, 
+  aiConfidence: number,
+  ebayData: EbayMarketData
+): { adjustedValue: number; marketInfluence: string } {
+  
+  // If no eBay data, return AI estimate unchanged
+  if (!ebayData.available || !ebayData.priceAnalysis || ebayData.totalListings < 3) {
+    return { 
+      adjustedValue: aiEstimate, 
+      marketInfluence: 'none - insufficient market data' 
+    };
+  }
+  
+  const ebayMedian = ebayData.priceAnalysis.median;
+  const ebayAverage = ebayData.priceAnalysis.average;
+  
+  // Calculate variance between AI and eBay
+  const variance = Math.abs(aiEstimate - ebayMedian) / ebayMedian;
+  
+  // Weight eBay data based on listing count (more listings = more reliable)
+  let ebayWeight = Math.min(ebayData.totalListings / 50, 0.4); // Max 40% weight
+  
+  // Reduce eBay weight if AI confidence is very high
+  if (aiConfidence > 90) {
+    ebayWeight *= 0.5;
+  }
+  
+  // If variance is huge (>100%), trust AI less and eBay more
+  if (variance > 1.0) {
+    ebayWeight = Math.min(ebayWeight * 1.5, 0.5);
+  }
+  
+  // Blend the values
+  const aiWeight = 1 - ebayWeight;
+  const adjustedValue = Math.round((aiEstimate * aiWeight + ebayMedian * ebayWeight) * 100) / 100;
+  
+  const marketInfluence = ebayWeight > 0.1 
+    ? `eBay median ($${ebayMedian}) weighted ${Math.round(ebayWeight * 100)}%`
+    : 'minimal - AI estimate prioritized';
+  
+  console.log(`💰 Price blend: AI $${aiEstimate} (${Math.round(aiWeight * 100)}%) + eBay $${ebayMedian} (${Math.round(ebayWeight * 100)}%) = $${adjustedValue}`);
+  
+  return { adjustedValue, marketInfluence };
 }
 
 // Main analysis function using dynamic import
@@ -182,7 +328,7 @@ Analyze this item for resale potential based on physical characteristics only:`;
   const bestVote = consensus.votes.reduce((best, vote) => 
     vote.weight > best.weight ? vote : best, consensus.votes[0]);
   
-  const summaryReasoning = bestVote?.rawResponse?.summary_reasoning || 
+  let summaryReasoning = bestVote?.rawResponse?.summary_reasoning || 
     `Consensus reached by ${consensus.consensus.totalVotes} AI models with ${consensus.consensus.confidence}% agreement.`;
   
   // Build enhanced source tracking data
@@ -212,12 +358,46 @@ Analyze this item for resale potential based on physical characteristics only:`;
     data: {}
   };
   
+  // ===== EBAY MARKET DATA INTEGRATION =====
+  console.log('🛒 Fetching eBay market data...');
+  const ebayData = await fetchEbayMarketData(consensus.consensus.itemName);
+  
+  // Add eBay to API sources if available
+  if (ebayData.available) {
+    apiSources.responded.push('eBay');
+    apiSources.data['eBay'] = {
+      confidence: ebayData.totalListings >= 10 ? 0.9 : 0.7,
+      dataPoints: ebayData.totalListings
+    };
+  }
+  
+  // Blend AI estimate with eBay market data
+  const { adjustedValue, marketInfluence } = blendWithMarketData(
+    consensus.consensus.estimatedValue,
+    consensus.consensus.confidence,
+    ebayData
+  );
+  
+  // Update summary reasoning with market context
+  if (ebayData.available && ebayData.priceAnalysis) {
+    summaryReasoning += ` Market validation: ${ebayData.totalListings} active eBay listings found with median price $${ebayData.priceAnalysis.median}.`;
+  }
+  
+  // Build market comps from eBay listings
+  const marketComps = ebayData.sampleListings?.map(listing => ({
+    source: 'eBay',
+    title: listing.title,
+    price: listing.price,
+    condition: listing.condition,
+    url: listing.url
+  })) || [];
+  
   const totalSources = respondedAIs.length + apiSources.responded.length;
   
   const fullResult: AnalysisResult = {
     id: consensus.analysisId,
     itemName: consensus.consensus.itemName,
-    estimatedValue: consensus.consensus.estimatedValue,
+    estimatedValue: adjustedValue, // Use market-adjusted value
     decision: consensus.consensus.decision,
     confidenceScore: consensus.consensus.confidence,
     summary_reasoning: summaryReasoning,
@@ -227,7 +407,7 @@ Analyze this item for resale potential based on physical characteristics only:`;
     category: request.category_id,
     subCategory: request.subcategory_id,
     imageUrl: imageData,
-    marketComps: [],
+    marketComps: marketComps,
     resale_toolkit: {
       listInArena: true,
       sellOnProPlatforms: true,
@@ -243,10 +423,11 @@ Analyze this item for resale potential based on physical characteristics only:`;
         weights: aiWeights
       },
       apiSources,
-      consensusMethod: 'weighted_average',
+      consensusMethod: 'weighted_average_with_market_data',
       finalConfidence: consensus.consensus.confidence / 100
     },
-    authorityData: consensus.authorityData
+    authorityData: consensus.authorityData,
+    ebayMarketData: ebayData
   };
   
   // Add debug info if analysis quality is FALLBACK
@@ -256,6 +437,9 @@ Analyze this item for resale potential based on physical characteristics only:`;
       details: `Only ${consensus.votes.length} AI model(s) responded. A minimum of 3 models is required for reliable consensus. Check API keys and provider initialization.`
     };
   }
+  
+  // Log market influence for debugging
+  console.log(`📊 Final value: $${adjustedValue} (Market influence: ${marketInfluence})`);
   
   return fullResult;
 }
