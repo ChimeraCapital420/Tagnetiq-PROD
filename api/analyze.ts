@@ -1,10 +1,10 @@
-// FORCE REDEPLOY v2.5 - eBay Market Data Integration (Fixed URL)
+// FORCE REDEPLOY v3.0 - Multi-API Market Data Integration (eBay + Numista + Brickset)
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
 // Node.js runtime configuration
 export const config = {
-  maxDuration: 45,
+  maxDuration: 60, // Increased for multiple API calls
 };
 
 // Environment variables
@@ -14,7 +14,11 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 // Create Supabase admin client
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-// Types (moved inline to avoid import issues)
+// Production URL for internal API calls
+const BASE_URL = 'https://tagnetiq-prod.vercel.app';
+
+// ==================== TYPES ====================
+
 interface HydraConsensus {
   analysisId: string;
   votes: any[];
@@ -44,7 +48,8 @@ interface AnalysisRequest {
   subcategory_id?: string;
 }
 
-interface EbayMarketData {
+interface MarketDataSource {
+  source: string;
   available: boolean;
   query: string;
   totalListings: number;
@@ -66,6 +71,7 @@ interface EbayMarketData {
     url: string;
   }>;
   error?: string;
+  metadata?: Record<string, any>;
 }
 
 interface AnalysisResult {
@@ -103,14 +109,494 @@ interface AnalysisResult {
     finalConfidence: number;
   };
   authorityData?: any;
-  ebayMarketData?: EbayMarketData;
+  marketData?: {
+    sources: MarketDataSource[];
+    primarySource: string;
+    blendMethod: string;
+  };
   debug_info?: {
     reason: string;
     details: string;
   };
 }
 
-// Auth verification
+// ==================== CATEGORY DETECTION ====================
+
+type ItemCategory = 'coins' | 'lego' | 'trading_cards' | 'books' | 'general';
+
+interface CategoryDetection {
+  category: ItemCategory;
+  confidence: number;
+  keywords: string[];
+}
+
+function detectItemCategory(itemName: string, categoryId?: string): CategoryDetection {
+  const nameLower = itemName.toLowerCase();
+  
+  // Coin/Currency detection
+  const coinKeywords = [
+    'coin', 'penny', 'nickel', 'dime', 'quarter', 'dollar', 'cent',
+    'morgan', 'liberty', 'eagle', 'buffalo', 'wheat', 'mercury',
+    'numismatic', 'mint', 'uncirculated', 'proof', 'silver dollar',
+    'gold coin', 'half dollar', 'commemorative', 'bullion',
+    'currency', 'banknote', 'note', 'bill'
+  ];
+  
+  // LEGO detection
+  const legoKeywords = [
+    'lego', 'legos', 'brick', 'minifig', 'minifigure',
+    'star wars lego', 'technic', 'creator', 'ninjago',
+    'city lego', 'friends lego', 'duplo', 'bionicle',
+    'millennium falcon', 'death star', 'hogwarts'
+  ];
+  
+  // Trading card detection
+  const cardKeywords = [
+    'pokemon', 'charizard', 'pikachu', 'magic the gathering', 'mtg',
+    'yu-gi-oh', 'yugioh', 'trading card', 'tcg', 'holographic',
+    'first edition', 'psa', 'graded card', 'booster', 'pack'
+  ];
+  
+  // Book detection
+  const bookKeywords = [
+    'book', 'novel', 'hardcover', 'paperback', 'first edition book',
+    'signed copy', 'isbn', 'author', 'rare book', 'antique book'
+  ];
+  
+  // Check category_id hint
+  if (categoryId) {
+    const catLower = categoryId.toLowerCase();
+    if (catLower.includes('coin') || catLower.includes('currency')) {
+      return { category: 'coins', confidence: 0.9, keywords: ['category_hint'] };
+    }
+    if (catLower.includes('lego') || catLower.includes('toy')) {
+      return { category: 'lego', confidence: 0.9, keywords: ['category_hint'] };
+    }
+    if (catLower.includes('card') || catLower.includes('trading')) {
+      return { category: 'trading_cards', confidence: 0.9, keywords: ['category_hint'] };
+    }
+    if (catLower.includes('book') || catLower.includes('media')) {
+      return { category: 'books', confidence: 0.9, keywords: ['category_hint'] };
+    }
+  }
+  
+  // Score each category
+  const scores: Record<ItemCategory, { score: number; matches: string[] }> = {
+    coins: { score: 0, matches: [] },
+    lego: { score: 0, matches: [] },
+    trading_cards: { score: 0, matches: [] },
+    books: { score: 0, matches: [] },
+    general: { score: 0.1, matches: [] } // Default baseline
+  };
+  
+  coinKeywords.forEach(kw => {
+    if (nameLower.includes(kw)) {
+      scores.coins.score += kw.split(' ').length; // Multi-word matches score higher
+      scores.coins.matches.push(kw);
+    }
+  });
+  
+  legoKeywords.forEach(kw => {
+    if (nameLower.includes(kw)) {
+      scores.lego.score += kw.split(' ').length;
+      scores.lego.matches.push(kw);
+    }
+  });
+  
+  cardKeywords.forEach(kw => {
+    if (nameLower.includes(kw)) {
+      scores.trading_cards.score += kw.split(' ').length;
+      scores.trading_cards.matches.push(kw);
+    }
+  });
+  
+  bookKeywords.forEach(kw => {
+    if (nameLower.includes(kw)) {
+      scores.books.score += kw.split(' ').length;
+      scores.books.matches.push(kw);
+    }
+  });
+  
+  // Find highest scoring category
+  let bestCategory: ItemCategory = 'general';
+  let bestScore = 0;
+  let bestMatches: string[] = [];
+  
+  (Object.entries(scores) as [ItemCategory, { score: number; matches: string[] }][]).forEach(([cat, data]) => {
+    if (data.score > bestScore) {
+      bestScore = data.score;
+      bestCategory = cat;
+      bestMatches = data.matches;
+    }
+  });
+  
+  // Calculate confidence based on score
+  const confidence = Math.min(0.5 + (bestScore * 0.1), 0.95);
+  
+  console.log(`🏷️ Category detected: ${bestCategory} (confidence: ${Math.round(confidence * 100)}%, keywords: ${bestMatches.join(', ') || 'none'})`);
+  
+  return { category: bestCategory, confidence, keywords: bestMatches };
+}
+
+// ==================== API FETCHERS ====================
+
+// eBay Market Data Fetcher
+async function fetchEbayMarketData(itemName: string): Promise<MarketDataSource> {
+  try {
+    console.log(`🛒 [eBay] Fetching market data for: ${itemName}`);
+    
+    const searchQuery = itemName
+      .replace(/[^\w\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 100);
+    
+    const url = `${BASE_URL}/api/ebay/price-check?q=${encodeURIComponent(searchQuery)}&limit=10`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    
+    if (!response.ok) {
+      console.warn(`⚠️ [eBay] API returned ${response.status}`);
+      return {
+        source: 'eBay',
+        available: false,
+        query: searchQuery,
+        totalListings: 0,
+        error: `API error: ${response.status}`
+      };
+    }
+    
+    const data = await response.json();
+    const listingCount = data.priceAnalysis?.sampleSize || data.totalListings || 0;
+    
+    console.log(`✅ [eBay] ${listingCount} listings found`);
+    
+    return {
+      source: 'eBay',
+      available: true,
+      query: data.query || searchQuery,
+      totalListings: listingCount,
+      priceAnalysis: data.priceAnalysis ? {
+        lowest: data.priceAnalysis.lowestPrice || data.priceAnalysis.lowest,
+        highest: data.priceAnalysis.highestPrice || data.priceAnalysis.highest,
+        average: data.priceAnalysis.averagePrice || data.priceAnalysis.average,
+        median: data.priceAnalysis.medianPrice || data.priceAnalysis.median
+      } : undefined,
+      suggestedPrices: data.suggestedPrices,
+      sampleListings: data.sampleListings?.slice(0, 5).map((listing: any) => ({
+        title: listing.title,
+        price: listing.price,
+        condition: listing.condition,
+        url: listing.url
+      }))
+    };
+    
+  } catch (error: any) {
+    console.warn(`⚠️ [eBay] Fetch failed: ${error.message}`);
+    return {
+      source: 'eBay',
+      available: false,
+      query: itemName,
+      totalListings: 0,
+      error: error.message
+    };
+  }
+}
+
+// Numista Coin Data Fetcher
+async function fetchNumistaData(itemName: string): Promise<MarketDataSource> {
+  try {
+    console.log(`🪙 [Numista] Fetching coin data for: ${itemName}`);
+    
+    const searchQuery = itemName
+      .replace(/[^\w\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 100);
+    
+    const url = `${BASE_URL}/api/numista/price-check?q=${encodeURIComponent(searchQuery)}&limit=5`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    
+    if (!response.ok) {
+      console.warn(`⚠️ [Numista] API returned ${response.status}`);
+      return {
+        source: 'Numista',
+        available: false,
+        query: searchQuery,
+        totalListings: 0,
+        error: `API error: ${response.status}`
+      };
+    }
+    
+    const data = await response.json();
+    
+    if (!data.found || !data.priceAnalysis) {
+      console.log(`ℹ️ [Numista] No pricing data found`);
+      return {
+        source: 'Numista',
+        available: false,
+        query: searchQuery,
+        totalListings: 0,
+        error: 'No pricing data available'
+      };
+    }
+    
+    console.log(`✅ [Numista] ${data.priceAnalysis.sampleSize} price points found`);
+    
+    return {
+      source: 'Numista',
+      available: true,
+      query: data.query || searchQuery,
+      totalListings: data.priceAnalysis.sampleSize || 0,
+      priceAnalysis: {
+        lowest: data.priceAnalysis.lowestPrice,
+        highest: data.priceAnalysis.highestPrice,
+        average: data.priceAnalysis.averagePrice,
+        median: data.priceAnalysis.medianPrice
+      },
+      suggestedPrices: data.suggestedPrices,
+      sampleListings: data.sampleListings?.slice(0, 5).map((listing: any) => ({
+        title: listing.title,
+        price: listing.price,
+        condition: listing.condition || 'Catalogue Price',
+        url: listing.url
+      })),
+      metadata: {
+        dataSource: 'numista_catalogue',
+        totalTypes: data.totalTypes
+      }
+    };
+    
+  } catch (error: any) {
+    console.warn(`⚠️ [Numista] Fetch failed: ${error.message}`);
+    return {
+      source: 'Numista',
+      available: false,
+      query: itemName,
+      totalListings: 0,
+      error: error.message
+    };
+  }
+}
+
+// Brickset LEGO Data Fetcher
+async function fetchBricksetData(itemName: string): Promise<MarketDataSource> {
+  try {
+    console.log(`🧱 [Brickset] Fetching LEGO data for: ${itemName}`);
+    
+    // Extract set number if present (e.g., "75192" from "LEGO 75192 Millennium Falcon")
+    const setNumberMatch = itemName.match(/\b(\d{4,6})\b/);
+    
+    let url: string;
+    if (setNumberMatch) {
+      url = `${BASE_URL}/api/brickset/price-check?setNumber=${setNumberMatch[1]}`;
+      console.log(`🔍 [Brickset] Searching by set number: ${setNumberMatch[1]}`);
+    } else {
+      const searchQuery = itemName
+        .replace(/lego/gi, '')
+        .replace(/[^\w\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 100);
+      url = `${BASE_URL}/api/brickset/price-check?q=${encodeURIComponent(searchQuery)}&limit=5`;
+    }
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn(`⚠️ [Brickset] API returned ${response.status}: ${errorText.substring(0, 100)}`);
+      return {
+        source: 'Brickset',
+        available: false,
+        query: itemName,
+        totalListings: 0,
+        error: `API error: ${response.status}`
+      };
+    }
+    
+    const data = await response.json();
+    
+    if (!data.found || !data.priceAnalysis) {
+      console.log(`ℹ️ [Brickset] No LEGO sets found`);
+      return {
+        source: 'Brickset',
+        available: false,
+        query: itemName,
+        totalListings: 0,
+        error: 'No matching LEGO sets found'
+      };
+    }
+    
+    console.log(`✅ [Brickset] ${data.totalSets} sets found`);
+    
+    return {
+      source: 'Brickset',
+      available: true,
+      query: data.query,
+      totalListings: data.totalSets || data.priceAnalysis.sampleSize || 0,
+      priceAnalysis: {
+        lowest: data.priceAnalysis.lowestPrice,
+        highest: data.priceAnalysis.highestPrice,
+        average: data.priceAnalysis.averagePrice,
+        median: data.priceAnalysis.medianPrice
+      },
+      suggestedPrices: data.suggestedPrices,
+      sampleListings: data.sampleListings?.slice(0, 5).map((listing: any) => ({
+        title: listing.title,
+        price: listing.price,
+        condition: listing.condition || 'Estimated Value',
+        url: listing.url
+      })),
+      metadata: {
+        dataSource: 'brickset_catalogue',
+        note: data.note
+      }
+    };
+    
+  } catch (error: any) {
+    console.warn(`⚠️ [Brickset] Fetch failed: ${error.message}`);
+    return {
+      source: 'Brickset',
+      available: false,
+      query: itemName,
+      totalListings: 0,
+      error: error.message
+    };
+  }
+}
+
+// ==================== MARKET DATA ORCHESTRATOR ====================
+
+interface MarketDataResult {
+  sources: MarketDataSource[];
+  primarySource: string;
+  blendedPrice: number;
+  blendMethod: string;
+  marketInfluence: string;
+}
+
+async function fetchAllMarketData(
+  itemName: string, 
+  category: ItemCategory,
+  aiEstimate: number,
+  aiConfidence: number
+): Promise<MarketDataResult> {
+  
+  console.log(`\n📊 Fetching market data for category: ${category}`);
+  
+  const sources: MarketDataSource[] = [];
+  const apiCalls: Promise<MarketDataSource>[] = [];
+  
+  // Always fetch eBay (universal marketplace)
+  apiCalls.push(fetchEbayMarketData(itemName));
+  
+  // Add category-specific APIs
+  switch (category) {
+    case 'coins':
+      apiCalls.push(fetchNumistaData(itemName));
+      break;
+    case 'lego':
+      apiCalls.push(fetchBricksetData(itemName));
+      break;
+    case 'trading_cards':
+      // Future: Add TCGPlayer here
+      break;
+    case 'books':
+      // Future: Add Google Books here
+      break;
+  }
+  
+  // Execute all API calls in parallel
+  const results = await Promise.all(apiCalls);
+  sources.push(...results);
+  
+  // Determine primary source and blend prices
+  const availableSources = sources.filter(s => s.available && s.priceAnalysis);
+  
+  if (availableSources.length === 0) {
+    console.log(`⚠️ No market data available, using AI estimate only`);
+    return {
+      sources,
+      primarySource: 'AI Consensus',
+      blendedPrice: aiEstimate,
+      blendMethod: 'ai_only',
+      marketInfluence: 'none - no market data available'
+    };
+  }
+  
+  // Calculate blended price from all available sources
+  let totalWeight = 0;
+  let weightedSum = 0;
+  const influences: string[] = [];
+  
+  // AI estimate baseline (weight based on confidence)
+  const aiWeight = aiConfidence / 100 * 0.4; // Max 40% for AI
+  weightedSum += aiEstimate * aiWeight;
+  totalWeight += aiWeight;
+  influences.push(`AI: $${aiEstimate} (${Math.round(aiWeight * 100)}%)`);
+  
+  // Add market sources with weights based on data quality
+  availableSources.forEach(source => {
+    if (!source.priceAnalysis) return;
+    
+    let sourceWeight = 0;
+    const median = source.priceAnalysis.median;
+    
+    // Weight based on listing count and source reliability
+    if (source.source === 'eBay') {
+      // eBay: Weight heavily for high listing counts
+      sourceWeight = Math.min(source.totalListings / 100, 0.35);
+    } else if (source.source === 'Numista') {
+      // Numista: Catalogue data is reliable but may not reflect market
+      sourceWeight = Math.min(source.totalListings / 20, 0.25);
+    } else if (source.source === 'Brickset') {
+      // Brickset: Good for retail/estimated values
+      sourceWeight = Math.min(source.totalListings / 10, 0.25);
+    }
+    
+    if (sourceWeight > 0.05) { // Only include if weight is meaningful
+      weightedSum += median * sourceWeight;
+      totalWeight += sourceWeight;
+      influences.push(`${source.source}: $${median} (${Math.round(sourceWeight * 100)}%)`);
+    }
+  });
+  
+  const blendedPrice = Math.round((weightedSum / totalWeight) * 100) / 100;
+  
+  // Determine primary source (highest weighted market source)
+  const primarySource = availableSources.reduce((best, current) => {
+    const currentListings = current.totalListings || 0;
+    const bestListings = best?.totalListings || 0;
+    return currentListings > bestListings ? current : best;
+  }, availableSources[0])?.source || 'AI Consensus';
+  
+  const marketInfluence = influences.join(' + ');
+  
+  console.log(`💰 Blended price: $${blendedPrice} from ${availableSources.length} market sources`);
+  console.log(`📈 Blend breakdown: ${marketInfluence}`);
+  
+  return {
+    sources,
+    primarySource,
+    blendedPrice,
+    blendMethod: availableSources.length > 1 ? 'multi_source_weighted' : 'single_source_blend',
+    marketInfluence
+  };
+}
+
+// ==================== AUTH VERIFICATION ====================
+
 async function verifyUser(req: VercelRequest) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
@@ -127,133 +613,10 @@ async function verifyUser(req: VercelRequest) {
   return user;
 }
 
-// eBay Market Data Fetcher
-async function fetchEbayMarketData(itemName: string): Promise<EbayMarketData> {
-  // HARDCODE production URL - VERCEL_URL returns preview URLs which are auth-protected
-  const baseUrl = 'https://tagnetiq-prod.vercel.app';
-  
-  try {
-    console.log(`🛒 Fetching eBay market data for: ${itemName}`);
-    
-    // Clean up item name for search query
-    const searchQuery = itemName
-      .replace(/[^\w\s]/g, ' ')  // Remove special characters
-      .replace(/\s+/g, ' ')       // Normalize spaces
-      .trim()
-      .substring(0, 100);         // Limit length
-    
-    const url = `${baseUrl}/api/ebay/price-check?q=${encodeURIComponent(searchQuery)}&limit=10`;
-    
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.warn(`⚠️ eBay API returned ${response.status}: ${errorText.substring(0, 200)}`);
-      return {
-        available: false,
-        query: searchQuery,
-        totalListings: 0,
-        error: `eBay API error: ${response.status}`
-      };
-    }
-    
-    const data = await response.json();
-    
-    // Extract listing count from priceAnalysis.sampleSize
-    const listingCount = data.priceAnalysis?.sampleSize || data.totalListings || 0;
-    
-    console.log(`✅ eBay data received: ${listingCount} listings found`);
-    
-    return {
-      available: true,
-      query: data.query || searchQuery,
-      totalListings: listingCount,
-      priceAnalysis: data.priceAnalysis ? {
-        // Map the actual field names from the API response
-        lowest: data.priceAnalysis.lowestPrice || data.priceAnalysis.lowest,
-        highest: data.priceAnalysis.highestPrice || data.priceAnalysis.highest,
-        average: data.priceAnalysis.averagePrice || data.priceAnalysis.average,
-        median: data.priceAnalysis.medianPrice || data.priceAnalysis.median
-      } : undefined,
-      suggestedPrices: data.suggestedPrices ? {
-        goodDeal: data.suggestedPrices.goodDeal,
-        fairMarket: data.suggestedPrices.fairMarket,
-        sellPrice: data.suggestedPrices.sellPrice
-      } : undefined,
-      sampleListings: data.sampleListings?.slice(0, 5).map((listing: any) => ({
-        title: listing.title,
-        price: listing.price,
-        condition: listing.condition,
-        url: listing.url
-      }))
-    };
-    
-  } catch (error: any) {
-    console.warn(`⚠️ eBay fetch failed: ${error.message}`);
-    return {
-      available: false,
-      query: itemName,
-      totalListings: 0,
-      error: error.message
-    };
-  }
-}
+// ==================== MAIN ANALYSIS FUNCTION ====================
 
-// Blend AI consensus with eBay market data
-function blendWithMarketData(
-  aiEstimate: number, 
-  aiConfidence: number,
-  ebayData: EbayMarketData
-): { adjustedValue: number; marketInfluence: string } {
-  
-  // If no eBay data, return AI estimate unchanged
-  if (!ebayData.available || !ebayData.priceAnalysis || ebayData.totalListings < 3) {
-    return { 
-      adjustedValue: aiEstimate, 
-      marketInfluence: 'none - insufficient market data' 
-    };
-  }
-  
-  const ebayMedian = ebayData.priceAnalysis.median;
-  const ebayAverage = ebayData.priceAnalysis.average;
-  
-  // Calculate variance between AI and eBay
-  const variance = Math.abs(aiEstimate - ebayMedian) / ebayMedian;
-  
-  // Weight eBay data based on listing count (more listings = more reliable)
-  let ebayWeight = Math.min(ebayData.totalListings / 50, 0.4); // Max 40% weight
-  
-  // Reduce eBay weight if AI confidence is very high
-  if (aiConfidence > 90) {
-    ebayWeight *= 0.5;
-  }
-  
-  // If variance is huge (>100%), trust AI less and eBay more
-  if (variance > 1.0) {
-    ebayWeight = Math.min(ebayWeight * 1.5, 0.5);
-  }
-  
-  // Blend the values
-  const aiWeight = 1 - ebayWeight;
-  const adjustedValue = Math.round((aiEstimate * aiWeight + ebayMedian * ebayWeight) * 100) / 100;
-  
-  const marketInfluence = ebayWeight > 0.1 
-    ? `eBay median ($${ebayMedian}) weighted ${Math.round(ebayWeight * 100)}%`
-    : 'minimal - AI estimate prioritized';
-  
-  console.log(`💰 Price blend: AI $${aiEstimate} (${Math.round(aiWeight * 100)}%) + eBay $${ebayMedian} (${Math.round(ebayWeight * 100)}%) = $${adjustedValue}`);
-  
-  return { adjustedValue, marketInfluence };
-}
-
-// Main analysis function using dynamic import
 async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult> {
-  // ENHANCED ANTI-BRAGGING PROMPT: Focus strictly on physical item characteristics
+  // ENHANCED ANTI-BRAGGING PROMPT
   const jsonPrompt = `You are a professional appraiser analyzing an item for resale value. Focus ONLY on what you can actually observe about the PHYSICAL ITEM.
 
 CRITICAL INSTRUCTIONS:
@@ -271,20 +634,16 @@ CRITICAL INSTRUCTIONS:
 FORBIDDEN - NEVER mention these in valuation_factors:
 ❌ "AI analysis" ❌ "Professional analysis" ❌ "Machine learning" ❌ "Image recognition" 
 ❌ "Advanced algorithms" ❌ "Technical assessment" ❌ "AI-powered evaluation"
-❌ "Detailed analysis" ❌ "Comprehensive evaluation" ❌ "Professional presentation"
-❌ "High-demand AI valuation services" ❌ "Advanced analytical capabilities"
 
 REQUIRED - valuation_factors must ONLY describe the PHYSICAL ITEM:
 ✅ "Excellent physical condition" ✅ "High-quality leather construction" ✅ "Recognizable brand logo"
 ✅ "Strong market demand for this type" ✅ "Good resale potential" ✅ "Minimal wear visible"
-✅ "Premium materials used" ✅ "Popular style/design" ✅ "Collectible appeal"
 
 IMPORTANT RULES:
 - ONLY identify brands you can CLEARLY see and verify from logos, tags, or distinctive features
-- DO NOT guess or assume luxury brands like "Louis Vuitton" unless you see clear LV monogram or authentic markings
-- If you cannot clearly identify the brand, use generic descriptions like "leather handbag" or "designer-style purse"
-- Be specific about what you observe: "brown leather bag with gold hardware" not "Louis Vuitton bag"
-- Focus on: condition, materials, craftsmanship, brand visibility, market appeal, rarity, functionality
+- DO NOT guess or assume luxury brands unless you see clear authentic markings
+- If you cannot clearly identify the brand, use generic descriptions
+- Be specific about what you observe
 - estimatedValue must be a realistic number based on what you can actually see
 - decision must be exactly "BUY" or "SELL" (uppercase)
 - confidence must be between 0 and 1
@@ -294,25 +653,40 @@ Analyze this item for resale potential based on physical characteristics only:`;
   
   let imageData = '';
   
-  // Handle different scan types
   if (request.scanType === 'multi-modal' && request.items?.length) {
     imageData = request.items[0].data;
   } else if (request.data) {
     imageData = request.data;
   }
   
-  // Dynamic import of HydraEngine
+  // Initialize Hydra Engine
   console.log('🚀 Initializing Hydra Consensus Engine...');
   const { HydraEngine } = await import('../src/lib/hydra-engine.js');
   const hydra = new HydraEngine();
   await hydra.initialize();
   
-  // Run multi-AI consensus analysis WITH authority validation
+  // Run multi-AI consensus analysis
   const consensus = await hydra.analyzeWithAuthority([imageData], jsonPrompt, request.category_id);
   
   console.log(`✅ Hydra consensus complete: ${consensus.votes.length} AI models voted`);
   
-  // Build valuation factors from all votes with weighted importance
+  // Detect item category
+  const categoryDetection = detectItemCategory(
+    consensus.consensus.itemName, 
+    request.category_id
+  );
+  
+  // ===== MULTI-API MARKET DATA INTEGRATION =====
+  console.log('\n🌐 === MARKET DATA INTEGRATION ===');
+  
+  const marketData = await fetchAllMarketData(
+    consensus.consensus.itemName,
+    categoryDetection.category,
+    consensus.consensus.estimatedValue,
+    consensus.consensus.confidence
+  );
+  
+  // Build valuation factors from votes
   const factorCounts = new Map<string, number>();
   consensus.votes.forEach(vote => {
     if (vote.rawResponse?.valuation_factors) {
@@ -327,14 +701,26 @@ Analyze this item for resale potential based on physical characteristics only:`;
     .slice(0, 5)
     .map(entry => entry[0]);
   
-  // Get the best summary reasoning from highest weighted vote
+  // Get best summary reasoning
   const bestVote = consensus.votes.reduce((best, vote) => 
     vote.weight > best.weight ? vote : best, consensus.votes[0]);
   
   let summaryReasoning = bestVote?.rawResponse?.summary_reasoning || 
-    `Consensus reached by ${consensus.consensus.totalVotes} AI models with ${consensus.consensus.confidence}% agreement.`;
+    `Consensus reached by ${consensus.consensus.totalVotes} AI models.`;
   
-  // Build enhanced source tracking data
+  // Enhance summary with market data context
+  const availableMarketSources = marketData.sources.filter(s => s.available);
+  if (availableMarketSources.length > 0) {
+    const sourceNames = availableMarketSources.map(s => s.source).join(', ');
+    const primaryData = availableMarketSources[0];
+    summaryReasoning += ` Market validation from ${sourceNames}: `;
+    
+    if (primaryData.priceAnalysis) {
+      summaryReasoning += `${primaryData.totalListings} listings found with median price $${primaryData.priceAnalysis.median}.`;
+    }
+  }
+  
+  // Build enhanced source tracking
   const respondedAIs = consensus.votes
     .filter(vote => vote.success)
     .map(vote => vote.providerName);
@@ -346,61 +732,43 @@ Analyze this item for resale potential based on physical characteristics only:`;
     }
   });
   
-  // Extract API sources from authority data if available
-  const apiSources = consensus.authorityData ? {
-    responded: Object.keys(consensus.authorityData),
-    data: Object.entries(consensus.authorityData).reduce((acc, [source, data]: [string, any]) => {
-      acc[source] = {
-        confidence: data.confidence || 0.95,
-        dataPoints: Array.isArray(data) ? data.length : 1
-      };
+  // Build API sources from market data
+  const apiSources = {
+    responded: marketData.sources.filter(s => s.available).map(s => s.source),
+    data: marketData.sources.reduce((acc, source) => {
+      if (source.available) {
+        acc[source.source] = {
+          confidence: source.totalListings >= 10 ? 0.9 : 0.7,
+          dataPoints: source.totalListings
+        };
+      }
       return acc;
     }, {} as Record<string, { confidence: number; dataPoints: number }>)
-  } : {
-    responded: [],
-    data: {}
   };
   
-  // ===== EBAY MARKET DATA INTEGRATION =====
-  console.log('🛒 Fetching eBay market data...');
-  const ebayData = await fetchEbayMarketData(consensus.consensus.itemName);
-  
-  // Add eBay to API sources if available
-  if (ebayData.available) {
-    apiSources.responded.push('eBay');
-    apiSources.data['eBay'] = {
-      confidence: ebayData.totalListings >= 10 ? 0.9 : 0.7,
-      dataPoints: ebayData.totalListings
-    };
-  }
-  
-  // Blend AI estimate with eBay market data
-  const { adjustedValue, marketInfluence } = blendWithMarketData(
-    consensus.consensus.estimatedValue,
-    consensus.consensus.confidence,
-    ebayData
-  );
-  
-  // Update summary reasoning with market context
-  if (ebayData.available && ebayData.priceAnalysis) {
-    summaryReasoning += ` Market validation: ${ebayData.totalListings} active eBay listings found with median price $${ebayData.priceAnalysis.median}.`;
-  }
-  
-  // Build market comps from eBay listings
-  const marketComps = ebayData.sampleListings?.map(listing => ({
-    source: 'eBay',
-    title: listing.title,
-    price: listing.price,
-    condition: listing.condition,
-    url: listing.url
-  })) || [];
+  // Build market comps from all sources
+  const marketComps: any[] = [];
+  marketData.sources.forEach(source => {
+    if (source.sampleListings) {
+      source.sampleListings.forEach(listing => {
+        marketComps.push({
+          source: source.source,
+          title: listing.title,
+          price: listing.price,
+          condition: listing.condition,
+          url: listing.url
+        });
+      });
+    }
+  });
   
   const totalSources = respondedAIs.length + apiSources.responded.length;
   
+  // Build final result
   const fullResult: AnalysisResult = {
     id: consensus.analysisId,
     itemName: consensus.consensus.itemName,
-    estimatedValue: adjustedValue, // Use market-adjusted value
+    estimatedValue: marketData.blendedPrice, // Use multi-source blended price
     decision: consensus.consensus.decision,
     confidenceScore: consensus.consensus.confidence,
     summary_reasoning: summaryReasoning,
@@ -410,14 +778,14 @@ Analyze this item for resale potential based on physical characteristics only:`;
     category: request.category_id,
     subCategory: request.subcategory_id,
     imageUrl: imageData,
-    marketComps: marketComps,
+    marketComps: marketComps.slice(0, 10), // Top 10 comps
     resale_toolkit: {
       listInArena: true,
       sellOnProPlatforms: true,
       linkToMyStore: false,
       shareToSocial: true
     },
-    tags: [request.category_id],
+    tags: [request.category_id, categoryDetection.category],
     hydraConsensus: {
       ...consensus,
       totalSources,
@@ -426,28 +794,39 @@ Analyze this item for resale potential based on physical characteristics only:`;
         weights: aiWeights
       },
       apiSources,
-      consensusMethod: 'weighted_average_with_market_data',
+      consensusMethod: marketData.blendMethod,
       finalConfidence: consensus.consensus.confidence / 100
     },
     authorityData: consensus.authorityData,
-    ebayMarketData: ebayData
+    marketData: {
+      sources: marketData.sources,
+      primarySource: marketData.primarySource,
+      blendMethod: marketData.blendMethod
+    }
   };
   
-  // Add debug info if analysis quality is FALLBACK
+  // Add debug info if needed
   if (consensus.consensus.analysisQuality === 'FALLBACK') {
     fullResult.debug_info = {
       reason: 'Multi-AI consensus degraded',
-      details: `Only ${consensus.votes.length} AI model(s) responded. A minimum of 3 models is required for reliable consensus. Check API keys and provider initialization.`
+      details: `Only ${consensus.votes.length} AI model(s) responded. Check API keys.`
     };
   }
   
-  // Log market influence for debugging
-  console.log(`📊 Final value: $${adjustedValue} (Market influence: ${marketInfluence})`);
+  // Final logging
+  console.log(`\n✅ === ANALYSIS COMPLETE ===`);
+  console.log(`📦 Item: ${consensus.consensus.itemName}`);
+  console.log(`🏷️ Category: ${categoryDetection.category}`);
+  console.log(`💵 AI Estimate: $${consensus.consensus.estimatedValue}`);
+  console.log(`💰 Final Value: $${marketData.blendedPrice}`);
+  console.log(`📊 Sources: ${totalSources} (${respondedAIs.length} AI + ${apiSources.responded.length} Market APIs)`);
+  console.log(`📈 Blend: ${marketData.marketInfluence}\n`);
   
   return fullResult;
 }
 
-// Main API handler
+// ==================== API HANDLER ====================
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -461,16 +840,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Validation
     if (body.scanType === 'multi-modal') {
       if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
-        return res.status(400).json({ error: 'Multi-modal analysis requires items array with at least one item.' });
+        return res.status(400).json({ error: 'Multi-modal analysis requires items array.' });
       }
     } else {
       if (!body.scanType || !body.data || !body.category_id) {
-        return res.status(400).json({ error: 'Missing required fields in analysis request.' });
+        return res.status(400).json({ error: 'Missing required fields.' });
       }
     }
     
     if (!body.category_id) {
-      return res.status(400).json({ error: 'category_id is required for all analysis types.' });
+      return res.status(400).json({ error: 'category_id is required.' });
     }
 
     const analysisResult = await performAnalysis(body);
