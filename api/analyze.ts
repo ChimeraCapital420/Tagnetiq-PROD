@@ -1,4 +1,4 @@
-// FORCE REDEPLOY v3.0 - Multi-API Market Data Integration (eBay + Numista + Brickset)
+// FORCE REDEPLOY v3.1 - Multi-API Market Data Integration (eBay + Numista + Brickset + Google Books)
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -476,6 +476,97 @@ async function fetchBricksetData(itemName: string): Promise<MarketDataSource> {
   }
 }
 
+// Google Books Data Fetcher
+async function fetchGoogleBooksData(itemName: string): Promise<MarketDataSource> {
+  try {
+    console.log(`📚 [Google Books] Fetching book data for: ${itemName}`);
+    
+    // Try to extract ISBN if present
+    const isbnMatch = itemName.match(/(?:isbn[:\s]*)?(\d{10}|\d{13})/i);
+    
+    let url: string;
+    if (isbnMatch) {
+      url = `${BASE_URL}/api/google-books/price-check?isbn=${isbnMatch[1]}`;
+      console.log(`🔍 [Google Books] Searching by ISBN: ${isbnMatch[1]}`);
+    } else {
+      const searchQuery = itemName
+        .replace(/[^\w\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 100);
+      url = `${BASE_URL}/api/google-books/price-check?q=${encodeURIComponent(searchQuery)}`;
+    }
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn(`⚠️ [Google Books] API returned ${response.status}: ${errorText.substring(0, 100)}`);
+      return {
+        source: 'Google Books',
+        available: false,
+        query: itemName,
+        totalListings: 0,
+        error: `API error: ${response.status}`
+      };
+    }
+    
+    const data = await response.json();
+    
+    if (!data.found || !data.priceAnalysis) {
+      console.log(`ℹ️ [Google Books] No books found`);
+      return {
+        source: 'Google Books',
+        available: false,
+        query: itemName,
+        totalListings: 0,
+        error: 'No matching books found'
+      };
+    }
+    
+    console.log(`✅ [Google Books] Found: ${data.book?.title || 'Book'} - Retail: $${data.pricing?.retailPrice}`);
+    
+    return {
+      source: 'Google Books',
+      available: true,
+      query: data.query,
+      totalListings: data.conditionPrices?.length || data.priceAnalysis?.priceCount || 1,
+      priceAnalysis: {
+        lowest: data.priceAnalysis.lowestPrice,
+        highest: data.priceAnalysis.highestPrice,
+        average: data.priceAnalysis.averagePrice,
+        median: data.priceAnalysis.medianPrice
+      },
+      suggestedPrices: data.suggestedPrices,
+      sampleListings: data.sampleListings?.slice(0, 5).map((listing: any) => ({
+        title: listing.title,
+        price: listing.price,
+        condition: listing.condition || 'Good Condition',
+        url: listing.url
+      })),
+      metadata: {
+        dataSource: 'google_books',
+        book: data.book,
+        retailPrice: data.pricing?.retailPrice,
+        isbn: data.book?.isbn13 || data.book?.isbn10
+      }
+    };
+    
+  } catch (error: any) {
+    console.warn(`⚠️ [Google Books] Fetch failed: ${error.message}`);
+    return {
+      source: 'Google Books',
+      available: false,
+      query: itemName,
+      totalListings: 0,
+      error: error.message
+    };
+  }
+}
+
 // ==================== MARKET DATA ORCHESTRATOR ====================
 
 interface MarketDataResult {
@@ -513,7 +604,7 @@ async function fetchAllMarketData(
       // Future: Add TCGPlayer here
       break;
     case 'books':
-      // Future: Add Google Books here
+      apiCalls.push(fetchGoogleBooksData(itemName));
       break;
   }
   
@@ -563,6 +654,9 @@ async function fetchAllMarketData(
     } else if (source.source === 'Brickset') {
       // Brickset: Good for retail/estimated values
       sourceWeight = Math.min(source.totalListings / 10, 0.25);
+    } else if (source.source === 'Google Books') {
+      // Google Books: Good for ISBN lookups and condition pricing
+      sourceWeight = Math.min(source.totalListings / 5, 0.30);
     }
     
     if (sourceWeight > 0.05) { // Only include if weight is meaningful
