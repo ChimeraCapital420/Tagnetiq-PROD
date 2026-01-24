@@ -11,11 +11,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { subCategories } from '@/lib/subcategories';
 import SpotlightCarousel from '@/components/dashboard/SpotlightCarousel';
+import { ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
 
 const Dashboard: React.FC = () => {
   const { lastAnalysisResult, selectedCategory, setSelectedCategory } = useAppContext();
   const [isSubCategoryModalOpen, setIsSubCategoryModalOpen] = useState(false);
   const [currentCategory, setCurrentCategory] = useState<{ id: string; name: string } | null>(null);
+  const [isCategoryPanelOpen, setIsCategoryPanelOpen] = useState(false);
   const { user, profile } = useAuth();
 
   const handleCategorySelect = (category: { id: string; name: string; }) => {
@@ -27,6 +29,9 @@ const Dashboard: React.FC = () => {
     if (availableSubCategories.length > 0) {
         setCurrentCategory(category);
         setIsSubCategoryModalOpen(true);
+    } else {
+      // Close the panel after selection if no subcategories
+      setIsCategoryPanelOpen(false);
     }
   };
   
@@ -49,8 +54,9 @@ const Dashboard: React.FC = () => {
   return (
     <>
       <div className="relative z-10 p-4 sm:p-8">
-        <div className="max-w-4xl mx-auto space-y-8">
+        <div className="max-w-4xl mx-auto space-y-6">
           
+          {/* Welcome Card with Spotlight */}
           <Card className="overflow-hidden border-border/50 bg-background/50 backdrop-blur-sm">
             <div className="grid grid-cols-1 md:grid-cols-2 items-center">
               <div className="p-8">
@@ -64,37 +70,75 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
           </Card>
-          
+
+          {/* Analysis Result */}
           {lastAnalysisResult && (
             <div className="flex justify-center">
               <AnalysisResult />
             </div>
           )}
 
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {CATEGORIES.map((category) => (
-              <Card 
-                key={category.id} 
-                className="overflow-hidden border-border/50 bg-background/50 backdrop-blur-sm hover:border-primary transition-all group cursor-pointer text-center"
-                onClick={() => handleCategorySelect(category)}
-              >
-                <CardHeader className="p-4 flex-col items-center">
-                  <category.icon className="h-8 w-8 mb-2" />
-                  <CardTitle className="text-base">{category.name}</CardTitle>
-                </CardHeader>
-                <CardContent className="p-4 pt-0">
-                    <p className="text-xs text-muted-foreground">{category.description}</p>
-                </CardContent>
-              </Card>
-            ))}
+          {/* Collapsible Category Refinement Panel */}
+          <div className="space-y-3">
+            <button
+              onClick={() => setIsCategoryPanelOpen(!isCategoryPanelOpen)}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-border/50 bg-background/50 backdrop-blur-sm hover:border-primary/50 transition-all group"
+            >
+              <div className="flex items-center gap-3">
+                <SlidersHorizontal className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                <span className="text-sm font-medium">Refine Category</span>
+                <span className="text-xs text-muted-foreground">(optional)</span>
+              </div>
+              {isCategoryPanelOpen ? (
+                <ChevronUp className="h-5 w-5 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-5 w-5 text-muted-foreground" />
+              )}
+            </button>
+
+            {/* Expandable Category Grid */}
+            <div
+              className={`grid grid-cols-3 sm:grid-cols-3 gap-3 overflow-hidden transition-all duration-300 ease-in-out ${
+                isCategoryPanelOpen 
+                  ? 'max-h-[600px] opacity-100' 
+                  : 'max-h-0 opacity-0'
+              }`}
+            >
+              {CATEGORIES.map((category) => {
+                const isSelected = selectedCategory === category.id || 
+                  selectedCategory?.startsWith(category.id);
+                
+                return (
+                  <Card 
+                    key={category.id} 
+                    className={`overflow-hidden border-border/50 bg-background/50 backdrop-blur-sm hover:border-primary transition-all group cursor-pointer text-center ${
+                      isSelected ? 'border-primary ring-1 ring-primary/20' : ''
+                    }`}
+                    onClick={() => handleCategorySelect(category)}
+                  >
+                    <CardHeader className="p-3 flex-col items-center">
+                      <category.icon className={`h-6 w-6 mb-1 ${isSelected ? 'text-primary' : ''}`} />
+                      <CardTitle className="text-sm">{category.name}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-3 pt-0">
+                      <p className="text-xs text-muted-foreground line-clamp-2">{category.description}</p>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
           </div>
+
         </div>
       </div>
       
       {currentCategory && (
         <SubCategoryModal
           isOpen={isSubCategoryModalOpen}
-          onClose={() => setIsSubCategoryModalOpen(false)}
+          onClose={() => {
+            setIsSubCategoryModalOpen(false);
+            setIsCategoryPanelOpen(false); // Close panel after subcategory selection
+          }}
           categoryId={currentCategory.id}
           categoryName={currentCategory.name}
         />
