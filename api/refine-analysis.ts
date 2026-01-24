@@ -1,4 +1,5 @@
 // api/refine-analysis.ts
+// FORCE REDEPLOY v2.0 - Added Pokemon TCG, RAWG, Discogs, Comic Vine, Retailed APIs
 
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { AnalysisResult } from '../src/types';
@@ -40,35 +41,30 @@ const openai = openaiKey ? new OpenAI({ apiKey: openaiKey }) : null;
 const genAI = googleKey ? new GoogleGenerativeAI(googleKey) : null;
 const googleModel = genAI ? genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest"}) : null;
 
-// --- API Integration Functions ---
-async function searchNumistaCoins(searchTerm: string) {
-  const apiKey = process.env.NUMISTA_API_KEY || process.env.NUMISTA_TOKEN;
-  if (!apiKey) return [];
+// Production URL for internal API calls
+const BASE_URL = 'https://tagnetiq-prod.vercel.app';
 
+// --- API Integration Functions ---
+
+// Numista Coins
+async function searchNumistaCoins(searchTerm: string) {
   try {
     const response = await fetch(
-      `https://api.numista.com/v3/types?q=${encodeURIComponent(searchTerm)}&count=10`,
-      {
-        headers: {
-          'Numista-API-Key': apiKey,
-          'Accept': 'application/json'
-        }
-      }
+      `${BASE_URL}/api/numista/search?q=${encodeURIComponent(searchTerm)}&limit=5`,
+      { headers: { 'Accept': 'application/json' } }
     );
 
     if (!response.ok) return [];
     const data = await response.json();
     
-    return (data.types || []).map((coin: any) => ({
+    return (data.results || []).map((coin: any) => ({
       source: 'Numista',
       title: coin.title,
-      year: coin.min_year || coin.max_year,
+      year: coin.minYear || coin.maxYear,
       country: coin.issuer?.name,
       composition: coin.composition?.text,
-      weight: coin.weight,
-      diameter: coin.diameter,
-      mintage: coin.mintage,
-      catalog_id: coin.id
+      numista_id: coin.id,
+      url: coin.url
     }));
   } catch (error) {
     console.error('Numista error:', error);
@@ -76,14 +72,12 @@ async function searchNumistaCoins(searchTerm: string) {
   }
 }
 
-// --- PCGS Coin Grading & Population Data ---
+// PCGS Coin Grading & Population Data
 async function searchPCGSCoins(searchTerm: string) {
   const apiKey = process.env.PCGS_API_KEY || process.env.PCGS_TOKEN || process.env.PCGS_SECRET;
   if (!apiKey) return [];
 
   try {
-    // Note: PCGS API structure varies - adjust endpoint based on their documentation
-    // This is a common structure for coin grading APIs
     const response = await fetch(
       `https://api.pcgs.com/v1/coins/search?q=${encodeURIComponent(searchTerm)}&limit=10`,
       {
@@ -104,24 +98,19 @@ async function searchPCGSCoins(searchTerm: string) {
       year: coin.year,
       mint_mark: coin.mint_mark,
       denomination: coin.denomination,
-      // Population data shows rarity
       population_data: {
         total_graded: coin.population?.total,
         ms65_and_higher: coin.population?.ms65_plus,
         ms67_and_higher: coin.population?.ms67_plus,
         ms70_perfect: coin.population?.ms70
       },
-      // Price guide data
       price_guide: {
         ms60: coin.prices?.ms60,
         ms63: coin.prices?.ms63,
         ms65: coin.prices?.ms65,
         ms67: coin.prices?.ms67,
         ms70: coin.prices?.ms70
-      },
-      variety: coin.variety,
-      designation: coin.designation,
-      coin_facts: coin.coin_facts
+      }
     }));
   } catch (error) {
     console.error('PCGS error:', error);
@@ -129,41 +118,40 @@ async function searchPCGSCoins(searchTerm: string) {
   }
 }
 
+// Brickset LEGO
 async function searchBricksetLego(searchTerm: string) {
-  const apiKey = process.env.BRICKSET_API_KEY || process.env.BRICKSET_TOKEN;
-  if (!apiKey) return [];
-
   try {
-    const response = await fetch('https://brickset.com/api/v3.asmx/getSets', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        apiKey: apiKey,
-        params: JSON.stringify({ query: searchTerm, pageSize: 10 })
-      }).toString()
+    // Try set number extraction first
+    const setNumberMatch = searchTerm.match(/\b(\d{4,6})\b/);
+    
+    let url: string;
+    if (setNumberMatch) {
+      url = `${BASE_URL}/api/brickset/sets?setNumber=${setNumberMatch[1]}`;
+    } else {
+      url = `${BASE_URL}/api/brickset/search?q=${encodeURIComponent(searchTerm)}&limit=5`;
+    }
+    
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' }
     });
 
     if (!response.ok) return [];
+    const data = await response.json();
     
-    const text = await response.text();
-    const jsonMatch = text.match(/>(\{.*\})</);
-    if (!jsonMatch) return [];
-    
-    const data = JSON.parse(jsonMatch[1]);
-    const sets = data.sets || [];
-
+    const sets = data.results || data.sets || [];
     return sets.map((set: any) => ({
       source: 'Brickset',
-      set_number: set.number,
+      set_number: set.setNumber || set.number,
       name: set.name,
       year: set.year,
       theme: set.theme,
       subtheme: set.subtheme,
       pieces: set.pieces,
       minifigs: set.minifigs,
-      retail_price_usd: set.USRetailPrice,
-      current_value_new: set.currentValue?.new,
-      current_value_used: set.currentValue?.used
+      retail_price_usd: set.retailPrice || set.USRetailPrice,
+      current_value_new: set.valueNew,
+      current_value_used: set.valueUsed,
+      url: set.url
     }));
   } catch (error) {
     console.error('Brickset error:', error);
@@ -171,14 +159,12 @@ async function searchBricksetLego(searchTerm: string) {
   }
 }
 
-// --- Chrono24 Watch Search Integration ---
+// Chrono24 Watch Search
 async function searchChrono24Watches(searchTerm: string) {
   const apiKey = process.env.CHRONO24_API_KEY || process.env.CHRONO24_TOKEN;
   if (!apiKey) return [];
 
   try {
-    // Note: This is a hypothetical API structure based on typical watch marketplace APIs
-    // You'll need to adjust based on actual Chrono24 API documentation
     const response = await fetch(
       `https://api.chrono24.com/v1/watches/search?q=${encodeURIComponent(searchTerm)}&limit=10`,
       {
@@ -199,14 +185,9 @@ async function searchChrono24Watches(searchTerm: string) {
       reference: watch.reference_number,
       year: watch.production_year,
       condition: watch.condition,
-      box_papers: watch.box_and_papers,
-      movement: watch.movement_type,
-      case_material: watch.case_material,
-      case_diameter: watch.case_diameter_mm,
       average_price: watch.price_stats?.average,
       min_price: watch.price_stats?.min,
       max_price: watch.price_stats?.max,
-      market_trend: watch.price_trend,
       listing_url: watch.url
     }));
   } catch (error) {
@@ -215,13 +196,12 @@ async function searchChrono24Watches(searchTerm: string) {
   }
 }
 
-// --- NEW: GoCollect Multi-Category Integration ---
+// GoCollect Multi-Category
 async function searchGoCollect(searchTerm: string, collectibleType: string = 'all') {
   const apiKey = process.env.GOCOLLECT_API_KEY || process.env.GO_COLLECT_API_KEY || process.env.GOCOLLECT_TOKEN;
   if (!apiKey) return [];
 
   try {
-    // GoCollect API endpoint - adjust based on their actual documentation
     const endpoint = collectibleType === 'all' 
       ? `https://api.gocollect.com/v1/collectibles/search?q=${encodeURIComponent(searchTerm)}`
       : `https://api.gocollect.com/v1/collectibles/${collectibleType}/search?q=${encodeURIComponent(searchTerm)}`;
@@ -242,32 +222,12 @@ async function searchGoCollect(searchTerm: string, collectibleType: string = 'al
       title: item.title || item.name,
       issue_number: item.issue,
       publisher: item.publisher,
-      set_name: item.set_name,
-      card_number: item.card_number,
       year: item.year,
-      // Price data by condition/grade
-      prices: {
-        mint: item.prices?.mint || item.prices?.['9.8'],
-        near_mint: item.prices?.near_mint || item.prices?.['9.6'],
-        excellent: item.prices?.excellent || item.prices?.['9.4'],
-        very_good: item.prices?.very_good || item.prices?.['9.0'],
-        good: item.prices?.good || item.prices?.['8.0'],
-        fair: item.prices?.fair || item.prices?.['6.0']
-      },
-      // Market trends
+      prices: item.prices,
       trend_30_day: item.trends?.thirty_day,
       trend_90_day: item.trends?.ninety_day,
-      trend_1_year: item.trends?.one_year,
-      // Population/Census data for rarity
-      census: {
-        total_graded: item.census?.total,
-        high_grade_count: item.census?.high_grade
-      },
-      // Additional metadata
       rarity: item.rarity,
-      first_appearance: item.first_appearance,
-      key_issue: item.key_issue,
-      hot_item: item.hot_item
+      key_issue: item.key_issue
     }));
   } catch (error) {
     console.error('GoCollect error:', error);
@@ -275,7 +235,219 @@ async function searchGoCollect(searchTerm: string, collectibleType: string = 'al
   }
 }
 
-// --- Perplexity API Integration ---
+// ==================== NEW API INTEGRATIONS ====================
+
+// Pokemon TCG API
+async function searchPokemonTCG(searchTerm: string) {
+  try {
+    const searchQuery = searchTerm
+      .replace(/pokemon/gi, '')
+      .replace(/card/gi, '')
+      .trim();
+    
+    const response = await fetch(
+      `${BASE_URL}/api/pokemon/search?q=${encodeURIComponent(searchQuery)}&limit=5`,
+      { headers: { 'Accept': 'application/json' } }
+    );
+
+    if (!response.ok) return [];
+    const data = await response.json();
+    
+    if (!data.success || !data.results) return [];
+    
+    return data.results.map((card: any) => ({
+      source: 'Pokemon TCG',
+      name: card.name,
+      set: card.setName,
+      number: card.number,
+      rarity: card.rarity,
+      tcgplayer_price: card.pricing?.tcgplayer?.market,
+      cardmarket_price: card.pricing?.cardmarket?.averageSellPrice,
+      image: card.imageSmall,
+      tcgplayer_url: card.tcgplayerUrl
+    }));
+  } catch (error) {
+    console.error('Pokemon TCG error:', error);
+    return [];
+  }
+}
+
+// RAWG Video Games API
+async function searchRAWGGames(searchTerm: string) {
+  try {
+    const searchQuery = searchTerm
+      .replace(/video game/gi, '')
+      .replace(/game/gi, '')
+      .trim();
+    
+    const response = await fetch(
+      `${BASE_URL}/api/rawg/search?q=${encodeURIComponent(searchQuery)}&limit=5`,
+      { headers: { 'Accept': 'application/json' } }
+    );
+
+    if (!response.ok) return [];
+    const data = await response.json();
+    
+    if (!data.success || !data.results) return [];
+    
+    return data.results.map((game: any) => ({
+      source: 'RAWG',
+      name: game.name,
+      released: game.released,
+      metacritic: game.metacritic,
+      platforms: game.platforms?.map((p: any) => p.platform?.name || p).join(', '),
+      genres: game.genres?.map((g: any) => g.name || g).join(', '),
+      esrb_rating: game.esrbRating,
+      url: `https://rawg.io/games/${game.slug}`,
+      // Note: RAWG doesn't provide pricing, useful for identification
+      note: 'RAWG provides metadata for game identification. Use eBay for market prices.'
+    }));
+  } catch (error) {
+    console.error('RAWG error:', error);
+    return [];
+  }
+}
+
+// Discogs Music/Vinyl API
+async function searchDiscogs(searchTerm: string) {
+  try {
+    const searchQuery = searchTerm
+      .replace(/vinyl/gi, '')
+      .replace(/record/gi, '')
+      .replace(/album/gi, '')
+      .trim();
+    
+    const response = await fetch(
+      `${BASE_URL}/api/discogs/search?q=${encodeURIComponent(searchQuery)}&type=release&limit=5`,
+      { headers: { 'Accept': 'application/json' } }
+    );
+
+    if (!response.ok) return [];
+    const data = await response.json();
+    
+    if (!data.success || !data.results) return [];
+    
+    return data.results.map((release: any) => ({
+      source: 'Discogs',
+      title: release.title,
+      artist: release.artist,
+      year: release.year,
+      format: release.format,
+      label: release.label,
+      country: release.country,
+      lowest_price: release.lowestPrice,
+      for_sale: release.forSale,
+      url: release.url || `https://www.discogs.com/release/${release.id}`
+    }));
+  } catch (error) {
+    console.error('Discogs error:', error);
+    return [];
+  }
+}
+
+// Comic Vine Comics API
+async function searchComicVine(searchTerm: string) {
+  try {
+    const searchQuery = searchTerm
+      .replace(/comic/gi, '')
+      .replace(/book/gi, '')
+      .trim();
+    
+    const response = await fetch(
+      `${BASE_URL}/api/comicvine/search?q=${encodeURIComponent(searchQuery)}&type=issue&limit=5`,
+      { headers: { 'Accept': 'application/json' } }
+    );
+
+    if (!response.ok) return [];
+    const data = await response.json();
+    
+    if (!data.success || !data.results) return [];
+    
+    return data.results.map((issue: any) => ({
+      source: 'Comic Vine',
+      name: issue.name,
+      volume_name: issue.volumeName,
+      issue_number: issue.issueNumber,
+      cover_date: issue.coverDate,
+      publisher: issue.publisher,
+      first_appearance_characters: issue.firstAppearanceCharacters,
+      url: issue.url,
+      // Note: Comic Vine doesn't provide pricing
+      note: 'Comic Vine provides comic metadata. Use eBay for market prices.'
+    }));
+  } catch (error) {
+    console.error('Comic Vine error:', error);
+    return [];
+  }
+}
+
+// Retailed Sneaker/Streetwear API
+async function searchRetailed(searchTerm: string) {
+  try {
+    // Check for SKU pattern
+    const skuMatch = searchTerm.match(/\b([A-Z]{1,2}\d{4,6}-\d{3})\b/i);
+    
+    let url: string;
+    if (skuMatch) {
+      // Use price endpoint for SKU lookups
+      url = `${BASE_URL}/api/retailed/prices?sku=${skuMatch[1]}`;
+    } else {
+      const searchQuery = searchTerm
+        .replace(/sneaker/gi, '')
+        .replace(/shoe/gi, '')
+        .trim();
+      url = `${BASE_URL}/api/retailed/search?q=${encodeURIComponent(searchQuery)}&limit=5`;
+    }
+    
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' }
+    });
+
+    if (!response.ok) return [];
+    const data = await response.json();
+    
+    // Handle price endpoint response
+    if (data.found && data.priceStats) {
+      return [{
+        source: 'Retailed',
+        name: data.product?.title || searchTerm,
+        sku: data.product?.sku,
+        brand: data.product?.brand,
+        colorway: data.product?.colorway,
+        retail_price: data.product?.retailPrice,
+        lowest_ask: data.priceStats.lowestAsk,
+        highest_ask: data.priceStats.highestAsk,
+        average_ask: data.priceStats.averageAsk,
+        marketplace_count: data.priceStats.marketplaceCount,
+        marketplaces: data.prices?.map((p: any) => ({
+          name: p.marketplace,
+          price: p.lowestAsk,
+          url: p.url
+        }))
+      }];
+    }
+    
+    // Handle search endpoint response
+    if (data.success && data.results) {
+      return data.results.map((item: any) => ({
+        source: 'Retailed',
+        name: item.name,
+        sku: item.sku,
+        brand: item.brand,
+        colorway: item.colorway,
+        release_date: item.releaseDate,
+        retail_price: item.retailPrice
+      }));
+    }
+    
+    return [];
+  } catch (error) {
+    console.error('Retailed error:', error);
+    return [];
+  }
+}
+
+// Perplexity API Integration
 async function searchPerplexity(query: string, category: string) {
   const apiKey = process.env.PERPLEXITY_API_KEY || process.env.PERPLEXITY_TOKEN || process.env.PPLX_API_KEY;
   if (!apiKey) return null;
@@ -315,12 +487,9 @@ async function searchPerplexity(query: string, category: string) {
 
 /**
  * A helper function to safely parse a JSON string from an AI response.
- * @param jsonString The string to parse.
- * @returns The parsed object or null if parsing fails.
  */
 const safeJsonParse = (jsonString: string) => {
   try {
-    // Clean the string: remove ```json markdown and any leading/trailing whitespace
     const cleanedString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanedString);
   } catch (error) {
@@ -346,15 +515,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const analysis: AnalysisResult = original_analysis;
 
     // --- Fetch Category-Specific API Data ---
-    let apiData = [];
+    let apiData: any[] = [];
     let perplexityData = null;
 
     // Determine search query from item name or refinement text
     const searchQuery = analysis.itemName || refinement_text;
+    const searchLower = searchQuery.toLowerCase();
 
-    // Category-specific API calls with GoCollect integration
+    console.log(`🔍 Refining analysis for: ${searchQuery}`);
+    console.log(`📁 Category: ${category} / ${subcategory}`);
+
+    // Category-specific API calls with all new integrations
     if (category === 'Toys & Collectibles') {
-      if (subcategory === 'LEGO Sets') {
+      if (subcategory === 'LEGO Sets' || searchLower.includes('lego')) {
         apiData = await searchBricksetLego(searchQuery);
         perplexityData = await searchPerplexity(searchQuery, 'LEGO collectibles');
       } else if (subcategory === 'Action Figures' || subcategory === 'Vintage Toys') {
@@ -362,24 +535,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         perplexityData = await searchPerplexity(searchQuery, 'vintage toys action figures');
       }
     } else if (category === 'Trading Cards') {
-      // Handle specific trading card types
-      if (subcategory === 'Pokemon Cards' || searchQuery.toLowerCase().includes('pokemon')) {
-        apiData = await searchGoCollect(searchQuery, 'pokemon');
+      // Pokemon cards - use Pokemon TCG API
+      if (subcategory === 'Pokemon Cards' || searchLower.includes('pokemon') || searchLower.includes('charizard') || searchLower.includes('pikachu')) {
+        const pokemonData = await searchPokemonTCG(searchQuery);
+        const goCollectData = await searchGoCollect(searchQuery, 'pokemon');
+        apiData = [...pokemonData, ...goCollectData];
         perplexityData = await searchPerplexity(searchQuery, 'Pokemon TCG card values PSA BGS');
-      } else if (subcategory === 'Magic: The Gathering' || searchQuery.toLowerCase().includes('mtg') || searchQuery.toLowerCase().includes('magic')) {
+      } 
+      // Magic: The Gathering
+      else if (subcategory === 'Magic: The Gathering' || searchLower.includes('mtg') || searchLower.includes('magic')) {
         apiData = await searchGoCollect(searchQuery, 'mtg');
         perplexityData = await searchPerplexity(searchQuery, 'Magic the Gathering card prices');
-      } else if (subcategory === 'Sports Cards') {
-        const goCollectData = await searchGoCollect(searchQuery, 'sports');
-        apiData = [...goCollectData];
+      } 
+      // Sports Cards
+      else if (subcategory === 'Sports Cards') {
+        apiData = await searchGoCollect(searchQuery, 'sports');
         perplexityData = await searchPerplexity(searchQuery, 'sports cards PSA BGS pricing');
-      } else {
-        // General trading cards
-        apiData = await searchGoCollect(searchQuery, 'cards');
+      } 
+      // General trading cards
+      else {
+        const pokemonData = await searchPokemonTCG(searchQuery);
+        const goCollectData = await searchGoCollect(searchQuery, 'cards');
+        apiData = [...pokemonData, ...goCollectData];
         perplexityData = await searchPerplexity(searchQuery, 'trading card values');
       }
-    } else if (category === 'Comics & Graphic Novels' || category === 'Comic Books') {
-      apiData = await searchGoCollect(searchQuery, 'comics');
+    } else if (category === 'Comics & Graphic Novels' || category === 'Comic Books' || searchLower.includes('comic') || searchLower.includes('marvel') || searchLower.includes('dc')) {
+      // Use Comic Vine for identification + GoCollect for pricing
+      const comicVineData = await searchComicVine(searchQuery);
+      const goCollectData = await searchGoCollect(searchQuery, 'comics');
+      apiData = [...comicVineData, ...goCollectData];
       perplexityData = await searchPerplexity(searchQuery, 'comic book values CGC CBCS');
     } else if (category === 'Coins & Currency') {
       // Call both Numista and PCGS for coins
@@ -392,10 +576,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } else if (category === 'Jewelry & Watches' && (subcategory === 'Luxury Watches' || subcategory === 'Watches')) {
       apiData = await searchChrono24Watches(searchQuery);
       perplexityData = await searchPerplexity(searchQuery, 'luxury watches market Chrono24');
-    } else if (category === 'Video Games' || category === 'Gaming') {
+    } else if (category === 'Video Games' || category === 'Gaming' || searchLower.includes('game') || searchLower.includes('nintendo') || searchLower.includes('playstation') || searchLower.includes('xbox')) {
+      // Use RAWG for identification + GoCollect for graded games
+      const rawgData = await searchRAWGGames(searchQuery);
       const goCollectData = await searchGoCollect(searchQuery, 'videogames');
-      apiData = [...goCollectData];
+      apiData = [...rawgData, ...goCollectData];
       perplexityData = await searchPerplexity(searchQuery, 'video game values WATA VGA sealed');
+    } else if (category === 'Music' || category === 'Vinyl' || searchLower.includes('vinyl') || searchLower.includes('record') || searchLower.includes('album')) {
+      // Use Discogs for vinyl/music
+      apiData = await searchDiscogs(searchQuery);
+      perplexityData = await searchPerplexity(searchQuery, 'vinyl record values Discogs');
+    } else if (category === 'Sneakers' || category === 'Footwear' || category === 'Streetwear' || searchLower.includes('jordan') || searchLower.includes('yeezy') || searchLower.includes('nike') || searchLower.includes('sneaker')) {
+      // Use Retailed for sneakers/streetwear
+      apiData = await searchRetailed(searchQuery);
+      perplexityData = await searchPerplexity(searchQuery, 'sneaker resale StockX GOAT');
     } else if (category === 'Magazines' || category === 'Publications') {
       apiData = await searchGoCollect(searchQuery, 'magazines');
       perplexityData = await searchPerplexity(searchQuery, 'vintage magazine values');
@@ -410,6 +604,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       perplexityData = await searchPerplexity(searchQuery, category || 'collectibles');
     }
+
+    console.log(`📊 Found ${apiData.length} API results from ${[...new Set(apiData.map(d => d.source))].join(', ') || 'none'}`);
 
     // --- Dynamic Multi-AI Consensus Prompt ---
     const prompt = `
@@ -434,16 +630,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       Your Task:
       1. Analyze how the new information and market data impact the item's value.
       2. If specific API data is provided, prioritize this authoritative data:
+         - Pokemon TCG: TCGPlayer/Cardmarket live pricing
          - GoCollect: Provides graded prices, population census, and trend data
          - Numista: Global coin specifications and varieties
          - PCGS: US coin grading populations and price guides
          - Brickset: LEGO set details and current market values
          - Chrono24: Watch market prices and trends
+         - RAWG: Video game metadata for identification
+         - Discogs: Vinyl/music marketplace pricing
+         - Comic Vine: Comic metadata and first appearance info
+         - Retailed: Sneaker/streetwear pricing from StockX/GOAT
       3. For graded items (cards, comics, coins): Grade dramatically affects value
          - Pokemon/MTG: PSA 10 vs PSA 9 can be 5-10x difference
          - Comics: CGC 9.8 vs 9.6 can be 3-5x difference
          - Coins: MS67 vs MS65 can be 10x+ difference
-      4. Consider market trends: 30-day, 90-day, and 1-year trends from GoCollect
+      4. Consider market trends: 30-day, 90-day, and 1-year trends
       5. Factor in rarity: population/census data indicates scarcity premiums
       6. Determine a new, adjusted estimated value as a single number.
       7. Create a new list of the top 5 key valuation factors incorporating market data.
@@ -467,7 +668,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           model: "claude-3-5-sonnet-20240620",
           max_tokens: 1024,
           messages: [{ role: "user", content: prompt }],
-        }).then(response => safeJsonParse(response.content[0].text))
+        }).then(response => {
+          const text = response.content[0];
+          return safeJsonParse('type' in text && text.type === 'text' ? text.text : '');
+        })
       );
     }
     
@@ -511,14 +715,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const allFactors = successfulResponses.flatMap(res => res.newFactors || []);
     const uniqueFactors = [...new Set(allFactors)];
 
-    // For simplicity, we'll take the summary from the first successful response.
+    // Take the summary from the first successful response
     const newSummary = successfulResponses[0].newSummary || `Value adjusted based on user feedback. ${analysis.summary_reasoning}`;
+
+    console.log(`✅ Refinement complete: $${analysis.estimatedValue.toFixed(2)} → $${averageValue.toFixed(2)}`);
 
     // --- Construct Final Updated Analysis ---
     const updatedAnalysis: AnalysisResult = {
       ...analysis,
       estimatedValue: averageValue,
-      valuation_factors: uniqueFactors.slice(0, 5), // Take top 5 unique factors
+      valuation_factors: uniqueFactors.slice(0, 5),
       summary_reasoning: newSummary,
     };
 

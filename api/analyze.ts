@@ -1,4 +1,4 @@
-// FORCE REDEPLOY v3.1 - Multi-API Market Data Integration (eBay + Numista + Brickset + Google Books)
+// FORCE REDEPLOY v4.0 - Multi-API Market Data Integration (eBay + Numista + Brickset + Google Books + Pokemon TCG + RAWG + Discogs + Comic Vine + Retailed)
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -122,7 +122,7 @@ interface AnalysisResult {
 
 // ==================== CATEGORY DETECTION ====================
 
-type ItemCategory = 'coins' | 'lego' | 'trading_cards' | 'books' | 'general';
+type ItemCategory = 'coins' | 'lego' | 'trading_cards' | 'books' | 'video_games' | 'music' | 'comics' | 'sneakers' | 'general';
 
 interface CategoryDetection {
   category: ItemCategory;
@@ -150,11 +150,13 @@ function detectItemCategory(itemName: string, categoryId?: string): CategoryDete
     'millennium falcon', 'death star', 'hogwarts'
   ];
   
-  // Trading card detection
+  // Trading card detection (Pokemon, MTG, Sports, etc.)
   const cardKeywords = [
     'pokemon', 'charizard', 'pikachu', 'magic the gathering', 'mtg',
     'yu-gi-oh', 'yugioh', 'trading card', 'tcg', 'holographic',
-    'first edition', 'psa', 'graded card', 'booster', 'pack'
+    'first edition', 'psa', 'graded card', 'booster', 'pack',
+    'vmax', 'vstar', 'ex card', 'gx card', 'full art',
+    'rainbow rare', 'secret rare', 'shiny', 'holo'
   ];
   
   // Book detection
@@ -163,20 +165,70 @@ function detectItemCategory(itemName: string, categoryId?: string): CategoryDete
     'signed copy', 'isbn', 'author', 'rare book', 'antique book'
   ];
   
+  // Video Games detection
+  const videoGameKeywords = [
+    'video game', 'game', 'nintendo', 'playstation', 'xbox', 'ps5', 'ps4', 'ps3', 'ps2',
+    'switch', 'wii', 'gamecube', 'n64', 'snes', 'nes', 'gameboy', 'game boy',
+    'sega', 'genesis', 'dreamcast', 'atari', 'steam', 'pc game',
+    'sealed game', 'cib', 'complete in box', 'cartridge', 'disc',
+    'zelda', 'mario', 'final fantasy', 'call of duty', 'halo',
+    'retro game', 'vintage game', 'collector edition'
+  ];
+  
+  // Music/Vinyl detection
+  const musicKeywords = [
+    'vinyl', 'record', 'lp', 'album', '45 rpm', '33 rpm', '78 rpm',
+    'first pressing', 'original pressing', 'limited edition vinyl',
+    'picture disc', 'colored vinyl', 'audiophile', 'mono', 'stereo',
+    'discogs', 'rare vinyl', 'sealed vinyl', 'mint vinyl',
+    'beatles', 'led zeppelin', 'pink floyd', 'bob dylan',
+    'cd', 'cassette', 'tape', '8-track'
+  ];
+  
+  // Comics detection
+  const comicsKeywords = [
+    'comic', 'comic book', 'graphic novel', 'manga', 'issue',
+    'marvel', 'dc comics', 'spider-man', 'batman', 'superman', 'x-men',
+    'first appearance', 'key issue', 'cgc', 'cbcs', 'graded comic',
+    'golden age', 'silver age', 'bronze age', 'modern age',
+    'variant cover', 'newsstand', 'direct edition'
+  ];
+  
+  // Sneakers/Streetwear detection
+  const sneakerKeywords = [
+    'sneaker', 'sneakers', 'jordan', 'air jordan', 'nike', 'adidas',
+    'yeezy', 'dunk', 'air force', 'air max', 'new balance', 'asics',
+    'deadstock', 'ds', 'vnds', 'og all', 'retro', 'bred', 'chicago',
+    'off-white', 'travis scott', 'collaboration', 'collab',
+    'supreme', 'bape', 'streetwear', 'hypebeast', 'stockx', 'goat'
+  ];
+  
   // Check category_id hint
   if (categoryId) {
     const catLower = categoryId.toLowerCase();
     if (catLower.includes('coin') || catLower.includes('currency')) {
       return { category: 'coins', confidence: 0.9, keywords: ['category_hint'] };
     }
-    if (catLower.includes('lego') || catLower.includes('toy')) {
+    if (catLower.includes('lego') || catLower.includes('brick')) {
       return { category: 'lego', confidence: 0.9, keywords: ['category_hint'] };
     }
-    if (catLower.includes('card') || catLower.includes('trading')) {
+    if (catLower.includes('card') || catLower.includes('trading') || catLower.includes('pokemon') || catLower.includes('tcg')) {
       return { category: 'trading_cards', confidence: 0.9, keywords: ['category_hint'] };
     }
     if (catLower.includes('book') || catLower.includes('media')) {
       return { category: 'books', confidence: 0.9, keywords: ['category_hint'] };
+    }
+    if (catLower.includes('game') || catLower.includes('video') || catLower.includes('gaming')) {
+      return { category: 'video_games', confidence: 0.9, keywords: ['category_hint'] };
+    }
+    if (catLower.includes('music') || catLower.includes('vinyl') || catLower.includes('record')) {
+      return { category: 'music', confidence: 0.9, keywords: ['category_hint'] };
+    }
+    if (catLower.includes('comic') || catLower.includes('manga')) {
+      return { category: 'comics', confidence: 0.9, keywords: ['category_hint'] };
+    }
+    if (catLower.includes('sneaker') || catLower.includes('shoe') || catLower.includes('streetwear') || catLower.includes('footwear')) {
+      return { category: 'sneakers', confidence: 0.9, keywords: ['category_hint'] };
     }
   }
   
@@ -186,12 +238,16 @@ function detectItemCategory(itemName: string, categoryId?: string): CategoryDete
     lego: { score: 0, matches: [] },
     trading_cards: { score: 0, matches: [] },
     books: { score: 0, matches: [] },
+    video_games: { score: 0, matches: [] },
+    music: { score: 0, matches: [] },
+    comics: { score: 0, matches: [] },
+    sneakers: { score: 0, matches: [] },
     general: { score: 0.1, matches: [] } // Default baseline
   };
   
   coinKeywords.forEach(kw => {
     if (nameLower.includes(kw)) {
-      scores.coins.score += kw.split(' ').length; // Multi-word matches score higher
+      scores.coins.score += kw.split(' ').length;
       scores.coins.matches.push(kw);
     }
   });
@@ -214,6 +270,34 @@ function detectItemCategory(itemName: string, categoryId?: string): CategoryDete
     if (nameLower.includes(kw)) {
       scores.books.score += kw.split(' ').length;
       scores.books.matches.push(kw);
+    }
+  });
+  
+  videoGameKeywords.forEach(kw => {
+    if (nameLower.includes(kw)) {
+      scores.video_games.score += kw.split(' ').length;
+      scores.video_games.matches.push(kw);
+    }
+  });
+  
+  musicKeywords.forEach(kw => {
+    if (nameLower.includes(kw)) {
+      scores.music.score += kw.split(' ').length;
+      scores.music.matches.push(kw);
+    }
+  });
+  
+  comicsKeywords.forEach(kw => {
+    if (nameLower.includes(kw)) {
+      scores.comics.score += kw.split(' ').length;
+      scores.comics.matches.push(kw);
+    }
+  });
+  
+  sneakerKeywords.forEach(kw => {
+    if (nameLower.includes(kw)) {
+      scores.sneakers.score += kw.split(' ').length;
+      scores.sneakers.matches.push(kw);
     }
   });
   
@@ -567,6 +651,540 @@ async function fetchGoogleBooksData(itemName: string): Promise<MarketDataSource>
   }
 }
 
+// ==================== NEW API FETCHERS ====================
+
+// Pokemon TCG Data Fetcher
+async function fetchPokemonTCGData(itemName: string): Promise<MarketDataSource> {
+  try {
+    console.log(`🎴 [Pokemon TCG] Fetching card data for: ${itemName}`);
+    
+    const searchQuery = itemName
+      .replace(/pokemon/gi, '')
+      .replace(/card/gi, '')
+      .replace(/[^\w\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 100);
+    
+    const url = `${BASE_URL}/api/pokemon/search?q=${encodeURIComponent(searchQuery)}&limit=5`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    
+    if (!response.ok) {
+      console.warn(`⚠️ [Pokemon TCG] API returned ${response.status}`);
+      return {
+        source: 'Pokemon TCG',
+        available: false,
+        query: searchQuery,
+        totalListings: 0,
+        error: `API error: ${response.status}`
+      };
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success || !data.results || data.results.length === 0) {
+      console.log(`ℹ️ [Pokemon TCG] No cards found`);
+      return {
+        source: 'Pokemon TCG',
+        available: false,
+        query: searchQuery,
+        totalListings: 0,
+        error: 'No matching Pokemon cards found'
+      };
+    }
+    
+    // Extract pricing from results
+    const prices: number[] = [];
+    const listings: any[] = [];
+    
+    data.results.forEach((card: any) => {
+      if (card.pricing?.tcgplayer?.market) {
+        prices.push(card.pricing.tcgplayer.market);
+        listings.push({
+          title: card.name,
+          price: card.pricing.tcgplayer.market,
+          condition: card.rarity || 'Market Price',
+          url: card.tcgplayerUrl || `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(card.name)}`
+        });
+      } else if (card.pricing?.cardmarket?.averageSellPrice) {
+        prices.push(card.pricing.cardmarket.averageSellPrice);
+        listings.push({
+          title: card.name,
+          price: card.pricing.cardmarket.averageSellPrice,
+          condition: card.rarity || 'Average Sell',
+          url: card.cardmarketUrl || '#'
+        });
+      }
+    });
+    
+    if (prices.length === 0) {
+      return {
+        source: 'Pokemon TCG',
+        available: false,
+        query: searchQuery,
+        totalListings: data.totalResults || 0,
+        error: 'Cards found but no pricing data available'
+      };
+    }
+    
+    const sortedPrices = [...prices].sort((a, b) => a - b);
+    const median = sortedPrices[Math.floor(sortedPrices.length / 2)];
+    
+    console.log(`✅ [Pokemon TCG] ${data.totalResults} cards found, ${prices.length} with pricing`);
+    
+    return {
+      source: 'Pokemon TCG',
+      available: true,
+      query: data.query || searchQuery,
+      totalListings: data.totalResults || prices.length,
+      priceAnalysis: {
+        lowest: Math.min(...prices),
+        highest: Math.max(...prices),
+        average: prices.reduce((a, b) => a + b, 0) / prices.length,
+        median: median
+      },
+      suggestedPrices: {
+        goodDeal: Math.min(...prices) * 0.85,
+        fairMarket: median,
+        sellPrice: median * 1.15
+      },
+      sampleListings: listings.slice(0, 5),
+      metadata: {
+        dataSource: 'pokemon_tcg_api',
+        totalCards: data.totalResults
+      }
+    };
+    
+  } catch (error: any) {
+    console.warn(`⚠️ [Pokemon TCG] Fetch failed: ${error.message}`);
+    return {
+      source: 'Pokemon TCG',
+      available: false,
+      query: itemName,
+      totalListings: 0,
+      error: error.message
+    };
+  }
+}
+
+// RAWG Video Games Data Fetcher
+async function fetchRAWGData(itemName: string): Promise<MarketDataSource> {
+  try {
+    console.log(`🎮 [RAWG] Fetching video game data for: ${itemName}`);
+    
+    const searchQuery = itemName
+      .replace(/video game/gi, '')
+      .replace(/game/gi, '')
+      .replace(/[^\w\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 100);
+    
+    const url = `${BASE_URL}/api/rawg/search?q=${encodeURIComponent(searchQuery)}&limit=5`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    
+    if (!response.ok) {
+      console.warn(`⚠️ [RAWG] API returned ${response.status}`);
+      return {
+        source: 'RAWG',
+        available: false,
+        query: searchQuery,
+        totalListings: 0,
+        error: `API error: ${response.status}`
+      };
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success || !data.results || data.results.length === 0) {
+      console.log(`ℹ️ [RAWG] No games found`);
+      return {
+        source: 'RAWG',
+        available: false,
+        query: searchQuery,
+        totalListings: 0,
+        error: 'No matching video games found'
+      };
+    }
+    
+    // Build listings from results (RAWG doesn't have pricing, but has metadata)
+    const listings = data.results.map((game: any) => ({
+      title: game.name,
+      price: 0, // RAWG doesn't provide pricing
+      condition: `Metacritic: ${game.metacritic || 'N/A'} | Released: ${game.released || 'Unknown'}`,
+      url: `https://rawg.io/games/${game.slug}`
+    }));
+    
+    console.log(`✅ [RAWG] ${data.totalResults} games found`);
+    
+    // RAWG provides metadata, not pricing - useful for identification
+    return {
+      source: 'RAWG',
+      available: true,
+      query: data.query || searchQuery,
+      totalListings: data.totalResults || data.results.length,
+      // No price analysis since RAWG doesn't provide prices
+      sampleListings: listings.slice(0, 5),
+      metadata: {
+        dataSource: 'rawg_games_db',
+        totalGames: data.totalResults,
+        topResult: data.results[0] ? {
+          name: data.results[0].name,
+          released: data.results[0].released,
+          metacritic: data.results[0].metacritic,
+          platforms: data.results[0].platforms
+        } : null,
+        note: 'RAWG provides game metadata, not pricing. Use eBay for market prices.'
+      }
+    };
+    
+  } catch (error: any) {
+    console.warn(`⚠️ [RAWG] Fetch failed: ${error.message}`);
+    return {
+      source: 'RAWG',
+      available: false,
+      query: itemName,
+      totalListings: 0,
+      error: error.message
+    };
+  }
+}
+
+// Discogs Music/Vinyl Data Fetcher
+async function fetchDiscogsData(itemName: string): Promise<MarketDataSource> {
+  try {
+    console.log(`🎵 [Discogs] Fetching music data for: ${itemName}`);
+    
+    const searchQuery = itemName
+      .replace(/vinyl/gi, '')
+      .replace(/record/gi, '')
+      .replace(/album/gi, '')
+      .replace(/[^\w\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 100);
+    
+    const url = `${BASE_URL}/api/discogs/search?q=${encodeURIComponent(searchQuery)}&type=release&limit=5`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    
+    if (!response.ok) {
+      console.warn(`⚠️ [Discogs] API returned ${response.status}`);
+      return {
+        source: 'Discogs',
+        available: false,
+        query: searchQuery,
+        totalListings: 0,
+        error: `API error: ${response.status}`
+      };
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success || !data.results || data.results.length === 0) {
+      console.log(`ℹ️ [Discogs] No releases found`);
+      return {
+        source: 'Discogs',
+        available: false,
+        query: searchQuery,
+        totalListings: 0,
+        error: 'No matching music releases found'
+      };
+    }
+    
+    // Extract pricing from results (if available from release endpoint)
+    const prices: number[] = [];
+    const listings: any[] = [];
+    
+    data.results.forEach((release: any) => {
+      // Discogs search doesn't include pricing, but the release endpoint does
+      // We'll note this and suggest using eBay for pricing
+      listings.push({
+        title: release.title,
+        price: release.lowestPrice || 0,
+        condition: `${release.format || 'Unknown format'} | ${release.year || 'Unknown year'}`,
+        url: release.url || `https://www.discogs.com/release/${release.id}`
+      });
+      
+      if (release.lowestPrice) {
+        prices.push(release.lowestPrice);
+      }
+    });
+    
+    console.log(`✅ [Discogs] ${data.totalResults} releases found`);
+    
+    // If we have pricing data
+    if (prices.length > 0) {
+      const sortedPrices = [...prices].sort((a: number, b: number) => a - b);
+      const median = sortedPrices[Math.floor(sortedPrices.length / 2)];
+      
+      return {
+        source: 'Discogs',
+        available: true,
+        query: data.query || searchQuery,
+        totalListings: data.totalResults || listings.length,
+        priceAnalysis: {
+          lowest: Math.min(...prices),
+          highest: Math.max(...prices),
+          average: prices.reduce((a: number, b: number) => a + b, 0) / prices.length,
+          median: median
+        },
+        suggestedPrices: {
+          goodDeal: Math.min(...prices) * 0.85,
+          fairMarket: median,
+          sellPrice: median * 1.15
+        },
+        sampleListings: listings.slice(0, 5),
+        metadata: {
+          dataSource: 'discogs_database',
+          totalReleases: data.totalResults
+        }
+      };
+    }
+    
+    // Return without pricing (metadata only)
+    return {
+      source: 'Discogs',
+      available: true,
+      query: data.query || searchQuery,
+      totalListings: data.totalResults || listings.length,
+      sampleListings: listings.slice(0, 5),
+      metadata: {
+        dataSource: 'discogs_database',
+        totalReleases: data.totalResults,
+        note: 'Search matched. Use release endpoint or eBay for detailed pricing.'
+      }
+    };
+    
+  } catch (error: any) {
+    console.warn(`⚠️ [Discogs] Fetch failed: ${error.message}`);
+    return {
+      source: 'Discogs',
+      available: false,
+      query: itemName,
+      totalListings: 0,
+      error: error.message
+    };
+  }
+}
+
+// Comic Vine Comics Data Fetcher
+async function fetchComicVineData(itemName: string): Promise<MarketDataSource> {
+  try {
+    console.log(`📚 [Comic Vine] Fetching comic data for: ${itemName}`);
+    
+    const searchQuery = itemName
+      .replace(/comic/gi, '')
+      .replace(/book/gi, '')
+      .replace(/[^\w\s#]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 100);
+    
+    const url = `${BASE_URL}/api/comicvine/search?q=${encodeURIComponent(searchQuery)}&type=issue&limit=5`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    
+    if (!response.ok) {
+      console.warn(`⚠️ [Comic Vine] API returned ${response.status}`);
+      return {
+        source: 'Comic Vine',
+        available: false,
+        query: searchQuery,
+        totalListings: 0,
+        error: `API error: ${response.status}`
+      };
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success || !data.results || data.results.length === 0) {
+      console.log(`ℹ️ [Comic Vine] No comics found`);
+      return {
+        source: 'Comic Vine',
+        available: false,
+        query: searchQuery,
+        totalListings: 0,
+        error: 'No matching comics found'
+      };
+    }
+    
+    // Comic Vine provides metadata, not pricing
+    const listings = data.results.map((issue: any) => ({
+      title: issue.name,
+      price: 0,
+      condition: `Issue #${issue.issueNumber || 'N/A'} | ${issue.coverDate || 'Unknown date'}`,
+      url: issue.url || '#'
+    }));
+    
+    console.log(`✅ [Comic Vine] ${data.totalResults} issues found`);
+    
+    return {
+      source: 'Comic Vine',
+      available: true,
+      query: data.query || searchQuery,
+      totalListings: data.totalResults || listings.length,
+      sampleListings: listings.slice(0, 5),
+      metadata: {
+        dataSource: 'comic_vine_database',
+        totalIssues: data.totalResults,
+        topResult: data.results[0] ? {
+          name: data.results[0].name,
+          volumeName: data.results[0].volumeName,
+          issueNumber: data.results[0].issueNumber,
+          coverDate: data.results[0].coverDate
+        } : null,
+        note: 'Comic Vine provides comic metadata. Use eBay for market prices.'
+      }
+    };
+    
+  } catch (error: any) {
+    console.warn(`⚠️ [Comic Vine] Fetch failed: ${error.message}`);
+    return {
+      source: 'Comic Vine',
+      available: false,
+      query: itemName,
+      totalListings: 0,
+      error: error.message
+    };
+  }
+}
+
+// Retailed Sneaker Data Fetcher
+async function fetchRetailedData(itemName: string): Promise<MarketDataSource> {
+  try {
+    console.log(`👟 [Retailed] Fetching sneaker data for: ${itemName}`);
+    
+    // Try to extract SKU if present (e.g., "DH6927-140")
+    const skuMatch = itemName.match(/\b([A-Z]{1,2}\d{4,6}-\d{3})\b/i);
+    
+    let url: string;
+    if (skuMatch) {
+      url = `${BASE_URL}/api/retailed/prices?sku=${skuMatch[1]}`;
+      console.log(`🔍 [Retailed] Searching by SKU: ${skuMatch[1]}`);
+    } else {
+      const searchQuery = itemName
+        .replace(/sneaker/gi, '')
+        .replace(/shoe/gi, '')
+        .replace(/[^\w\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 100);
+      url = `${BASE_URL}/api/retailed/search?q=${encodeURIComponent(searchQuery)}&limit=5`;
+    }
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    
+    if (!response.ok) {
+      console.warn(`⚠️ [Retailed] API returned ${response.status}`);
+      return {
+        source: 'Retailed',
+        available: false,
+        query: itemName,
+        totalListings: 0,
+        error: `API error: ${response.status}`
+      };
+    }
+    
+    const data = await response.json();
+    
+    // Handle price endpoint response
+    if (data.found && data.priceStats) {
+      console.log(`✅ [Retailed] Found pricing: $${data.priceStats.lowestAsk} - $${data.priceStats.highestAsk}`);
+      
+      return {
+        source: 'Retailed',
+        available: true,
+        query: data.query || itemName,
+        totalListings: data.priceStats.marketplaceCount || 0,
+        priceAnalysis: {
+          lowest: data.priceStats.lowestAsk,
+          highest: data.priceStats.highestAsk,
+          average: data.priceStats.averageAsk,
+          median: data.priceStats.averageAsk // Use average as median approximation
+        },
+        suggestedPrices: {
+          goodDeal: data.priceStats.lowestAsk * 0.9,
+          fairMarket: data.priceStats.averageAsk,
+          sellPrice: data.priceStats.averageAsk * 1.1
+        },
+        sampleListings: data.prices?.slice(0, 5).map((p: any) => ({
+          title: data.product?.title || itemName,
+          price: p.lowestAsk,
+          condition: `${p.marketplace} (${p.country})`,
+          url: p.url
+        })),
+        metadata: {
+          dataSource: 'retailed_sneaker_db',
+          product: data.product,
+          marketplaces: data.prices?.map((p: any) => p.marketplace)
+        }
+      };
+    }
+    
+    // Handle search endpoint response
+    if (data.success && data.results && data.results.length > 0) {
+      const listings = data.results.map((item: any) => ({
+        title: item.name,
+        price: item.retailPrice || 0,
+        condition: `SKU: ${item.sku} | Released: ${item.releaseDate || 'Unknown'}`,
+        url: `https://stockx.com/search?s=${encodeURIComponent(item.sku || item.name)}`
+      }));
+      
+      console.log(`✅ [Retailed] ${data.totalResults} sneakers found`);
+      
+      return {
+        source: 'Retailed',
+        available: true,
+        query: data.query || itemName,
+        totalListings: data.totalResults || listings.length,
+        sampleListings: listings.slice(0, 5),
+        metadata: {
+          dataSource: 'retailed_sneaker_db',
+          totalProducts: data.totalResults,
+          note: 'Use SKU search for detailed pricing from StockX/GOAT'
+        }
+      };
+    }
+    
+    console.log(`ℹ️ [Retailed] No sneakers found`);
+    return {
+      source: 'Retailed',
+      available: false,
+      query: itemName,
+      totalListings: 0,
+      error: 'No matching sneakers found'
+    };
+    
+  } catch (error: any) {
+    console.warn(`⚠️ [Retailed] Fetch failed: ${error.message}`);
+    return {
+      source: 'Retailed',
+      available: false,
+      query: itemName,
+      totalListings: 0,
+      error: error.message
+    };
+  }
+}
+
 // ==================== MARKET DATA ORCHESTRATOR ====================
 
 interface MarketDataResult {
@@ -601,10 +1219,22 @@ async function fetchAllMarketData(
       apiCalls.push(fetchBricksetData(itemName));
       break;
     case 'trading_cards':
-      // Future: Add TCGPlayer here
+      apiCalls.push(fetchPokemonTCGData(itemName));
       break;
     case 'books':
       apiCalls.push(fetchGoogleBooksData(itemName));
+      break;
+    case 'video_games':
+      apiCalls.push(fetchRAWGData(itemName));
+      break;
+    case 'music':
+      apiCalls.push(fetchDiscogsData(itemName));
+      break;
+    case 'comics':
+      apiCalls.push(fetchComicVineData(itemName));
+      break;
+    case 'sneakers':
+      apiCalls.push(fetchRetailedData(itemName));
       break;
   }
   
@@ -616,7 +1246,13 @@ async function fetchAllMarketData(
   const availableSources = sources.filter(s => s.available && s.priceAnalysis);
   
   if (availableSources.length === 0) {
-    console.log(`⚠️ No market data available, using AI estimate only`);
+    // Check if we have metadata-only sources (like RAWG, Comic Vine)
+    const metadataSources = sources.filter(s => s.available && !s.priceAnalysis);
+    if (metadataSources.length > 0) {
+      console.log(`ℹ️ Found metadata from ${metadataSources.map(s => s.source).join(', ')} but no pricing. Using AI estimate.`);
+    } else {
+      console.log(`⚠️ No market data available, using AI estimate only`);
+    }
     return {
       sources,
       primarySource: 'AI Consensus',
@@ -645,18 +1281,37 @@ async function fetchAllMarketData(
     const median = source.priceAnalysis.median;
     
     // Weight based on listing count and source reliability
-    if (source.source === 'eBay') {
-      // eBay: Weight heavily for high listing counts
-      sourceWeight = Math.min(source.totalListings / 100, 0.35);
-    } else if (source.source === 'Numista') {
-      // Numista: Catalogue data is reliable but may not reflect market
-      sourceWeight = Math.min(source.totalListings / 20, 0.25);
-    } else if (source.source === 'Brickset') {
-      // Brickset: Good for retail/estimated values
-      sourceWeight = Math.min(source.totalListings / 10, 0.25);
-    } else if (source.source === 'Google Books') {
-      // Google Books: Good for ISBN lookups and condition pricing
-      sourceWeight = Math.min(source.totalListings / 5, 0.30);
+    switch (source.source) {
+      case 'eBay':
+        // eBay: Weight heavily for high listing counts
+        sourceWeight = Math.min(source.totalListings / 100, 0.35);
+        break;
+      case 'Numista':
+        // Numista: Catalogue data is reliable but may not reflect market
+        sourceWeight = Math.min(source.totalListings / 20, 0.25);
+        break;
+      case 'Brickset':
+        // Brickset: Good for retail/estimated values
+        sourceWeight = Math.min(source.totalListings / 10, 0.25);
+        break;
+      case 'Google Books':
+        // Google Books: Good for ISBN lookups and condition pricing
+        sourceWeight = Math.min(source.totalListings / 5, 0.30);
+        break;
+      case 'Pokemon TCG':
+        // Pokemon TCG: Official TCGPlayer/Cardmarket pricing
+        sourceWeight = Math.min(source.totalListings / 50, 0.35);
+        break;
+      case 'Discogs':
+        // Discogs: Good for vinyl/music pricing
+        sourceWeight = Math.min(source.totalListings / 30, 0.30);
+        break;
+      case 'Retailed':
+        // Retailed: StockX/GOAT pricing for sneakers
+        sourceWeight = Math.min(source.totalListings / 5, 0.40);
+        break;
+      default:
+        sourceWeight = 0.1;
     }
     
     if (sourceWeight > 0.05) { // Only include if weight is meaningful
@@ -806,11 +1461,13 @@ Analyze this item for resale potential based on physical characteristics only:`;
   const availableMarketSources = marketData.sources.filter(s => s.available);
   if (availableMarketSources.length > 0) {
     const sourceNames = availableMarketSources.map(s => s.source).join(', ');
-    const primaryData = availableMarketSources[0];
+    const primaryData = availableMarketSources.find(s => s.priceAnalysis) || availableMarketSources[0];
     summaryReasoning += ` Market validation from ${sourceNames}: `;
     
     if (primaryData.priceAnalysis) {
       summaryReasoning += `${primaryData.totalListings} listings found with median price $${primaryData.priceAnalysis.median}.`;
+    } else if (primaryData.metadata?.note) {
+      summaryReasoning += primaryData.metadata.note;
     }
   }
   
@@ -832,7 +1489,7 @@ Analyze this item for resale potential based on physical characteristics only:`;
     data: marketData.sources.reduce((acc, source) => {
       if (source.available) {
         acc[source.source] = {
-          confidence: source.totalListings >= 10 ? 0.9 : 0.7,
+          confidence: source.priceAnalysis ? (source.totalListings >= 10 ? 0.9 : 0.7) : 0.5,
           dataPoints: source.totalListings
         };
       }
