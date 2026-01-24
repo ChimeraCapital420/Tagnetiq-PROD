@@ -1,4 +1,5 @@
-// FORCE REDEPLOY v4.0 - Multi-API Market Data Integration (eBay + Numista + Brickset + Google Books + Pokemon TCG + RAWG + Discogs + Comic Vine + Retailed)
+// HYDRA v5.0 - AI Category Detection + Multi-API Market Data Integration
+// Key fixes: 1) AI votes on category, 2) Returns detected category, 3) Proper API routing
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -84,7 +85,8 @@ interface AnalysisResult {
   valuation_factors: string[];
   analysis_quality: 'OPTIMAL' | 'DEGRADED' | 'FALLBACK';
   capturedAt: string;
-  category: string;
+  category: string;           // v5.0: Now returns DETECTED category
+  requestedCategory?: string; // v5.0: Original request category for reference
   subCategory?: string;
   imageUrl: string;
   marketComps: any[];
@@ -120,204 +122,354 @@ interface AnalysisResult {
   };
 }
 
-// ==================== CATEGORY DETECTION ====================
+// ==================== v5.0 CATEGORY SYSTEM ====================
 
-type ItemCategory = 'coins' | 'lego' | 'trading_cards' | 'books' | 'video_games' | 'music' | 'comics' | 'sneakers' | 'general';
+// Expanded category list (60+ categories mapped to API endpoints)
+type ItemCategory = 
+  | 'coins' | 'banknotes' | 'currency'
+  | 'lego' | 'building_blocks'
+  | 'trading_cards' | 'pokemon_cards' | 'mtg_cards' | 'sports_cards' | 'yugioh_cards'
+  | 'books' | 'rare_books' | 'textbooks' | 'comics' | 'manga' | 'graphic_novels'
+  | 'video_games' | 'retro_games' | 'game_consoles'
+  | 'vinyl_records' | 'music' | 'cds' | 'cassettes'
+  | 'sneakers' | 'shoes' | 'streetwear' | 'designer_fashion'
+  | 'watches' | 'jewelry' | 'gemstones'
+  | 'art' | 'paintings' | 'prints' | 'sculptures'
+  | 'antiques' | 'vintage' | 'collectibles'
+  | 'toys' | 'action_figures' | 'dolls' | 'model_kits'
+  | 'sports_memorabilia' | 'autographs'
+  | 'stamps' | 'postcards'
+  | 'electronics' | 'cameras' | 'audio_equipment'
+  | 'musical_instruments' | 'guitars' | 'keyboards'
+  | 'tools' | 'power_tools'
+  | 'general';
+
+// Map categories to their specialized APIs
+const CATEGORY_API_MAP: Record<string, string[]> = {
+  // Coins & Currency → Numista
+  'coins': ['numista', 'ebay'],
+  'banknotes': ['numista', 'ebay'],
+  'currency': ['numista', 'ebay'],
+  
+  // LEGO → Brickset
+  'lego': ['brickset', 'ebay'],
+  'building_blocks': ['brickset', 'ebay'],
+  
+  // Trading Cards → Pokemon TCG (or specific card APIs)
+  'trading_cards': ['pokemon_tcg', 'ebay'],
+  'pokemon_cards': ['pokemon_tcg', 'ebay'],
+  'pokemon': ['pokemon_tcg', 'ebay'],
+  'mtg_cards': ['ebay'], // Could add Scryfall API
+  'sports_cards': ['ebay'],
+  'yugioh_cards': ['ebay'],
+  
+  // Books → Google Books
+  'books': ['google_books', 'ebay'],
+  'rare_books': ['google_books', 'ebay'],
+  'textbooks': ['google_books', 'ebay'],
+  
+  // Comics → Comic Vine
+  'comics': ['comicvine', 'ebay'],
+  'manga': ['comicvine', 'ebay'],
+  'graphic_novels': ['comicvine', 'ebay'],
+  
+  // Video Games → RAWG
+  'video_games': ['rawg', 'ebay'],
+  'retro_games': ['rawg', 'ebay'],
+  'game_consoles': ['rawg', 'ebay'],
+  
+  // Music → Discogs
+  'vinyl_records': ['discogs', 'ebay'],
+  'vinyl': ['discogs', 'ebay'],
+  'music': ['discogs', 'ebay'],
+  'records': ['discogs', 'ebay'],
+  'cds': ['discogs', 'ebay'],
+  'cassettes': ['discogs', 'ebay'],
+  
+  // Sneakers → Retailed
+  'sneakers': ['retailed', 'ebay'],
+  'shoes': ['retailed', 'ebay'],
+  'streetwear': ['retailed', 'ebay'],
+  'jordans': ['retailed', 'ebay'],
+  'nike': ['retailed', 'ebay'],
+  'yeezy': ['retailed', 'ebay'],
+  
+  // General/fallback → eBay only
+  'general': ['ebay'],
+  'collectibles': ['ebay'],
+  'antiques': ['ebay'],
+  'vintage': ['ebay'],
+  'toys': ['ebay'],
+  'action_figures': ['ebay'],
+  'watches': ['ebay'],
+  'jewelry': ['ebay'],
+  'electronics': ['ebay'],
+  'art': ['ebay'],
+};
+
+// Get APIs for a category with fuzzy matching
+function getApisForCategory(category: string): string[] {
+  const catLower = category.toLowerCase().trim();
+  
+  // Direct match
+  if (CATEGORY_API_MAP[catLower]) {
+    return CATEGORY_API_MAP[catLower];
+  }
+  
+  // Fuzzy match - check if category contains or is contained by a key
+  for (const [key, apis] of Object.entries(CATEGORY_API_MAP)) {
+    if (catLower.includes(key) || key.includes(catLower)) {
+      return apis;
+    }
+  }
+  
+  // Default to eBay
+  return ['ebay'];
+}
 
 interface CategoryDetection {
   category: ItemCategory;
   confidence: number;
   keywords: string[];
+  source: 'ai_vote' | 'keyword_detection' | 'category_hint' | 'default';
 }
 
-function detectItemCategory(itemName: string, categoryId?: string): CategoryDetection {
+// v5.0: Enhanced category detection that combines AI votes + keyword detection
+function detectItemCategory(
+  itemName: string, 
+  categoryId?: string,
+  aiDetectedCategory?: string
+): CategoryDetection {
   const nameLower = itemName.toLowerCase();
   
-  // Coin/Currency detection
-  const coinKeywords = [
-    'coin', 'penny', 'nickel', 'dime', 'quarter', 'dollar', 'cent',
-    'morgan', 'liberty', 'eagle', 'buffalo', 'wheat', 'mercury',
-    'numismatic', 'mint', 'uncirculated', 'proof', 'silver dollar',
-    'gold coin', 'half dollar', 'commemorative', 'bullion',
-    'currency', 'banknote', 'note', 'bill'
-  ];
-  
-  // LEGO detection
-  const legoKeywords = [
-    'lego', 'legos', 'brick', 'minifig', 'minifigure',
-    'star wars lego', 'technic', 'creator', 'ninjago',
-    'city lego', 'friends lego', 'duplo', 'bionicle',
-    'millennium falcon', 'death star', 'hogwarts'
-  ];
-  
-  // Trading card detection (Pokemon, MTG, Sports, etc.)
-  const cardKeywords = [
-    'pokemon', 'charizard', 'pikachu', 'magic the gathering', 'mtg',
-    'yu-gi-oh', 'yugioh', 'trading card', 'tcg', 'holographic',
-    'first edition', 'psa', 'graded card', 'booster', 'pack',
-    'vmax', 'vstar', 'ex card', 'gx card', 'full art',
-    'rainbow rare', 'secret rare', 'shiny', 'holo'
-  ];
-  
-  // Book detection
-  const bookKeywords = [
-    'book', 'novel', 'hardcover', 'paperback', 'first edition book',
-    'signed copy', 'isbn', 'author', 'rare book', 'antique book'
-  ];
-  
-  // Video Games detection
-  const videoGameKeywords = [
-    'video game', 'game', 'nintendo', 'playstation', 'xbox', 'ps5', 'ps4', 'ps3', 'ps2',
-    'switch', 'wii', 'gamecube', 'n64', 'snes', 'nes', 'gameboy', 'game boy',
-    'sega', 'genesis', 'dreamcast', 'atari', 'steam', 'pc game',
-    'sealed game', 'cib', 'complete in box', 'cartridge', 'disc',
-    'zelda', 'mario', 'final fantasy', 'call of duty', 'halo',
-    'retro game', 'vintage game', 'collector edition'
-  ];
-  
-  // Music/Vinyl detection
-  const musicKeywords = [
-    'vinyl', 'record', 'lp', 'album', '45 rpm', '33 rpm', '78 rpm',
-    'first pressing', 'original pressing', 'limited edition vinyl',
-    'picture disc', 'colored vinyl', 'audiophile', 'mono', 'stereo',
-    'discogs', 'rare vinyl', 'sealed vinyl', 'mint vinyl',
-    'beatles', 'led zeppelin', 'pink floyd', 'bob dylan',
-    'cd', 'cassette', 'tape', '8-track'
-  ];
-  
-  // Comics detection
-  const comicsKeywords = [
-    'comic', 'comic book', 'graphic novel', 'manga', 'issue',
-    'marvel', 'dc comics', 'spider-man', 'batman', 'superman', 'x-men',
-    'first appearance', 'key issue', 'cgc', 'cbcs', 'graded comic',
-    'golden age', 'silver age', 'bronze age', 'modern age',
-    'variant cover', 'newsstand', 'direct edition'
-  ];
-  
-  // Sneakers/Streetwear detection
-  const sneakerKeywords = [
-    'sneaker', 'sneakers', 'jordan', 'air jordan', 'nike', 'adidas',
-    'yeezy', 'dunk', 'air force', 'air max', 'new balance', 'asics',
-    'deadstock', 'ds', 'vnds', 'og all', 'retro', 'bred', 'chicago',
-    'off-white', 'travis scott', 'collaboration', 'collab',
-    'supreme', 'bape', 'streetwear', 'hypebeast', 'stockx', 'goat'
-  ];
-  
-  // Check category_id hint
-  if (categoryId) {
-    const catLower = categoryId.toLowerCase();
-    if (catLower.includes('coin') || catLower.includes('currency')) {
-      return { category: 'coins', confidence: 0.9, keywords: ['category_hint'] };
-    }
-    if (catLower.includes('lego') || catLower.includes('brick')) {
-      return { category: 'lego', confidence: 0.9, keywords: ['category_hint'] };
-    }
-    if (catLower.includes('card') || catLower.includes('trading') || catLower.includes('pokemon') || catLower.includes('tcg')) {
-      return { category: 'trading_cards', confidence: 0.9, keywords: ['category_hint'] };
-    }
-    if (catLower.includes('book') || catLower.includes('media')) {
-      return { category: 'books', confidence: 0.9, keywords: ['category_hint'] };
-    }
-    if (catLower.includes('game') || catLower.includes('video') || catLower.includes('gaming')) {
-      return { category: 'video_games', confidence: 0.9, keywords: ['category_hint'] };
-    }
-    if (catLower.includes('music') || catLower.includes('vinyl') || catLower.includes('record')) {
-      return { category: 'music', confidence: 0.9, keywords: ['category_hint'] };
-    }
-    if (catLower.includes('comic') || catLower.includes('manga')) {
-      return { category: 'comics', confidence: 0.9, keywords: ['category_hint'] };
-    }
-    if (catLower.includes('sneaker') || catLower.includes('shoe') || catLower.includes('streetwear') || catLower.includes('footwear')) {
-      return { category: 'sneakers', confidence: 0.9, keywords: ['category_hint'] };
+  // v5.0: Priority 1 - AI detected category (from JSON response)
+  if (aiDetectedCategory && aiDetectedCategory !== 'general' && aiDetectedCategory !== 'unknown') {
+    const normalizedAiCategory = normalizeCategory(aiDetectedCategory);
+    if (normalizedAiCategory !== 'general') {
+      console.log(`🤖 AI detected category: ${normalizedAiCategory}`);
+      return { 
+        category: normalizedAiCategory as ItemCategory, 
+        confidence: 0.95, 
+        keywords: ['ai_detection'],
+        source: 'ai_vote'
+      };
     }
   }
   
-  // Score each category
-  const scores: Record<ItemCategory, { score: number; matches: string[] }> = {
-    coins: { score: 0, matches: [] },
-    lego: { score: 0, matches: [] },
-    trading_cards: { score: 0, matches: [] },
-    books: { score: 0, matches: [] },
-    video_games: { score: 0, matches: [] },
-    music: { score: 0, matches: [] },
-    comics: { score: 0, matches: [] },
-    sneakers: { score: 0, matches: [] },
-    general: { score: 0.1, matches: [] } // Default baseline
+  // Priority 2 - Category hint from request (only if specific)
+  if (categoryId && categoryId !== 'general') {
+    const normalizedHint = normalizeCategory(categoryId);
+    if (normalizedHint !== 'general') {
+      console.log(`💡 Category hint used: ${normalizedHint}`);
+      return { 
+        category: normalizedHint as ItemCategory, 
+        confidence: 0.9, 
+        keywords: ['category_hint'],
+        source: 'category_hint'
+      };
+    }
+  }
+  
+  // Priority 3 - Keyword detection from item name
+  const keywordResult = detectCategoryByKeywords(nameLower);
+  if (keywordResult.category !== 'general') {
+    console.log(`🔍 Keyword detected category: ${keywordResult.category} (keywords: ${keywordResult.keywords.join(', ')})`);
+    return { ...keywordResult, source: 'keyword_detection' };
+  }
+  
+  // Default
+  console.log(`⚠️ No specific category detected, defaulting to general`);
+  return { category: 'general', confidence: 0.5, keywords: [], source: 'default' };
+}
+
+// Normalize various category strings to our standard categories
+function normalizeCategory(category: string): string {
+  const catLower = category.toLowerCase().trim().replace(/[_\s-]+/g, '_');
+  
+  // Pokemon variations
+  if (catLower.includes('pokemon') || catLower.includes('pokémon')) {
+    return 'pokemon_cards';
+  }
+  
+  // Trading card variations
+  if (catLower.includes('trading_card') || catLower.includes('tcg') || catLower === 'cards') {
+    return 'trading_cards';
+  }
+  
+  // Coin variations
+  if (catLower.includes('coin') || catLower.includes('numismatic') || catLower.includes('currency')) {
+    return 'coins';
+  }
+  
+  // LEGO variations
+  if (catLower.includes('lego') || catLower.includes('brick')) {
+    return 'lego';
+  }
+  
+  // Video game variations
+  if (catLower.includes('video_game') || catLower.includes('videogame') || catLower === 'gaming') {
+    return 'video_games';
+  }
+  
+  // Vinyl/Music variations
+  if (catLower.includes('vinyl') || catLower.includes('record') || catLower === 'music' || catLower === 'album') {
+    return 'vinyl_records';
+  }
+  
+  // Comic variations
+  if (catLower.includes('comic') || catLower.includes('manga')) {
+    return 'comics';
+  }
+  
+  // Book variations
+  if (catLower.includes('book') && !catLower.includes('comic')) {
+    return 'books';
+  }
+  
+  // Sneaker variations
+  if (catLower.includes('sneaker') || catLower.includes('jordan') || catLower.includes('yeezy') || 
+      catLower.includes('shoe') || catLower.includes('footwear')) {
+    return 'sneakers';
+  }
+  
+  // Return as-is if no normalization needed
+  return catLower;
+}
+
+// Keyword-based category detection (fallback)
+function detectCategoryByKeywords(nameLower: string): { category: ItemCategory; confidence: number; keywords: string[] } {
+  // Keyword lists for each category
+  const categoryKeywords: Record<ItemCategory, string[]> = {
+    coins: [
+      'coin', 'penny', 'nickel', 'dime', 'quarter', 'dollar', 'cent',
+      'morgan', 'liberty', 'eagle', 'buffalo', 'wheat', 'mercury',
+      'numismatic', 'mint', 'uncirculated', 'proof', 'silver dollar',
+      'gold coin', 'half dollar', 'commemorative', 'bullion',
+      'currency', 'banknote', 'note', 'bill'
+    ],
+    banknotes: ['banknote', 'paper money', 'currency note'],
+    currency: [],
+    lego: [
+      'lego', 'legos', 'brick', 'minifig', 'minifigure',
+      'star wars lego', 'technic', 'creator', 'ninjago',
+      'city lego', 'friends lego', 'duplo', 'bionicle',
+      'millennium falcon', 'death star', 'hogwarts'
+    ],
+    building_blocks: [],
+    trading_cards: [
+      'pokemon', 'pokémon', 'charizard', 'pikachu', 'magic the gathering', 'mtg',
+      'yu-gi-oh', 'yugioh', 'trading card', 'tcg', 'holographic',
+      'first edition', 'psa', 'graded card', 'booster', 'pack',
+      'vmax', 'vstar', 'ex card', 'gx card', 'full art',
+      'rainbow rare', 'secret rare', 'shiny', 'holo'
+    ],
+    pokemon_cards: ['pokemon', 'pokémon', 'pikachu', 'charizard', 'mewtwo', 'gengar', 'eevee'],
+    mtg_cards: ['magic the gathering', 'mtg', 'planeswalker', 'mana'],
+    sports_cards: ['topps', 'panini', 'rookie card', 'sports card', 'baseball card', 'football card', 'basketball card'],
+    yugioh_cards: ['yu-gi-oh', 'yugioh', 'blue eyes', 'dark magician'],
+    books: [
+      'book', 'novel', 'hardcover', 'paperback', 'first edition book',
+      'signed copy', 'isbn', 'author', 'rare book', 'antique book'
+    ],
+    rare_books: ['first edition', 'signed book', 'rare book', 'antique book'],
+    textbooks: ['textbook', 'educational'],
+    comics: [
+      'comic', 'comic book', 'graphic novel', 'manga', 'issue',
+      'marvel', 'dc comics', 'spider-man', 'batman', 'superman', 'x-men',
+      'first appearance', 'key issue', 'cgc', 'cbcs', 'graded comic',
+      'golden age', 'silver age', 'bronze age', 'modern age',
+      'variant cover', 'newsstand', 'direct edition'
+    ],
+    manga: ['manga', 'anime', 'japanese comic'],
+    graphic_novels: ['graphic novel'],
+    video_games: [
+      'video game', 'game', 'nintendo', 'playstation', 'xbox', 'ps5', 'ps4', 'ps3', 'ps2',
+      'switch', 'wii', 'gamecube', 'n64', 'snes', 'nes', 'gameboy', 'game boy',
+      'sega', 'genesis', 'dreamcast', 'atari', 'steam', 'pc game',
+      'sealed game', 'cib', 'complete in box', 'cartridge', 'disc',
+      'zelda', 'mario', 'final fantasy', 'call of duty', 'halo',
+      'retro game', 'vintage game', 'collector edition'
+    ],
+    retro_games: ['retro game', 'vintage game', 'classic game'],
+    game_consoles: ['console', 'playstation', 'xbox', 'nintendo', 'sega'],
+    vinyl_records: [
+      'vinyl', 'record', 'lp', 'album', '45 rpm', '33 rpm', '78 rpm',
+      'first pressing', 'original pressing', 'limited edition vinyl',
+      'picture disc', 'colored vinyl', 'audiophile', 'mono', 'stereo',
+      'discogs', 'rare vinyl', 'sealed vinyl', 'mint vinyl',
+      'beatles', 'led zeppelin', 'pink floyd', 'bob dylan'
+    ],
+    music: [],
+    cds: ['cd', 'compact disc'],
+    cassettes: ['cassette', 'tape'],
+    sneakers: [
+      'sneaker', 'sneakers', 'jordan', 'air jordan', 'nike', 'adidas',
+      'yeezy', 'dunk', 'air force', 'air max', 'new balance', 'asics',
+      'deadstock', 'ds', 'vnds', 'og all', 'retro', 'bred', 'chicago',
+      'off-white', 'travis scott', 'collaboration', 'collab',
+      'supreme', 'bape', 'streetwear', 'hypebeast', 'stockx', 'goat'
+    ],
+    shoes: [],
+    streetwear: ['supreme', 'bape', 'off-white', 'streetwear'],
+    designer_fashion: ['gucci', 'louis vuitton', 'chanel', 'prada', 'hermes'],
+    watches: ['watch', 'rolex', 'omega', 'seiko', 'casio', 'timepiece'],
+    jewelry: ['jewelry', 'necklace', 'bracelet', 'ring', 'earring', 'gold', 'silver', 'diamond'],
+    gemstones: ['gemstone', 'ruby', 'emerald', 'sapphire', 'diamond'],
+    art: ['painting', 'artwork', 'canvas', 'oil painting', 'watercolor'],
+    paintings: ['painting', 'oil on canvas'],
+    prints: ['print', 'lithograph', 'screen print', 'art print'],
+    sculptures: ['sculpture', 'statue', 'figurine'],
+    antiques: ['antique', 'vintage', 'victorian', 'art deco'],
+    vintage: ['vintage', 'retro', 'mid-century'],
+    collectibles: ['collectible', 'collector', 'rare', 'limited edition'],
+    toys: ['toy', 'action figure', 'doll', 'plush', 'stuffed animal'],
+    action_figures: ['action figure', 'figure', 'statue', 'funko', 'pop vinyl'],
+    dolls: ['doll', 'barbie', 'american girl'],
+    model_kits: ['model kit', 'gundam', 'plastic model'],
+    sports_memorabilia: ['memorabilia', 'autograph', 'signed', 'jersey', 'game used'],
+    autographs: ['autograph', 'signed', 'signature'],
+    stamps: ['stamp', 'philatelic', 'postage'],
+    postcards: ['postcard', 'postal'],
+    electronics: ['electronic', 'gadget', 'device'],
+    cameras: ['camera', 'lens', 'photography'],
+    audio_equipment: ['amplifier', 'speaker', 'headphone', 'turntable'],
+    musical_instruments: ['guitar', 'piano', 'violin', 'instrument'],
+    guitars: ['guitar', 'fender', 'gibson', 'acoustic', 'electric guitar'],
+    keyboards: ['keyboard', 'synthesizer', 'piano'],
+    tools: ['tool', 'drill', 'saw'],
+    power_tools: ['power tool', 'drill', 'circular saw'],
+    general: []
   };
   
-  coinKeywords.forEach(kw => {
-    if (nameLower.includes(kw)) {
-      scores.coins.score += kw.split(' ').length;
-      scores.coins.matches.push(kw);
-    }
-  });
+  // Score each category
+  const scores: Record<string, { score: number; matches: string[] }> = {};
   
-  legoKeywords.forEach(kw => {
-    if (nameLower.includes(kw)) {
-      scores.lego.score += kw.split(' ').length;
-      scores.lego.matches.push(kw);
-    }
-  });
-  
-  cardKeywords.forEach(kw => {
-    if (nameLower.includes(kw)) {
-      scores.trading_cards.score += kw.split(' ').length;
-      scores.trading_cards.matches.push(kw);
-    }
-  });
-  
-  bookKeywords.forEach(kw => {
-    if (nameLower.includes(kw)) {
-      scores.books.score += kw.split(' ').length;
-      scores.books.matches.push(kw);
-    }
-  });
-  
-  videoGameKeywords.forEach(kw => {
-    if (nameLower.includes(kw)) {
-      scores.video_games.score += kw.split(' ').length;
-      scores.video_games.matches.push(kw);
-    }
-  });
-  
-  musicKeywords.forEach(kw => {
-    if (nameLower.includes(kw)) {
-      scores.music.score += kw.split(' ').length;
-      scores.music.matches.push(kw);
-    }
-  });
-  
-  comicsKeywords.forEach(kw => {
-    if (nameLower.includes(kw)) {
-      scores.comics.score += kw.split(' ').length;
-      scores.comics.matches.push(kw);
-    }
-  });
-  
-  sneakerKeywords.forEach(kw => {
-    if (nameLower.includes(kw)) {
-      scores.sneakers.score += kw.split(' ').length;
-      scores.sneakers.matches.push(kw);
-    }
-  });
+  for (const [category, keywords] of Object.entries(categoryKeywords)) {
+    scores[category] = { score: 0, matches: [] };
+    keywords.forEach(kw => {
+      if (nameLower.includes(kw)) {
+        // Weight multi-word keywords higher
+        scores[category].score += kw.split(' ').length;
+        scores[category].matches.push(kw);
+      }
+    });
+  }
   
   // Find highest scoring category
   let bestCategory: ItemCategory = 'general';
   let bestScore = 0;
   let bestMatches: string[] = [];
   
-  (Object.entries(scores) as [ItemCategory, { score: number; matches: string[] }][]).forEach(([cat, data]) => {
+  for (const [cat, data] of Object.entries(scores)) {
     if (data.score > bestScore) {
       bestScore = data.score;
-      bestCategory = cat;
+      bestCategory = cat as ItemCategory;
       bestMatches = data.matches;
     }
-  });
+  }
   
-  // Calculate confidence based on score
+  // Calculate confidence
   const confidence = Math.min(0.5 + (bestScore * 0.1), 0.95);
-  
-  console.log(`🏷️ Category detected: ${bestCategory} (confidence: ${Math.round(confidence * 100)}%, keywords: ${bestMatches.join(', ') || 'none'})`);
   
   return { category: bestCategory, confidence, keywords: bestMatches };
 }
@@ -651,8 +803,6 @@ async function fetchGoogleBooksData(itemName: string): Promise<MarketDataSource>
   }
 }
 
-// ==================== NEW API FETCHERS ====================
-
 // Pokemon TCG Data Fetcher
 async function fetchPokemonTCGData(itemName: string): Promise<MarketDataSource> {
   try {
@@ -660,6 +810,7 @@ async function fetchPokemonTCGData(itemName: string): Promise<MarketDataSource> 
     
     const searchQuery = itemName
       .replace(/pokemon/gi, '')
+      .replace(/pokémon/gi, '')
       .replace(/card/gi, '')
       .replace(/[^\w\s]/g, ' ')
       .replace(/\s+/g, ' ')
@@ -909,7 +1060,6 @@ async function fetchDiscogsData(itemName: string): Promise<MarketDataSource> {
     
     data.results.forEach((release: any) => {
       // Discogs search doesn't include pricing, but the release endpoint does
-      // We'll note this and suggest using eBay for pricing
       listings.push({
         title: release.title,
         price: release.lowestPrice || 0,
@@ -1185,7 +1335,7 @@ async function fetchRetailedData(itemName: string): Promise<MarketDataSource> {
   }
 }
 
-// ==================== MARKET DATA ORCHESTRATOR ====================
+// ==================== v5.0 MARKET DATA ORCHESTRATOR ====================
 
 interface MarketDataResult {
   sources: MarketDataSource[];
@@ -1193,49 +1343,58 @@ interface MarketDataResult {
   blendedPrice: number;
   blendMethod: string;
   marketInfluence: string;
+  apisUsed: string[];
 }
 
 async function fetchAllMarketData(
   itemName: string, 
-  category: ItemCategory,
+  category: string,  // v5.0: Accept any string, normalize internally
   aiEstimate: number,
   aiConfidence: number
 ): Promise<MarketDataResult> {
   
-  console.log(`\n📊 Fetching market data for category: ${category}`);
+  console.log(`\n📊 === MARKET DATA INTEGRATION ===`);
+  console.log(`🏷️ Category: ${category}`);
+  console.log(`🔎 Item: ${itemName}`);
   
   const sources: MarketDataSource[] = [];
   const apiCalls: Promise<MarketDataSource>[] = [];
   
-  // Always fetch eBay (universal marketplace)
-  apiCalls.push(fetchEbayMarketData(itemName));
+  // v5.0: Get APIs for this category using smart routing
+  const apisToCall = getApisForCategory(category);
+  console.log(`📡 APIs to call: ${apisToCall.join(', ')}`);
   
-  // Add category-specific APIs
-  switch (category) {
-    case 'coins':
-      apiCalls.push(fetchNumistaData(itemName));
-      break;
-    case 'lego':
-      apiCalls.push(fetchBricksetData(itemName));
-      break;
-    case 'trading_cards':
-      apiCalls.push(fetchPokemonTCGData(itemName));
-      break;
-    case 'books':
-      apiCalls.push(fetchGoogleBooksData(itemName));
-      break;
-    case 'video_games':
-      apiCalls.push(fetchRAWGData(itemName));
-      break;
-    case 'music':
-      apiCalls.push(fetchDiscogsData(itemName));
-      break;
-    case 'comics':
-      apiCalls.push(fetchComicVineData(itemName));
-      break;
-    case 'sneakers':
-      apiCalls.push(fetchRetailedData(itemName));
-      break;
+  // Build API calls based on category routing
+  for (const api of apisToCall) {
+    switch (api) {
+      case 'ebay':
+        apiCalls.push(fetchEbayMarketData(itemName));
+        break;
+      case 'numista':
+        apiCalls.push(fetchNumistaData(itemName));
+        break;
+      case 'brickset':
+        apiCalls.push(fetchBricksetData(itemName));
+        break;
+      case 'google_books':
+        apiCalls.push(fetchGoogleBooksData(itemName));
+        break;
+      case 'pokemon_tcg':
+        apiCalls.push(fetchPokemonTCGData(itemName));
+        break;
+      case 'rawg':
+        apiCalls.push(fetchRAWGData(itemName));
+        break;
+      case 'discogs':
+        apiCalls.push(fetchDiscogsData(itemName));
+        break;
+      case 'comicvine':
+        apiCalls.push(fetchComicVineData(itemName));
+        break;
+      case 'retailed':
+        apiCalls.push(fetchRetailedData(itemName));
+        break;
+    }
   }
   
   // Execute all API calls in parallel
@@ -1258,7 +1417,8 @@ async function fetchAllMarketData(
       primarySource: 'AI Consensus',
       blendedPrice: aiEstimate,
       blendMethod: 'ai_only',
-      marketInfluence: 'none - no market data available'
+      marketInfluence: 'none - no market data available',
+      apisUsed: apisToCall
     };
   }
   
@@ -1271,7 +1431,7 @@ async function fetchAllMarketData(
   const aiWeight = aiConfidence / 100 * 0.4; // Max 40% for AI
   weightedSum += aiEstimate * aiWeight;
   totalWeight += aiWeight;
-  influences.push(`AI: $${aiEstimate} (${Math.round(aiWeight * 100)}%)`);
+  influences.push(`AI: $${aiEstimate.toFixed(2)} (${Math.round(aiWeight * 100)}%)`);
   
   // Add market sources with weights based on data quality
   availableSources.forEach(source => {
@@ -1317,7 +1477,7 @@ async function fetchAllMarketData(
     if (sourceWeight > 0.05) { // Only include if weight is meaningful
       weightedSum += median * sourceWeight;
       totalWeight += sourceWeight;
-      influences.push(`${source.source}: $${median} (${Math.round(sourceWeight * 100)}%)`);
+      influences.push(`${source.source}: $${median.toFixed(2)} (${Math.round(sourceWeight * 100)}%)`);
     }
   });
   
@@ -1340,7 +1500,8 @@ async function fetchAllMarketData(
     primarySource,
     blendedPrice,
     blendMethod: availableSources.length > 1 ? 'multi_source_weighted' : 'single_source_blend',
-    marketInfluence
+    marketInfluence,
+    apisUsed: apisToCall
   };
 }
 
@@ -1362,10 +1523,11 @@ async function verifyUser(req: VercelRequest) {
   return user;
 }
 
-// ==================== MAIN ANALYSIS FUNCTION ====================
+// ==================== v5.0 MAIN ANALYSIS FUNCTION ====================
 
 async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult> {
-  // ENHANCED ANTI-BRAGGING PROMPT
+  // v5.0: ENHANCED PROMPT WITH CATEGORY DETECTION
+  // AI models now vote on category as part of their analysis
   const jsonPrompt = `You are a professional appraiser analyzing an item for resale value. Focus ONLY on what you can actually observe about the PHYSICAL ITEM.
 
 CRITICAL INSTRUCTIONS:
@@ -1373,12 +1535,31 @@ CRITICAL INSTRUCTIONS:
 2. The JSON must have EXACTLY this structure:
 {
   "itemName": "specific item name based on what you see",
+  "category": "detected_category",
   "estimatedValue": 25.99,
   "decision": "BUY",
   "valuation_factors": ["Physical condition: excellent/good/fair/poor", "Material quality: leather/fabric/metal/etc", "Brand recognition: visible/none", "Market demand: high/medium/low", "Resale potential: strong/weak"],
   "summary_reasoning": "Brief explanation of why this specific item is worth the estimated value",
   "confidence": 0.85
 }
+
+CATEGORY DETECTION - Choose the MOST SPECIFIC category that matches:
+- "pokemon_cards" - Pokemon trading cards (Pikachu, Charizard, etc.)
+- "trading_cards" - Other TCG cards (MTG, Yu-Gi-Oh, sports cards)
+- "coins" - Coins, currency, banknotes
+- "lego" - LEGO sets and minifigures
+- "video_games" - Video games and consoles
+- "vinyl_records" - Vinyl records, LPs, music
+- "comics" - Comic books, manga, graphic novels
+- "books" - Books (non-comic)
+- "sneakers" - Sneakers, shoes, streetwear
+- "watches" - Watches and timepieces
+- "jewelry" - Jewelry and gemstones
+- "toys" - Toys and action figures
+- "art" - Art and paintings
+- "antiques" - Antiques and vintage items
+- "electronics" - Electronics and gadgets
+- "general" - Only if nothing else fits
 
 FORBIDDEN - NEVER mention these in valuation_factors:
 ❌ "AI analysis" ❌ "Professional analysis" ❌ "Machine learning" ❌ "Image recognition" 
@@ -1409,7 +1590,7 @@ Analyze this item for resale potential based on physical characteristics only:`;
   }
   
   // Initialize Hydra Engine
-  console.log('🚀 Initializing Hydra Consensus Engine...');
+  console.log('🚀 Initializing Hydra Consensus Engine v5.0...');
   const { HydraEngine } = await import('../src/lib/hydra-engine.js');
   const hydra = new HydraEngine();
   await hydra.initialize();
@@ -1419,18 +1600,48 @@ Analyze this item for resale potential based on physical characteristics only:`;
   
   console.log(`✅ Hydra consensus complete: ${consensus.votes.length} AI models voted`);
   
-  // Detect item category
+  // v5.0: Extract AI category votes from responses
+  const categoryVotes: Map<string, number> = new Map();
+  consensus.votes.forEach(vote => {
+    if (vote.success && vote.rawResponse?.category) {
+      const cat = normalizeCategory(vote.rawResponse.category);
+      const currentWeight = categoryVotes.get(cat) || 0;
+      categoryVotes.set(cat, currentWeight + vote.weight);
+    }
+  });
+  
+  // Find winning category from AI votes
+  let aiDetectedCategory: string | undefined;
+  let maxCategoryWeight = 0;
+  categoryVotes.forEach((weight, cat) => {
+    if (weight > maxCategoryWeight && cat !== 'general') {
+      maxCategoryWeight = weight;
+      aiDetectedCategory = cat;
+    }
+  });
+  
+  if (aiDetectedCategory) {
+    console.log(`🤖 AI category votes: ${Array.from(categoryVotes.entries()).map(([c, w]) => `${c}:${w.toFixed(2)}`).join(', ')}`);
+    console.log(`🏆 Winning AI category: ${aiDetectedCategory} (weight: ${maxCategoryWeight.toFixed(2)})`);
+  }
+  
+  // v5.0: Enhanced category detection with AI votes
   const categoryDetection = detectItemCategory(
     consensus.consensus.itemName, 
-    request.category_id
+    request.category_id,
+    aiDetectedCategory  // v5.0: Pass AI detected category
   );
   
-  // ===== MULTI-API MARKET DATA INTEGRATION =====
-  console.log('\n🌐 === MARKET DATA INTEGRATION ===');
+  console.log(`\n🏷️ === CATEGORY DETECTION ===`);
+  console.log(`📝 Requested: ${request.category_id}`);
+  console.log(`🤖 AI Detected: ${aiDetectedCategory || 'none'}`);
+  console.log(`🔍 Keyword Detected: ${categoryDetection.category}`);
+  console.log(`✅ Final Category: ${categoryDetection.category} (source: ${categoryDetection.source})`);
   
+  // ===== MULTI-API MARKET DATA INTEGRATION =====
   const marketData = await fetchAllMarketData(
     consensus.consensus.itemName,
-    categoryDetection.category,
+    categoryDetection.category,  // v5.0: Use DETECTED category, not requested
     consensus.consensus.estimatedValue,
     consensus.consensus.confidence
   );
@@ -1465,7 +1676,7 @@ Analyze this item for resale potential based on physical characteristics only:`;
     summaryReasoning += ` Market validation from ${sourceNames}: `;
     
     if (primaryData.priceAnalysis) {
-      summaryReasoning += `${primaryData.totalListings} listings found with median price $${primaryData.priceAnalysis.median}.`;
+      summaryReasoning += `${primaryData.totalListings} listings found with median price $${primaryData.priceAnalysis.median.toFixed(2)}.`;
     } else if (primaryData.metadata?.note) {
       summaryReasoning += primaryData.metadata.note;
     }
@@ -1515,7 +1726,7 @@ Analyze this item for resale potential based on physical characteristics only:`;
   
   const totalSources = respondedAIs.length + apiSources.responded.length;
   
-  // Build final result
+  // v5.0: Build final result with DETECTED category
   const fullResult: AnalysisResult = {
     id: consensus.analysisId,
     itemName: consensus.consensus.itemName,
@@ -1526,7 +1737,8 @@ Analyze this item for resale potential based on physical characteristics only:`;
     valuation_factors: topFactors,
     analysis_quality: consensus.consensus.analysisQuality,
     capturedAt: new Date().toISOString(),
-    category: request.category_id,
+    category: categoryDetection.category,     // v5.0: DETECTED category (THE FIX!)
+    requestedCategory: request.category_id,   // v5.0: Original request for reference
     subCategory: request.subcategory_id,
     imageUrl: imageData,
     marketComps: marketComps.slice(0, 10), // Top 10 comps
@@ -1536,7 +1748,11 @@ Analyze this item for resale potential based on physical characteristics only:`;
       linkToMyStore: false,
       shareToSocial: true
     },
-    tags: [request.category_id, categoryDetection.category],
+    tags: [
+      categoryDetection.category,  // v5.0: Use detected category in tags
+      ...(request.category_id !== categoryDetection.category ? [request.category_id] : []),
+      ...categoryDetection.keywords.slice(0, 3)
+    ],
     hydraConsensus: {
       ...consensus,
       totalSources,
@@ -1560,17 +1776,19 @@ Analyze this item for resale potential based on physical characteristics only:`;
   if (consensus.consensus.analysisQuality === 'FALLBACK') {
     fullResult.debug_info = {
       reason: 'Multi-AI consensus degraded',
-      details: `Only ${consensus.votes.length} AI model(s) responded. Check API keys.`
+      details: `Only ${consensus.votes.length} AI model(s) responded. Check API keys and rate limits.`
     };
   }
   
   // Final logging
   console.log(`\n✅ === ANALYSIS COMPLETE ===`);
   console.log(`📦 Item: ${consensus.consensus.itemName}`);
-  console.log(`🏷️ Category: ${categoryDetection.category}`);
+  console.log(`🏷️ Detected Category: ${categoryDetection.category} (source: ${categoryDetection.source})`);
+  console.log(`📝 Requested Category: ${request.category_id}`);
   console.log(`💵 AI Estimate: $${consensus.consensus.estimatedValue}`);
   console.log(`💰 Final Value: $${marketData.blendedPrice}`);
   console.log(`📊 Sources: ${totalSources} (${respondedAIs.length} AI + ${apiSources.responded.length} Market APIs)`);
+  console.log(`📡 APIs Used: ${marketData.apisUsed.join(', ')}`);
   console.log(`📈 Blend: ${marketData.marketInfluence}\n`);
   
   return fullResult;
