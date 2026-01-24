@@ -4,8 +4,8 @@
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUser } from '../_lib/security.js';
-import { cache, cacheKey } from '../_lib/cache';
-import { rateLimit } from '../_lib/rateLimit';
+import { cache, cacheKey } from '../_lib/cache.js';
+import { rateLimit } from '../_lib/rateLimit.js';
 
 export const config = {
   runtime: 'nodejs',
