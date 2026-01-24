@@ -1,11 +1,11 @@
-// HYDRA v5.0 - AI Category Detection + Multi-API Market Data Integration
-// Key fixes: 1) AI votes on category, 2) Returns detected category, 3) Proper API routing
+// HYDRA v5.1 - Enhanced Category Detection + Better Keyword Matching
+// Key fixes: 1) Expanded Pokemon/Coin keywords, 2) Fallback from item name parsing, 3) Debug logging
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
 // Node.js runtime configuration
 export const config = {
-  maxDuration: 60, // Increased for multiple API calls
+  maxDuration: 60,
 };
 
 // Environment variables
@@ -85,8 +85,8 @@ interface AnalysisResult {
   valuation_factors: string[];
   analysis_quality: 'OPTIMAL' | 'DEGRADED' | 'FALLBACK';
   capturedAt: string;
-  category: string;           // v5.0: Now returns DETECTED category
-  requestedCategory?: string; // v5.0: Original request category for reference
+  category: string;
+  requestedCategory?: string;
   subCategory?: string;
   imageUrl: string;
   marketComps: any[];
@@ -119,12 +119,12 @@ interface AnalysisResult {
   debug_info?: {
     reason: string;
     details: string;
+    categoryDebug?: any;
   };
 }
 
-// ==================== v5.0 CATEGORY SYSTEM ====================
+// ==================== v5.1 ENHANCED CATEGORY SYSTEM ====================
 
-// Expanded category list (60+ categories mapped to API endpoints)
 type ItemCategory = 
   | 'coins' | 'banknotes' | 'currency'
   | 'lego' | 'building_blocks'
@@ -146,55 +146,38 @@ type ItemCategory =
 
 // Map categories to their specialized APIs
 const CATEGORY_API_MAP: Record<string, string[]> = {
-  // Coins & Currency → Numista
   'coins': ['numista', 'ebay'],
   'banknotes': ['numista', 'ebay'],
   'currency': ['numista', 'ebay'],
-  
-  // LEGO → Brickset
   'lego': ['brickset', 'ebay'],
   'building_blocks': ['brickset', 'ebay'],
-  
-  // Trading Cards → Pokemon TCG (or specific card APIs)
   'trading_cards': ['pokemon_tcg', 'ebay'],
   'pokemon_cards': ['pokemon_tcg', 'ebay'],
   'pokemon': ['pokemon_tcg', 'ebay'],
-  'mtg_cards': ['ebay'], // Could add Scryfall API
+  'mtg_cards': ['ebay'],
   'sports_cards': ['ebay'],
   'yugioh_cards': ['ebay'],
-  
-  // Books → Google Books
   'books': ['google_books', 'ebay'],
   'rare_books': ['google_books', 'ebay'],
   'textbooks': ['google_books', 'ebay'],
-  
-  // Comics → Comic Vine
   'comics': ['comicvine', 'ebay'],
   'manga': ['comicvine', 'ebay'],
   'graphic_novels': ['comicvine', 'ebay'],
-  
-  // Video Games → RAWG
   'video_games': ['rawg', 'ebay'],
   'retro_games': ['rawg', 'ebay'],
   'game_consoles': ['rawg', 'ebay'],
-  
-  // Music → Discogs
   'vinyl_records': ['discogs', 'ebay'],
   'vinyl': ['discogs', 'ebay'],
   'music': ['discogs', 'ebay'],
   'records': ['discogs', 'ebay'],
   'cds': ['discogs', 'ebay'],
   'cassettes': ['discogs', 'ebay'],
-  
-  // Sneakers → Retailed
   'sneakers': ['retailed', 'ebay'],
   'shoes': ['retailed', 'ebay'],
   'streetwear': ['retailed', 'ebay'],
   'jordans': ['retailed', 'ebay'],
   'nike': ['retailed', 'ebay'],
   'yeezy': ['retailed', 'ebay'],
-  
-  // General/fallback → eBay only
   'general': ['ebay'],
   'collectibles': ['ebay'],
   'antiques': ['ebay'],
@@ -207,23 +190,19 @@ const CATEGORY_API_MAP: Record<string, string[]> = {
   'art': ['ebay'],
 };
 
-// Get APIs for a category with fuzzy matching
 function getApisForCategory(category: string): string[] {
   const catLower = category.toLowerCase().trim();
   
-  // Direct match
   if (CATEGORY_API_MAP[catLower]) {
     return CATEGORY_API_MAP[catLower];
   }
   
-  // Fuzzy match - check if category contains or is contained by a key
   for (const [key, apis] of Object.entries(CATEGORY_API_MAP)) {
     if (catLower.includes(key) || key.includes(catLower)) {
       return apis;
     }
   }
   
-  // Default to eBay
   return ['ebay'];
 }
 
@@ -231,10 +210,10 @@ interface CategoryDetection {
   category: ItemCategory;
   confidence: number;
   keywords: string[];
-  source: 'ai_vote' | 'keyword_detection' | 'category_hint' | 'default';
+  source: 'ai_vote' | 'keyword_detection' | 'category_hint' | 'name_parsing' | 'default';
 }
 
-// v5.0: Enhanced category detection that combines AI votes + keyword detection
+// v5.1: Enhanced category detection with aggressive keyword matching
 function detectItemCategory(
   itemName: string, 
   categoryId?: string,
@@ -242,11 +221,30 @@ function detectItemCategory(
 ): CategoryDetection {
   const nameLower = itemName.toLowerCase();
   
-  // v5.0: Priority 1 - AI detected category (from JSON response)
+  console.log(`\n🔍 === CATEGORY DETECTION DEBUG ===`);
+  console.log(`📝 Item Name: "${itemName}"`);
+  console.log(`📝 Name Lower: "${nameLower}"`);
+  console.log(`🤖 AI Category Input: ${aiDetectedCategory || 'none'}`);
+  console.log(`💡 Category Hint: ${categoryId || 'none'}`);
+  
+  // v5.1: Priority 0 - AGGRESSIVE name-based detection (runs first!)
+  // This catches obvious cases even if AI misses them
+  const nameBasedCategory = detectCategoryFromName(nameLower);
+  if (nameBasedCategory && nameBasedCategory !== 'general') {
+    console.log(`🎯 NAME PARSING detected: ${nameBasedCategory}`);
+    return {
+      category: nameBasedCategory as ItemCategory,
+      confidence: 0.92,
+      keywords: ['name_parsing'],
+      source: 'name_parsing'
+    };
+  }
+  
+  // Priority 1 - AI detected category
   if (aiDetectedCategory && aiDetectedCategory !== 'general' && aiDetectedCategory !== 'unknown') {
     const normalizedAiCategory = normalizeCategory(aiDetectedCategory);
     if (normalizedAiCategory !== 'general') {
-      console.log(`🤖 AI detected category: ${normalizedAiCategory}`);
+      console.log(`🤖 AI VOTE accepted: ${normalizedAiCategory}`);
       return { 
         category: normalizedAiCategory as ItemCategory, 
         confidence: 0.95, 
@@ -256,11 +254,11 @@ function detectItemCategory(
     }
   }
   
-  // Priority 2 - Category hint from request (only if specific)
+  // Priority 2 - Category hint from request
   if (categoryId && categoryId !== 'general') {
     const normalizedHint = normalizeCategory(categoryId);
     if (normalizedHint !== 'general') {
-      console.log(`💡 Category hint used: ${normalizedHint}`);
+      console.log(`💡 CATEGORY HINT used: ${normalizedHint}`);
       return { 
         category: normalizedHint as ItemCategory, 
         confidence: 0.9, 
@@ -272,104 +270,271 @@ function detectItemCategory(
   
   // Priority 3 - Keyword detection from item name
   const keywordResult = detectCategoryByKeywords(nameLower);
+  console.log(`🔑 KEYWORD DETECTION result: ${keywordResult.category} (confidence: ${keywordResult.confidence})`);
+  console.log(`🔑 Matched keywords: ${keywordResult.keywords.join(', ') || 'none'}`);
+  
   if (keywordResult.category !== 'general') {
-    console.log(`🔍 Keyword detected category: ${keywordResult.category} (keywords: ${keywordResult.keywords.join(', ')})`);
     return { ...keywordResult, source: 'keyword_detection' };
   }
   
-  // Default
-  console.log(`⚠️ No specific category detected, defaulting to general`);
+  console.log(`⚠️ No category detected, defaulting to general`);
   return { category: 'general', confidence: 0.5, keywords: [], source: 'default' };
+}
+
+// v5.1: NEW - Aggressive name-based category detection
+// Catches obvious patterns like "XXX Pokemon Card" or "XXX Coin"
+function detectCategoryFromName(nameLower: string): string | null {
+  // Pokemon patterns - very aggressive
+  if (nameLower.includes('pokemon') || nameLower.includes('pokémon') || 
+      nameLower.includes('poke mon') || nameLower.includes('poké')) {
+    return 'pokemon_cards';
+  }
+  
+  // Check for Pokemon names + "card"
+  const pokemonNames = [
+    'pikachu', 'charizard', 'blastoise', 'venusaur', 'mewtwo', 'mew',
+    'ampharos', 'dragonite', 'gyarados', 'snorlax', 'gengar', 'alakazam',
+    'machamp', 'golem', 'arcanine', 'lapras', 'vaporeon', 'jolteon', 'flareon',
+    'articuno', 'zapdos', 'moltres', 'dratini', 'dragonair', 'eevee',
+    'lugia', 'ho-oh', 'celebi', 'entei', 'suicune', 'raikou', 'tyranitar',
+    'rayquaza', 'groudon', 'kyogre', 'deoxys', 'latios', 'latias',
+    'dialga', 'palkia', 'giratina', 'arceus', 'darkrai', 'shaymin',
+    'reshiram', 'zekrom', 'kyurem', 'victini', 'genesect',
+    'xerneas', 'yveltal', 'zygarde', 'diancie', 'hoopa', 'volcanion',
+    'solgaleo', 'lunala', 'necrozma', 'marshadow', 'zeraora',
+    'zacian', 'zamazenta', 'eternatus', 'calyrex', 'urshifu',
+    'umbreon', 'espeon', 'leafeon', 'glaceon', 'sylveon'
+  ];
+  
+  for (const pokemon of pokemonNames) {
+    if (nameLower.includes(pokemon)) {
+      // Only if it also has "card" or is clearly a TCG item
+      if (nameLower.includes('card') || nameLower.includes('tcg') || 
+          nameLower.includes('holo') || nameLower.includes('vmax') || 
+          nameLower.includes('vstar') || nameLower.includes('ex ') ||
+          nameLower.includes(' gx') || nameLower.includes('full art')) {
+        return 'pokemon_cards';
+      }
+      // Even without "card", if it's a Pokemon name, likely a card
+      return 'pokemon_cards';
+    }
+  }
+  
+  // Coin patterns - very aggressive
+  const coinPatterns = [
+    'coin', 'penny', 'nickel', 'dime', 'quarter', 'half dollar',
+    'dollar coin', 'silver dollar', 'gold coin', 'cent piece',
+    'morgan', 'peace dollar', 'walking liberty', 'buffalo nickel',
+    'mercury dime', 'barber', 'seated liberty', 'standing liberty',
+    'indian head', 'wheat penny', 'steel penny', 'flying eagle',
+    'trade dollar', 'commemorative', 'proof coin', 'mint state',
+    'ms-', 'ms63', 'ms64', 'ms65', 'ms66', 'ms67', 'ms68', 'ms69', 'ms70',
+    'pcgs', 'ngc', 'anacs', 'icg'  // Grading services
+  ];
+  
+  for (const pattern of coinPatterns) {
+    if (nameLower.includes(pattern)) {
+      return 'coins';
+    }
+  }
+  
+  // LEGO patterns
+  if (nameLower.includes('lego') || nameLower.includes('legoland') ||
+      nameLower.includes('minifig') || nameLower.includes('minifigure')) {
+    return 'lego';
+  }
+  
+  // Book patterns
+  if ((nameLower.includes('book') || nameLower.includes('hardcover') || 
+       nameLower.includes('paperback') || nameLower.includes('novel')) &&
+      !nameLower.includes('comic')) {
+    return 'books';
+  }
+  
+  // Vinyl patterns
+  if (nameLower.includes('vinyl') || nameLower.includes('record') ||
+      nameLower.includes(' lp') || nameLower.includes('lp ') ||
+      nameLower.includes('33 rpm') || nameLower.includes('45 rpm')) {
+    return 'vinyl_records';
+  }
+  
+  // Video game patterns
+  if (nameLower.includes('video game') || nameLower.includes('nintendo') ||
+      nameLower.includes('playstation') || nameLower.includes('xbox') ||
+      nameLower.includes('ps5') || nameLower.includes('ps4') ||
+      nameLower.includes('switch game') || nameLower.includes('wii')) {
+    return 'video_games';
+  }
+  
+  // Sneaker patterns
+  if (nameLower.includes('jordan') || nameLower.includes('yeezy') ||
+      nameLower.includes('nike dunk') || nameLower.includes('air force') ||
+      nameLower.includes('air max') || nameLower.includes('sneaker')) {
+    return 'sneakers';
+  }
+  
+  // Comic patterns
+  if (nameLower.includes('comic') || nameLower.includes('marvel') ||
+      nameLower.includes('dc comics') || nameLower.includes('manga')) {
+    return 'comics';
+  }
+  
+  return null;
 }
 
 // Normalize various category strings to our standard categories
 function normalizeCategory(category: string): string {
   const catLower = category.toLowerCase().trim().replace(/[_\s-]+/g, '_');
   
-  // Pokemon variations
   if (catLower.includes('pokemon') || catLower.includes('pokémon')) {
     return 'pokemon_cards';
   }
   
-  // Trading card variations
   if (catLower.includes('trading_card') || catLower.includes('tcg') || catLower === 'cards') {
     return 'trading_cards';
   }
   
-  // Coin variations
   if (catLower.includes('coin') || catLower.includes('numismatic') || catLower.includes('currency')) {
     return 'coins';
   }
   
-  // LEGO variations
   if (catLower.includes('lego') || catLower.includes('brick')) {
     return 'lego';
   }
   
-  // Video game variations
   if (catLower.includes('video_game') || catLower.includes('videogame') || catLower === 'gaming') {
     return 'video_games';
   }
   
-  // Vinyl/Music variations
   if (catLower.includes('vinyl') || catLower.includes('record') || catLower === 'music' || catLower === 'album') {
     return 'vinyl_records';
   }
   
-  // Comic variations
   if (catLower.includes('comic') || catLower.includes('manga')) {
     return 'comics';
   }
   
-  // Book variations
   if (catLower.includes('book') && !catLower.includes('comic')) {
     return 'books';
   }
   
-  // Sneaker variations
   if (catLower.includes('sneaker') || catLower.includes('jordan') || catLower.includes('yeezy') || 
       catLower.includes('shoe') || catLower.includes('footwear')) {
     return 'sneakers';
   }
   
-  // Return as-is if no normalization needed
   return catLower;
 }
 
-// Keyword-based category detection (fallback)
+// v5.1: MASSIVELY EXPANDED keyword lists
 function detectCategoryByKeywords(nameLower: string): { category: ItemCategory; confidence: number; keywords: string[] } {
-  // Keyword lists for each category
   const categoryKeywords: Record<ItemCategory, string[]> = {
     coins: [
       'coin', 'penny', 'nickel', 'dime', 'quarter', 'dollar', 'cent',
       'morgan', 'liberty', 'eagle', 'buffalo', 'wheat', 'mercury',
       'numismatic', 'mint', 'uncirculated', 'proof', 'silver dollar',
       'gold coin', 'half dollar', 'commemorative', 'bullion',
-      'currency', 'banknote', 'note', 'bill'
+      'currency', 'banknote', 'note', 'bill', 'peace dollar',
+      'walking liberty', 'standing liberty', 'seated liberty',
+      'barber', 'indian head', 'flying eagle', 'trade dollar',
+      'double eagle', 'gold eagle', 'silver eagle', 'platinum eagle',
+      'krugerrand', 'maple leaf', 'britannia', 'philharmonic',
+      'ancient coin', 'roman coin', 'greek coin', 'byzantine',
+      'ms63', 'ms64', 'ms65', 'ms66', 'ms67', 'ms68', 'ms69', 'ms70',
+      'pcgs', 'ngc', 'anacs', 'icg', 'mint state', 'proof coin'
     ],
-    banknotes: ['banknote', 'paper money', 'currency note'],
+    banknotes: ['banknote', 'paper money', 'currency note', 'federal reserve note'],
     currency: [],
     lego: [
       'lego', 'legos', 'brick', 'minifig', 'minifigure',
       'star wars lego', 'technic', 'creator', 'ninjago',
       'city lego', 'friends lego', 'duplo', 'bionicle',
-      'millennium falcon', 'death star', 'hogwarts'
+      'millennium falcon', 'death star', 'hogwarts', 'batman lego',
+      'marvel lego', 'architecture', 'ideas lego', 'creator expert'
     ],
     building_blocks: [],
     trading_cards: [
-      'pokemon', 'pokémon', 'charizard', 'pikachu', 'magic the gathering', 'mtg',
-      'yu-gi-oh', 'yugioh', 'trading card', 'tcg', 'holographic',
+      'trading card', 'tcg', 'holographic', 'foil card',
       'first edition', 'psa', 'graded card', 'booster', 'pack',
-      'vmax', 'vstar', 'ex card', 'gx card', 'full art',
-      'rainbow rare', 'secret rare', 'shiny', 'holo'
+      'cgc', 'bgs', 'beckett', 'card game'
     ],
-    pokemon_cards: ['pokemon', 'pokémon', 'pikachu', 'charizard', 'mewtwo', 'gengar', 'eevee'],
-    mtg_cards: ['magic the gathering', 'mtg', 'planeswalker', 'mana'],
-    sports_cards: ['topps', 'panini', 'rookie card', 'sports card', 'baseball card', 'football card', 'basketball card'],
-    yugioh_cards: ['yu-gi-oh', 'yugioh', 'blue eyes', 'dark magician'],
+    // v5.1: MASSIVELY EXPANDED Pokemon list
+    pokemon_cards: [
+      'pokemon', 'pokémon', 'poke mon', 'poké',
+      // Gen 1 (151)
+      'pikachu', 'charizard', 'blastoise', 'venusaur', 'mewtwo', 'mew',
+      'bulbasaur', 'ivysaur', 'charmander', 'charmeleon', 'squirtle', 'wartortle',
+      'caterpie', 'metapod', 'butterfree', 'weedle', 'kakuna', 'beedrill',
+      'pidgey', 'pidgeotto', 'pidgeot', 'rattata', 'raticate', 'spearow', 'fearow',
+      'ekans', 'arbok', 'raichu', 'sandshrew', 'sandslash',
+      'nidoran', 'nidorina', 'nidoqueen', 'nidorino', 'nidoking',
+      'clefairy', 'clefable', 'vulpix', 'ninetales', 'jigglypuff', 'wigglytuff',
+      'zubat', 'golbat', 'oddish', 'gloom', 'vileplume', 'paras', 'parasect',
+      'venonat', 'venomoth', 'diglett', 'dugtrio', 'meowth', 'persian',
+      'psyduck', 'golduck', 'mankey', 'primeape', 'growlithe', 'arcanine',
+      'poliwag', 'poliwhirl', 'poliwrath', 'abra', 'kadabra', 'alakazam',
+      'machop', 'machoke', 'machamp', 'bellsprout', 'weepinbell', 'victreebel',
+      'tentacool', 'tentacruel', 'geodude', 'graveler', 'golem',
+      'ponyta', 'rapidash', 'slowpoke', 'slowbro', 'magnemite', 'magneton',
+      'farfetchd', 'doduo', 'dodrio', 'seel', 'dewgong', 'grimer', 'muk',
+      'shellder', 'cloyster', 'gastly', 'haunter', 'gengar',
+      'onix', 'drowzee', 'hypno', 'krabby', 'kingler', 'voltorb', 'electrode',
+      'exeggcute', 'exeggutor', 'cubone', 'marowak', 'hitmonlee', 'hitmonchan',
+      'lickitung', 'koffing', 'weezing', 'rhyhorn', 'rhydon',
+      'chansey', 'tangela', 'kangaskhan', 'horsea', 'seadra',
+      'goldeen', 'seaking', 'staryu', 'starmie', 'mr. mime', 'scyther',
+      'jynx', 'electabuzz', 'magmar', 'pinsir', 'tauros',
+      'magikarp', 'gyarados', 'lapras', 'ditto', 'eevee',
+      'vaporeon', 'jolteon', 'flareon', 'porygon',
+      'omanyte', 'omastar', 'kabuto', 'kabutops', 'aerodactyl',
+      'snorlax', 'articuno', 'zapdos', 'moltres',
+      'dratini', 'dragonair', 'dragonite',
+      // Gen 2
+      'chikorita', 'bayleef', 'meganium', 'cyndaquil', 'quilava', 'typhlosion',
+      'totodile', 'croconaw', 'feraligatr', 'sentret', 'furret',
+      'hoothoot', 'noctowl', 'ledyba', 'ledian', 'spinarak', 'ariados',
+      'crobat', 'chinchou', 'lanturn', 'togepi', 'togetic', 'natu', 'xatu',
+      'mareep', 'flaaffy', 'ampharos', 'bellossom', 'marill', 'azumarill',
+      'sudowoodo', 'politoed', 'hoppip', 'skiploom', 'jumpluff',
+      'aipom', 'sunkern', 'sunflora', 'yanma', 'wooper', 'quagsire',
+      'espeon', 'umbreon', 'murkrow', 'slowking', 'misdreavus',
+      'unown', 'wobbuffet', 'girafarig', 'pineco', 'forretress',
+      'dunsparce', 'gligar', 'steelix', 'snubbull', 'granbull',
+      'qwilfish', 'scizor', 'shuckle', 'heracross', 'sneasel',
+      'teddiursa', 'ursaring', 'slugma', 'magcargo', 'swinub', 'piloswine',
+      'corsola', 'remoraid', 'octillery', 'delibird', 'mantine',
+      'skarmory', 'houndour', 'houndoom', 'kingdra', 'phanpy', 'donphan',
+      'porygon2', 'stantler', 'smeargle', 'tyrogue', 'hitmontop',
+      'smoochum', 'elekid', 'magby', 'miltank', 'blissey',
+      'raikou', 'entei', 'suicune', 'larvitar', 'pupitar', 'tyranitar',
+      'lugia', 'ho-oh', 'celebi',
+      // Gen 3+
+      'rayquaza', 'groudon', 'kyogre', 'deoxys', 'latios', 'latias',
+      'dialga', 'palkia', 'giratina', 'arceus', 'darkrai', 'shaymin',
+      'reshiram', 'zekrom', 'kyurem', 'victini', 'genesect',
+      'xerneas', 'yveltal', 'zygarde', 'diancie', 'hoopa', 'volcanion',
+      'solgaleo', 'lunala', 'necrozma', 'marshadow', 'zeraora',
+      'zacian', 'zamazenta', 'eternatus', 'calyrex', 'urshifu',
+      'leafeon', 'glaceon', 'sylveon',
+      // Card types
+      'vmax', 'vstar', 'v card', 'gx card', 'ex card', 'full art',
+      'rainbow rare', 'secret rare', 'shiny', 'holo', 'holographic',
+      'reverse holo', 'promo', 'trainer gallery', 'alt art',
+      'illustration rare', 'special art', 'gold star', 'shining',
+      'crystal', 'delta species', 'lv.x', 'prime', 'legend',
+      'mega', 'break', 'tag team', 'amazing rare', 'radiant'
+    ],
+    mtg_cards: ['magic the gathering', 'mtg', 'planeswalker', 'mana', 'wizards of the coast'],
+    sports_cards: [
+      'topps', 'panini', 'rookie card', 'sports card', 'baseball card', 
+      'football card', 'basketball card', 'hockey card', 'prizm', 'select',
+      'optic', 'mosaic', 'donruss', 'bowman', 'upper deck'
+    ],
+    yugioh_cards: ['yu-gi-oh', 'yugioh', 'blue eyes', 'dark magician', 'exodia', 'konami'],
     books: [
       'book', 'novel', 'hardcover', 'paperback', 'first edition book',
-      'signed copy', 'isbn', 'author', 'rare book', 'antique book'
+      'signed copy', 'isbn', 'author', 'rare book', 'antique book',
+      'leather bound', 'dust jacket', 'manuscript'
     ],
     rare_books: ['first edition', 'signed book', 'rare book', 'antique book'],
     textbooks: ['textbook', 'educational'],
@@ -380,7 +545,7 @@ function detectCategoryByKeywords(nameLower: string): { category: ItemCategory; 
       'golden age', 'silver age', 'bronze age', 'modern age',
       'variant cover', 'newsstand', 'direct edition'
     ],
-    manga: ['manga', 'anime', 'japanese comic'],
+    manga: ['manga', 'anime', 'japanese comic', 'shonen', 'seinen'],
     graphic_novels: ['graphic novel'],
     video_games: [
       'video game', 'game', 'nintendo', 'playstation', 'xbox', 'ps5', 'ps4', 'ps3', 'ps2',
@@ -412,18 +577,18 @@ function detectCategoryByKeywords(nameLower: string): { category: ItemCategory; 
     shoes: [],
     streetwear: ['supreme', 'bape', 'off-white', 'streetwear'],
     designer_fashion: ['gucci', 'louis vuitton', 'chanel', 'prada', 'hermes'],
-    watches: ['watch', 'rolex', 'omega', 'seiko', 'casio', 'timepiece'],
+    watches: ['watch', 'rolex', 'omega', 'seiko', 'casio', 'timepiece', 'wristwatch'],
     jewelry: ['jewelry', 'necklace', 'bracelet', 'ring', 'earring', 'gold', 'silver', 'diamond'],
     gemstones: ['gemstone', 'ruby', 'emerald', 'sapphire', 'diamond'],
     art: ['painting', 'artwork', 'canvas', 'oil painting', 'watercolor'],
     paintings: ['painting', 'oil on canvas'],
     prints: ['print', 'lithograph', 'screen print', 'art print'],
     sculptures: ['sculpture', 'statue', 'figurine'],
-    antiques: ['antique', 'vintage', 'victorian', 'art deco'],
+    antiques: ['antique', 'victorian', 'art deco', 'edwardian'],
     vintage: ['vintage', 'retro', 'mid-century'],
     collectibles: ['collectible', 'collector', 'rare', 'limited edition'],
     toys: ['toy', 'action figure', 'doll', 'plush', 'stuffed animal'],
-    action_figures: ['action figure', 'figure', 'statue', 'funko', 'pop vinyl'],
+    action_figures: ['action figure', 'figure', 'statue', 'funko', 'pop vinyl', 'hot toys'],
     dolls: ['doll', 'barbie', 'american girl'],
     model_kits: ['model kit', 'gundam', 'plastic model'],
     sports_memorabilia: ['memorabilia', 'autograph', 'signed', 'jersey', 'game used'],
@@ -441,42 +606,54 @@ function detectCategoryByKeywords(nameLower: string): { category: ItemCategory; 
     general: []
   };
   
-  // Score each category
   const scores: Record<string, { score: number; matches: string[] }> = {};
   
   for (const [category, keywords] of Object.entries(categoryKeywords)) {
     scores[category] = { score: 0, matches: [] };
     keywords.forEach(kw => {
       if (nameLower.includes(kw)) {
-        // Weight multi-word keywords higher
         scores[category].score += kw.split(' ').length;
         scores[category].matches.push(kw);
       }
     });
   }
   
-  // Find highest scoring category
   let bestCategory: ItemCategory = 'general';
   let bestScore = 0;
   let bestMatches: string[] = [];
   
-  for (const [cat, data] of Object.entries(scores)) {
-    if (data.score > bestScore) {
-      bestScore = data.score;
-      bestCategory = cat as ItemCategory;
-      bestMatches = data.matches;
-    }
+  // v5.1: Sort by score descending, then prefer more specific categories
+  const sortedScores = Object.entries(scores)
+    .filter(([_, data]) => data.score > 0)
+    .sort((a, b) => {
+      // Higher score wins
+      if (b[1].score !== a[1].score) return b[1].score - a[1].score;
+      // Tie: prefer more specific category (longer name often = more specific)
+      return b[0].length - a[0].length;
+    });
+  
+  if (sortedScores.length > 0) {
+    bestCategory = sortedScores[0][0] as ItemCategory;
+    bestScore = sortedScores[0][1].score;
+    bestMatches = sortedScores[0][1].matches;
   }
   
-  // Calculate confidence
   const confidence = Math.min(0.5 + (bestScore * 0.1), 0.95);
+  
+  // Debug logging
+  if (sortedScores.length > 0) {
+    console.log(`🔑 Top 3 keyword matches:`);
+    sortedScores.slice(0, 3).forEach(([cat, data]) => {
+      console.log(`   - ${cat}: score ${data.score} (${data.matches.join(', ')})`);
+    });
+  }
   
   return { category: bestCategory, confidence, keywords: bestMatches };
 }
 
 // ==================== API FETCHERS ====================
+// (Same as v5.0 - keeping them identical)
 
-// eBay Market Data Fetcher
 async function fetchEbayMarketData(itemName: string): Promise<MarketDataSource> {
   try {
     console.log(`🛒 [eBay] Fetching market data for: ${itemName}`);
@@ -542,7 +719,6 @@ async function fetchEbayMarketData(itemName: string): Promise<MarketDataSource> 
   }
 }
 
-// Numista Coin Data Fetcher
 async function fetchNumistaData(itemName: string): Promise<MarketDataSource> {
   try {
     console.log(`🪙 [Numista] Fetching coin data for: ${itemName}`);
@@ -622,12 +798,10 @@ async function fetchNumistaData(itemName: string): Promise<MarketDataSource> {
   }
 }
 
-// Brickset LEGO Data Fetcher
 async function fetchBricksetData(itemName: string): Promise<MarketDataSource> {
   try {
     console.log(`🧱 [Brickset] Fetching LEGO data for: ${itemName}`);
     
-    // Extract set number if present (e.g., "75192" from "LEGO 75192 Millennium Falcon")
     const setNumberMatch = itemName.match(/\b(\d{4,6})\b/);
     
     let url: string;
@@ -712,12 +886,10 @@ async function fetchBricksetData(itemName: string): Promise<MarketDataSource> {
   }
 }
 
-// Google Books Data Fetcher
 async function fetchGoogleBooksData(itemName: string): Promise<MarketDataSource> {
   try {
     console.log(`📚 [Google Books] Fetching book data for: ${itemName}`);
     
-    // Try to extract ISBN if present
     const isbnMatch = itemName.match(/(?:isbn[:\s]*)?(\d{10}|\d{13})/i);
     
     let url: string;
@@ -803,7 +975,6 @@ async function fetchGoogleBooksData(itemName: string): Promise<MarketDataSource>
   }
 }
 
-// Pokemon TCG Data Fetcher
 async function fetchPokemonTCGData(itemName: string): Promise<MarketDataSource> {
   try {
     console.log(`🎴 [Pokemon TCG] Fetching card data for: ${itemName}`);
@@ -848,7 +1019,6 @@ async function fetchPokemonTCGData(itemName: string): Promise<MarketDataSource> 
       };
     }
     
-    // Extract pricing from results
     const prices: number[] = [];
     const listings: any[] = [];
     
@@ -922,7 +1092,6 @@ async function fetchPokemonTCGData(itemName: string): Promise<MarketDataSource> 
   }
 }
 
-// RAWG Video Games Data Fetcher
 async function fetchRAWGData(itemName: string): Promise<MarketDataSource> {
   try {
     console.log(`🎮 [RAWG] Fetching video game data for: ${itemName}`);
@@ -966,23 +1135,20 @@ async function fetchRAWGData(itemName: string): Promise<MarketDataSource> {
       };
     }
     
-    // Build listings from results (RAWG doesn't have pricing, but has metadata)
     const listings = data.results.map((game: any) => ({
       title: game.name,
-      price: 0, // RAWG doesn't provide pricing
+      price: 0,
       condition: `Metacritic: ${game.metacritic || 'N/A'} | Released: ${game.released || 'Unknown'}`,
       url: `https://rawg.io/games/${game.slug}`
     }));
     
     console.log(`✅ [RAWG] ${data.totalResults} games found`);
     
-    // RAWG provides metadata, not pricing - useful for identification
     return {
       source: 'RAWG',
       available: true,
       query: data.query || searchQuery,
       totalListings: data.totalResults || data.results.length,
-      // No price analysis since RAWG doesn't provide prices
       sampleListings: listings.slice(0, 5),
       metadata: {
         dataSource: 'rawg_games_db',
@@ -1009,7 +1175,6 @@ async function fetchRAWGData(itemName: string): Promise<MarketDataSource> {
   }
 }
 
-// Discogs Music/Vinyl Data Fetcher
 async function fetchDiscogsData(itemName: string): Promise<MarketDataSource> {
   try {
     console.log(`🎵 [Discogs] Fetching music data for: ${itemName}`);
@@ -1054,12 +1219,10 @@ async function fetchDiscogsData(itemName: string): Promise<MarketDataSource> {
       };
     }
     
-    // Extract pricing from results (if available from release endpoint)
     const prices: number[] = [];
     const listings: any[] = [];
     
     data.results.forEach((release: any) => {
-      // Discogs search doesn't include pricing, but the release endpoint does
       listings.push({
         title: release.title,
         price: release.lowestPrice || 0,
@@ -1074,7 +1237,6 @@ async function fetchDiscogsData(itemName: string): Promise<MarketDataSource> {
     
     console.log(`✅ [Discogs] ${data.totalResults} releases found`);
     
-    // If we have pricing data
     if (prices.length > 0) {
       const sortedPrices = [...prices].sort((a: number, b: number) => a - b);
       const median = sortedPrices[Math.floor(sortedPrices.length / 2)];
@@ -1103,7 +1265,6 @@ async function fetchDiscogsData(itemName: string): Promise<MarketDataSource> {
       };
     }
     
-    // Return without pricing (metadata only)
     return {
       source: 'Discogs',
       available: true,
@@ -1129,7 +1290,6 @@ async function fetchDiscogsData(itemName: string): Promise<MarketDataSource> {
   }
 }
 
-// Comic Vine Comics Data Fetcher
 async function fetchComicVineData(itemName: string): Promise<MarketDataSource> {
   try {
     console.log(`📚 [Comic Vine] Fetching comic data for: ${itemName}`);
@@ -1173,7 +1333,6 @@ async function fetchComicVineData(itemName: string): Promise<MarketDataSource> {
       };
     }
     
-    // Comic Vine provides metadata, not pricing
     const listings = data.results.map((issue: any) => ({
       title: issue.name,
       price: 0,
@@ -1214,12 +1373,10 @@ async function fetchComicVineData(itemName: string): Promise<MarketDataSource> {
   }
 }
 
-// Retailed Sneaker Data Fetcher
 async function fetchRetailedData(itemName: string): Promise<MarketDataSource> {
   try {
     console.log(`👟 [Retailed] Fetching sneaker data for: ${itemName}`);
     
-    // Try to extract SKU if present (e.g., "DH6927-140")
     const skuMatch = itemName.match(/\b([A-Z]{1,2}\d{4,6}-\d{3})\b/i);
     
     let url: string;
@@ -1255,7 +1412,6 @@ async function fetchRetailedData(itemName: string): Promise<MarketDataSource> {
     
     const data = await response.json();
     
-    // Handle price endpoint response
     if (data.found && data.priceStats) {
       console.log(`✅ [Retailed] Found pricing: $${data.priceStats.lowestAsk} - $${data.priceStats.highestAsk}`);
       
@@ -1268,7 +1424,7 @@ async function fetchRetailedData(itemName: string): Promise<MarketDataSource> {
           lowest: data.priceStats.lowestAsk,
           highest: data.priceStats.highestAsk,
           average: data.priceStats.averageAsk,
-          median: data.priceStats.averageAsk // Use average as median approximation
+          median: data.priceStats.averageAsk
         },
         suggestedPrices: {
           goodDeal: data.priceStats.lowestAsk * 0.9,
@@ -1289,7 +1445,6 @@ async function fetchRetailedData(itemName: string): Promise<MarketDataSource> {
       };
     }
     
-    // Handle search endpoint response
     if (data.success && data.results && data.results.length > 0) {
       const listings = data.results.map((item: any) => ({
         title: item.name,
@@ -1335,7 +1490,7 @@ async function fetchRetailedData(itemName: string): Promise<MarketDataSource> {
   }
 }
 
-// ==================== v5.0 MARKET DATA ORCHESTRATOR ====================
+// ==================== MARKET DATA ORCHESTRATOR ====================
 
 interface MarketDataResult {
   sources: MarketDataSource[];
@@ -1348,7 +1503,7 @@ interface MarketDataResult {
 
 async function fetchAllMarketData(
   itemName: string, 
-  category: string,  // v5.0: Accept any string, normalize internally
+  category: string,
   aiEstimate: number,
   aiConfidence: number
 ): Promise<MarketDataResult> {
@@ -1360,11 +1515,9 @@ async function fetchAllMarketData(
   const sources: MarketDataSource[] = [];
   const apiCalls: Promise<MarketDataSource>[] = [];
   
-  // v5.0: Get APIs for this category using smart routing
   const apisToCall = getApisForCategory(category);
   console.log(`📡 APIs to call: ${apisToCall.join(', ')}`);
   
-  // Build API calls based on category routing
   for (const api of apisToCall) {
     switch (api) {
       case 'ebay':
@@ -1397,15 +1550,12 @@ async function fetchAllMarketData(
     }
   }
   
-  // Execute all API calls in parallel
   const results = await Promise.all(apiCalls);
   sources.push(...results);
   
-  // Determine primary source and blend prices
   const availableSources = sources.filter(s => s.available && s.priceAnalysis);
   
   if (availableSources.length === 0) {
-    // Check if we have metadata-only sources (like RAWG, Comic Vine)
     const metadataSources = sources.filter(s => s.available && !s.priceAnalysis);
     if (metadataSources.length > 0) {
       console.log(`ℹ️ Found metadata from ${metadataSources.map(s => s.source).join(', ')} but no pricing. Using AI estimate.`);
@@ -1422,59 +1572,48 @@ async function fetchAllMarketData(
     };
   }
   
-  // Calculate blended price from all available sources
   let totalWeight = 0;
   let weightedSum = 0;
   const influences: string[] = [];
   
-  // AI estimate baseline (weight based on confidence)
-  const aiWeight = aiConfidence / 100 * 0.4; // Max 40% for AI
+  const aiWeight = aiConfidence / 100 * 0.4;
   weightedSum += aiEstimate * aiWeight;
   totalWeight += aiWeight;
   influences.push(`AI: $${aiEstimate.toFixed(2)} (${Math.round(aiWeight * 100)}%)`);
   
-  // Add market sources with weights based on data quality
   availableSources.forEach(source => {
     if (!source.priceAnalysis) return;
     
     let sourceWeight = 0;
     const median = source.priceAnalysis.median;
     
-    // Weight based on listing count and source reliability
     switch (source.source) {
       case 'eBay':
-        // eBay: Weight heavily for high listing counts
         sourceWeight = Math.min(source.totalListings / 100, 0.35);
         break;
       case 'Numista':
-        // Numista: Catalogue data is reliable but may not reflect market
         sourceWeight = Math.min(source.totalListings / 20, 0.25);
         break;
       case 'Brickset':
-        // Brickset: Good for retail/estimated values
         sourceWeight = Math.min(source.totalListings / 10, 0.25);
         break;
       case 'Google Books':
-        // Google Books: Good for ISBN lookups and condition pricing
         sourceWeight = Math.min(source.totalListings / 5, 0.30);
         break;
       case 'Pokemon TCG':
-        // Pokemon TCG: Official TCGPlayer/Cardmarket pricing
         sourceWeight = Math.min(source.totalListings / 50, 0.35);
         break;
       case 'Discogs':
-        // Discogs: Good for vinyl/music pricing
         sourceWeight = Math.min(source.totalListings / 30, 0.30);
         break;
       case 'Retailed':
-        // Retailed: StockX/GOAT pricing for sneakers
         sourceWeight = Math.min(source.totalListings / 5, 0.40);
         break;
       default:
         sourceWeight = 0.1;
     }
     
-    if (sourceWeight > 0.05) { // Only include if weight is meaningful
+    if (sourceWeight > 0.05) {
       weightedSum += median * sourceWeight;
       totalWeight += sourceWeight;
       influences.push(`${source.source}: $${median.toFixed(2)} (${Math.round(sourceWeight * 100)}%)`);
@@ -1483,7 +1622,6 @@ async function fetchAllMarketData(
   
   const blendedPrice = Math.round((weightedSum / totalWeight) * 100) / 100;
   
-  // Determine primary source (highest weighted market source)
   const primarySource = availableSources.reduce((best, current) => {
     const currentListings = current.totalListings || 0;
     const bestListings = best?.totalListings || 0;
@@ -1523,11 +1661,9 @@ async function verifyUser(req: VercelRequest) {
   return user;
 }
 
-// ==================== v5.0 MAIN ANALYSIS FUNCTION ====================
+// ==================== v5.1 MAIN ANALYSIS FUNCTION ====================
 
 async function performAnalysis(request: AnalysisRequest): Promise<AnalysisResult> {
-  // v5.0: ENHANCED PROMPT WITH CATEGORY DETECTION
-  // AI models now vote on category as part of their analysis
   const jsonPrompt = `You are a professional appraiser analyzing an item for resale value. Focus ONLY on what you can actually observe about the PHYSICAL ITEM.
 
 CRITICAL INSTRUCTIONS:
@@ -1543,10 +1679,10 @@ CRITICAL INSTRUCTIONS:
   "confidence": 0.85
 }
 
-CATEGORY DETECTION - Choose the MOST SPECIFIC category that matches:
-- "pokemon_cards" - Pokemon trading cards (Pikachu, Charizard, etc.)
+CATEGORY DETECTION - YOU MUST CHOOSE THE MOST SPECIFIC CATEGORY:
+- "pokemon_cards" - ANY Pokemon trading card (Pikachu, Charizard, Ampharos, etc.)
 - "trading_cards" - Other TCG cards (MTG, Yu-Gi-Oh, sports cards)
-- "coins" - Coins, currency, banknotes
+- "coins" - ANY coin, currency, or banknote (Peace Dollar, Morgan, etc.)
 - "lego" - LEGO sets and minifigures
 - "video_games" - Video games and consoles
 - "vinyl_records" - Vinyl records, LPs, music
@@ -1559,7 +1695,12 @@ CATEGORY DETECTION - Choose the MOST SPECIFIC category that matches:
 - "art" - Art and paintings
 - "antiques" - Antiques and vintage items
 - "electronics" - Electronics and gadgets
-- "general" - Only if nothing else fits
+- "general" - ONLY if absolutely nothing else fits
+
+IMPORTANT: Do NOT use "general" if you can identify the item type!
+- If you see a Pokemon card → use "pokemon_cards"
+- If you see a coin → use "coins"
+- If you see a LEGO set → use "lego"
 
 FORBIDDEN - NEVER mention these in valuation_factors:
 ❌ "AI analysis" ❌ "Professional analysis" ❌ "Machine learning" ❌ "Image recognition" 
@@ -1589,20 +1730,20 @@ Analyze this item for resale potential based on physical characteristics only:`;
     imageData = request.data;
   }
   
-  // Initialize Hydra Engine
-  console.log('🚀 Initializing Hydra Consensus Engine v5.0...');
+  console.log('🚀 Initializing Hydra Consensus Engine v5.1...');
   const { HydraEngine } = await import('../src/lib/hydra-engine.js');
   const hydra = new HydraEngine();
   await hydra.initialize();
   
-  // Run multi-AI consensus analysis
   const consensus = await hydra.analyzeWithAuthority([imageData], jsonPrompt, request.category_id);
   
   console.log(`✅ Hydra consensus complete: ${consensus.votes.length} AI models voted`);
   
-  // v5.0: Extract AI category votes from responses
+  // v5.1: Extract AI category votes with enhanced logging
   const categoryVotes: Map<string, number> = new Map();
+  console.log(`\n🗳️ === AI CATEGORY VOTES ===`);
   consensus.votes.forEach(vote => {
+    console.log(`   ${vote.providerName}: category="${vote.rawResponse?.category || 'NOT PROVIDED'}" (weight: ${vote.weight?.toFixed(2) || 'N/A'})`);
     if (vote.success && vote.rawResponse?.category) {
       const cat = normalizeCategory(vote.rawResponse.category);
       const currentWeight = categoryVotes.get(cat) || 0;
@@ -1610,7 +1751,6 @@ Analyze this item for resale potential based on physical characteristics only:`;
     }
   });
   
-  // Find winning category from AI votes
   let aiDetectedCategory: string | undefined;
   let maxCategoryWeight = 0;
   categoryVotes.forEach((weight, cat) => {
@@ -1623,30 +1763,31 @@ Analyze this item for resale potential based on physical characteristics only:`;
   if (aiDetectedCategory) {
     console.log(`🤖 AI category votes: ${Array.from(categoryVotes.entries()).map(([c, w]) => `${c}:${w.toFixed(2)}`).join(', ')}`);
     console.log(`🏆 Winning AI category: ${aiDetectedCategory} (weight: ${maxCategoryWeight.toFixed(2)})`);
+  } else {
+    console.log(`⚠️ No AI category votes detected - will use name-based detection`);
   }
   
-  // v5.0: Enhanced category detection with AI votes
+  // v5.1: Enhanced category detection with name parsing
   const categoryDetection = detectItemCategory(
     consensus.consensus.itemName, 
     request.category_id,
-    aiDetectedCategory  // v5.0: Pass AI detected category
+    aiDetectedCategory
   );
   
-  console.log(`\n🏷️ === CATEGORY DETECTION ===`);
+  console.log(`\n🏷️ === FINAL CATEGORY DECISION ===`);
   console.log(`📝 Requested: ${request.category_id}`);
   console.log(`🤖 AI Detected: ${aiDetectedCategory || 'none'}`);
-  console.log(`🔍 Keyword Detected: ${categoryDetection.category}`);
   console.log(`✅ Final Category: ${categoryDetection.category} (source: ${categoryDetection.source})`);
+  console.log(`📊 Confidence: ${(categoryDetection.confidence * 100).toFixed(0)}%`);
   
   // ===== MULTI-API MARKET DATA INTEGRATION =====
   const marketData = await fetchAllMarketData(
     consensus.consensus.itemName,
-    categoryDetection.category,  // v5.0: Use DETECTED category, not requested
+    categoryDetection.category,
     consensus.consensus.estimatedValue,
     consensus.consensus.confidence
   );
   
-  // Build valuation factors from votes
   const factorCounts = new Map<string, number>();
   consensus.votes.forEach(vote => {
     if (vote.rawResponse?.valuation_factors) {
@@ -1661,14 +1802,12 @@ Analyze this item for resale potential based on physical characteristics only:`;
     .slice(0, 5)
     .map(entry => entry[0]);
   
-  // Get best summary reasoning
   const bestVote = consensus.votes.reduce((best, vote) => 
     vote.weight > best.weight ? vote : best, consensus.votes[0]);
   
   let summaryReasoning = bestVote?.rawResponse?.summary_reasoning || 
     `Consensus reached by ${consensus.consensus.totalVotes} AI models.`;
   
-  // Enhance summary with market data context
   const availableMarketSources = marketData.sources.filter(s => s.available);
   if (availableMarketSources.length > 0) {
     const sourceNames = availableMarketSources.map(s => s.source).join(', ');
@@ -1682,7 +1821,6 @@ Analyze this item for resale potential based on physical characteristics only:`;
     }
   }
   
-  // Build enhanced source tracking
   const respondedAIs = consensus.votes
     .filter(vote => vote.success)
     .map(vote => vote.providerName);
@@ -1694,7 +1832,6 @@ Analyze this item for resale potential based on physical characteristics only:`;
     }
   });
   
-  // Build API sources from market data
   const apiSources = {
     responded: marketData.sources.filter(s => s.available).map(s => s.source),
     data: marketData.sources.reduce((acc, source) => {
@@ -1708,7 +1845,6 @@ Analyze this item for resale potential based on physical characteristics only:`;
     }, {} as Record<string, { confidence: number; dataPoints: number }>)
   };
   
-  // Build market comps from all sources
   const marketComps: any[] = [];
   marketData.sources.forEach(source => {
     if (source.sampleListings) {
@@ -1726,22 +1862,22 @@ Analyze this item for resale potential based on physical characteristics only:`;
   
   const totalSources = respondedAIs.length + apiSources.responded.length;
   
-  // v5.0: Build final result with DETECTED category
+  // v5.1: Build final result
   const fullResult: AnalysisResult = {
     id: consensus.analysisId,
     itemName: consensus.consensus.itemName,
-    estimatedValue: marketData.blendedPrice, // Use multi-source blended price
+    estimatedValue: marketData.blendedPrice,
     decision: consensus.consensus.decision,
     confidenceScore: consensus.consensus.confidence,
     summary_reasoning: summaryReasoning,
     valuation_factors: topFactors,
     analysis_quality: consensus.consensus.analysisQuality,
     capturedAt: new Date().toISOString(),
-    category: categoryDetection.category,     // v5.0: DETECTED category (THE FIX!)
-    requestedCategory: request.category_id,   // v5.0: Original request for reference
+    category: categoryDetection.category,
+    requestedCategory: request.category_id,
     subCategory: request.subcategory_id,
     imageUrl: imageData,
-    marketComps: marketComps.slice(0, 10), // Top 10 comps
+    marketComps: marketComps.slice(0, 10),
     resale_toolkit: {
       listInArena: true,
       sellOnProPlatforms: true,
@@ -1749,7 +1885,7 @@ Analyze this item for resale potential based on physical characteristics only:`;
       shareToSocial: true
     },
     tags: [
-      categoryDetection.category,  // v5.0: Use detected category in tags
+      categoryDetection.category,
       ...(request.category_id !== categoryDetection.category ? [request.category_id] : []),
       ...categoryDetection.keywords.slice(0, 3)
     ],
@@ -1772,15 +1908,20 @@ Analyze this item for resale potential based on physical characteristics only:`;
     }
   };
   
-  // Add debug info if needed
+  // v5.1: Enhanced debug info
   if (consensus.consensus.analysisQuality === 'FALLBACK') {
     fullResult.debug_info = {
       reason: 'Multi-AI consensus degraded',
-      details: `Only ${consensus.votes.length} AI model(s) responded. Check API keys and rate limits.`
+      details: `Only ${consensus.votes.length} AI model(s) responded. Check API keys and rate limits.`,
+      categoryDebug: {
+        aiVotes: Object.fromEntries(categoryVotes),
+        finalCategory: categoryDetection.category,
+        detectionSource: categoryDetection.source,
+        matchedKeywords: categoryDetection.keywords
+      }
     };
   }
   
-  // Final logging
   console.log(`\n✅ === ANALYSIS COMPLETE ===`);
   console.log(`📦 Item: ${consensus.consensus.itemName}`);
   console.log(`🏷️ Detected Category: ${categoryDetection.category} (source: ${categoryDetection.source})`);
@@ -1806,7 +1947,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     const body = req.body as AnalysisRequest;
     
-    // Validation
     if (body.scanType === 'multi-modal') {
       if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
         return res.status(400).json({ error: 'Multi-modal analysis requires items array.' });
