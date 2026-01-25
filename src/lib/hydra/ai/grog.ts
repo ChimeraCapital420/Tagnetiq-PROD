@@ -36,9 +36,7 @@ export class GroqProvider extends BaseAIProvider {
 
       // Clean prompt and enforce JSON output
       const cleanPrompt = prompt.replace(/\n+/g, ' ').trim();
-      const jsonEnforcedPrompt = `${cleanPrompt}
-
-CRITICAL INSTRUCTION: You MUST respond with ONLY a valid JSON object. Do not include ANY other text, markdown formatting, code blocks, or explanations. The response must be parseable JSON and nothing else.`;
+      const jsonEnforcedPrompt = `${cleanPrompt}\n\nCRITICAL INSTRUCTION: You MUST respond with ONLY a valid JSON object. Do not include ANY other text, markdown formatting, code blocks, or explanations. The response must be parseable JSON and nothing else.`;
 
       const response = await this.fetchWithTimeout(
         GroqProvider.API_ENDPOINT,
