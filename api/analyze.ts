@@ -1,5 +1,6 @@
-// HYDRA v5.1 - Enhanced Category Detection + Better Keyword Matching
-// Key fixes: 1) Expanded Pokemon/Coin keywords, 2) Fallback from item name parsing, 3) Debug logging
+// HYDRA v5.2 - Authority Data + Confidence Boosting + Flip Button
+// Key fixes: 1) Authority data for ALL APIs (not just Google Books), 2) Confidence boost when authority confirms
+// 3) Pokemon TCG timeout fix (6s), 4) flipAnalysis button enabled, 5) All v5.1 features preserved
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -73,6 +74,22 @@ interface MarketDataSource {
   }>;
   error?: string;
   metadata?: Record<string, any>;
+  authorityData?: AuthorityData; // v5.2: Authority data for this source
+}
+
+// v5.2: Authority data structure for verified item information
+interface AuthorityData {
+  source: string;
+  verified: boolean;
+  confidence: number;
+  itemDetails: Record<string, any>;
+  priceData?: {
+    market?: number;
+    retail?: number;
+    conditions?: Array<{condition: string; price: number; grade?: string}>;
+  };
+  externalUrl?: string;
+  lastUpdated: string;
 }
 
 interface AnalysisResult {
@@ -95,6 +112,7 @@ interface AnalysisResult {
     sellOnProPlatforms: boolean;
     linkToMyStore: boolean;
     shareToSocial: boolean;
+    flipAnalysis?: boolean; // v5.2: Enable FLIP button
   };
   tags: string[];
   hydraConsensus?: HydraConsensus & {
@@ -105,12 +123,14 @@ interface AnalysisResult {
     };
     apiSources: {
       responded: string[];
-      data: Record<string, { confidence: number; dataPoints: number }>;
+      data: Record<string, { confidence: number; dataPoints: number; hasAuthority?: boolean }>; // v5.2: track authority
     };
     consensusMethod: string;
     finalConfidence: number;
+    confidenceBoost?: number; // v5.2: track boost amount
   };
-  authorityData?: any;
+  authorityData?: AuthorityData; // v5.2: Primary authority data
+  allAuthorities?: AuthorityData[]; // v5.2: All authority sources
   marketData?: {
     sources: MarketDataSource[];
     primarySource: string;
@@ -687,6 +707,29 @@ async function fetchEbayMarketData(itemName: string): Promise<MarketDataSource> 
     
     console.log(`✅ [eBay] ${listingCount} listings found`);
     
+    // v5.2: Build authority data for eBay (fallback authority for market pricing)
+    const median = data.priceAnalysis?.medianPrice || data.priceAnalysis?.median;
+    const authorityData: AuthorityData | undefined = data.priceAnalysis ? {
+      source: 'eBay Marketplace',
+      verified: true,
+      confidence: 0.85,
+      itemDetails: {
+        query: data.query || searchQuery,
+        totalListings: listingCount,
+        marketType: 'secondary_market'
+      },
+      priceData: {
+        market: median,
+        conditions: [
+          { condition: 'All Conditions', price: median },
+          { condition: 'Low End', price: data.priceAnalysis.lowestPrice || data.priceAnalysis.lowest },
+          { condition: 'High End', price: data.priceAnalysis.highestPrice || data.priceAnalysis.highest }
+        ]
+      },
+      externalUrl: `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(searchQuery)}`,
+      lastUpdated: new Date().toISOString()
+    } : undefined;
+    
     return {
       source: 'eBay',
       available: true,
@@ -704,7 +747,8 @@ async function fetchEbayMarketData(itemName: string): Promise<MarketDataSource> 
         price: listing.price,
         condition: listing.condition,
         url: listing.url
-      }))
+      })),
+      authorityData // v5.2: Include authority data
     };
     
   } catch (error: any) {
@@ -762,6 +806,38 @@ async function fetchNumistaData(itemName: string): Promise<MarketDataSource> {
     
     console.log(`✅ [Numista] ${data.priceAnalysis.sampleSize} price points found`);
     
+    // v5.2: Build authority data for coins
+    const authorityData: AuthorityData = {
+      source: 'Numista Catalogue',
+      verified: true,
+      confidence: 0.92,
+      itemDetails: {
+        title: data.type?.title || data.query || searchQuery,
+        country: data.type?.issuer?.name || 'Unknown',
+        year: data.type?.min_year ? `${data.type.min_year}${data.type.max_year && data.type.max_year !== data.type.min_year ? '-' + data.type.max_year : ''}` : undefined,
+        denomination: data.type?.value?.text,
+        composition: data.type?.composition?.text,
+        weight: data.type?.weight ? `${data.type.weight}g` : undefined,
+        diameter: data.type?.size ? `${data.type.size}mm` : undefined,
+        mintage: data.type?.mintage,
+        mint: data.type?.mints?.[0]?.name
+      },
+      priceData: data.priceAnalysis ? {
+        market: data.priceAnalysis.medianPrice,
+        conditions: [
+          { condition: 'Good (G)', price: data.priceAnalysis.lowestPrice * 0.6, grade: 'G' },
+          { condition: 'Very Good (VG)', price: data.priceAnalysis.lowestPrice * 0.75, grade: 'VG' },
+          { condition: 'Fine (F)', price: data.priceAnalysis.lowestPrice * 0.9, grade: 'F' },
+          { condition: 'Very Fine (VF)', price: data.priceAnalysis.medianPrice, grade: 'VF' },
+          { condition: 'Extremely Fine (XF)', price: data.priceAnalysis.medianPrice * 1.3, grade: 'XF' },
+          { condition: 'About Uncirculated (AU)', price: data.priceAnalysis.medianPrice * 1.6, grade: 'AU' },
+          { condition: 'Uncirculated (UNC)', price: data.priceAnalysis.highestPrice, grade: 'UNC' }
+        ]
+      } : undefined,
+      externalUrl: data.type?.url || `https://en.numista.com/catalogue/index.php?r=${encodeURIComponent(searchQuery)}`,
+      lastUpdated: new Date().toISOString()
+    };
+    
     return {
       source: 'Numista',
       available: true,
@@ -783,7 +859,8 @@ async function fetchNumistaData(itemName: string): Promise<MarketDataSource> {
       metadata: {
         dataSource: 'numista_catalogue',
         totalTypes: data.totalTypes
-      }
+      },
+      authorityData // v5.2: Include authority data
     };
     
   } catch (error: any) {
@@ -850,6 +927,36 @@ async function fetchBricksetData(itemName: string): Promise<MarketDataSource> {
     
     console.log(`✅ [Brickset] ${data.totalSets} sets found`);
     
+    // v5.2: Build authority data for LEGO
+    const bestSet = data.sets?.[0] || data.set;
+    const authorityData: AuthorityData = {
+      source: 'Brickset Database',
+      verified: true,
+      confidence: 0.90,
+      itemDetails: {
+        name: bestSet?.name || data.query,
+        setNumber: bestSet?.number || setNumberMatch?.[1],
+        theme: bestSet?.theme,
+        year: bestSet?.year,
+        pieces: bestSet?.pieces,
+        minifigs: bestSet?.minifigs,
+        retailPrice: bestSet?.LEGOCom?.US?.retailPrice || bestSet?.retailPrice,
+        ageRange: bestSet?.ageRange ? `${bestSet.ageRange.min}-${bestSet.ageRange.max}` : undefined
+      },
+      priceData: data.priceAnalysis ? {
+        retail: bestSet?.LEGOCom?.US?.retailPrice || bestSet?.retailPrice,
+        market: data.priceAnalysis.medianPrice,
+        conditions: [
+          { condition: 'Used (No Box)', price: data.priceAnalysis.lowestPrice * 0.5 },
+          { condition: 'Used Complete', price: data.priceAnalysis.lowestPrice * 0.7 },
+          { condition: 'New Open Box', price: data.priceAnalysis.medianPrice * 0.85 },
+          { condition: 'New Sealed', price: data.priceAnalysis.medianPrice }
+        ]
+      } : undefined,
+      externalUrl: bestSet?.bricksetURL || `https://brickset.com/sets?query=${encodeURIComponent(data.query || itemName)}`,
+      lastUpdated: new Date().toISOString()
+    };
+    
     return {
       source: 'Brickset',
       available: true,
@@ -871,7 +978,8 @@ async function fetchBricksetData(itemName: string): Promise<MarketDataSource> {
       metadata: {
         dataSource: 'brickset_catalogue',
         note: data.note
-      }
+      },
+      authorityData // v5.2: Include authority data
     };
     
   } catch (error: any) {
@@ -937,6 +1045,37 @@ async function fetchGoogleBooksData(itemName: string): Promise<MarketDataSource>
     
     console.log(`✅ [Google Books] Found: ${data.book?.title || 'Book'} - Retail: $${data.pricing?.retailPrice}`);
     
+    // v5.2: Build authority data for books
+    const authorityData: AuthorityData = {
+      source: 'Google Books',
+      verified: true,
+      confidence: 0.88,
+      itemDetails: {
+        title: data.book?.title,
+        authors: data.book?.authors?.join(', '),
+        publisher: data.book?.publisher,
+        publishedDate: data.book?.publishedDate,
+        isbn13: data.book?.isbn13,
+        isbn10: data.book?.isbn10,
+        pageCount: data.book?.pageCount,
+        categories: data.book?.categories?.join(', '),
+        language: data.book?.language
+      },
+      priceData: {
+        retail: data.pricing?.retailPrice,
+        market: data.priceAnalysis?.medianPrice,
+        conditions: [
+          { condition: 'Acceptable', price: data.priceAnalysis?.lowestPrice * 0.5 },
+          { condition: 'Good', price: data.priceAnalysis?.lowestPrice * 0.7 },
+          { condition: 'Very Good', price: data.priceAnalysis?.medianPrice * 0.85 },
+          { condition: 'Like New', price: data.priceAnalysis?.medianPrice },
+          { condition: 'New', price: data.pricing?.retailPrice || data.priceAnalysis?.highestPrice }
+        ]
+      },
+      externalUrl: data.book?.infoLink || `https://www.google.com/search?tbm=bks&q=${encodeURIComponent(data.query || itemName)}`,
+      lastUpdated: new Date().toISOString()
+    };
+    
     return {
       source: 'Google Books',
       available: true,
@@ -960,7 +1099,8 @@ async function fetchGoogleBooksData(itemName: string): Promise<MarketDataSource>
         book: data.book,
         retailPrice: data.pricing?.retailPrice,
         isbn: data.book?.isbn13 || data.book?.isbn10
-      }
+      },
+      authorityData // v5.2: Include authority data
     };
     
   } catch (error: any) {
@@ -976,6 +1116,10 @@ async function fetchGoogleBooksData(itemName: string): Promise<MarketDataSource>
 }
 
 async function fetchPokemonTCGData(itemName: string): Promise<MarketDataSource> {
+  // v5.2: Add timeout handling to prevent 504 errors
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000); // 6s timeout (reduced from default)
+  
   try {
     console.log(`🎴 [Pokemon TCG] Fetching card data for: ${itemName}`);
     
@@ -993,7 +1137,10 @@ async function fetchPokemonTCGData(itemName: string): Promise<MarketDataSource> 
     const response = await fetch(url, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal // v5.2: Add abort signal
     });
+    
+    clearTimeout(timeoutId); // Clear timeout on successful response
     
     if (!response.ok) {
       console.warn(`⚠️ [Pokemon TCG] API returned ${response.status}`);
@@ -1021,10 +1168,12 @@ async function fetchPokemonTCGData(itemName: string): Promise<MarketDataSource> 
     
     const prices: number[] = [];
     const listings: any[] = [];
+    let bestCard: any = null;
     
     data.results.forEach((card: any) => {
       if (card.pricing?.tcgplayer?.market) {
         prices.push(card.pricing.tcgplayer.market);
+        if (!bestCard) bestCard = card; // Save first card with pricing
         listings.push({
           title: card.name,
           price: card.pricing.tcgplayer.market,
@@ -1033,6 +1182,7 @@ async function fetchPokemonTCGData(itemName: string): Promise<MarketDataSource> 
         });
       } else if (card.pricing?.cardmarket?.averageSellPrice) {
         prices.push(card.pricing.cardmarket.averageSellPrice);
+        if (!bestCard) bestCard = card;
         listings.push({
           title: card.name,
           price: card.pricing.cardmarket.averageSellPrice,
@@ -1057,6 +1207,39 @@ async function fetchPokemonTCGData(itemName: string): Promise<MarketDataSource> 
     
     console.log(`✅ [Pokemon TCG] ${data.totalResults} cards found, ${prices.length} with pricing`);
     
+    // v5.2: Build authority data for Pokemon cards
+    const marketPrice = bestCard?.pricing?.tcgplayer?.market || median;
+    const authorityData: AuthorityData = {
+      source: 'Pokemon TCG API',
+      verified: true,
+      confidence: 0.91,
+      itemDetails: {
+        name: bestCard?.name || searchQuery,
+        set: bestCard?.set?.name,
+        series: bestCard?.set?.series,
+        number: bestCard?.number,
+        rarity: bestCard?.rarity,
+        types: bestCard?.types?.join(', '),
+        hp: bestCard?.hp,
+        artist: bestCard?.artist,
+        releaseDate: bestCard?.set?.releaseDate
+      },
+      priceData: {
+        market: marketPrice,
+        conditions: [
+          { condition: 'Damaged', price: marketPrice * 0.2, grade: 'DMG' },
+          { condition: 'Heavily Played', price: marketPrice * 0.4, grade: 'HP' },
+          { condition: 'Moderately Played', price: marketPrice * 0.6, grade: 'MP' },
+          { condition: 'Lightly Played', price: marketPrice * 0.8, grade: 'LP' },
+          { condition: 'Near Mint', price: marketPrice, grade: 'NM' },
+          { condition: 'PSA 9', price: marketPrice * 2.5, grade: 'PSA9' },
+          { condition: 'PSA 10', price: marketPrice * 5, grade: 'PSA10' }
+        ]
+      },
+      externalUrl: bestCard?.tcgplayerUrl || `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(searchQuery)}`,
+      lastUpdated: new Date().toISOString()
+    };
+    
     return {
       source: 'Pokemon TCG',
       available: true,
@@ -1077,10 +1260,23 @@ async function fetchPokemonTCGData(itemName: string): Promise<MarketDataSource> 
       metadata: {
         dataSource: 'pokemon_tcg_api',
         totalCards: data.totalResults
-      }
+      },
+      authorityData // v5.2: Include authority data
     };
     
   } catch (error: any) {
+    clearTimeout(timeoutId);
+    // v5.2: Handle timeout specifically
+    if (error.name === 'AbortError') {
+      console.warn(`⚠️ [Pokemon TCG] Request timed out after 6s`);
+      return {
+        source: 'Pokemon TCG',
+        available: false,
+        query: itemName,
+        totalListings: 0,
+        error: 'Request timed out'
+      };
+    }
     console.warn(`⚠️ [Pokemon TCG] Fetch failed: ${error.message}`);
     return {
       source: 'Pokemon TCG',
@@ -1237,9 +1433,43 @@ async function fetchDiscogsData(itemName: string): Promise<MarketDataSource> {
     
     console.log(`✅ [Discogs] ${data.totalResults} releases found`);
     
+    // v5.2: Build authority data for vinyl/music
+    const bestRelease = data.results[0];
+    
     if (prices.length > 0) {
       const sortedPrices = [...prices].sort((a: number, b: number) => a - b);
       const median = sortedPrices[Math.floor(sortedPrices.length / 2)];
+      
+      const authorityData: AuthorityData = {
+        source: 'Discogs Database',
+        verified: true,
+        confidence: 0.88,
+        itemDetails: {
+          title: bestRelease?.title,
+          artist: bestRelease?.artist || bestRelease?.title?.split(' - ')?.[0],
+          label: bestRelease?.label,
+          year: bestRelease?.year,
+          format: bestRelease?.format,
+          country: bestRelease?.country,
+          genre: bestRelease?.genre?.join(', '),
+          catalogNumber: bestRelease?.catno
+        },
+        priceData: {
+          market: median,
+          conditions: [
+            { condition: 'Poor (P)', price: median * 0.1, grade: 'P' },
+            { condition: 'Fair (F)', price: median * 0.25, grade: 'F' },
+            { condition: 'Good (G)', price: median * 0.4, grade: 'G' },
+            { condition: 'Good Plus (G+)', price: median * 0.55, grade: 'G+' },
+            { condition: 'Very Good (VG)', price: median * 0.7, grade: 'VG' },
+            { condition: 'Very Good Plus (VG+)', price: median * 0.85, grade: 'VG+' },
+            { condition: 'Near Mint (NM)', price: median, grade: 'NM' },
+            { condition: 'Mint (M)', price: median * 1.3, grade: 'M' }
+          ]
+        },
+        externalUrl: bestRelease?.url || `https://www.discogs.com/search/?q=${encodeURIComponent(searchQuery)}`,
+        lastUpdated: new Date().toISOString()
+      };
       
       return {
         source: 'Discogs',
@@ -1261,7 +1491,8 @@ async function fetchDiscogsData(itemName: string): Promise<MarketDataSource> {
         metadata: {
           dataSource: 'discogs_database',
           totalReleases: data.totalResults
-        }
+        },
+        authorityData // v5.2: Include authority data
       };
     }
     
@@ -1415,6 +1646,38 @@ async function fetchRetailedData(itemName: string): Promise<MarketDataSource> {
     if (data.found && data.priceStats) {
       console.log(`✅ [Retailed] Found pricing: $${data.priceStats.lowestAsk} - $${data.priceStats.highestAsk}`);
       
+      // v5.2: Build authority data for sneakers
+      const avgPrice = data.priceStats.averageAsk;
+      const authorityData: AuthorityData = {
+        source: 'Retailed Sneaker Database',
+        verified: true,
+        confidence: 0.93,
+        itemDetails: {
+          name: data.product?.title || data.product?.name || itemName,
+          sku: data.product?.sku || skuMatch?.[1],
+          brand: data.product?.brand,
+          colorway: data.product?.colorway,
+          releaseDate: data.product?.releaseDate,
+          retailPrice: data.product?.retailPrice,
+          gender: data.product?.gender,
+          category: data.product?.category
+        },
+        priceData: {
+          retail: data.product?.retailPrice,
+          market: avgPrice,
+          conditions: [
+            { condition: 'Beaters (Heavy Wear)', price: avgPrice * 0.3 },
+            { condition: 'Good (Visible Wear)', price: avgPrice * 0.5 },
+            { condition: 'Excellent (Light Wear)', price: avgPrice * 0.75 },
+            { condition: 'VNDS (Very Near DS)', price: avgPrice * 0.9 },
+            { condition: 'DS (Deadstock)', price: avgPrice },
+            { condition: 'DS w/ Receipt', price: avgPrice * 1.05 }
+          ]
+        },
+        externalUrl: data.product?.url || `https://stockx.com/search?s=${encodeURIComponent(data.product?.sku || itemName)}`,
+        lastUpdated: new Date().toISOString()
+      };
+      
       return {
         source: 'Retailed',
         available: true,
@@ -1441,7 +1704,8 @@ async function fetchRetailedData(itemName: string): Promise<MarketDataSource> {
           dataSource: 'retailed_sneaker_db',
           product: data.product,
           marketplaces: data.prices?.map((p: any) => p.marketplace)
-        }
+        },
+        authorityData // v5.2: Include authority data
       };
     }
     
@@ -1499,6 +1763,8 @@ interface MarketDataResult {
   blendMethod: string;
   marketInfluence: string;
   apisUsed: string[];
+  primaryAuthority?: AuthorityData; // v5.2: Best authority source
+  allAuthorities?: AuthorityData[]; // v5.2: All authority sources
 }
 
 async function fetchAllMarketData(
@@ -1630,8 +1896,38 @@ async function fetchAllMarketData(
   
   const marketInfluence = influences.join(' + ');
   
+  // v5.2: Collect all authority data from sources
+  const allAuthorities: AuthorityData[] = sources
+    .filter(s => s.authorityData)
+    .map(s => s.authorityData!);
+  
+  // v5.2: Select primary authority by priority
+  // Priority: Pokemon TCG > Numista > Brickset > Google Books > Discogs > Retailed > Comic Vine > RAWG > eBay
+  const authorityPriority: Record<string, number> = {
+    'Pokemon TCG API': 1,
+    'Numista Catalogue': 2,
+    'Brickset Database': 3,
+    'Google Books': 4,
+    'Discogs Database': 5,
+    'Retailed Sneaker Database': 6,
+    'Comic Vine Database': 7,
+    'RAWG Games Database': 8,
+    'eBay Marketplace': 9
+  };
+  
+  const primaryAuthority = allAuthorities.length > 0
+    ? allAuthorities.sort((a, b) => {
+        const aPriority = authorityPriority[a.source] || 99;
+        const bPriority = authorityPriority[b.source] || 99;
+        return aPriority - bPriority;
+      })[0]
+    : undefined;
+  
   console.log(`💰 Blended price: $${blendedPrice} from ${availableSources.length} market sources`);
   console.log(`📈 Blend breakdown: ${marketInfluence}`);
+  if (primaryAuthority) {
+    console.log(`🏛️ Primary Authority: ${primaryAuthority.source} (confidence: ${primaryAuthority.confidence})`);
+  }
   
   return {
     sources,
@@ -1639,7 +1935,9 @@ async function fetchAllMarketData(
     blendedPrice,
     blendMethod: availableSources.length > 1 ? 'multi_source_weighted' : 'single_source_blend',
     marketInfluence,
-    apisUsed: apisToCall
+    apisUsed: apisToCall,
+    primaryAuthority, // v5.2
+    allAuthorities // v5.2
   };
 }
 
@@ -1832,18 +2130,32 @@ Analyze this item for resale potential based on physical characteristics only:`;
     }
   });
   
+  // v5.2: Track authority presence in apiSources
   const apiSources = {
     responded: marketData.sources.filter(s => s.available).map(s => s.source),
     data: marketData.sources.reduce((acc, source) => {
       if (source.available) {
         acc[source.source] = {
           confidence: source.priceAnalysis ? (source.totalListings >= 10 ? 0.9 : 0.7) : 0.5,
-          dataPoints: source.totalListings
+          dataPoints: source.totalListings,
+          hasAuthority: !!source.authorityData // v5.2: Flag authority presence
         };
       }
       return acc;
-    }, {} as Record<string, { confidence: number; dataPoints: number }>)
+    }, {} as Record<string, { confidence: number; dataPoints: number; hasAuthority?: boolean }>)
   };
+  
+  // v5.2: Calculate confidence boost from authority data
+  let confidenceBoost = 0;
+  let baseConfidence = consensus.consensus.confidence;
+  
+  if (marketData.primaryAuthority) {
+    // Boost confidence based on authority source credibility (max +15%)
+    confidenceBoost = Math.min(marketData.primaryAuthority.confidence * 0.15, 0.15);
+    const boostedConfidence = Math.min(98, baseConfidence + (confidenceBoost * 100));
+    console.log(`🔋 Confidence boost: Base ${baseConfidence}% → +${(confidenceBoost * 100).toFixed(1)}% from ${marketData.primaryAuthority.source} → Final: ${boostedConfidence}%`);
+    baseConfidence = boostedConfidence;
+  }
   
   const marketComps: any[] = [];
   marketData.sources.forEach(source => {
@@ -1862,13 +2174,13 @@ Analyze this item for resale potential based on physical characteristics only:`;
   
   const totalSources = respondedAIs.length + apiSources.responded.length;
   
-  // v5.1: Build final result
+  // v5.2: Build final result with boosted confidence and authority data
   const fullResult: AnalysisResult = {
     id: consensus.analysisId,
     itemName: consensus.consensus.itemName,
     estimatedValue: marketData.blendedPrice,
     decision: consensus.consensus.decision,
-    confidenceScore: consensus.consensus.confidence,
+    confidenceScore: baseConfidence, // v5.2: Use boosted confidence
     summary_reasoning: summaryReasoning,
     valuation_factors: topFactors,
     analysis_quality: consensus.consensus.analysisQuality,
@@ -1882,7 +2194,8 @@ Analyze this item for resale potential based on physical characteristics only:`;
       listInArena: true,
       sellOnProPlatforms: true,
       linkToMyStore: false,
-      shareToSocial: true
+      shareToSocial: true,
+      flipAnalysis: true // v5.2: Enable FLIP button
     },
     tags: [
       categoryDetection.category,
@@ -1898,9 +2211,11 @@ Analyze this item for resale potential based on physical characteristics only:`;
       },
       apiSources,
       consensusMethod: marketData.blendMethod,
-      finalConfidence: consensus.consensus.confidence / 100
+      finalConfidence: baseConfidence / 100, // v5.2: Use boosted confidence
+      confidenceBoost: confidenceBoost > 0 ? confidenceBoost * 100 : undefined // v5.2: Track boost
     },
-    authorityData: consensus.authorityData,
+    authorityData: marketData.primaryAuthority, // v5.2: Use primary authority from market data
+    allAuthorities: marketData.allAuthorities, // v5.2: All authority sources
     marketData: {
       sources: marketData.sources,
       primarySource: marketData.primarySource,
