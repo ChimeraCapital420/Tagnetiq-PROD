@@ -1,5 +1,5 @@
 // FILE: src/lib/hydra/fetchers/index.ts
-// HYDRA v5.2 - Market Data Fetchers Index
+// HYDRA v6.0 - Market Data Fetchers Index
 // Unified interface for all market data sources
 
 import type { MarketDataSource, MarketDataResult, ItemCategory } from '../types.js';
@@ -15,6 +15,7 @@ export { fetchDiscogsData } from './discogs.js';
 export { fetchRetailedData } from './retailed.js';
 export { fetchPsaData, verifyPsaCerts } from './psa.js';
 export { fetchNhtsaData, validateVIN, decodeVINBatch } from './nhtsa.js';
+export { fetchUpcItemDbData, extractBarcode, validateUPC, searchByName as searchUpcByName, getRateLimitStatus as getUpcRateLimitStatus } from './upcitemdb.js';
 
 // Import for internal use
 import { fetchEbayData } from './ebay.js';
@@ -26,6 +27,7 @@ import { fetchDiscogsData } from './discogs.js';
 import { fetchRetailedData } from './retailed.js';
 import { fetchPsaData } from './psa.js';
 import { fetchNhtsaData } from './nhtsa.js';
+import { fetchUpcItemDbData } from './upcitemdb.js';
 
 // ==================== FETCHER REGISTRY ====================
 
@@ -41,6 +43,7 @@ const FETCHER_REGISTRY: Record<string, FetcherFunction> = {
   'retailed': fetchRetailedData,
   'psa': fetchPsaData,
   'nhtsa': fetchNhtsaData,
+  'upcitemdb': fetchUpcItemDbData,
 };
 
 // ==================== UNIFIED FETCH FUNCTION ====================
@@ -130,6 +133,9 @@ export async function fetchMarketData(
   console.log(`✅ Sources with data: ${sources.filter(s => s.available).map(s => s.source).join(', ') || 'none'}`);
   console.log(`💰 Blended price: $${blendedPrice.toFixed(2)} (${blendMethod})`);
   console.log(`🎯 Primary authority: ${primaryAuthority?.source || 'none'}`);
+  if (primaryAuthority?.itemDetails) {
+    console.log(`📋 Authority itemDetails keys: ${Object.keys(primaryAuthority.itemDetails).join(', ')}`);
+  }
   console.log(`⏱️ Total time: ${Date.now() - startTime}ms`);
   
   return {
@@ -256,4 +262,14 @@ export async function fetchMarketDataBatch(
   }
   
   return results;
+}
+
+// ==================== AVAILABLE FETCHERS ====================
+
+export function getAvailableFetchers(): string[] {
+  return Object.keys(FETCHER_REGISTRY);
+}
+
+export function isFetcherAvailable(source: string): boolean {
+  return source in FETCHER_REGISTRY;
 }

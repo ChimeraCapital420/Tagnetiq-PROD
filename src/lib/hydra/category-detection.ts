@@ -1,5 +1,5 @@
 // FILE: src/lib/hydra/category-detection.ts
-// HYDRA v5.2 - Category Detection System
+// HYDRA v6.0 - Category Detection System
 // Extracted from analyze.ts for modularity
 
 import type { ItemCategory, CategoryDetection } from './types.js';
@@ -7,11 +7,16 @@ import type { ItemCategory, CategoryDetection } from './types.js';
 // ==================== CATEGORY API MAPPING ====================
 
 export const CATEGORY_API_MAP: Record<string, string[]> = {
+  // Coins & Currency
   'coins': ['numista', 'ebay'],
   'banknotes': ['numista', 'ebay'],
   'currency': ['numista', 'ebay'],
+  
+  // LEGO
   'lego': ['brickset', 'ebay'],
   'building_blocks': ['brickset', 'ebay'],
+  
+  // Trading Cards
   'trading_cards': ['pokemon_tcg', 'psa', 'ebay'],
   'pokemon_cards': ['pokemon_tcg', 'psa', 'ebay'],
   'pokemon': ['pokemon_tcg', 'psa', 'ebay'],
@@ -23,34 +28,59 @@ export const CATEGORY_API_MAP: Record<string, string[]> = {
   'hockey_cards': ['psa', 'ebay'],
   'graded_cards': ['psa', 'ebay'],
   'yugioh_cards': ['psa', 'ebay'],
+  
+  // Books
   'books': ['google_books', 'ebay'],
   'rare_books': ['google_books', 'ebay'],
   'textbooks': ['google_books', 'ebay'],
-  'comics': ['comicvine', 'psa', 'ebay'],
-  'manga': ['comicvine', 'ebay'],
-  'graphic_novels': ['comicvine', 'ebay'],
-  'video_games': ['rawg', 'ebay'],
-  'retro_games': ['rawg', 'ebay'],
-  'game_consoles': ['rawg', 'ebay'],
+  
+  // Comics
+  'comics': ['psa', 'ebay'],
+  'manga': ['ebay'],
+  'graphic_novels': ['ebay'],
+  
+  // Video Games
+  'video_games': ['ebay'],
+  'retro_games': ['ebay'],
+  'game_consoles': ['ebay'],
+  
+  // Music
   'vinyl_records': ['discogs', 'ebay'],
   'vinyl': ['discogs', 'ebay'],
   'music': ['discogs', 'ebay'],
   'records': ['discogs', 'ebay'],
   'cds': ['discogs', 'ebay'],
   'cassettes': ['discogs', 'ebay'],
+  
+  // Sneakers & Streetwear
   'sneakers': ['retailed', 'ebay'],
   'shoes': ['retailed', 'ebay'],
   'streetwear': ['retailed', 'ebay'],
   'jordans': ['retailed', 'ebay'],
   'nike': ['retailed', 'ebay'],
   'yeezy': ['retailed', 'ebay'],
-  // Vehicle categories - NHTSA VIN Decoder (FREE API!)
+  
+  // Vehicles - NHTSA VIN Decoder (FREE API!)
   'vehicles': ['nhtsa', 'ebay'],
   'cars': ['nhtsa', 'ebay'],
   'trucks': ['nhtsa', 'ebay'],
   'motorcycles': ['nhtsa', 'ebay'],
   'automotive': ['nhtsa', 'ebay'],
   'autos': ['nhtsa', 'ebay'],
+  
+  // Household & Retail Items - UPCitemdb (FREE API!)
+  'household': ['upcitemdb', 'ebay'],
+  'appliances': ['upcitemdb', 'ebay'],
+  'kitchen': ['upcitemdb', 'ebay'],
+  'home': ['upcitemdb', 'ebay'],
+  'tools': ['upcitemdb', 'ebay'],
+  'power_tools': ['upcitemdb', 'ebay'],
+  'baby': ['upcitemdb', 'ebay'],
+  'pets': ['upcitemdb', 'ebay'],
+  'grocery': ['upcitemdb', 'ebay'],
+  'beauty': ['upcitemdb', 'ebay'],
+  'health': ['upcitemdb', 'ebay'],
+  
   // General categories
   'general': ['ebay'],
   'collectibles': ['ebay'],
@@ -60,7 +90,7 @@ export const CATEGORY_API_MAP: Record<string, string[]> = {
   'action_figures': ['ebay'],
   'watches': ['ebay'],
   'jewelry': ['ebay'],
-  'electronics': ['ebay'],
+  'electronics': ['upcitemdb', 'ebay'],
   'art': ['ebay'],
 };
 
@@ -151,6 +181,12 @@ export function detectItemCategory(
 // ==================== NAME-BASED DETECTION ====================
 
 export function detectCategoryFromName(nameLower: string): string | null {
+  // Barcode Detection - 8-13 digit numbers
+  const barcodePattern = /\b\d{8,13}\b/;
+  if (barcodePattern.test(nameLower)) {
+    return 'household'; // Will trigger UPCitemdb
+  }
+  
   // VIN Detection - 17 character alphanumeric (excluding I, O, Q)
   const vinPattern = /\b[A-HJ-NPR-Z0-9]{17}\b/i;
   if (vinPattern.test(nameLower) || nameLower.includes('vin')) {
@@ -174,6 +210,27 @@ export function detectCategoryFromName(nameLower: string): string | null {
   for (const pattern of vehiclePatterns) {
     if (nameLower.includes(pattern)) {
       return 'vehicles';
+    }
+  }
+  
+  // Household/Appliance patterns - triggers UPCitemdb
+  const householdPatterns = [
+    'blender', 'coffee maker', 'keurig', 'nespresso', 'instant pot', 'air fryer',
+    'toaster', 'microwave', 'mixer', 'food processor', 'juicer', 'waffle maker',
+    'vacuum', 'dyson', 'roomba', 'shark', 'bissell', 'hoover',
+    'speaker', 'bluetooth speaker', 'soundbar', 'headphones', 'airpods', 'earbuds',
+    'fitbit', 'garmin', 'apple watch', 'kindle', 'fire tablet',
+    'roku', 'firestick', 'chromecast', 'apple tv',
+    'drill', 'saw', 'dewalt', 'makita', 'milwaukee', 'ryobi', 'craftsman',
+    'baby monitor', 'car seat', 'stroller', 'pack n play', 'high chair',
+    'pet feeder', 'litter box', 'aquarium', 'dog crate',
+    'vitamix', 'cuisinart', 'kitchenaid', 'ninja', 'hamilton beach',
+    'new in box', 'nib', 'factory sealed', 'brand new sealed'
+  ];
+  
+  for (const pattern of householdPatterns) {
+    if (nameLower.includes(pattern)) {
+      return 'household';
     }
   }
   
@@ -269,7 +326,8 @@ export function detectCategoryFromName(nameLower: string): string | null {
   
   // Book patterns
   if ((nameLower.includes('book') || nameLower.includes('hardcover') || 
-       nameLower.includes('paperback') || nameLower.includes('novel')) &&
+       nameLower.includes('paperback') || nameLower.includes('novel') ||
+       nameLower.includes('isbn')) &&
       !nameLower.includes('comic')) {
     return 'books';
   }
@@ -309,6 +367,12 @@ export function detectCategoryFromName(nameLower: string): string | null {
 
 export function normalizeCategory(category: string): string {
   const catLower = category.toLowerCase().trim().replace(/[_\s-]+/g, '_');
+  
+  // Household normalization
+  if (catLower.includes('household') || catLower.includes('appliance') || 
+      catLower.includes('kitchen') || catLower.includes('home_goods')) {
+    return 'household';
+  }
   
   // Vehicle normalization
   if (catLower.includes('vehicle') || catLower.includes('car') || catLower.includes('auto') ||
@@ -353,6 +417,10 @@ export function normalizeCategory(category: string): string {
     return 'sneakers';
   }
   
+  if (catLower.includes('electronic') || catLower.includes('gadget') || catLower.includes('tech')) {
+    return 'electronics';
+  }
+  
   return catLower;
 }
 
@@ -360,6 +428,17 @@ export function normalizeCategory(category: string): string {
 
 export function detectCategoryByKeywords(nameLower: string): { category: ItemCategory; confidence: number; keywords: string[] } {
   const categoryKeywords: Record<ItemCategory, string[]> = {
+    // Household/Retail (UPCitemdb)
+    household: [
+      'appliance', 'kitchen', 'blender', 'mixer', 'coffee maker', 'keurig', 'nespresso',
+      'instant pot', 'air fryer', 'toaster', 'microwave', 'food processor', 'juicer',
+      'vacuum', 'dyson', 'roomba', 'shark', 'bissell', 'hoover', 'mop', 'steam cleaner',
+      'vitamix', 'cuisinart', 'kitchenaid', 'ninja', 'hamilton beach', 'black decker',
+      'baby monitor', 'car seat', 'stroller', 'pack n play', 'high chair', 'crib',
+      'pet feeder', 'litter box', 'aquarium', 'dog bed', 'cat tree',
+      'new in box', 'nib', 'sealed', 'factory sealed', 'unopened',
+      'walmart', 'target', 'costco', 'amazon basics'
+    ],
     // Vehicle keywords
     vehicles: [
       'vehicle', 'car', 'automobile', 'automotive', 'auto', 'sedan', 'coupe', 'hatchback',
@@ -408,63 +487,18 @@ export function detectCategoryByKeywords(nameLower: string): { category: ItemCat
     pokemon_cards: [
       'pokemon', 'pokémon', 'poke mon', 'poké',
       'pikachu', 'charizard', 'blastoise', 'venusaur', 'mewtwo', 'mew',
-      'bulbasaur', 'ivysaur', 'charmander', 'charmeleon', 'squirtle', 'wartortle',
-      'caterpie', 'metapod', 'butterfree', 'weedle', 'kakuna', 'beedrill',
-      'pidgey', 'pidgeotto', 'pidgeot', 'rattata', 'raticate', 'spearow', 'fearow',
-      'ekans', 'arbok', 'raichu', 'sandshrew', 'sandslash',
-      'nidoran', 'nidorina', 'nidoqueen', 'nidorino', 'nidoking',
-      'clefairy', 'clefable', 'vulpix', 'ninetales', 'jigglypuff', 'wigglytuff',
-      'zubat', 'golbat', 'oddish', 'gloom', 'vileplume', 'paras', 'parasect',
-      'venonat', 'venomoth', 'diglett', 'dugtrio', 'meowth', 'persian',
-      'psyduck', 'golduck', 'mankey', 'primeape', 'growlithe', 'arcanine',
-      'poliwag', 'poliwhirl', 'poliwrath', 'abra', 'kadabra', 'alakazam',
-      'machop', 'machoke', 'machamp', 'bellsprout', 'weepinbell', 'victreebel',
-      'tentacool', 'tentacruel', 'geodude', 'graveler', 'golem',
-      'ponyta', 'rapidash', 'slowpoke', 'slowbro', 'magnemite', 'magneton',
-      'farfetchd', 'doduo', 'dodrio', 'seel', 'dewgong', 'grimer', 'muk',
-      'shellder', 'cloyster', 'gastly', 'haunter', 'gengar',
-      'onix', 'drowzee', 'hypno', 'krabby', 'kingler', 'voltorb', 'electrode',
-      'exeggcute', 'exeggutor', 'cubone', 'marowak', 'hitmonlee', 'hitmonchan',
-      'lickitung', 'koffing', 'weezing', 'rhyhorn', 'rhydon',
-      'chansey', 'tangela', 'kangaskhan', 'horsea', 'seadra',
-      'goldeen', 'seaking', 'staryu', 'starmie', 'mr. mime', 'scyther',
-      'jynx', 'electabuzz', 'magmar', 'pinsir', 'tauros',
-      'magikarp', 'gyarados', 'lapras', 'ditto', 'eevee',
-      'vaporeon', 'jolteon', 'flareon', 'porygon',
-      'omanyte', 'omastar', 'kabuto', 'kabutops', 'aerodactyl',
-      'snorlax', 'articuno', 'zapdos', 'moltres',
-      'dratini', 'dragonair', 'dragonite',
-      'chikorita', 'bayleef', 'meganium', 'cyndaquil', 'quilava', 'typhlosion',
-      'totodile', 'croconaw', 'feraligatr', 'sentret', 'furret',
-      'hoothoot', 'noctowl', 'ledyba', 'ledian', 'spinarak', 'ariados',
-      'crobat', 'chinchou', 'lanturn', 'togepi', 'togetic', 'natu', 'xatu',
-      'mareep', 'flaaffy', 'ampharos', 'bellossom', 'marill', 'azumarill',
-      'sudowoodo', 'politoed', 'hoppip', 'skiploom', 'jumpluff',
-      'aipom', 'sunkern', 'sunflora', 'yanma', 'wooper', 'quagsire',
-      'espeon', 'umbreon', 'murkrow', 'slowking', 'misdreavus',
-      'unown', 'wobbuffet', 'girafarig', 'pineco', 'forretress',
-      'dunsparce', 'gligar', 'steelix', 'snubbull', 'granbull',
-      'qwilfish', 'scizor', 'shuckle', 'heracross', 'sneasel',
-      'teddiursa', 'ursaring', 'slugma', 'magcargo', 'swinub', 'piloswine',
-      'corsola', 'remoraid', 'octillery', 'delibird', 'mantine',
-      'skarmory', 'houndour', 'houndoom', 'kingdra', 'phanpy', 'donphan',
-      'porygon2', 'stantler', 'smeargle', 'tyrogue', 'hitmontop',
-      'smoochum', 'elekid', 'magby', 'miltank', 'blissey',
-      'raikou', 'entei', 'suicune', 'larvitar', 'pupitar', 'tyranitar',
-      'lugia', 'ho-oh', 'celebi',
-      'rayquaza', 'groudon', 'kyogre', 'deoxys', 'latios', 'latias',
-      'dialga', 'palkia', 'giratina', 'arceus', 'darkrai', 'shaymin',
-      'reshiram', 'zekrom', 'kyurem', 'victini', 'genesect',
-      'xerneas', 'yveltal', 'zygarde', 'diancie', 'hoopa', 'volcanion',
-      'solgaleo', 'lunala', 'necrozma', 'marshadow', 'zeraora',
-      'zacian', 'zamazenta', 'eternatus', 'calyrex', 'urshifu',
-      'leafeon', 'glaceon', 'sylveon',
+      'bulbasaur', 'charmander', 'squirtle', 'eevee', 'snorlax', 'gengar',
+      'dragonite', 'gyarados', 'alakazam', 'machamp', 'arcanine', 'lapras',
+      'vaporeon', 'jolteon', 'flareon', 'espeon', 'umbreon', 'leafeon', 'glaceon', 'sylveon',
+      'articuno', 'zapdos', 'moltres', 'lugia', 'ho-oh', 'celebi',
+      'rayquaza', 'groudon', 'kyogre', 'dialga', 'palkia', 'giratina', 'arceus',
+      'reshiram', 'zekrom', 'kyurem', 'xerneas', 'yveltal', 'zygarde',
+      'solgaleo', 'lunala', 'necrozma', 'zacian', 'zamazenta', 'eternatus',
       'vmax', 'vstar', 'v card', 'gx card', 'ex card', 'full art',
       'rainbow rare', 'secret rare', 'shiny', 'holo', 'holographic',
       'reverse holo', 'promo', 'trainer gallery', 'alt art',
       'illustration rare', 'special art', 'gold star', 'shining',
-      'crystal', 'delta species', 'lv.x', 'prime', 'legend',
-      'mega', 'break', 'tag team', 'amazing rare', 'radiant'
+      'base set', 'jungle', 'fossil', 'team rocket'
     ],
     mtg_cards: ['magic the gathering', 'mtg', 'planeswalker', 'mana', 'wizards of the coast'],
     sports_cards: [
@@ -537,14 +571,21 @@ export function detectCategoryByKeywords(nameLower: string): { category: ItemCat
     autographs: ['autograph', 'signed', 'signature'],
     stamps: ['stamp', 'philatelic', 'postage'],
     postcards: ['postcard', 'postal'],
-    electronics: ['electronic', 'gadget', 'device'],
-    cameras: ['camera', 'lens', 'photography'],
+    electronics: [
+      'electronic', 'gadget', 'device', 'speaker', 'headphone', 'earbuds',
+      'tablet', 'laptop', 'computer', 'monitor', 'keyboard', 'mouse',
+      'smart home', 'alexa', 'echo', 'google home', 'ring doorbell',
+      'gopro', 'drone', 'camera', 'lens'
+    ],
+    cameras: ['camera', 'lens', 'photography', 'dslr', 'mirrorless'],
     audio_equipment: ['amplifier', 'speaker', 'headphone', 'turntable'],
     musical_instruments: ['guitar', 'piano', 'violin', 'instrument'],
     guitars: ['guitar', 'fender', 'gibson', 'acoustic', 'electric guitar'],
     keyboards: ['keyboard', 'synthesizer', 'piano'],
-    tools: ['tool', 'drill', 'saw'],
-    power_tools: ['power tool', 'drill', 'circular saw'],
+    tools: ['tool', 'drill', 'saw', 'wrench', 'screwdriver'],
+    power_tools: ['power tool', 'drill', 'circular saw', 'jigsaw', 'sander', 'grinder'],
+    baby: ['baby', 'infant', 'toddler', 'nursery', 'diaper', 'formula'],
+    pets: ['pet', 'dog', 'cat', 'fish', 'bird', 'aquarium', 'terrarium'],
     general: []
   };
   

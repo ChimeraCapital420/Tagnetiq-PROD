@@ -1,5 +1,7 @@
 // FILE: src/components/AnalysisResult.tsx
-// STATUS: Chronos-enhanced with time-travel UI and multi-image carousel - COMPLETE VERSION
+// STATUS: HYDRA v6.0 - Universal Authority Report Card Integration
+// Supports ALL authority sources: Google Books, Numista, Pokemon TCG, Brickset, 
+// Discogs, Retailed, PSA, NHTSA, UPCitemdb, and more
 
 import React, { useState } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
@@ -12,9 +14,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { CheckCircle, Star, WandSparkles, Loader2, Shield, Trash2 } from 'lucide-react';
+import { CheckCircle, Star, WandSparkles, Loader2, Trash2 } from 'lucide-react';
 import { HydraConsensusDisplay } from './HydraConsensusDisplay.js';
 import { AnalysisHistoryNavigator } from './AnalysisHistoryNavigator.js';
+import { AuthorityReportCard } from './AuthorityReportCard.js';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
 
 const AnalysisResult: React.FC = () => {
@@ -160,134 +163,13 @@ const AnalysisResult: React.FC = () => {
             </div>
           )}
 
-          {/* AUTHORITY VERIFICATION DISPLAY - COMPLETE VERSION */}
+          {/* UNIVERSAL AUTHORITY REPORT CARD - Handles ALL source types */}
+          {/* Supports: Google Books, Numista, Pokemon TCG, Brickset, Discogs, 
+              Retailed, PSA, NHTSA, UPCitemdb, and more */}
           {lastAnalysisResult.authorityData && (
-            <Card className="mt-4 border-green-500/20 bg-green-50/50 dark:bg-green-950/20">
-              <CardHeader className="pb-3">
-                <div className="flex items-center gap-2">
-                  <Shield className="h-5 w-5 text-green-600" />
-                  <CardTitle className="text-lg">
-                    Verified by {lastAnalysisResult.authorityData.source}
-                  </CardTitle>
-                  <Badge variant="outline" className="ml-auto text-green-600 border-green-600">
-                    Authority Verified
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {/* Book Details Grid */}
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  {lastAnalysisResult.authorityData.isbn && (
-                    <div>
-                      <p className="text-muted-foreground">ISBN</p>
-                      <p className="font-mono font-semibold">
-                        {lastAnalysisResult.authorityData.isbn}
-                      </p>
-                    </div>
-                  )}
-                  {lastAnalysisResult.authorityData.authors && (
-                    <div>
-                      <p className="text-muted-foreground">Author(s)</p>
-                      <p className="font-semibold">
-                        {lastAnalysisResult.authorityData.authors.join(', ')}
-                      </p>
-                    </div>
-                  )}
-                  {lastAnalysisResult.authorityData.publisher && (
-                    <div>
-                      <p className="text-muted-foreground">Publisher</p>
-                      <p>{lastAnalysisResult.authorityData.publisher}</p>
-                    </div>
-                  )}
-                  {lastAnalysisResult.authorityData.publishedDate && (
-                    <div>
-                      <p className="text-muted-foreground">Published</p>
-                      <p>{lastAnalysisResult.authorityData.publishedDate}</p>
-                    </div>
-                  )}
-                  {lastAnalysisResult.authorityData.pageCount > 0 && (
-                    <div>
-                      <p className="text-muted-foreground">Pages</p>
-                      <p>{lastAnalysisResult.authorityData.pageCount}</p>
-                    </div>
-                  )}
-                  {lastAnalysisResult.authorityData.retailPrice && (
-                    <div>
-                      <p className="text-muted-foreground">Retail Price</p>
-                      <p className="font-semibold">
-                        ${lastAnalysisResult.authorityData.retailPrice.toFixed(2)}
-                      </p>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Categories */}
-                {lastAnalysisResult.authorityData.categories && 
-                 lastAnalysisResult.authorityData.categories.length > 0 && (
-                  <div className="pt-2">
-                    <p className="text-sm text-muted-foreground mb-1">Categories</p>
-                    <div className="flex flex-wrap gap-1">
-                      {lastAnalysisResult.authorityData.categories.slice(0, 3).map((cat, idx) => (
-                        <Badge key={idx} variant="secondary" className="text-xs">
-                          {cat}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                {/* Market Values */}
-                {lastAnalysisResult.authorityData.marketValue && (
-                  <div className="pt-3 border-t">
-                    <p className="text-sm font-semibold mb-2">Market Values by Condition</p>
-                    <div className="grid grid-cols-4 gap-2">
-                      <div className="text-center p-2 rounded bg-background">
-                        <p className="text-xs text-muted-foreground">Good</p>
-                        <p className="font-bold text-sm">
-                          ${lastAnalysisResult.authorityData.marketValue.good}
-                        </p>
-                      </div>
-                      <div className="text-center p-2 rounded bg-background">
-                        <p className="text-xs text-muted-foreground">Very Good</p>
-                        <p className="font-bold text-sm">
-                          ${lastAnalysisResult.authorityData.marketValue.veryGood}
-                        </p>
-                      </div>
-                      <div className="text-center p-2 rounded bg-background">
-                        <p className="text-xs text-muted-foreground">Like New</p>
-                        <p className="font-bold text-sm">
-                          ${lastAnalysisResult.authorityData.marketValue.likeNew}
-                        </p>
-                      </div>
-                      <div className="text-center p-2 rounded bg-background">
-                        <p className="text-xs text-muted-foreground">New</p>
-                        <p className="font-bold text-sm">
-                          ${lastAnalysisResult.authorityData.marketValue.new}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                
-                {/* Authority Source Link */}
-                <div className="pt-2 text-xs text-center text-muted-foreground">
-                  Data provided by {lastAnalysisResult.authorityData.source}
-                  {lastAnalysisResult.authorityData.isbn && (
-                    <span>
-                      {' • '}
-                      <a 
-                        href={`https://openlibrary.org/isbn/${lastAnalysisResult.authorityData.isbn}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary hover:underline"
-                      >
-                        View on Open Library
-                      </a>
-                    </span>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+            <div className="mt-4">
+              <AuthorityReportCard authorityData={lastAnalysisResult.authorityData} />
+            </div>
           )}
         </CardHeader>
         
