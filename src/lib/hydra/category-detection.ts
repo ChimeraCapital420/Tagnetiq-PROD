@@ -1,6 +1,6 @@
 // FILE: src/lib/hydra/category-detection.ts
-// HYDRA v6.1 - Category Detection System
-// FIXED: AI Vote now takes priority over name parsing
+// HYDRA v6.2 - Category Detection System
+// FIXED v6.2: vinyl vs vin bug - check vinyl BEFORE vehicle/vin patterns
 
 import type { ItemCategory, CategoryDetection } from './types.js';
 
@@ -111,7 +111,7 @@ export function getApisForCategory(category: string): string[] {
 }
 
 // ==================== MAIN CATEGORY DETECTION ====================
-// FIXED v6.1: Reordered priorities - AI vote now comes FIRST since AI saw the image!
+// FIXED v6.2: Reordered priorities - AI vote now comes FIRST since AI saw the image!
 
 export function detectItemCategory(
   itemName: string, 
@@ -188,9 +188,20 @@ export function detectCategoryFromName(nameLower: string): string | null {
     return 'household'; // Will trigger UPCitemdb
   }
   
+  // IMPORTANT: Check for vinyl BEFORE checking for VIN!
+  // "vinyl" contains "vin" so we must check this first
+  if (nameLower.includes('vinyl') || nameLower.includes('record') ||
+      nameLower.includes(' lp') || nameLower.includes('lp ') ||
+      nameLower.includes('33 rpm') || nameLower.includes('45 rpm') ||
+      nameLower.includes('album')) {
+    return 'vinyl_records';
+  }
+  
   // VIN Detection - 17 character alphanumeric (excluding I, O, Q)
+  // Only check for "vin" as a word, not as part of "vinyl"
   const vinPattern = /\b[A-HJ-NPR-Z0-9]{17}\b/i;
-  if (vinPattern.test(nameLower) || nameLower.includes('vin')) {
+  const hasVinWord = /\bvin\b/i.test(nameLower); // "vin" as whole word only
+  if (vinPattern.test(nameLower) || hasVinWord) {
     return 'vehicles';
   }
   
@@ -279,7 +290,7 @@ export function detectCategoryFromName(nameLower: string): string | null {
     return 'pokemon_cards';
   }
   
-  // Check for Pokemon names + "card"
+  // Check for Pokemon names
   const pokemonNames = [
     'pikachu', 'charizard', 'blastoise', 'venusaur', 'mewtwo', 'mew',
     'ampharos', 'dragonite', 'gyarados', 'snorlax', 'gengar', 'alakazam',
@@ -292,12 +303,12 @@ export function detectCategoryFromName(nameLower: string): string | null {
     'xerneas', 'yveltal', 'zygarde', 'diancie', 'hoopa', 'volcanion',
     'solgaleo', 'lunala', 'necrozma', 'marshadow', 'zeraora',
     'zacian', 'zamazenta', 'eternatus', 'calyrex', 'urshifu',
-    'umbreon', 'espeon', 'leafeon', 'glaceon', 'sylveon'
+    'umbreon', 'espeon', 'leafeon', 'glaceon', 'sylveon',
+    'stonjourner', 'dracovish', 'dragapult', 'corviknight', 'toxtricity'
   ];
   
   for (const pokemon of pokemonNames) {
     if (nameLower.includes(pokemon)) {
-      // If a Pokemon name is found, it's almost certainly a Pokemon card
       return 'pokemon_cards';
     }
   }
@@ -334,13 +345,6 @@ export function detectCategoryFromName(nameLower: string): string | null {
     return 'books';
   }
   
-  // Vinyl patterns
-  if (nameLower.includes('vinyl') || nameLower.includes('record') ||
-      nameLower.includes(' lp') || nameLower.includes('lp ') ||
-      nameLower.includes('33 rpm') || nameLower.includes('45 rpm')) {
-    return 'vinyl_records';
-  }
-  
   // Video game patterns
   if (nameLower.includes('video game') || nameLower.includes('nintendo') ||
       nameLower.includes('playstation') || nameLower.includes('xbox') ||
@@ -366,9 +370,25 @@ export function detectCategoryFromName(nameLower: string): string | null {
 }
 
 // ==================== CATEGORY NORMALIZATION ====================
+// FIXED v6.2: Check vinyl BEFORE vehicle to prevent "vinyl" matching "vin"
 
 export function normalizeCategory(category: string): string {
   const catLower = category.toLowerCase().trim().replace(/[_\s-]+/g, '_');
+  
+  // Pokemon/trading card normalization - check FIRST
+  if (catLower.includes('pokemon') || catLower.includes('pokémon')) {
+    return 'pokemon_cards';
+  }
+  
+  if (catLower.includes('trading_card') || catLower.includes('tcg') || catLower === 'cards') {
+    return 'trading_cards';
+  }
+  
+  // CRITICAL: Check vinyl BEFORE vehicle! "vinyl" contains "vin"
+  if (catLower.includes('vinyl') || catLower.includes('record') || 
+      catLower === 'music' || catLower === 'album' || catLower.includes('discogs')) {
+    return 'vinyl_records';
+  }
   
   // Household normalization
   if (catLower.includes('household') || catLower.includes('appliance') || 
@@ -376,22 +396,20 @@ export function normalizeCategory(category: string): string {
     return 'household';
   }
   
-  // Vehicle normalization
+  // Vehicle normalization - AFTER vinyl check!
+  // Only match "vin" as a standalone word or with underscores, not as part of "vinyl"
+  const isVinRelated = catLower === 'vin' || 
+                       catLower.startsWith('vin_') || 
+                       catLower.endsWith('_vin') ||
+                       catLower.includes('_vin_');
+  
   if (catLower.includes('vehicle') || catLower.includes('auto') ||
-      catLower.includes('truck') || catLower.includes('motorcycle') || catLower.includes('vin')) {
-    // BUT don't normalize to vehicles if it contains card keywords
-    if (!catLower.includes('card') && !catLower.includes('pokemon') && !catLower.includes('tcg')) {
+      catLower.includes('truck') || catLower.includes('motorcycle') || isVinRelated) {
+    // Double-check it's not a card or vinyl
+    if (!catLower.includes('card') && !catLower.includes('pokemon') && 
+        !catLower.includes('tcg') && !catLower.includes('vinyl')) {
       return 'vehicles';
     }
-  }
-  
-  // Pokemon/trading card normalization - check BEFORE generic car check
-  if (catLower.includes('pokemon') || catLower.includes('pokémon')) {
-    return 'pokemon_cards';
-  }
-  
-  if (catLower.includes('trading_card') || catLower.includes('tcg') || catLower === 'cards') {
-    return 'trading_cards';
   }
   
   if (catLower.includes('coin') || catLower.includes('numismatic') || catLower.includes('currency')) {
@@ -404,10 +422,6 @@ export function normalizeCategory(category: string): string {
   
   if (catLower.includes('video_game') || catLower.includes('videogame') || catLower === 'gaming') {
     return 'video_games';
-  }
-  
-  if (catLower.includes('vinyl') || catLower.includes('record') || catLower === 'music' || catLower === 'album') {
-    return 'vinyl_records';
   }
   
   if (catLower.includes('comic') || catLower.includes('manga')) {
@@ -445,12 +459,12 @@ export function detectCategoryByKeywords(nameLower: string): { category: ItemCat
       'new in box', 'nib', 'sealed', 'factory sealed', 'unopened',
       'walmart', 'target', 'costco', 'amazon basics'
     ],
-    // Vehicle keywords
+    // Vehicle keywords - removed 'vin' to avoid matching 'vinyl'
     vehicles: [
       'vehicle', 'automobile', 'automotive', 'sedan', 'coupe', 'hatchback',
       'truck', 'pickup', 'suv', 'crossover', 'minivan', 'wagon',
       'motorcycle', 'motorbike', 'scooter', 'atv', 'utv',
-      'vin', 'odometer', 'mileage', 'title', 'carfax',
+      'odometer', 'mileage', 'title', 'carfax',
       'ford', 'chevrolet', 'chevy', 'toyota', 'honda', 'nissan', 'dodge', 'ram',
       'jeep', 'gmc', 'bmw', 'mercedes', 'audi', 'lexus', 'acura', 'infiniti',
       'volkswagen', 'subaru', 'mazda', 'hyundai', 'kia', 'tesla', 'rivian', 'lucid',
@@ -500,11 +514,13 @@ export function detectCategoryByKeywords(nameLower: string): { category: ItemCat
       'rayquaza', 'groudon', 'kyogre', 'dialga', 'palkia', 'giratina', 'arceus',
       'reshiram', 'zekrom', 'kyurem', 'xerneas', 'yveltal', 'zygarde',
       'solgaleo', 'lunala', 'necrozma', 'zacian', 'zamazenta', 'eternatus',
+      'stonjourner', 'dracovish', 'dragapult', 'corviknight', 'toxtricity',
       'vmax', 'vstar', 'v card', 'gx card', 'ex card', 'full art',
       'rainbow rare', 'secret rare', 'shiny', 'holo', 'holographic',
       'reverse holo', 'promo', 'trainer gallery', 'alt art',
       'illustration rare', 'special art', 'gold star', 'shining',
-      'base set', 'jungle', 'fossil', 'team rocket'
+      'base set', 'jungle', 'fossil', 'team rocket',
+      'single strike', 'rapid strike', 'fusion strike'
     ],
     mtg_cards: ['magic the gathering', 'mtg', 'planeswalker', 'mana', 'wizards of the coast'],
     sports_cards: [

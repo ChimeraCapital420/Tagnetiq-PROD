@@ -1,5 +1,6 @@
 // FILE: src/lib/hydra/fetchers/nhtsa.ts
-// HYDRA v5.2 - NHTSA VIN Decoder Fetcher (Vehicles)
+// HYDRA v6.2 - NHTSA VIN Decoder Fetcher (Vehicles)
+// FIXED: Better VIN extraction from multiple sources
 // FREE API - No key required!
 // Documentation: https://vpic.nhtsa.dot.gov/api/
 
@@ -35,19 +36,48 @@ export interface NHTSAVehicleData {
   errorText: string;
 }
 
-export async function fetchNhtsaData(itemName: string): Promise<MarketDataSource> {
+/**
+ * Main entry point - can accept VIN directly or extract from item name
+ */
+export async function fetchNhtsaData(
+  itemName: string, 
+  additionalContext?: string
+): Promise<MarketDataSource> {
   const startTime = Date.now();
 
   try {
-    // Extract VIN from item name
-    const vin = extractVIN(itemName);
+    // Try multiple sources for VIN extraction
+    let vin = extractVIN(itemName);
+    
+    // If not found in item name, try additional context
+    if (!vin && additionalContext) {
+      vin = extractVIN(additionalContext);
+      if (vin) {
+        console.log(`🔍 NHTSA: Found VIN in additional context: ${vin}`);
+      }
+    }
+    
+    // If still not found, check if the item name itself looks like a VIN
+    if (!vin) {
+      const cleanedName = itemName.replace(/\s+/g, '').toUpperCase();
+      if (/^[A-HJ-NPR-Z0-9]{17}$/.test(cleanedName)) {
+        vin = cleanedName;
+        console.log(`🔍 NHTSA: Item name appears to be a VIN: ${vin}`);
+      }
+    }
     
     if (!vin) {
-      console.log('⚠️ NHTSA: No valid VIN found in item name');
+      console.log('⚠️ NHTSA: No valid VIN found in item name or context');
       return createFallbackResult(itemName, 'No VIN detected');
     }
 
     console.log(`🔍 NHTSA VIN decode: "${vin}"`);
+
+    // Validate VIN format
+    if (!isValidVINFormat(vin)) {
+      console.log(`⚠️ NHTSA: Invalid VIN format: ${vin}`);
+      return createFallbackResult(itemName, `Invalid VIN format: ${vin}`);
+    }
 
     // Use DecodeVinExtended for maximum data
     const decodeUrl = `${NHTSA_API_BASE}/DecodeVinExtended/${vin}?format=json`;
@@ -56,7 +86,7 @@ export async function fetchNhtsaData(itemName: string): Promise<MarketDataSource
       method: 'GET',
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'Tagnetiq-HYDRA/1.0',
+        'User-Agent': 'Tagnetiq-HYDRA/6.2',
       },
     });
 
@@ -78,7 +108,7 @@ export async function fetchNhtsaData(itemName: string): Promise<MarketDataSource
 
     // Check for decode errors
     if (vehicleData.errorCode && vehicleData.errorCode !== '0') {
-      console.log(`⚠️ NHTSA decode error: ${vehicleData.errorText}`);
+      console.log(`⚠️ NHTSA decode warning: ${vehicleData.errorText}`);
     }
 
     // Build display title
@@ -145,23 +175,53 @@ export async function fetchNhtsaData(itemName: string): Promise<MarketDataSource
 }
 
 /**
+ * Check if string is valid VIN format (17 alphanumeric, no I, O, Q)
+ */
+function isValidVINFormat(vin: string): boolean {
+  if (!vin || vin.length !== 17) return false;
+  return /^[A-HJ-NPR-Z0-9]{17}$/i.test(vin);
+}
+
+/**
  * Extract VIN from item name/description
  * VINs are 17 characters (letters and numbers, excluding I, O, Q)
  */
-function extractVIN(itemName: string): string | null {
-  // Standard 17-character VIN pattern
-  // VINs don't contain I, O, or Q
-  const vinPattern = /\b[A-HJ-NPR-Z0-9]{17}\b/gi;
-  const matches = itemName.match(vinPattern);
+function extractVIN(text: string): string | null {
+  if (!text) return null;
+  
+  // Normalize text: remove common separators, keep alphanumerics
+  const normalizedText = text.toUpperCase();
+  
+  // Pattern 1: Standard 17-character VIN (most reliable)
+  const vinPattern = /\b[A-HJ-NPR-Z0-9]{17}\b/g;
+  const matches = normalizedText.match(vinPattern);
   
   if (matches && matches.length > 0) {
-    return matches[0].toUpperCase();
+    // Validate each match and return the first valid one
+    for (const match of matches) {
+      if (isValidVINFormat(match)) {
+        return match;
+      }
+    }
   }
 
-  // Try to find partial VIN mentions
-  const vinMention = itemName.match(/vin[:\s#]*([A-HJ-NPR-Z0-9]{17})/i);
-  if (vinMention) {
-    return vinMention[1].toUpperCase();
+  // Pattern 2: VIN with label prefix (e.g., "VIN: XXXXX" or "VIN#XXXXX")
+  const vinLabelPattern = /VIN[:\s#-]*([A-HJ-NPR-Z0-9]{17})/i;
+  const labelMatch = normalizedText.match(vinLabelPattern);
+  if (labelMatch && isValidVINFormat(labelMatch[1])) {
+    return labelMatch[1];
+  }
+
+  // Pattern 3: VIN with spaces or dashes (sometimes formatted for readability)
+  const spacedPattern = /([A-HJ-NPR-Z0-9]{1}[\s-]?){17}/g;
+  const spacedMatches = normalizedText.match(spacedPattern);
+  if (spacedMatches) {
+    for (const match of spacedMatches) {
+      const cleaned = match.replace(/[\s-]/g, '');
+      if (isValidVINFormat(cleaned)) {
+        return cleaned;
+      }
+    }
   }
 
   return null;
@@ -279,6 +339,7 @@ function createFallbackResult(itemName: string, reason: string): MarketDataSourc
       fallback: true,
       reason,
       searchUrl: 'https://vpic.nhtsa.dot.gov/decoder/',
+      tip: 'Ensure the VIN is included in the item name or description for automatic decoding.',
     },
   };
 }
