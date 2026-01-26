@@ -53,10 +53,24 @@ export const config = {
 interface AnalyzeRequest {
   itemName: string;
   imageBase64?: string;
+  additionalImages?: string[];
   userId?: string;
   analysisId?: string;
   categoryHint?: string;
   condition?: string;
+}
+
+interface MultiModalItem {
+  type: 'photo' | 'video' | 'document' | 'certificate';
+  name: string;
+  data: string;
+  additionalFrames?: string[];
+  metadata?: {
+    documentType?: string;
+    description?: string;
+    extractedText?: string;
+    barcodes?: string[];
+  };
 }
 
 function validateRequest(body: unknown): AnalyzeRequest {
@@ -64,7 +78,80 @@ function validateRequest(body: unknown): AnalyzeRequest {
     throw new Error('Invalid request body');
   }
   
-  const { itemName, imageBase64, userId, analysisId, categoryHint, condition } = body as Record<string, unknown>;
+  const rawBody = body as Record<string, unknown>;
+  
+  // ==========================================================================
+  // HANDLE MULTI-MODAL FORMAT (from DualScanner)
+  // ==========================================================================
+  if (rawBody.items && Array.isArray(rawBody.items) && rawBody.items.length > 0) {
+    const items = rawBody.items as MultiModalItem[];
+    const primaryItem = items[0];
+    
+    // Extract image data from the primary item
+    let imageBase64: string | undefined;
+    if (primaryItem.data) {
+      // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+      imageBase64 = primaryItem.data.includes('base64,') 
+        ? primaryItem.data.split('base64,')[1] 
+        : primaryItem.data;
+    }
+    
+    // Collect additional images from other items and video frames
+    const additionalImages: string[] = [];
+    
+    // Add frames from video items
+    if (primaryItem.additionalFrames) {
+      primaryItem.additionalFrames.forEach(frame => {
+        const cleanFrame = frame.includes('base64,') ? frame.split('base64,')[1] : frame;
+        additionalImages.push(cleanFrame);
+      });
+    }
+    
+    // Add images from other selected items
+    items.slice(1).forEach(item => {
+      if (item.data) {
+        const cleanData = item.data.includes('base64,') ? item.data.split('base64,')[1] : item.data;
+        additionalImages.push(cleanData);
+      }
+    });
+    
+    // Generate item name from context
+    let itemName = 'Unknown Item';
+    
+    // Try to get name from item metadata or generate from type
+    if (primaryItem.name && !primaryItem.name.startsWith('Photo ') && !primaryItem.name.startsWith('Video ')) {
+      itemName = primaryItem.name;
+    } else if (primaryItem.metadata?.description) {
+      itemName = primaryItem.metadata.description;
+    } else if (primaryItem.metadata?.extractedText) {
+      // Use first 50 chars of extracted text as hint
+      itemName = primaryItem.metadata.extractedText.substring(0, 50).trim() || 'Unknown Item';
+    } else {
+      // Generate generic name based on scan type
+      const scanType = rawBody.scanType as string || 'multi-modal';
+      itemName = `${scanType} scan - ${items.length} item(s)`;
+    }
+    
+    // Extract category hint from category_id or subcategory_id
+    const categoryHint = (rawBody.subcategory_id as string) || 
+                         (rawBody.category_id as string) || 
+                         undefined;
+    
+    return {
+      itemName,
+      imageBase64,
+      additionalImages: additionalImages.length > 0 ? additionalImages : undefined,
+      userId: typeof rawBody.userId === 'string' ? rawBody.userId : undefined,
+      analysisId: typeof rawBody.analysisId === 'string' ? rawBody.analysisId : `analysis_${Date.now()}`,
+      categoryHint: categoryHint !== 'general' ? categoryHint : undefined,
+      condition: typeof rawBody.condition === 'string' ? rawBody.condition : 'good',
+    };
+  }
+  
+  // ==========================================================================
+  // HANDLE STANDARD FORMAT (direct itemName)
+  // ==========================================================================
+  const { itemName, imageBase64, userId, analysisId, categoryHint, condition } = rawBody;
   
   if (!itemName || typeof itemName !== 'string' || itemName.trim().length === 0) {
     throw new Error('itemName is required');
@@ -88,7 +175,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -102,14 +189,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let analysisId = '';
 
   try {
-    // 1. Validate request
+    // 1. Validate request (handles both multi-modal and standard formats)
     const request = validateRequest(req.body);
     analysisId = request.analysisId!;
     
     console.log(`\n🔥 === HYDRA v6.0 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName}"`);
     console.log(`🆔 ID: ${analysisId}`);
-    console.log(`🖼️ Image: ${request.imageBase64 ? 'Yes' : 'No'}`);
+    console.log(`🖼️ Primary Image: ${request.imageBase64 ? 'Yes' : 'No'}`);
+    console.log(`🖼️ Additional Images: ${request.additionalImages?.length || 0}`);
     
     // 2. Detect category
     const categoryResult = detectItemCategory(request.itemName, request.categoryHint);
