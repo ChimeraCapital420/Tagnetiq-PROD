@@ -80,7 +80,9 @@ export interface FormattedAuthorityData {
     price: number;
   }>;
   
-  // Google Books specific
+  // =========================================================================
+  // GOOGLE BOOKS SPECIFIC
+  // =========================================================================
   isbn?: string;
   isbn13?: string;
   isbn10?: string;
@@ -99,7 +101,9 @@ export interface FormattedAuthorityData {
   };
   retailPrice?: number;
   
-  // Numista specific (coins)
+  // =========================================================================
+  // NUMISTA SPECIFIC (Coins & Banknotes)
+  // =========================================================================
   numistaId?: number;
   issuer?: string;
   minYear?: number;
@@ -115,7 +119,9 @@ export interface FormattedAuthorityData {
   obverseThumb?: string;
   reverseThumb?: string;
   
-  // Pokemon TCG specific
+  // =========================================================================
+  // POKEMON TCG SPECIFIC
+  // =========================================================================
   pokemonTcgId?: string;
   setName?: string;
   setCode?: string;
@@ -126,6 +132,99 @@ export interface FormattedAuthorityData {
   attacks?: any[];
   weaknesses?: any[];
   resistances?: any[];
+  cardNumber?: string;
+  
+  // =========================================================================
+  // BRICKSET SPECIFIC (LEGO)
+  // =========================================================================
+  bricksetId?: number;
+  setNumber?: string;
+  year?: number;
+  theme?: string;
+  themeGroup?: string;
+  subtheme?: string;
+  pieces?: number;
+  minifigs?: number;
+  ageRange?: string;
+  packagingType?: string;
+  availability?: string;
+  instructionsCount?: number;
+  rrp?: number; // Recommended retail price
+  pricePerPiece?: number;
+  
+  // =========================================================================
+  // DISCOGS SPECIFIC (Vinyl/Music)
+  // =========================================================================
+  discogsId?: number;
+  releaseId?: number;
+  masterId?: number;
+  artistName?: string;
+  label?: string;
+  format?: string[];
+  country?: string;
+  released?: string;
+  genres?: string[];
+  styles?: string[];
+  tracklist?: Array<{
+    position: string;
+    title: string;
+    duration?: string;
+  }>;
+  lowestPrice?: number;
+  medianPrice?: number;
+  highestPrice?: number;
+  numForSale?: number;
+  
+  // =========================================================================
+  // RETAILED SPECIFIC (Sneakers/Streetwear)
+  // =========================================================================
+  retailedId?: string;
+  sku?: string;
+  styleCode?: string;
+  brand?: string;
+  colorway?: string;
+  releaseDate?: string;
+  retailPriceMSRP?: number;
+  resalePrices?: {
+    stockx?: number;
+    goat?: number;
+    flightClub?: number;
+    stadiumGoods?: number;
+  };
+  pricesBySize?: Array<{
+    size: string;
+    price: number;
+  }>;
+  gender?: string;
+  silhouette?: string;
+  
+  // =========================================================================
+  // PSA SPECIFIC (Graded Items)
+  // =========================================================================
+  psaCertNumber?: string;
+  grade?: string;
+  gradeDescription?: string;
+  cardYear?: string;
+  cardBrand?: string;
+  cardCategory?: string;
+  cardSubject?: string;
+  cardVariety?: string;
+  totalPopulation?: number;
+  populationHigher?: number;
+  labelType?: string;
+  isCrossedOver?: boolean;
+  certDate?: string;
+  
+  // =========================================================================
+  // COLNECT SPECIFIC (Future - Multi-category collectibles)
+  // =========================================================================
+  colnectId?: number;
+  colnectCategory?: string;
+  seriesName?: string;
+  producerName?: string;
+  frontImageUrl?: string;
+  backImageUrl?: string;
+  catalogCodes?: string;
   
   // Raw item details (fallback for any other data)
   itemDetails?: Record<string, any>;
@@ -281,7 +380,7 @@ export function formatAnalysisResponse(
 }
 
 /**
- * Format authority data for response - PRESERVES ALL RICH DATA
+ * Format authority data for response - PRESERVES ALL RICH DATA FROM ALL SOURCES
  */
 export function formatAuthorityData(authority: AuthorityData): FormattedAuthorityData {
   const formatted: FormattedAuthorityData = {
@@ -305,9 +404,9 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
   if (authority.marketValue) {
     const mv = authority.marketValue;
     formatted.marketValue = {
-      low: formatPriceSmart(mv.fair || mv.poor || mv.good || 0),
-      mid: formatPriceSmart(mv.good || mv.average || mv.vf || 0),
-      high: formatPriceSmart(mv.excellent || mv.mint || mv.unc || 0),
+      low: formatPriceSmart(mv.fair || mv.poor || mv.good || mv.low || 0),
+      mid: formatPriceSmart(mv.good || mv.average || mv.vf || mv.mid || 0),
+      high: formatPriceSmart(mv.excellent || mv.mint || mv.unc || mv.high || 0),
     };
   }
 
@@ -374,7 +473,7 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
   // =========================================================================
   // POKEMON TCG DATA
   // =========================================================================
-  if (authority.source === 'pokemon_tcg' || details.pokemonTcgId) {
+  if (authority.source === 'pokemon_tcg' || details.pokemonTcgId || details.id) {
     formatted.pokemonTcgId = details.pokemonTcgId || details.id;
     formatted.title = details.name || formatted.title;
     formatted.setName = details.setName || details.set?.name;
@@ -386,7 +485,205 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
     formatted.attacks = details.attacks;
     formatted.weaknesses = details.weaknesses;
     formatted.resistances = details.resistances;
+    formatted.cardNumber = details.number || details.cardNumber;
     formatted.imageLinks = details.images;
+    formatted.externalUrl = details.tcgPlayerUrl || formatted.externalUrl;
+    
+    // Market prices from tcgplayer
+    if (details.tcgplayer?.prices) {
+      const prices = details.tcgplayer.prices;
+      const priceType = prices.holofoil || prices.normal || prices.reverseHolofoil || {};
+      formatted.marketValue = {
+        low: formatPriceSmart(priceType.low || 0),
+        mid: formatPriceSmart(priceType.mid || priceType.market || 0),
+        high: formatPriceSmart(priceType.high || 0),
+      };
+    }
+  }
+
+  // =========================================================================
+  // BRICKSET DATA (LEGO)
+  // =========================================================================
+  if (authority.source === 'brickset' || details.bricksetId || details.setID) {
+    formatted.bricksetId = details.bricksetId || details.setID;
+    formatted.setNumber = details.number || details.setNumber;
+    formatted.title = details.name || formatted.title;
+    formatted.year = details.year;
+    formatted.theme = details.theme;
+    formatted.themeGroup = details.themeGroup;
+    formatted.subtheme = details.subtheme;
+    formatted.pieces = details.pieces;
+    formatted.minifigs = details.minifigs;
+    formatted.ageRange = details.ageRange || (details.ageMin && details.ageMax ? `${details.ageMin}-${details.ageMax}` : undefined);
+    formatted.packagingType = details.packagingType;
+    formatted.availability = details.availability;
+    formatted.instructionsCount = details.instructionsCount;
+    formatted.imageLinks = details.image ? { thumbnail: details.image } : undefined;
+    formatted.externalUrl = details.bricksetURL || formatted.externalUrl;
+    
+    // LEGO pricing
+    if (details.LEGOCom?.US) {
+      formatted.rrp = details.LEGOCom.US.retailPrice;
+      formatted.retailPrice = details.LEGOCom.US.retailPrice;
+    }
+    if (details.pieces && formatted.retailPrice) {
+      formatted.pricePerPiece = parseFloat((formatted.retailPrice / details.pieces).toFixed(3));
+    }
+    
+    // Current market value
+    if (details.priceGuide || details.currentValue) {
+      const pg = details.priceGuide || {};
+      formatted.marketValue = {
+        low: formatPriceSmart(pg.minNew || pg.minUsed || 0),
+        mid: formatPriceSmart(pg.avgNew || details.currentValue || 0),
+        high: formatPriceSmart(pg.maxNew || 0),
+      };
+    }
+  }
+
+  // =========================================================================
+  // DISCOGS DATA (Vinyl/Music)
+  // =========================================================================
+  if (authority.source === 'discogs' || details.discogsId || details.releaseId) {
+    formatted.discogsId = details.discogsId || details.id;
+    formatted.releaseId = details.releaseId || details.id;
+    formatted.masterId = details.masterId || details.master_id;
+    formatted.title = details.title || formatted.title;
+    formatted.artistName = Array.isArray(details.artists) 
+      ? details.artists.map((a: any) => a.name).join(', ')
+      : details.artistName;
+    formatted.label = Array.isArray(details.labels)
+      ? details.labels.map((l: any) => l.name).join(', ')
+      : details.label;
+    formatted.format = details.formats?.map((f: any) => f.name) || details.format;
+    formatted.country = details.country;
+    formatted.released = details.released || details.year;
+    formatted.genres = details.genres;
+    formatted.styles = details.styles;
+    formatted.tracklist = details.tracklist?.map((t: any) => ({
+      position: t.position,
+      title: t.title,
+      duration: t.duration,
+    }));
+    formatted.imageLinks = details.images?.[0] ? { thumbnail: details.images[0].uri } : undefined;
+    formatted.externalUrl = details.uri || formatted.externalUrl;
+    
+    // Discogs marketplace stats
+    if (details.lowestPrice || details.stats) {
+      formatted.lowestPrice = details.lowestPrice || details.stats?.lowestPrice;
+      formatted.medianPrice = details.medianPrice || details.stats?.medianPrice;
+      formatted.highestPrice = details.highestPrice || details.stats?.highestPrice;
+      formatted.numForSale = details.numForSale || details.stats?.numForSale;
+      
+      formatted.marketValue = {
+        low: formatPriceSmart(formatted.lowestPrice || 0),
+        mid: formatPriceSmart(formatted.medianPrice || 0),
+        high: formatPriceSmart(formatted.highestPrice || 0),
+      };
+    }
+  }
+
+  // =========================================================================
+  // RETAILED DATA (Sneakers/Streetwear)
+  // =========================================================================
+  if (authority.source === 'retailed' || details.retailedId || details.sku) {
+    formatted.retailedId = details.retailedId || details.id;
+    formatted.sku = details.sku || details.styleId;
+    formatted.styleCode = details.styleCode || details.styleId;
+    formatted.title = details.name || details.title || formatted.title;
+    formatted.brand = details.brand;
+    formatted.colorway = details.colorway || details.color;
+    formatted.releaseDate = details.releaseDate;
+    formatted.gender = details.gender;
+    formatted.silhouette = details.silhouette || details.model;
+    formatted.imageLinks = details.image ? { thumbnail: details.image } : (details.images?.[0] ? { thumbnail: details.images[0] } : undefined);
+    formatted.externalUrl = details.url || formatted.externalUrl;
+    
+    // MSRP
+    formatted.retailPriceMSRP = details.retailPrice || details.msrp;
+    formatted.retailPrice = details.retailPrice || details.msrp;
+    
+    // Resale prices by platform
+    if (details.resellPrices || details.market) {
+      const rp = details.resellPrices || details.market || {};
+      formatted.resalePrices = {
+        stockx: rp.stockX || rp.stockx,
+        goat: rp.goat,
+        flightClub: rp.flightClub,
+        stadiumGoods: rp.stadiumGoods,
+      };
+      
+      // Calculate market value from resale prices
+      const prices = Object.values(formatted.resalePrices).filter(p => p && p > 0) as number[];
+      if (prices.length > 0) {
+        formatted.marketValue = {
+          low: formatPriceSmart(Math.min(...prices)),
+          mid: formatPriceSmart(prices.reduce((a, b) => a + b, 0) / prices.length),
+          high: formatPriceSmart(Math.max(...prices)),
+        };
+      }
+    }
+    
+    // Prices by size
+    if (details.pricesBySize || details.sizeChart) {
+      formatted.pricesBySize = (details.pricesBySize || details.sizeChart)?.map((s: any) => ({
+        size: s.size,
+        price: s.price || s.lowestAsk,
+      }));
+    }
+  }
+
+  // =========================================================================
+  // PSA DATA (Graded Items)
+  // =========================================================================
+  if (authority.source === 'psa' || details.psaCertNumber || details.certNumber) {
+    formatted.psaCertNumber = details.psaCertNumber || details.certNumber;
+    formatted.grade = details.grade;
+    formatted.gradeDescription = details.gradeDescription;
+    formatted.cardYear = details.cardYear || details.year;
+    formatted.cardBrand = details.cardBrand || details.brand;
+    formatted.cardCategory = details.cardCategory || details.category;
+    formatted.cardSubject = details.cardSubject || details.subject || details.player;
+    formatted.cardVariety = details.cardVariety || details.variety;
+    formatted.cardNumber = details.cardNumber;
+    formatted.totalPopulation = details.totalPopulation || details.popTotal;
+    formatted.populationHigher = details.populationHigher || details.popHigher;
+    formatted.labelType = details.labelType;
+    formatted.isCrossedOver = details.isCrossedOver;
+    formatted.certDate = details.certDate;
+    formatted.title = `${details.cardYear || ''} ${details.cardBrand || ''} ${details.cardSubject || ''} PSA ${details.grade || ''}`.trim() || formatted.title;
+    formatted.externalUrl = details.certUrl || `https://www.psacard.com/cert/${details.certNumber}` || formatted.externalUrl;
+    formatted.catalogNumber = details.certNumber || formatted.catalogNumber;
+  }
+
+  // =========================================================================
+  // COLNECT DATA (Future - Multi-category collectibles)
+  // =========================================================================
+  if (authority.source === 'colnect' || details.colnectId) {
+    formatted.colnectId = details.colnectId || details.id;
+    formatted.colnectCategory = details.colnectCategory || details.category;
+    formatted.title = details.itemName || details.name || formatted.title;
+    formatted.seriesName = details.seriesName || details.series;
+    formatted.producerName = details.producerName || details.producer || details.issuer;
+    formatted.catalogCodes = details.catalogCodes;
+    formatted.year = details.year;
+    formatted.country = details.country;
+    
+    // Image URLs
+    if (details.frontPictureId) {
+      const idStr = String(details.frontPictureId);
+      const thousands = idStr.slice(0, -3) || '0';
+      const remainder = idStr.slice(-3);
+      formatted.frontImageUrl = `https://i.colnect.net/images/t/${thousands}/${remainder}/${formatted.title?.replace(/\s+/g, '_') || 'item'}.jpg`;
+    }
+    if (details.backPictureId) {
+      const idStr = String(details.backPictureId);
+      const thousands = idStr.slice(0, -3) || '0';
+      const remainder = idStr.slice(-3);
+      formatted.backImageUrl = `https://i.colnect.net/images/t/${thousands}/${remainder}/${formatted.title?.replace(/\s+/g, '_') || 'item'}.jpg`;
+    }
+    
+    formatted.externalUrl = details.url || formatted.externalUrl;
   }
 
   // =========================================================================
@@ -398,14 +695,37 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
     
     // Remove already-extracted fields to avoid duplication
     const extractedKeys = [
+      // Google Books
       'googleBooksId', 'isbn13', 'isbn10', 'authors', 'publisher', 'publishedDate',
       'pageCount', 'categories', 'description', 'language', 'averageRating', 'ratingsCount',
-      'imageLinks', 'infoLink', 'canonicalVolumeLink', 'previewLink',
-      'numistaId', 'title', 'issuer', 'minYear', 'maxYear', 'value', 'composition',
+      'imageLinks', 'images', 'image', 'infoLink', 'canonicalVolumeLink', 'previewLink',
+      // Numista
+      'numistaId', 'title', 'name', 'issuer', 'minYear', 'maxYear', 'value', 'composition',
       'weight', 'size', 'thickness', 'shape', 'orientation', 'references', 'url',
       'obverseThumb', 'reverseThumb', 'category',
-      'pokemonTcgId', 'id', 'name', 'setName', 'set', 'setCode', 'rarity', 'artist',
-      'hp', 'types', 'attacks', 'weaknesses', 'resistances', 'images',
+      // Pokemon TCG
+      'pokemonTcgId', 'id', 'set', 'setName', 'setCode', 'rarity', 'artist',
+      'hp', 'types', 'attacks', 'weaknesses', 'resistances', 'number', 'tcgplayer', 'tcgPlayerUrl',
+      // Brickset
+      'bricksetId', 'setID', 'setNumber', 'year', 'theme', 'themeGroup', 'subtheme',
+      'pieces', 'minifigs', 'ageMin', 'ageMax', 'ageRange', 'packagingType', 'availability',
+      'instructionsCount', 'LEGOCom', 'bricksetURL', 'priceGuide', 'currentValue',
+      // Discogs
+      'discogsId', 'releaseId', 'masterId', 'master_id', 'artists', 'artistName',
+      'labels', 'label', 'formats', 'format', 'country', 'released', 'genres', 'styles',
+      'tracklist', 'uri', 'lowestPrice', 'medianPrice', 'highestPrice', 'numForSale', 'stats',
+      // Retailed
+      'retailedId', 'sku', 'styleId', 'styleCode', 'brand', 'colorway', 'color',
+      'releaseDate', 'gender', 'silhouette', 'model', 'retailPrice', 'msrp',
+      'resellPrices', 'market', 'pricesBySize', 'sizeChart',
+      // PSA
+      'psaCertNumber', 'certNumber', 'grade', 'gradeDescription', 'cardYear',
+      'cardBrand', 'cardCategory', 'cardSubject', 'subject', 'player', 'cardVariety', 'variety',
+      'cardNumber', 'totalPopulation', 'popTotal', 'populationHigher', 'popHigher',
+      'labelType', 'isCrossedOver', 'certDate', 'certUrl',
+      // Colnect
+      'colnectId', 'colnectCategory', 'itemName', 'seriesName', 'series',
+      'producerName', 'producer', 'catalogCodes', 'frontPictureId', 'backPictureId',
     ];
     
     extractedKeys.forEach(key => delete remainingDetails[key]);
