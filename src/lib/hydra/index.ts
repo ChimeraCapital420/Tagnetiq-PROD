@@ -23,17 +23,17 @@ export * from './prompts/index.js';
 export * from './ai/index.js';
 
 // =============================================================================
-// CONSENSUS ENGINE (Phase 3)
+// CONSENSUS ENGINE
 // =============================================================================
 export * from './consensus/index.js';
 
 // =============================================================================
-// PRICING (Phase 4)
+// PRICING
 // =============================================================================
 export * from './pricing/index.js';
 
 // =============================================================================
-// STORAGE (Phase 4)
+// STORAGE
 // =============================================================================
 export * from './storage/index.js';
 
@@ -42,8 +42,9 @@ export * from './storage/index.js';
 // =============================================================================
 export {
   detectItemCategory,
-  type CategoryResult,
-  type CategorySource,
+  getApisForCategory,
+  detectCategoryFromName,
+  normalizeCategory,
 } from './category-detection.js';
 
 // =============================================================================
@@ -52,31 +53,18 @@ export {
 export {
   // Main orchestrator
   fetchMarketData,
+  fetchMarketDataBatch,
   
   // Individual fetchers for direct access
   fetchEbayData,
   fetchNumistaData,
-  fetchPokemonTCGData,
+  fetchPokemonTcgData,
   fetchBricksetData,
   fetchGoogleBooksData,
   fetchDiscogsData,
   fetchRetailedData,
-  fetchPSAData,
-  fetchComicVineData,
-  
-  // Types
-  type MarketDataResult,
-  type AuthorityData,
-  type PriceByCondition,
-  type EbayListing,
-  type NumistaData,
-  type PokemonTCGData,
-  type BricksetData,
-  type GoogleBooksData,
-  type DiscogsData,
-  type RetailedData,
-  type PSAData,
-  type ComicVineData,
+  fetchPsaData,
+  verifyPsaCerts,
 } from './fetchers/index.js';
 
 // =============================================================================
@@ -151,16 +139,16 @@ export {
 // =============================================================================
 // VERSION INFO
 // =============================================================================
-export const HYDRA_VERSION = '6.0.0';
+export const HYDRA_VERSION = '6.0.1';
 export const HYDRA_MODULES = {
   config: true,
   prompts: true,
   categoryDetection: true,
   fetchers: true,
-  ai: true,        // Phase 2 - COMPLETE
-  consensus: true, // Phase 3 - COMPLETE
-  pricing: true,   // Phase 4 - COMPLETE
-  storage: true,   // Phase 4 - COMPLETE
+  ai: true,
+  consensus: true,
+  pricing: true,
+  storage: true,
 } as const;
 
 /**
