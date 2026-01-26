@@ -1,6 +1,8 @@
 // FILE: api/analyze.ts
-// HYDRA v6.0 - Slim Analysis Handler
+// HYDRA v6.3 - Slim Analysis Handler
 // Orchestrates modular components for multi-AI consensus analysis
+// FIXED v6.3: AI category now properly passed as 3rd parameter to detectItemCategory
+// FIXED v6.3: Vision prompt now instructs VIN extraction from images
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -162,6 +164,47 @@ function validateRequest(body: unknown): AnalyzeRequest {
 }
 
 // =============================================================================
+// VIN EXTRACTION HELPER
+// =============================================================================
+
+/**
+ * Extract VIN from AI-identified item name or raw response
+ * VINs are 17 characters: letters A-H, J-N, P, R-Z and digits 0-9
+ */
+function extractVINFromText(text: string): string | null {
+  if (!text) return null;
+  
+  const normalized = text.toUpperCase();
+  
+  // Pattern 1: Standard 17-character VIN
+  const vinPattern = /\b[A-HJ-NPR-Z0-9]{17}\b/g;
+  const matches = normalized.match(vinPattern);
+  
+  if (matches && matches.length > 0) {
+    // Validate each match (exclude I, O, Q)
+    for (const match of matches) {
+      if (!/[IOQ]/i.test(match)) {
+        return match;
+      }
+    }
+  }
+  
+  // Pattern 2: VIN with spaces or dashes (sometimes formatted)
+  const spacedPattern = /([A-HJ-NPR-Z0-9][\s-]?){17}/g;
+  const spacedMatches = normalized.match(spacedPattern);
+  if (spacedMatches) {
+    for (const match of spacedMatches) {
+      const cleaned = match.replace(/[\s-]/g, '');
+      if (cleaned.length === 17 && !/[IOQ]/i.test(cleaned)) {
+        return cleaned;
+      }
+    }
+  }
+  
+  return null;
+}
+
+// =============================================================================
 // MAIN HANDLER
 // =============================================================================
 
@@ -216,13 +259,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const visionProviders = ['openai', 'anthropic', 'google'].filter(isProviderAvailable);
     console.log(`\n  Stage 1 - Vision: ${visionProviders.join(', ') || 'none'}`);
     
-    // Build initial prompt
+    // Build initial prompt with VIN extraction instructions
     const initialPrompt = buildAnalysisPrompt({
       categoryHint: request.categoryHint,
       itemNameHint: hasItemName ? request.itemName : undefined,
     });
+    
+    // FIXED v6.3: Add VIN extraction instructions to vision prompt
+    const vinExtractionInstructions = `
+IMPORTANT: If you see a VIN (Vehicle Identification Number) anywhere in the image:
+- VINs are exactly 17 characters long (letters and numbers, excluding I, O, Q)
+- INCLUDE THE FULL VIN in your itemName response
+- Example: Instead of "Ford Vehicle VIN Plate", respond with "Ford F-150 VIN: 1FTFW1E50MFA12345"
+- Extract and include any visible VIN, serial number, or identification number in the item name
+
+Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, coin dates/mints, card numbers.
+`;
+    
     const userMessage = buildUserMessage(hasImage, request.itemName || 'Identify this item');
-    const fullPrompt = `${initialPrompt}\n\n${userMessage}`;
+    const fullPrompt = `${initialPrompt}\n\n${vinExtractionInstructions}\n\n${userMessage}`;
     
     const visionVotes = await runProviderStage(visionProviders, images, fullPrompt);
     
@@ -231,6 +286,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ==========================================================================
     let identifiedItemName = request.itemName;
     let identifiedCategory = 'general';
+    let extractedVIN: string | null = null;
+    let rawVisionResponse: any = null;
     
     if (visionVotes.length > 0) {
       // Get the best vote (highest weight/confidence)
@@ -243,10 +300,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       
       // Check if AI detected a category
-      const rawResponse = bestVote.rawResponse as any;
-      if (rawResponse?.category && rawResponse.category !== 'general') {
-        identifiedCategory = rawResponse.category;
+      rawVisionResponse = bestVote.rawResponse as any;
+      if (rawVisionResponse?.category && rawVisionResponse.category !== 'general') {
+        identifiedCategory = rawVisionResponse.category;
         console.log(`  🏷️ AI Category: ${identifiedCategory}`);
+      }
+      
+      // FIXED v6.3: Try to extract VIN from the item name or raw response
+      extractedVIN = extractVINFromText(identifiedItemName);
+      if (!extractedVIN && rawVisionResponse?.additionalDetails) {
+        extractedVIN = extractVINFromText(JSON.stringify(rawVisionResponse.additionalDetails));
+      }
+      if (extractedVIN) {
+        console.log(`  🚗 Extracted VIN: ${extractedVIN}`);
       }
     }
     
@@ -257,8 +323,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     // ==========================================================================
     // STAGE 2: Category Detection (using AI-identified item name)
+    // FIXED v6.3: Pass identifiedCategory as 3rd parameter (aiDetectedCategory)
     // ==========================================================================
-    const categoryResult = detectItemCategory(identifiedItemName, request.categoryHint || identifiedCategory);
+    const categoryResult = detectItemCategory(
+      identifiedItemName, 
+      request.categoryHint,  // 2nd param: categoryHint from request
+      identifiedCategory     // 3rd param: aiDetectedCategory from vision AI
+    );
     const finalCategory = categoryResult.category;
     console.log(`\n  🏷️ Final Category: ${finalCategory} (${categoryResult.confidence}%)`);
     
@@ -267,8 +338,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ==========================================================================
     console.log(`\n  Stage 2 - Market Data + Text Analysis (parallel)`);
     
-    // Start market data fetch with IDENTIFIED item name
-    const marketPromise = fetchMarketData(identifiedItemName, finalCategory);
+    // Build additional context for market data (includes extracted VIN)
+    const marketContext: Record<string, any> = {};
+    if (extractedVIN) {
+      marketContext.vin = extractedVIN;
+      marketContext.additionalContext = `VIN: ${extractedVIN}`;
+    }
+    if (rawVisionResponse?.additionalDetails) {
+      marketContext.visionDetails = rawVisionResponse.additionalDetails;
+    }
+    
+    // Start market data fetch with IDENTIFIED item name and context
+    // FIXED v6.3: Pass additional context for VIN extraction
+    const marketPromise = fetchMarketData(
+      identifiedItemName, 
+      finalCategory,
+      marketContext.additionalContext // Pass VIN context to fetchers
+    );
     
     // Text analysis models
     const textProviders = ['mistral', 'groq', 'xai'].filter(isProviderAvailable);
@@ -278,7 +364,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const textPrompt = buildAnalysisPrompt({
       categoryHint: finalCategory,
       itemNameHint: identifiedItemName,
-      additionalInstructions: `The item has been visually identified as: "${identifiedItemName}". Provide your valuation analysis.`,
+      additionalInstructions: `The item has been visually identified as: "${identifiedItemName}". ${extractedVIN ? `VIN: ${extractedVIN}. ` : ''}Provide your valuation analysis.`,
     });
     
     const textVotesPromise = runProviderStage(textProviders, [], textPrompt);
@@ -296,7 +382,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ==========================================================================
     if (isProviderAvailable('perplexity')) {
       console.log(`\n  Stage 3 - Market Search: perplexity`);
-      const marketSearchPrompt = `Find current market prices and recent sales for: "${identifiedItemName}". Category: ${finalCategory}. Provide specific price data from eBay sold listings, auction results, or dealer prices.`;
+      const marketSearchPrompt = `Find current market prices and recent sales for: "${identifiedItemName}". ${extractedVIN ? `VIN: ${extractedVIN}. ` : ''}Category: ${finalCategory}. Provide specific price data from eBay sold listings, auction results, or dealer prices.`;
       const perplexityVotes = await runProviderStage(['perplexity'], [], marketSearchPrompt, { isMarketSearch: true });
       allVotes.push(...perplexityVotes);
     }

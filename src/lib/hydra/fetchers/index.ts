@@ -1,6 +1,7 @@
 // FILE: src/lib/hydra/fetchers/index.ts
-// HYDRA v6.0 - Market Data Fetchers Index
+// HYDRA v6.3 - Market Data Fetchers Index
 // Unified interface for all market data sources
+// FIXED v6.3: Now passes additionalContext to fetchers (especially NHTSA for VIN)
 
 import type { MarketDataSource, MarketDataResult, ItemCategory } from '../types.js';
 import { getApisForCategory } from '../category-detection.js';
@@ -31,9 +32,14 @@ import { fetchUpcItemDbData } from './upcitemdb.js';
 
 // ==================== FETCHER REGISTRY ====================
 
-type FetcherFunction = (itemName: string, category?: string) => Promise<MarketDataSource>;
+// Standard fetcher function type (itemName, category)
+type StandardFetcherFunction = (itemName: string, category?: string) => Promise<MarketDataSource>;
 
-const FETCHER_REGISTRY: Record<string, FetcherFunction> = {
+// Extended fetcher function type (itemName, additionalContext) - for NHTSA
+type ExtendedFetcherFunction = (itemName: string, additionalContext?: string) => Promise<MarketDataSource>;
+
+// Registry uses standard type, but some fetchers accept additional params
+const FETCHER_REGISTRY: Record<string, StandardFetcherFunction | ExtendedFetcherFunction> = {
   'ebay': fetchEbayData,
   'numista': fetchNumistaData,
   'pokemon_tcg': fetchPokemonTcgData,
@@ -42,15 +48,27 @@ const FETCHER_REGISTRY: Record<string, FetcherFunction> = {
   'discogs': fetchDiscogsData,
   'retailed': fetchRetailedData,
   'psa': fetchPsaData,
-  'nhtsa': fetchNhtsaData,
+  'nhtsa': fetchNhtsaData,  // This one accepts additionalContext as 2nd param
   'upcitemdb': fetchUpcItemDbData,
 };
 
+// Fetchers that accept additionalContext as their second parameter
+const CONTEXT_AWARE_FETCHERS = ['nhtsa', 'psa'];
+
 // ==================== UNIFIED FETCH FUNCTION ====================
 
+/**
+ * Fetch market data from multiple sources for an item
+ * 
+ * @param itemName - The name/description of the item
+ * @param category - The detected category
+ * @param additionalContext - FIXED v6.3: Additional context like VIN numbers extracted from images
+ * @param options - Fetch options
+ */
 export async function fetchMarketData(
   itemName: string,
   category: ItemCategory,
+  additionalContext?: string,
   options?: {
     maxSources?: number;
     timeout?: number;
@@ -65,6 +83,9 @@ export async function fetchMarketData(
   console.log(`\n📊 === FETCHING MARKET DATA ===`);
   console.log(`📝 Item: "${itemName}"`);
   console.log(`🏷️ Category: ${category}`);
+  if (additionalContext) {
+    console.log(`📎 Additional Context: "${additionalContext}"`);
+  }
   
   // Get APIs for this category
   let apis = getApisForCategory(category);
@@ -90,9 +111,17 @@ export async function fetchMarketData(
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeout);
       
-      const result = await fetcher(itemName, category);
-      clearTimeout(timeoutId);
+      // FIXED v6.3: Pass additionalContext to context-aware fetchers
+      let result: MarketDataSource;
+      if (CONTEXT_AWARE_FETCHERS.includes(api) && additionalContext) {
+        // These fetchers accept (itemName, additionalContext)
+        result = await (fetcher as ExtendedFetcherFunction)(itemName, additionalContext);
+      } else {
+        // Standard fetchers accept (itemName, category)
+        result = await (fetcher as StandardFetcherFunction)(itemName, category);
+      }
       
+      clearTimeout(timeoutId);
       return result;
     } catch (error: any) {
       if (error.name === 'AbortError') {
@@ -232,7 +261,7 @@ function determineMarketInfluence(sources: MarketDataSource[], category: ItemCat
 // ==================== BATCH FETCH ====================
 
 export async function fetchMarketDataBatch(
-  items: Array<{ name: string; category: ItemCategory }>,
+  items: Array<{ name: string; category: ItemCategory; additionalContext?: string }>,
   options?: {
     maxConcurrent?: number;
     delayBetween?: number;
@@ -248,7 +277,7 @@ export async function fetchMarketDataBatch(
     const batch = items.slice(i, i + maxConcurrent);
     
     const batchResults = await Promise.all(
-      batch.map(item => fetchMarketData(item.name, item.category))
+      batch.map(item => fetchMarketData(item.name, item.category, item.additionalContext))
     );
     
     batch.forEach((item, index) => {

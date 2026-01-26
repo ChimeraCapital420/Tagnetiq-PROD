@@ -1,11 +1,11 @@
 // FILE: src/lib/hydra/fetchers/pokemon-tcg.ts
-// HYDRA v6.2 - Pokemon TCG API Fetcher
-// FIXED: Better query cleaning to remove mechanics and improve matching
+// HYDRA v6.3 - Pokemon TCG API Fetcher
+// FIXED v6.3: Retry now uses DIFFERENT query strategies, not identical query
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
 const POKEMON_TCG_API = 'https://api.pokemontcg.io/v2';
-const POKEMON_TCG_TIMEOUT = 10000; // 10 second timeout (increased from 8)
+const POKEMON_TCG_TIMEOUT = 10000; // 10 second timeout
 
 export async function fetchPokemonTcgData(itemName: string): Promise<MarketDataSource> {
   const startTime = Date.now();
@@ -41,10 +41,10 @@ export async function fetchPokemonTcgData(itemName: string): Promise<MarketDataS
     if (!response.ok) {
       console.error(`❌ Pokemon TCG API error: ${response.status}`);
       
-      // If 404, try a simpler search
-      if (response.status === 404) {
+      // If error, try simplified search strategies
+      if (response.status === 404 || response.status === 400) {
         console.log('🔄 Pokemon TCG: Retrying with simplified query...');
-        return await retryWithSimpleQuery(itemName, headers, startTime);
+        return await retryWithSimpleQuery(itemName, headers, startTime, 1);
       }
       
       return createFallbackResult(itemName, searchQuery);
@@ -55,7 +55,7 @@ export async function fetchPokemonTcgData(itemName: string): Promise<MarketDataS
     
     if (cards.length === 0) {
       console.log('⚠️ Pokemon TCG: No matching cards found, trying simplified search...');
-      return await retryWithSimpleQuery(itemName, headers, startTime);
+      return await retryWithSimpleQuery(itemName, headers, startTime, 1);
     }
     
     // Get the best match
@@ -71,6 +71,7 @@ export async function fetchPokemonTcgData(itemName: string): Promise<MarketDataS
       source: 'pokemon_tcg',
       verified: true,
       confidence: calculateMatchConfidence(itemName, bestMatch.name, bestMatch.set?.name),
+      title: `${bestMatch.name} - ${bestMatch.set?.name}`,
       itemDetails: {
         cardId: bestMatch.id,
         name: bestMatch.name,
@@ -164,14 +165,16 @@ export async function fetchPokemonTcgData(itemName: string): Promise<MarketDataS
 }
 
 /**
- * Retry with a simpler query if the first one fails
+ * Retry with progressively simpler query strategies
+ * FIXED v6.3: Each retry level uses a DIFFERENT query approach
  */
 async function retryWithSimpleQuery(
   itemName: string, 
   headers: Record<string, string>,
-  startTime: number
+  startTime: number,
+  retryLevel: number
 ): Promise<MarketDataSource> {
-  // Extract just the Pokemon name
+  // Extract pokemon name for all strategies
   const pokemonName = extractPokemonName(itemName);
   
   if (!pokemonName) {
@@ -179,8 +182,32 @@ async function retryWithSimpleQuery(
     return createFallbackResult(itemName, itemName);
   }
   
-  const simpleQuery = `name:${pokemonName}*`;
-  console.log(`🔄 Pokemon TCG retry search: "${simpleQuery}"`);
+  // Different query strategies for each retry level
+  let simpleQuery: string;
+  
+  switch (retryLevel) {
+    case 1:
+      // Strategy 1: Exact name match (no wildcard)
+      simpleQuery = `name:"${pokemonName}"`;
+      break;
+    case 2:
+      // Strategy 2: Name contains (partial match)
+      simpleQuery = `name:${pokemonName.toLowerCase()}*`;
+      break;
+    case 3:
+      // Strategy 3: Just the Pokemon name with set info if available
+      const setName = extractSetName(itemName);
+      if (setName) {
+        simpleQuery = `name:${pokemonName}* set.name:"${setName}"`;
+      } else {
+        simpleQuery = pokemonName; // Full text search as last resort
+      }
+      break;
+    default:
+      return createFallbackResult(itemName, itemName);
+  }
+  
+  console.log(`🔄 Pokemon TCG retry #${retryLevel}: "${simpleQuery}"`);
   
   try {
     const searchUrl = `${POKEMON_TCG_API}/cards?q=${encodeURIComponent(simpleQuery)}&pageSize=10&orderBy=-set.releaseDate`;
@@ -196,7 +223,11 @@ async function retryWithSimpleQuery(
     
     clearTimeout(timeoutId);
     
-    if (!response.ok || response.status === 404) {
+    if (!response.ok) {
+      // Try next retry level
+      if (retryLevel < 3) {
+        return await retryWithSimpleQuery(itemName, headers, startTime, retryLevel + 1);
+      }
       return createFallbackResult(itemName, simpleQuery);
     }
     
@@ -204,11 +235,15 @@ async function retryWithSimpleQuery(
     const cards = data.data || [];
     
     if (cards.length === 0) {
+      // Try next retry level
+      if (retryLevel < 3) {
+        return await retryWithSimpleQuery(itemName, headers, startTime, retryLevel + 1);
+      }
       return createFallbackResult(itemName, simpleQuery);
     }
     
     const bestMatch = cards[0];
-    console.log(`✅ Pokemon TCG (retry): Found "${bestMatch.name}" from ${bestMatch.set?.name}`);
+    console.log(`✅ Pokemon TCG (retry #${retryLevel}): Found "${bestMatch.name}" from ${bestMatch.set?.name}`);
     
     const prices = bestMatch.tcgplayer?.prices || {};
     const priceData = extractPriceData(prices);
@@ -216,7 +251,8 @@ async function retryWithSimpleQuery(
     const authorityData: AuthorityData = {
       source: 'pokemon_tcg',
       verified: true,
-      confidence: calculateMatchConfidence(itemName, bestMatch.name, bestMatch.set?.name) * 0.9, // Slightly lower confidence for retry
+      confidence: calculateMatchConfidence(itemName, bestMatch.name, bestMatch.set?.name) * (1 - retryLevel * 0.05), // Slightly lower confidence for each retry
+      title: `${bestMatch.name} - ${bestMatch.set?.name}`,
       itemDetails: {
         cardId: bestMatch.id,
         name: bestMatch.name,
@@ -278,14 +314,73 @@ async function retryWithSimpleQuery(
         responseTime: Date.now() - startTime,
         totalCards: data.totalCount,
         bestMatchId: bestMatch.id,
-        retryUsed: true,
+        retryLevel,
       },
     };
     
   } catch (error) {
-    console.error('❌ Pokemon TCG retry error:', error);
+    console.error(`❌ Pokemon TCG retry #${retryLevel} error:`, error);
+    // Try next retry level on error
+    if (retryLevel < 3) {
+      return await retryWithSimpleQuery(itemName, headers, startTime, retryLevel + 1);
+    }
     return createFallbackResult(itemName, itemName);
   }
+}
+
+/**
+ * Extract set name from item description
+ */
+function extractSetName(itemName: string): string | null {
+  const nameLower = itemName.toLowerCase();
+  
+  // Common set name patterns
+  const setPatterns: Record<string, string> = {
+    'celebrations': 'Celebrations',
+    'base set': 'Base',
+    'jungle': 'Jungle',
+    'fossil': 'Fossil',
+    'team rocket': 'Team Rocket',
+    'gym heroes': 'Gym Heroes',
+    'gym challenge': 'Gym Challenge',
+    'neo genesis': 'Neo Genesis',
+    'neo discovery': 'Neo Discovery',
+    'legendary collection': 'Legendary Collection',
+    'evolving skies': 'Evolving Skies',
+    'brilliant stars': 'Brilliant Stars',
+    'astral radiance': 'Astral Radiance',
+    'lost origin': 'Lost Origin',
+    'silver tempest': 'Silver Tempest',
+    'crown zenith': 'Crown Zenith',
+    'scarlet violet': 'Scarlet & Violet',
+    'paldea evolved': 'Paldea Evolved',
+    'obsidian flames': 'Obsidian Flames',
+    'paradox rift': 'Paradox Rift',
+    'temporal forces': 'Temporal Forces',
+    'twilight masquerade': 'Twilight Masquerade',
+    'shrouded fable': 'Shrouded Fable',
+    'surging sparks': 'Surging Sparks',
+    'prismatic evolutions': 'Prismatic Evolutions',
+    'battle styles': 'Battle Styles',
+    'chilling reign': 'Chilling Reign',
+    'fusion strike': 'Fusion Strike',
+    'vivid voltage': 'Vivid Voltage',
+    'darkness ablaze': 'Darkness Ablaze',
+    'rebel clash': 'Rebel Clash',
+    'sword shield': 'Sword & Shield',
+    'cosmic eclipse': 'Cosmic Eclipse',
+    'hidden fates': 'Hidden Fates',
+    'shining fates': 'Shining Fates',
+    'champions path': 'Champion\'s Path',
+  };
+  
+  for (const [pattern, setName] of Object.entries(setPatterns)) {
+    if (nameLower.includes(pattern)) {
+      return setName;
+    }
+  }
+  
+  return null;
 }
 
 /**
@@ -294,7 +389,7 @@ async function retryWithSimpleQuery(
 function extractPokemonName(itemName: string): string | null {
   const nameLower = itemName.toLowerCase();
   
-  // Comprehensive list of Pokemon names (add more as needed)
+  // Comprehensive list of Pokemon names
   const pokemonNames = [
     'pikachu', 'charizard', 'blastoise', 'venusaur', 'mewtwo', 'mew',
     'ampharos', 'dragonite', 'gyarados', 'snorlax', 'gengar', 'alakazam',
@@ -315,7 +410,7 @@ function extractPokemonName(itemName: string): string | null {
     'rhyhorn', 'chansey', 'tangela', 'kangaskhan', 'horsea', 'goldeen',
     'staryu', 'scyther', 'jynx', 'electabuzz', 'magmar', 'pinsir',
     'tauros', 'magikarp', 'ditto', 'porygon', 'omanyte', 'kabuto',
-    'aerodactyl', 'snorlax', 'dratini', 'dragonair',
+    'aerodactyl', 'dratini', 'dragonair',
     // Gen 2+
     'chikorita', 'cyndaquil', 'totodile', 'sentret', 'hoothoot', 'ledyba',
     'spinarak', 'chinchou', 'togepi', 'natu', 'mareep', 'marill',
@@ -331,14 +426,27 @@ function extractPokemonName(itemName: string): string | null {
     'stonjourner', 'dracovish', 'dragapult', 'corviknight', 'toxtricity',
     'grimmsnarl', 'alcremie', 'falinks', 'pincurchin', 'frosmoth',
     'eiscue', 'indeedee', 'morpeko', 'cufant', 'duraludon', 'dreepy',
-    'zacian', 'zamazenta', 'eternatus', 'kubfu', 'urshifu', 'zarude',
-    'regieleki', 'regidrago', 'glastrier', 'spectrier', 'calyrex'
+    'kubfu', 'urshifu', 'zarude', 'regieleki', 'regidrago', 
+    'glastrier', 'spectrier', 'calyrex',
+    // Scarlet/Violet
+    'sprigatito', 'fuecoco', 'quaxly', 'koraidon', 'miraidon',
+    'armarouge', 'ceruledge', 'gholdengo', 'annihilape', 'kingambit',
+    'baxcalibur', 'palafin', 'flamigo', 'tinkaton', 'orthworm'
   ];
   
   for (const pokemon of pokemonNames) {
     if (nameLower.includes(pokemon)) {
       // Return with proper capitalization
       return pokemon.charAt(0).toUpperCase() + pokemon.slice(1);
+    }
+  }
+  
+  // Try to extract from card number pattern (e.g., "Zekrom #010/025")
+  const cardNameMatch = itemName.match(/^([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+(?:Pokemon|Card|#|\d)/i);
+  if (cardNameMatch) {
+    const potentialName = cardNameMatch[1].trim();
+    if (potentialName.length >= 3 && potentialName.length <= 20) {
+      return potentialName;
     }
   }
   
@@ -369,6 +477,7 @@ function buildPokemonQuery(itemName: string): string {
     
     // Add set filter if detected
     const setPatterns: Record<string, string> = {
+      'celebrations': 'set.id:cel25',
       'base set': 'set.id:base1',
       'jungle': 'set.id:jungle',
       'fossil': 'set.id:fossil',
@@ -403,6 +512,8 @@ function buildPokemonQuery(itemName: string): string {
     .replace(/\b(single strike|rapid strike|fusion strike)\b/gi, '') // Remove battle styles
     .replace(/\b(vmax|vstar|gx|ex|v)\b/gi, '') // Remove card types
     .replace(/\b(full art|alt art|rainbow|secret rare|promo)\b/gi, '') // Remove rarity indicators
+    .replace(/#?\d+\/\d+/g, '') // Remove card numbers like #010/025
+    .replace(/from\s+\w+\s+set/gi, '') // Remove "from X Set"
     .replace(/\s+/g, ' ')
     .trim();
   
@@ -460,6 +571,13 @@ function calculateMatchConfidence(searchTerm: string, cardName: string, setName?
   
   // Check for exact Pokemon name match
   if (searchPokemon && nameLower.includes(searchPokemon.toLowerCase())) {
+    // Boost confidence if set also matches
+    if (setName) {
+      const setLower = setName.toLowerCase();
+      if (searchLower.includes(setLower) || searchLower.includes(setLower.replace(/[^a-z]/g, ''))) {
+        return 0.98;
+      }
+    }
     return 0.95;
   }
   
@@ -500,6 +618,7 @@ function createFallbackResult(itemName: string, query: string): MarketDataSource
     metadata: {
       fallback: true,
       searchUrl,
+      pokemonName,
     },
   };
 }
