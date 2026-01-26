@@ -119,15 +119,16 @@ function validateRequest(body: unknown): AnalyzeRequest {
     });
     
     // Generate item name - let AI identify from image
-    let itemName = 'Identify this item from the image';
+    let itemName = '';
     
     if (primaryItem.name && !primaryItem.name.startsWith('Photo ') && !primaryItem.name.startsWith('Video ')) {
       itemName = primaryItem.name;
     } else if (primaryItem.metadata?.description) {
       itemName = primaryItem.metadata.description;
     } else if (primaryItem.metadata?.extractedText) {
-      itemName = primaryItem.metadata.extractedText.substring(0, 50).trim() || 'Identify this item from the image';
+      itemName = primaryItem.metadata.extractedText.substring(0, 50).trim();
     }
+    // If no name, leave empty - AI will identify it
     
     const categoryHint = (rawBody.subcategory_id as string) || 
                          (rawBody.category_id as string) || 
@@ -149,12 +150,9 @@ function validateRequest(body: unknown): AnalyzeRequest {
   // ==========================================================================
   const { itemName, imageBase64, userId, analysisId, categoryHint, condition } = rawBody;
   
-  if (!itemName || typeof itemName !== 'string' || itemName.trim().length === 0) {
-    throw new Error('itemName is required');
-  }
-  
+  // itemName can be empty if we have an image - AI will identify it
   return {
-    itemName: itemName.trim(),
+    itemName: typeof itemName === 'string' ? itemName.trim() : '',
     imageBase64: typeof imageBase64 === 'string' ? imageBase64 : undefined,
     userId: typeof userId === 'string' ? userId : undefined,
     analysisId: typeof analysisId === 'string' ? analysisId : `analysis_${Date.now()}`,
@@ -189,17 +187,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const request = validateRequest(req.body);
     analysisId = request.analysisId!;
     
+    const hasImage = !!request.imageBase64;
+    const hasItemName = request.itemName.length > 0;
+    
+    // Must have either image or item name
+    if (!hasImage && !hasItemName) {
+      throw new Error('Either an image or item name is required');
+    }
+    
     console.log(`\n🔥 === HYDRA v6.0 ANALYSIS START ===`);
-    console.log(`📦 Item: "${request.itemName}"`);
+    console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
-    console.log(`🖼️ Primary Image: ${request.imageBase64 ? 'Yes' : 'No'}`);
+    console.log(`🖼️ Primary Image: ${hasImage ? 'Yes' : 'No'}`);
     console.log(`🖼️ Additional Images: ${request.additionalImages?.length || 0}`);
     
-    // 2. Detect category
-    const categoryResult = detectItemCategory(request.itemName, request.categoryHint);
-    console.log(`🏷️ Category: ${categoryResult.category} (${categoryResult.confidence}%)`);
-    
-    // 3. Build images array
+    // 2. Build images array
     const images: string[] = [];
     if (request.imageBase64) {
       images.push(request.imageBase64);
@@ -208,23 +210,132 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       images.push(...request.additionalImages.slice(0, 3));
     }
     
-    // 4. Run AI analysis and market data in parallel
-    const [aiVotes, marketResult] = await Promise.all([
-      runMultiAIAnalysis(request.itemName, images, categoryResult.category, request.categoryHint),
-      fetchMarketData(request.itemName, categoryResult.category),
-    ]);
+    // ==========================================================================
+    // STAGE 1: Primary Vision Analysis (MUST RUN FIRST to identify item)
+    // ==========================================================================
+    const visionProviders = ['openai', 'anthropic', 'google'].filter(isProviderAvailable);
+    console.log(`\n  Stage 1 - Vision: ${visionProviders.join(', ') || 'none'}`);
     
-    console.log(`📊 AI Votes: ${aiVotes.length}`);
-    console.log(`📈 Market sources: ${marketResult.sources.length}`);
+    // Build initial prompt
+    const initialPrompt = buildAnalysisPrompt({
+      categoryHint: request.categoryHint,
+      itemNameHint: hasItemName ? request.itemName : undefined,
+    });
+    const userMessage = buildUserMessage(hasImage, request.itemName || 'Identify this item');
+    const fullPrompt = `${initialPrompt}\n\n${userMessage}`;
     
-    // 5. Calculate consensus
+    const visionVotes = await runProviderStage(visionProviders, images, fullPrompt);
+    
+    // ==========================================================================
+    // EXTRACT IDENTIFIED ITEM NAME FROM VISION RESULTS
+    // ==========================================================================
+    let identifiedItemName = request.itemName;
+    let identifiedCategory = 'general';
+    
+    if (visionVotes.length > 0) {
+      // Get the best vote (highest weight/confidence)
+      const bestVote = visionVotes.reduce((a, b) => a.weight > b.weight ? a : b);
+      
+      // Use the AI-identified item name
+      if (bestVote.itemName && bestVote.itemName !== 'Unknown Item') {
+        identifiedItemName = bestVote.itemName;
+        console.log(`\n  🎯 AI Identified: "${identifiedItemName}"`);
+      }
+      
+      // Check if AI detected a category
+      const rawResponse = bestVote.rawResponse as any;
+      if (rawResponse?.category && rawResponse.category !== 'general') {
+        identifiedCategory = rawResponse.category;
+        console.log(`  🏷️ AI Category: ${identifiedCategory}`);
+      }
+    }
+    
+    // Fallback if still no name
+    if (!identifiedItemName) {
+      identifiedItemName = 'Unidentified Item';
+    }
+    
+    // ==========================================================================
+    // STAGE 2: Category Detection (using AI-identified item name)
+    // ==========================================================================
+    const categoryResult = detectItemCategory(identifiedItemName, request.categoryHint || identifiedCategory);
+    const finalCategory = categoryResult.category;
+    console.log(`\n  🏷️ Final Category: ${finalCategory} (${categoryResult.confidence}%)`);
+    
+    // ==========================================================================
+    // STAGE 3: Parallel - Market Data + Text AI Analysis
+    // ==========================================================================
+    console.log(`\n  Stage 2 - Market Data + Text Analysis (parallel)`);
+    
+    // Start market data fetch with IDENTIFIED item name
+    const marketPromise = fetchMarketData(identifiedItemName, finalCategory);
+    
+    // Text analysis models
+    const textProviders = ['mistral', 'groq', 'xai'].filter(isProviderAvailable);
+    console.log(`    Text providers: ${textProviders.join(', ') || 'none'}`);
+    
+    // Build text prompt with identified item context
+    const textPrompt = buildAnalysisPrompt({
+      categoryHint: finalCategory,
+      itemNameHint: identifiedItemName,
+      additionalInstructions: `The item has been visually identified as: "${identifiedItemName}". Provide your valuation analysis.`,
+    });
+    
+    const textVotesPromise = runProviderStage(textProviders, [], textPrompt);
+    
+    // Wait for both
+    const [marketResult, textVotes] = await Promise.all([marketPromise, textVotesPromise]);
+    
+    console.log(`    📈 Market sources: ${marketResult.sources.length}`);
+    
+    // Combine all votes
+    const allVotes: ModelVote[] = [...visionVotes, ...textVotes];
+    
+    // ==========================================================================
+    // STAGE 4: Market Search (Perplexity)
+    // ==========================================================================
+    if (isProviderAvailable('perplexity')) {
+      console.log(`\n  Stage 3 - Market Search: perplexity`);
+      const marketSearchPrompt = `Find current market prices and recent sales for: "${identifiedItemName}". Category: ${finalCategory}. Provide specific price data from eBay sold listings, auction results, or dealer prices.`;
+      const perplexityVotes = await runProviderStage(['perplexity'], [], marketSearchPrompt, { isMarketSearch: true });
+      allVotes.push(...perplexityVotes);
+    }
+    
+    // ==========================================================================
+    // STAGE 5: Tiebreaker if needed
+    // ==========================================================================
+    if (allVotes.length >= 4 && isProviderAvailable('deepseek')) {
+      const { shouldTrigger, reason } = shouldTriggerTiebreaker(allVotes);
+      
+      if (shouldTrigger) {
+        console.log(`\n  Stage 4 - Tiebreaker: deepseek (${reason})`);
+        const tiebreakerPrompt = buildAnalysisPrompt({
+          categoryHint: finalCategory,
+          itemNameHint: identifiedItemName,
+          additionalInstructions: 'Previous AI analyses show disagreement. Provide your independent assessment to help reach consensus.',
+        });
+        const tiebreakerVotes = await runProviderStage(['deepseek'], [], tiebreakerPrompt, { isTiebreaker: true });
+        allVotes.push(...tiebreakerVotes);
+      }
+    }
+    
+    console.log(`\n  📊 Total AI Votes: ${allVotes.length}`);
+    
+    // ==========================================================================
+    // STAGE 6: Calculate Consensus
+    // ==========================================================================
     const authorityData = marketResult.primaryAuthority || null;
-    const consensus = calculateConsensus(aiVotes, authorityData);
+    const consensus = calculateConsensus(allVotes, authorityData);
     
-    console.log(`🎯 Decision: ${consensus.decision} @ $${consensus.estimatedValue}`);
-    console.log(`📊 Confidence: ${consensus.confidence}% (${consensus.analysisQuality})`);
+    // Override consensus item name with our identified name
+    consensus.itemName = identifiedItemName;
     
-    // 6. Blend prices
+    console.log(`  🎯 Decision: ${consensus.decision} @ $${consensus.estimatedValue}`);
+    console.log(`  📊 Confidence: ${consensus.confidence}% (${consensus.analysisQuality})`);
+    
+    // ==========================================================================
+    // STAGE 7: Blend Prices
+    // ==========================================================================
     const marketPrices = marketResult.sources
       .filter(s => s.priceData && s.priceData.length > 0)
       .map(s => ({ source: s.source, prices: s.priceData! }));
@@ -236,23 +347,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       { condition: request.condition }
     );
     
-    // 7. Format response
+    // ==========================================================================
+    // STAGE 8: Format Response
+    // ==========================================================================
     const processingTime = Date.now() - startTime;
     const response = formatAnalysisResponse(
       analysisId,
       consensus,
-      categoryResult.category,
+      finalCategory,
       blendedPrice,
       authorityData,
       processingTime
     );
     
-    // 8. Save to Supabase (non-blocking)
+    // Save to Supabase (non-blocking)
     if (isSupabaseAvailable()) {
-      saveAnalysisAsync(analysisId, consensus, categoryResult.category, request.userId, aiVotes, authorityData, processingTime);
+      saveAnalysisAsync(analysisId, consensus, finalCategory, request.userId, allVotes, authorityData, processingTime);
     }
     
-    console.log(`✅ Complete in ${processingTime}ms\n`);
+    console.log(`\n  ✅ Complete in ${processingTime}ms\n`);
     
     return res.status(200).json(formatAPIResponse(response));
     
@@ -298,79 +411,8 @@ function createProviderFromId(providerId: string) {
 }
 
 // =============================================================================
-// MULTI-AI ANALYSIS ORCHESTRATION
+// PROVIDER STAGE RUNNER
 // =============================================================================
-
-async function runMultiAIAnalysis(
-  itemName: string,
-  images: string[],
-  category: string,
-  categoryHint?: string
-): Promise<ModelVote[]> {
-  const votes: ModelVote[] = [];
-  const hasImages = images.length > 0;
-  
-  // Build the analysis prompt
-  const systemPrompt = buildAnalysisPrompt({
-    categoryHint: categoryHint || category,
-    itemNameHint: itemName !== 'Identify this item from the image' ? itemName : undefined,
-  });
-  
-  const userMessage = buildUserMessage(hasImages, itemName);
-  const fullPrompt = `${systemPrompt}\n\n${userMessage}`;
-  
-  // Stage 1: Primary vision models
-  const visionProviders = ['openai', 'anthropic', 'google'].filter(isProviderAvailable);
-  console.log(`  Stage 1 - Vision: ${visionProviders.join(', ') || 'none'}`);
-  
-  const visionVotes = await runProviderStage(visionProviders, images, fullPrompt);
-  votes.push(...visionVotes);
-  
-  // Extract best context from vision results
-  const bestContext = votes.length > 0
-    ? votes.reduce((a, b) => a.weight > b.weight ? a : b).reasoning || itemName
-    : itemName;
-  
-  // Build text-only prompt
-  const textPrompt = buildAnalysisPrompt({
-    categoryHint: categoryHint || category,
-    itemNameHint: bestContext,
-    additionalInstructions: 'Note: Analyze based on the provided description. No image available.',
-  });
-  
-  // Stage 2: Text analysis models
-  const textProviders = ['mistral', 'groq', 'xai'].filter(isProviderAvailable);
-  console.log(`  Stage 2 - Text: ${textProviders.join(', ') || 'none'}`);
-  
-  const textVotes = await runProviderStage(textProviders, [], textPrompt);
-  votes.push(...textVotes);
-  
-  // Stage 3: Market search (Perplexity)
-  if (isProviderAvailable('perplexity')) {
-    console.log(`  Stage 3 - Market: perplexity`);
-    const marketPrompt = `Search for current market prices and recent sales for: "${bestContext}". Category: ${category}. Provide estimated value based on actual market data.`;
-    const perplexityVotes = await runProviderStage(['perplexity'], [], marketPrompt, { isMarketSearch: true });
-    votes.push(...perplexityVotes);
-  }
-  
-  // Stage 4: Tiebreaker if needed
-  if (votes.length >= 4 && isProviderAvailable('deepseek')) {
-    const { shouldTrigger, reason } = shouldTriggerTiebreaker(votes);
-    
-    if (shouldTrigger) {
-      console.log(`  Stage 4 - Tiebreaker: deepseek (${reason})`);
-      const tiebreakerPrompt = buildAnalysisPrompt({
-        categoryHint: category,
-        itemNameHint: bestContext,
-        additionalInstructions: 'Previous AI analyses show disagreement. Provide your independent assessment.',
-      });
-      const tiebreakerVotes = await runProviderStage(['deepseek'], [], tiebreakerPrompt, { isTiebreaker: true });
-      votes.push(...tiebreakerVotes);
-    }
-  }
-  
-  return votes;
-}
 
 async function runProviderStage(
   providers: string[],
@@ -405,7 +447,7 @@ async function runProviderStage(
           baseWeight: result.confidence || 0.8,
         };
         
-        // Create vote with correct signature: (provider, analysis, confidence, responseTime, options)
+        // Create vote with correct signature
         const vote = createVote(
           providerInfo,
           analysis,
