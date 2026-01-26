@@ -1,7 +1,6 @@
 // FILE: api/analyze.ts
 // HYDRA v6.0 - Slim Analysis Handler
 // Orchestrates modular components for multi-AI consensus analysis
-// Refactored from 2,300-line monolith to ~220 lines
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -12,12 +11,10 @@ import {
   
   // AI providers
   ProviderFactory,
-  getAvailableProviders,
   isProviderAvailable,
   
   // Consensus
   calculateConsensus,
-  tallyVotes,
   shouldTriggerTiebreaker,
   createVote,
   
@@ -31,12 +28,20 @@ import {
   saveAnalysisAsync,
   isSupabaseAvailable,
   
+  // Prompts
+  buildAnalysisPrompt,
+  buildUserMessage,
+  
   // Types
   type ModelVote,
 } from '../src/lib/hydra/index.js';
 
 // Import fetchers
 import { fetchMarketData } from '../src/lib/hydra/fetchers/index.js';
+
+// Import provider config for creating providers
+import { AI_PROVIDERS } from '../src/lib/hydra/config/providers.js';
+import { AI_MODEL_WEIGHTS } from '../src/lib/hydra/config/constants.js';
 
 // =============================================================================
 // CONFIG
@@ -90,7 +95,7 @@ function validateRequest(body: unknown): AnalyzeRequest {
     // Extract image data from the primary item
     let imageBase64: string | undefined;
     if (primaryItem.data) {
-      // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+      // Remove data URL prefix if present
       imageBase64 = primaryItem.data.includes('base64,') 
         ? primaryItem.data.split('base64,')[1] 
         : primaryItem.data;
@@ -99,7 +104,6 @@ function validateRequest(body: unknown): AnalyzeRequest {
     // Collect additional images from other items and video frames
     const additionalImages: string[] = [];
     
-    // Add frames from video items
     if (primaryItem.additionalFrames) {
       primaryItem.additionalFrames.forEach(frame => {
         const cleanFrame = frame.includes('base64,') ? frame.split('base64,')[1] : frame;
@@ -107,7 +111,6 @@ function validateRequest(body: unknown): AnalyzeRequest {
       });
     }
     
-    // Add images from other selected items
     items.slice(1).forEach(item => {
       if (item.data) {
         const cleanData = item.data.includes('base64,') ? item.data.split('base64,')[1] : item.data;
@@ -115,24 +118,17 @@ function validateRequest(body: unknown): AnalyzeRequest {
       }
     });
     
-    // Generate item name from context
-    let itemName = 'Unknown Item';
+    // Generate item name - let AI identify from image
+    let itemName = 'Identify this item from the image';
     
-    // Try to get name from item metadata or generate from type
     if (primaryItem.name && !primaryItem.name.startsWith('Photo ') && !primaryItem.name.startsWith('Video ')) {
       itemName = primaryItem.name;
     } else if (primaryItem.metadata?.description) {
       itemName = primaryItem.metadata.description;
     } else if (primaryItem.metadata?.extractedText) {
-      // Use first 50 chars of extracted text as hint
-      itemName = primaryItem.metadata.extractedText.substring(0, 50).trim() || 'Unknown Item';
-    } else {
-      // Generate generic name based on scan type
-      const scanType = rawBody.scanType as string || 'multi-modal';
-      itemName = `${scanType} scan - ${items.length} item(s)`;
+      itemName = primaryItem.metadata.extractedText.substring(0, 50).trim() || 'Identify this item from the image';
     }
     
-    // Extract category hint from category_id or subcategory_id
     const categoryHint = (rawBody.subcategory_id as string) || 
                          (rawBody.category_id as string) || 
                          undefined;
@@ -189,7 +185,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let analysisId = '';
 
   try {
-    // 1. Validate request (handles both multi-modal and standard formats)
+    // 1. Validate request
     const request = validateRequest(req.body);
     analysisId = request.analysisId!;
     
@@ -203,23 +199,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const categoryResult = detectItemCategory(request.itemName, request.categoryHint);
     console.log(`🏷️ Category: ${categoryResult.category} (${categoryResult.confidence}%)`);
     
-    // 3. Run AI analysis and market data in parallel
+    // 3. Build images array
+    const images: string[] = [];
+    if (request.imageBase64) {
+      images.push(request.imageBase64);
+    }
+    if (request.additionalImages) {
+      images.push(...request.additionalImages.slice(0, 3));
+    }
+    
+    // 4. Run AI analysis and market data in parallel
     const [aiVotes, marketResult] = await Promise.all([
-      runMultiAIAnalysis(request.itemName, request.imageBase64, categoryResult.category),
+      runMultiAIAnalysis(request.itemName, images, categoryResult.category, request.categoryHint),
       fetchMarketData(request.itemName, categoryResult.category),
     ]);
     
     console.log(`📊 AI Votes: ${aiVotes.length}`);
     console.log(`📈 Market sources: ${marketResult.sources.length}`);
     
-    // 4. Calculate consensus
+    // 5. Calculate consensus
     const authorityData = marketResult.primaryAuthority || null;
     const consensus = calculateConsensus(aiVotes, authorityData);
     
     console.log(`🎯 Decision: ${consensus.decision} @ $${consensus.estimatedValue}`);
     console.log(`📊 Confidence: ${consensus.confidence}% (${consensus.analysisQuality})`);
     
-    // 5. Blend prices from all sources
+    // 6. Blend prices
     const marketPrices = marketResult.sources
       .filter(s => s.priceData && s.priceData.length > 0)
       .map(s => ({ source: s.source, prices: s.priceData! }));
@@ -231,7 +236,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       { condition: request.condition }
     );
     
-    // 6. Format response
+    // 7. Format response
     const processingTime = Date.now() - startTime;
     const response = formatAnalysisResponse(
       analysisId,
@@ -242,7 +247,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       processingTime
     );
     
-    // 7. Save to Supabase (non-blocking)
+    // 8. Save to Supabase (non-blocking)
     if (isSupabaseAvailable()) {
       saveAnalysisAsync(analysisId, consensus, categoryResult.category, request.userId, aiVotes, authorityData, processingTime);
     }
@@ -258,22 +263,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 // =============================================================================
+// HELPER: Create provider from string ID
+// =============================================================================
+
+function createProviderFromId(providerId: string) {
+  // Handle case variations: 'openai' -> 'OpenAI', 'xai' -> 'xAI'
+  const nameMap: Record<string, string> = {
+    'openai': 'OpenAI',
+    'anthropic': 'Anthropic',
+    'google': 'Google',
+    'deepseek': 'DeepSeek',
+    'mistral': 'Mistral',
+    'groq': 'Groq',
+    'xai': 'xAI',
+    'perplexity': 'Perplexity',
+  };
+  
+  const providerName = nameMap[providerId.toLowerCase()];
+  if (!providerName) {
+    throw new Error(`Unknown provider: ${providerId}`);
+  }
+  
+  const config = AI_PROVIDERS[providerName as keyof typeof AI_PROVIDERS];
+  if (!config) {
+    throw new Error(`No config for provider: ${providerName}`);
+  }
+  
+  return ProviderFactory.create({
+    id: `${providerId}-analysis`,
+    name: providerName,
+    model: config.models[0],
+    baseWeight: AI_MODEL_WEIGHTS[providerId.toLowerCase() as keyof typeof AI_MODEL_WEIGHTS] || 1.0,
+  });
+}
+
+// =============================================================================
 // MULTI-AI ANALYSIS ORCHESTRATION
 // =============================================================================
 
 async function runMultiAIAnalysis(
   itemName: string,
-  imageBase64: string | undefined,
-  category: string
+  images: string[],
+  category: string,
+  categoryHint?: string
 ): Promise<ModelVote[]> {
   const votes: ModelVote[] = [];
-  const hasImage = !!imageBase64;
+  const hasImages = images.length > 0;
   
-  // Stage 1: Primary vision models (OpenAI, Anthropic, Google)
+  // Build the analysis prompt
+  const systemPrompt = buildAnalysisPrompt({
+    categoryHint: categoryHint || category,
+    itemNameHint: itemName !== 'Identify this item from the image' ? itemName : undefined,
+  });
+  
+  const userMessage = buildUserMessage(hasImages, itemName);
+  const fullPrompt = `${systemPrompt}\n\n${userMessage}`;
+  
+  // Stage 1: Primary vision models
   const visionProviders = ['openai', 'anthropic', 'google'].filter(isProviderAvailable);
   console.log(`  Stage 1 - Vision: ${visionProviders.join(', ') || 'none'}`);
   
-  const visionVotes = await runProviderStage(visionProviders, itemName, imageBase64, category);
+  const visionVotes = await runProviderStage(visionProviders, images, fullPrompt);
   votes.push(...visionVotes);
   
   // Extract best context from vision results
@@ -281,29 +331,42 @@ async function runMultiAIAnalysis(
     ? votes.reduce((a, b) => a.weight > b.weight ? a : b).reasoning || itemName
     : itemName;
   
-  // Stage 2: Text analysis models (Mistral, Groq, xAI)
+  // Build text-only prompt
+  const textPrompt = buildAnalysisPrompt({
+    categoryHint: categoryHint || category,
+    itemNameHint: bestContext,
+    additionalInstructions: 'Note: Analyze based on the provided description. No image available.',
+  });
+  
+  // Stage 2: Text analysis models
   const textProviders = ['mistral', 'groq', 'xai'].filter(isProviderAvailable);
   console.log(`  Stage 2 - Text: ${textProviders.join(', ') || 'none'}`);
   
-  const textVotes = await runProviderStage(textProviders, bestContext, undefined, category);
+  const textVotes = await runProviderStage(textProviders, [], textPrompt);
   votes.push(...textVotes);
   
-  // Stage 3: Market search (Perplexity) - gets weight boost
+  // Stage 3: Market search (Perplexity)
   if (isProviderAvailable('perplexity')) {
     console.log(`  Stage 3 - Market: perplexity`);
-    const perplexityVotes = await runProviderStage(['perplexity'], bestContext, undefined, category);
-    perplexityVotes.forEach(v => v.weight *= 1.2); // Market search bonus
+    const marketPrompt = `Search for current market prices and recent sales for: "${bestContext}". Category: ${category}. Provide estimated value based on actual market data.`;
+    const perplexityVotes = await runProviderStage(['perplexity'], [], marketPrompt);
+    perplexityVotes.forEach(v => v.weight *= 1.2);
     votes.push(...perplexityVotes);
   }
   
-  // Stage 4: Tiebreaker if needed (DeepSeek)
+  // Stage 4: Tiebreaker if needed
   if (votes.length >= 4 && isProviderAvailable('deepseek')) {
     const { shouldTrigger, reason } = shouldTriggerTiebreaker(votes);
     
     if (shouldTrigger) {
       console.log(`  Stage 4 - Tiebreaker: deepseek (${reason})`);
-      const tiebreakerVotes = await runProviderStage(['deepseek'], bestContext, undefined, category);
-      tiebreakerVotes.forEach(v => v.weight *= 0.6); // Tiebreaker weight reduction
+      const tiebreakerPrompt = buildAnalysisPrompt({
+        categoryHint: category,
+        itemNameHint: bestContext,
+        additionalInstructions: 'Previous AI analyses show disagreement. Provide your independent assessment.',
+      });
+      const tiebreakerVotes = await runProviderStage(['deepseek'], [], tiebreakerPrompt);
+      tiebreakerVotes.forEach(v => v.weight *= 0.6);
       votes.push(...tiebreakerVotes);
     }
   }
@@ -313,16 +376,15 @@ async function runMultiAIAnalysis(
 
 async function runProviderStage(
   providers: string[],
-  itemName: string,
-  imageBase64: string | undefined,
-  category: string
+  images: string[],
+  prompt: string
 ): Promise<ModelVote[]> {
   const results = await Promise.allSettled(
     providers.map(async (providerId) => {
       const start = Date.now();
       try {
-        const provider = ProviderFactory.create(providerId);
-        const result = await provider.analyze(itemName, imageBase64, { category });
+        const provider = createProviderFromId(providerId);
+        const result = await provider.analyze(images, prompt);
         const vote = createVote(providerId, result, { responseTime: Date.now() - start });
         console.log(`    ✓ ${providerId}: ${vote.decision} @ $${vote.estimatedValue.toFixed(2)}`);
         return vote;
