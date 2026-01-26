@@ -134,7 +134,7 @@ export function calculateConfidence(
     finalConfidence = Math.min(finalConfidence, lowVoteCap);
   }
 
-  // Determine analysis quality (matches hydra-engine.ts thresholds)
+  // Determine analysis quality
   const quality = determineQuality(finalConfidence, criticallyLowVotes);
 
   // Build metrics object
@@ -176,26 +176,28 @@ export function calculateConfidence(
 
 /**
  * Determine analysis quality level based on confidence and vote count
- * Matches hydra-engine.ts quality thresholds
+ * Updated with realistic thresholds for production use
  */
 export function determineQuality(
   confidence: number,
   criticallyLowVotes: boolean
 ): AnalysisQuality {
-  // Fallback if critically low votes regardless of confidence
+  // Fallback if critically low votes (less than 3) regardless of confidence
   if (criticallyLowVotes) {
     return 'FALLBACK';
   }
 
-  // Quality based on confidence thresholds (matches hydra-engine.ts)
-  if (confidence >= 97) {
+  // OPTIMAL: 70%+ confidence with sufficient votes
+  if (confidence >= 70) {
     return 'OPTIMAL';
   }
 
-  if (confidence >= 90) {
+  // DEGRADED: 50%+ confidence
+  if (confidence >= 50) {
     return 'DEGRADED';
   }
 
+  // FALLBACK: Below 50% confidence
   return 'FALLBACK';
 }
 
@@ -210,11 +212,11 @@ export function meetsMinimumConfidence(
 }
 
 /**
- * Check if confidence is optimal (97%+)
+ * Check if confidence is optimal (70%+)
  */
 export function isOptimalConfidence(
   confidence: number,
-  threshold: number = 97
+  threshold: number = 70
 ): boolean {
   return confidence >= threshold;
 }
@@ -325,7 +327,7 @@ function logConfidenceCalculation(
     console.log(`   Authority Verification: ✅ +5% boost`);
   }
   
-  console.log(`   Final Confidence: ${finalConfidence}% (Target: 97%+)`);
+  console.log(`   Final Confidence: ${finalConfidence}% (Target: 70%+)`);
 }
 
 // =============================================================================
