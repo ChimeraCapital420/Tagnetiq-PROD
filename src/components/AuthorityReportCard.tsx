@@ -315,15 +315,10 @@ export const AuthorityReportCard: React.FC<AuthorityReportCardProps> = ({
           </div>
         )}
         
-        {/* External Link */}
+        {/* External Link - THIS IS THE FIXED SECTION */}
         {authorityData.externalUrl && (
           <div className="pt-2 text-center">
-            
-              href={authorityData.externalUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-            >
+            <a href={authorityData.externalUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
               View on {sourceName} <ExternalLink className="h-3 w-3" />
             </a>
           </div>
@@ -383,7 +378,6 @@ const GoogleBooksSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
 
 const NumistaSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   <div className="space-y-3">
-    {/* Coin Images */}
     {(data.obverseThumb || data.reverseThumb) && (
       <div className="flex justify-center gap-4">
         {data.obverseThumb && (
