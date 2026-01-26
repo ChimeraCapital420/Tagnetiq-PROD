@@ -1,46 +1,57 @@
 // FILE: src/lib/hydra/fetchers/retailed.ts
-// HYDRA v5.2 - Retailed API Fetcher (Sneakers & Streetwear)
-// Documentation: https://docs.retailed.io
+// HYDRA v6.1 - Retailed API Fetcher (Sneakers & Streetwear)
+// NOTE: api.retailed.io domain appears to be offline as of Jan 2026
+// This fetcher will gracefully fall back to StockX search links
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
+// WARNING: This domain may be offline - fetch will fail gracefully
 const RETAILED_API = 'https://api.retailed.io/v1';
 
 export async function fetchRetailedData(itemName: string): Promise<MarketDataSource> {
   const startTime = Date.now();
   const apiKey = process.env.RETAILED_API_KEY;
   
+  // Build search query for fallback
+  const searchQuery = cleanSneakerQuery(itemName);
+  
   if (!apiKey) {
     console.log('⚠️ Retailed API key not configured');
-    return createFallbackResult(itemName);
+    return createFallbackResult(itemName, searchQuery);
   }
   
   try {
-    // Build search query
-    const searchQuery = cleanSneakerQuery(itemName);
     console.log(`🔍 Retailed search: "${searchQuery}"`);
+    console.log(`⚠️ Note: api.retailed.io may be offline - attempting fetch...`);
     
     // Extract SKU/style code if present
     const styleCode = extractStyleCode(itemName);
     
-    // Search for products
+    // Search for products with timeout
     let searchUrl = `${RETAILED_API}/products/search?query=${encodeURIComponent(searchQuery)}&limit=10`;
     if (styleCode) {
       searchUrl += `&sku=${encodeURIComponent(styleCode)}`;
     }
+    
+    // Add timeout to prevent hanging
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
     
     const response = await fetch(searchUrl, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Accept': 'application/json',
-        'User-Agent': 'TagnetIQ-HYDRA/5.2',
+        'User-Agent': 'TagnetIQ-HYDRA/6.1',
       },
+      signal: controller.signal,
     });
+    
+    clearTimeout(timeoutId);
     
     if (!response.ok) {
       console.error(`❌ Retailed API error: ${response.status}`);
-      return createFallbackResult(itemName);
+      return createFallbackResult(itemName, searchQuery);
     }
     
     const data = await response.json();
@@ -128,14 +139,20 @@ export async function fetchRetailedData(itemName: string): Promise<MarketDataSou
     };
     
   } catch (error) {
-    console.error('❌ Retailed fetch error:', error);
-    return {
-      source: 'retailed',
-      available: false,
-      query: itemName,
-      totalListings: 0,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
+    // Handle specific error types
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        console.error('❌ Retailed API timeout (5s)');
+      } else if (error.message.includes('ENOTFOUND') || error.message.includes('fetch failed')) {
+        console.error('❌ Retailed API domain offline (api.retailed.io not found)');
+      } else {
+        console.error('❌ Retailed fetch error:', error.message);
+      }
+    } else {
+      console.error('❌ Retailed fetch error:', error);
+    }
+    
+    return createFallbackResult(itemName, searchQuery);
   }
 }
 
@@ -214,23 +231,35 @@ function calculateMatchConfidence(searchTerm: string, productName: string, sku?:
   return Math.min(0.5 + (overlap.length / Math.max(searchWords.length, 1)) * 0.4, 0.85);
 }
 
-function createFallbackResult(itemName: string): MarketDataSource {
-  const searchUrl = `https://stockx.com/search?s=${encodeURIComponent(itemName)}`;
+function createFallbackResult(itemName: string, cleanedQuery?: string): MarketDataSource {
+  const query = cleanedQuery || cleanSneakerQuery(itemName);
+  const stockxUrl = `https://stockx.com/search?s=${encodeURIComponent(query)}`;
+  const goatUrl = `https://www.goat.com/search?query=${encodeURIComponent(query)}`;
   
   return {
     source: 'retailed',
-    available: true,
-    query: itemName,
+    available: true, // Mark as available so it doesn't error out
+    query: query,
     totalListings: 0,
-    sampleListings: [{
-      title: `Search StockX for "${itemName}"`,
-      price: 0,
-      condition: 'N/A',
-      url: searchUrl,
-    }],
+    sampleListings: [
+      {
+        title: `Search StockX for "${query}"`,
+        price: 0,
+        condition: 'New',
+        url: stockxUrl,
+      },
+      {
+        title: `Search GOAT for "${query}"`,
+        price: 0,
+        condition: 'New',
+        url: goatUrl,
+      },
+    ],
     metadata: {
       fallback: true,
-      searchUrl,
+      reason: 'Retailed API unavailable - using search links',
+      stockxUrl,
+      goatUrl,
     },
   };
 }

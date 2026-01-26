@@ -1,6 +1,6 @@
 // FILE: src/lib/hydra/category-detection.ts
-// HYDRA v6.0 - Category Detection System
-// Extracted from analyze.ts for modularity
+// HYDRA v6.1 - Category Detection System
+// FIXED: AI Vote now takes priority over name parsing
 
 import type { ItemCategory, CategoryDetection } from './types.js';
 
@@ -111,6 +111,7 @@ export function getApisForCategory(category: string): string[] {
 }
 
 // ==================== MAIN CATEGORY DETECTION ====================
+// FIXED v6.1: Reordered priorities - AI vote now comes FIRST since AI saw the image!
 
 export function detectItemCategory(
   itemName: string, 
@@ -125,19 +126,7 @@ export function detectItemCategory(
   console.log(`🤖 AI Category Input: ${aiDetectedCategory || 'none'}`);
   console.log(`💡 Category Hint: ${categoryId || 'none'}`);
   
-  // Priority 0 - AGGRESSIVE name-based detection (runs first!)
-  const nameBasedCategory = detectCategoryFromName(nameLower);
-  if (nameBasedCategory && nameBasedCategory !== 'general') {
-    console.log(`🎯 NAME PARSING detected: ${nameBasedCategory}`);
-    return {
-      category: nameBasedCategory as ItemCategory,
-      confidence: 0.92,
-      keywords: ['name_parsing'],
-      source: 'name_parsing'
-    };
-  }
-  
-  // Priority 1 - AI detected category
+  // Priority 1 - AI detected category (HIGHEST PRIORITY - AI saw the image!)
   if (aiDetectedCategory && aiDetectedCategory !== 'general' && aiDetectedCategory !== 'unknown') {
     const normalizedAiCategory = normalizeCategory(aiDetectedCategory);
     if (normalizedAiCategory !== 'general') {
@@ -165,7 +154,19 @@ export function detectItemCategory(
     }
   }
   
-  // Priority 3 - Keyword detection from item name
+  // Priority 3 - Name-based detection (only runs if AI didn't identify category)
+  const nameBasedCategory = detectCategoryFromName(nameLower);
+  if (nameBasedCategory && nameBasedCategory !== 'general') {
+    console.log(`🎯 NAME PARSING detected: ${nameBasedCategory}`);
+    return {
+      category: nameBasedCategory as ItemCategory,
+      confidence: 0.92,
+      keywords: ['name_parsing'],
+      source: 'name_parsing'
+    };
+  }
+  
+  // Priority 4 - Keyword detection from item name
   const keywordResult = detectCategoryByKeywords(nameLower);
   console.log(`🔑 KEYWORD DETECTION result: ${keywordResult.category} (confidence: ${keywordResult.confidence})`);
   console.log(`🔑 Matched keywords: ${keywordResult.keywords.join(', ') || 'none'}`);
@@ -193,23 +194,29 @@ export function detectCategoryFromName(nameLower: string): string | null {
     return 'vehicles';
   }
   
-  // Vehicle patterns
-  const vehiclePatterns = [
-    'vehicle', 'automobile', 'automotive', 'car ', ' car', 'sedan', 'coupe',
-    'truck', 'pickup', 'suv', 'crossover', 'minivan', 'van ',
-    'motorcycle', 'motorbike', 'harley', 'honda motorcycle', 'yamaha',
-    'ford ', 'chevrolet', 'chevy', 'toyota', 'honda ', 'nissan', 'dodge',
-    'jeep', 'gmc', 'bmw', 'mercedes', 'audi', 'lexus', 'acura', 'infiniti',
-    'volkswagen', 'vw ', 'subaru', 'mazda', 'hyundai', 'kia', 'tesla',
-    'mustang', 'camaro', 'corvette', 'challenger', 'charger', 'wrangler',
-    'f-150', 'f150', 'silverado', 'ram 1500', 'tacoma', 'tundra',
-    'civic', 'accord', 'camry', 'corolla', 'altima', 'maxima',
-    'model s', 'model 3', 'model x', 'model y'
-  ];
+  // Vehicle patterns - BUT only if it really looks like a vehicle, not a trading card
+  // Skip vehicle detection if it contains card-related keywords
+  const cardKeywords = ['card', 'pokemon', 'tcg', 'holo', 'vmax', 'vstar', 'ex', 'gx', 'trading'];
+  const hasCardKeyword = cardKeywords.some(kw => nameLower.includes(kw));
   
-  for (const pattern of vehiclePatterns) {
-    if (nameLower.includes(pattern)) {
-      return 'vehicles';
+  if (!hasCardKeyword) {
+    const vehiclePatterns = [
+      'vehicle', 'automobile', 'automotive', 'car ', ' car', 'sedan', 'coupe',
+      'truck', 'pickup', 'suv', 'crossover', 'minivan', 'van ',
+      'motorcycle', 'motorbike', 'harley', 'honda motorcycle', 'yamaha',
+      'ford ', 'chevrolet', 'chevy', 'toyota', 'honda ', 'nissan', 'dodge',
+      'jeep', 'gmc', 'bmw', 'mercedes', 'audi', 'lexus', 'acura', 'infiniti',
+      'volkswagen', 'vw ', 'subaru', 'mazda', 'hyundai', 'kia', 'tesla',
+      'mustang', 'camaro', 'corvette', 'challenger', 'charger', 'wrangler',
+      'f-150', 'f150', 'silverado', 'ram 1500', 'tacoma', 'tundra',
+      'civic', 'accord', 'camry', 'corolla', 'altima', 'maxima',
+      'model s', 'model 3', 'model x', 'model y'
+    ];
+    
+    for (const pattern of vehiclePatterns) {
+      if (nameLower.includes(pattern)) {
+        return 'vehicles';
+      }
     }
   }
   
@@ -290,12 +297,7 @@ export function detectCategoryFromName(nameLower: string): string | null {
   
   for (const pokemon of pokemonNames) {
     if (nameLower.includes(pokemon)) {
-      if (nameLower.includes('card') || nameLower.includes('tcg') || 
-          nameLower.includes('holo') || nameLower.includes('vmax') || 
-          nameLower.includes('vstar') || nameLower.includes('ex ') ||
-          nameLower.includes(' gx') || nameLower.includes('full art')) {
-        return 'pokemon_cards';
-      }
+      // If a Pokemon name is found, it's almost certainly a Pokemon card
       return 'pokemon_cards';
     }
   }
@@ -375,11 +377,15 @@ export function normalizeCategory(category: string): string {
   }
   
   // Vehicle normalization
-  if (catLower.includes('vehicle') || catLower.includes('car') || catLower.includes('auto') ||
+  if (catLower.includes('vehicle') || catLower.includes('auto') ||
       catLower.includes('truck') || catLower.includes('motorcycle') || catLower.includes('vin')) {
-    return 'vehicles';
+    // BUT don't normalize to vehicles if it contains card keywords
+    if (!catLower.includes('card') && !catLower.includes('pokemon') && !catLower.includes('tcg')) {
+      return 'vehicles';
+    }
   }
   
+  // Pokemon/trading card normalization - check BEFORE generic car check
   if (catLower.includes('pokemon') || catLower.includes('pokémon')) {
     return 'pokemon_cards';
   }
@@ -441,8 +447,8 @@ export function detectCategoryByKeywords(nameLower: string): { category: ItemCat
     ],
     // Vehicle keywords
     vehicles: [
-      'vehicle', 'car', 'automobile', 'automotive', 'auto', 'sedan', 'coupe', 'hatchback',
-      'truck', 'pickup', 'suv', 'crossover', 'minivan', 'van', 'wagon',
+      'vehicle', 'automobile', 'automotive', 'sedan', 'coupe', 'hatchback',
+      'truck', 'pickup', 'suv', 'crossover', 'minivan', 'wagon',
       'motorcycle', 'motorbike', 'scooter', 'atv', 'utv',
       'vin', 'odometer', 'mileage', 'title', 'carfax',
       'ford', 'chevrolet', 'chevy', 'toyota', 'honda', 'nissan', 'dodge', 'ram',

@@ -1,6 +1,6 @@
 // FILE: src/components/AuthorityReportCard.tsx
-// HYDRA v6.0 - Universal Authority Report Card
-// Dynamically renders authority data from ALL sources
+// HYDRA v6.1 - Universal Authority Report Card
+// FIXED: Normalized source to lowercase for consistent matching
 
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -173,7 +173,7 @@ interface AuthorityReportCardProps {
   className?: string;
 }
 
-// Source icon mapping
+// Source icon mapping (lowercase keys)
 const SOURCE_ICONS: Record<string, React.ReactNode> = {
   google_books: <BookOpen className="h-5 w-5" />,
   numista: <Coins className="h-5 w-5" />,
@@ -187,7 +187,7 @@ const SOURCE_ICONS: Record<string, React.ReactNode> = {
   ebay: <ShoppingBag className="h-5 w-5" />,
 };
 
-// Source display names
+// Source display names (lowercase keys)
 const SOURCE_NAMES: Record<string, string> = {
   google_books: 'Google Books',
   numista: 'Numista',
@@ -244,9 +244,14 @@ export const AuthorityReportCard: React.FC<AuthorityReportCardProps> = ({
   authorityData,
   className = ''
 }) => {
-  const source = authorityData.source;
+  // FIXED: Normalize source to lowercase for consistent matching
+  const source = authorityData.source?.toLowerCase() || '';
   const icon = SOURCE_ICONS[source] || <Shield className="h-5 w-5" />;
-  const sourceName = SOURCE_NAMES[source] || source;
+  const sourceName = SOURCE_NAMES[source] || authorityData.source || 'Unknown';
+  
+  // Debug log to help troubleshoot
+  console.log(`🎴 AuthorityReportCard rendering for source: "${source}"`);
+  console.log(`🎴 Has numistaId: ${!!authorityData.numistaId}, obverseThumb: ${!!authorityData.obverseThumb}`);
   
   return (
     <Card className={`border-green-500/20 bg-green-50/50 dark:bg-green-950/20 ${className}`}>
@@ -315,7 +320,7 @@ export const AuthorityReportCard: React.FC<AuthorityReportCardProps> = ({
           </div>
         )}
         
-        {/* External Link - THIS IS THE FIXED SECTION */}
+        {/* External Link */}
         {authorityData.externalUrl && (
           <div className="pt-2 text-center">
             <a href={authorityData.externalUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
