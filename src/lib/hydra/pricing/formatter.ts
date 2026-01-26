@@ -58,14 +58,77 @@ export interface FormattedAnalysisResponse {
 
 export interface FormattedAuthorityData {
   source: string;
-  catalogNumber?: string;
+  verified: boolean;
+  confidence?: number;
+  
+  // Common fields
   title?: string;
+  catalogNumber?: string;
+  externalUrl?: string;
+  
+  // Market values
   marketValue?: {
     low: string;
     mid: string;
     high: string;
   };
-  verified: boolean;
+  
+  // Price by condition (for coins, cards, etc.)
+  pricesByCondition?: Array<{
+    condition: string;
+    grade?: string;
+    price: number;
+  }>;
+  
+  // Google Books specific
+  isbn?: string;
+  isbn13?: string;
+  isbn10?: string;
+  authors?: string[];
+  publisher?: string;
+  publishedDate?: string;
+  pageCount?: number;
+  categories?: string[];
+  description?: string;
+  language?: string;
+  averageRating?: number;
+  ratingsCount?: number;
+  imageLinks?: {
+    thumbnail?: string;
+    smallThumbnail?: string;
+  };
+  retailPrice?: number;
+  
+  // Numista specific (coins)
+  numistaId?: number;
+  issuer?: string;
+  minYear?: number;
+  maxYear?: number;
+  value?: string;
+  composition?: string;
+  weight?: number;
+  size?: number;
+  thickness?: number;
+  shape?: string;
+  orientation?: string;
+  references?: string;
+  obverseThumb?: string;
+  reverseThumb?: string;
+  
+  // Pokemon TCG specific
+  pokemonTcgId?: string;
+  setName?: string;
+  setCode?: string;
+  rarity?: string;
+  artist?: string;
+  hp?: string;
+  types?: string[];
+  attacks?: any[];
+  weaknesses?: any[];
+  resistances?: any[];
+  
+  // Raw item details (fallback for any other data)
+  itemDetails?: Record<string, any>;
 }
 
 export interface PriceDisplay {
@@ -218,29 +281,138 @@ export function formatAnalysisResponse(
 }
 
 /**
- * Format authority data for response
+ * Format authority data for response - PRESERVES ALL RICH DATA
  */
 export function formatAuthorityData(authority: AuthorityData): FormattedAuthorityData {
   const formatted: FormattedAuthorityData = {
     source: authority.source,
-    verified: true,
+    verified: authority.verified ?? true,
+    confidence: authority.confidence,
   };
 
-  if (authority.catalogNumber) {
-    formatted.catalogNumber = authority.catalogNumber;
-  }
-
+  // Common fields
   if (authority.title) {
     formatted.title = authority.title;
   }
+  if (authority.catalogNumber) {
+    formatted.catalogNumber = authority.catalogNumber;
+  }
+  if (authority.externalUrl) {
+    formatted.externalUrl = authority.externalUrl;
+  }
 
+  // Format market value if available
   if (authority.marketValue) {
     const mv = authority.marketValue;
     formatted.marketValue = {
-      low: formatPriceSmart(mv.fair || mv.poor || 0),
-      mid: formatPriceSmart(mv.good || mv.average || 0),
-      high: formatPriceSmart(mv.excellent || mv.mint || 0),
+      low: formatPriceSmart(mv.fair || mv.poor || mv.good || 0),
+      mid: formatPriceSmart(mv.good || mv.average || mv.vf || 0),
+      high: formatPriceSmart(mv.excellent || mv.mint || mv.unc || 0),
     };
+  }
+
+  // Format price data if available (conditions/grades)
+  if (authority.priceData?.conditions) {
+    formatted.pricesByCondition = authority.priceData.conditions.map((c: any) => ({
+      condition: c.condition,
+      grade: c.grade,
+      price: c.price,
+    }));
+  }
+
+  // Extract itemDetails based on source type
+  const details = authority.itemDetails || {};
+
+  // =========================================================================
+  // GOOGLE BOOKS DATA
+  // =========================================================================
+  if (authority.source === 'google_books' || details.googleBooksId) {
+    formatted.isbn = details.isbn13 || details.isbn10;
+    formatted.isbn13 = details.isbn13;
+    formatted.isbn10 = details.isbn10;
+    formatted.authors = details.authors;
+    formatted.publisher = details.publisher;
+    formatted.publishedDate = details.publishedDate;
+    formatted.pageCount = details.pageCount;
+    formatted.categories = details.categories;
+    formatted.description = details.description;
+    formatted.language = details.language;
+    formatted.averageRating = details.averageRating;
+    formatted.ratingsCount = details.ratingsCount;
+    formatted.imageLinks = details.imageLinks;
+    formatted.title = details.title || formatted.title;
+    formatted.externalUrl = details.infoLink || details.canonicalVolumeLink || formatted.externalUrl;
+    
+    // Retail price from priceData
+    if (authority.priceData?.retail) {
+      formatted.retailPrice = authority.priceData.retail;
+    }
+  }
+
+  // =========================================================================
+  // NUMISTA DATA (Coins & Banknotes)
+  // =========================================================================
+  if (authority.source === 'numista' || details.numistaId) {
+    formatted.numistaId = details.numistaId;
+    formatted.title = details.title || formatted.title;
+    formatted.issuer = details.issuer;
+    formatted.minYear = details.minYear;
+    formatted.maxYear = details.maxYear;
+    formatted.value = details.value;
+    formatted.composition = details.composition;
+    formatted.weight = details.weight;
+    formatted.size = details.size;
+    formatted.thickness = details.thickness;
+    formatted.shape = details.shape;
+    formatted.orientation = details.orientation;
+    formatted.references = details.references;
+    formatted.obverseThumb = details.obverseThumb;
+    formatted.reverseThumb = details.reverseThumb;
+    formatted.externalUrl = details.url || formatted.externalUrl;
+  }
+
+  // =========================================================================
+  // POKEMON TCG DATA
+  // =========================================================================
+  if (authority.source === 'pokemon_tcg' || details.pokemonTcgId) {
+    formatted.pokemonTcgId = details.pokemonTcgId || details.id;
+    formatted.title = details.name || formatted.title;
+    formatted.setName = details.setName || details.set?.name;
+    formatted.setCode = details.setCode || details.set?.id;
+    formatted.rarity = details.rarity;
+    formatted.artist = details.artist;
+    formatted.hp = details.hp;
+    formatted.types = details.types;
+    formatted.attacks = details.attacks;
+    formatted.weaknesses = details.weaknesses;
+    formatted.resistances = details.resistances;
+    formatted.imageLinks = details.images;
+  }
+
+  // =========================================================================
+  // FALLBACK: Include raw itemDetails for any unmapped data
+  // =========================================================================
+  if (Object.keys(details).length > 0) {
+    // Only include itemDetails if there's data we haven't already extracted
+    const remainingDetails = { ...details };
+    
+    // Remove already-extracted fields to avoid duplication
+    const extractedKeys = [
+      'googleBooksId', 'isbn13', 'isbn10', 'authors', 'publisher', 'publishedDate',
+      'pageCount', 'categories', 'description', 'language', 'averageRating', 'ratingsCount',
+      'imageLinks', 'infoLink', 'canonicalVolumeLink', 'previewLink',
+      'numistaId', 'title', 'issuer', 'minYear', 'maxYear', 'value', 'composition',
+      'weight', 'size', 'thickness', 'shape', 'orientation', 'references', 'url',
+      'obverseThumb', 'reverseThumb', 'category',
+      'pokemonTcgId', 'id', 'name', 'setName', 'set', 'setCode', 'rarity', 'artist',
+      'hp', 'types', 'attacks', 'weaknesses', 'resistances', 'images',
+    ];
+    
+    extractedKeys.forEach(key => delete remainingDetails[key]);
+    
+    if (Object.keys(remainingDetails).length > 0) {
+      formatted.itemDetails = remainingDetails;
+    }
   }
 
   return formatted;
