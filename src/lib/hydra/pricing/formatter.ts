@@ -216,6 +216,30 @@ export interface FormattedAuthorityData {
   certDate?: string;
   
   // =========================================================================
+  // NHTSA SPECIFIC (Vehicles - FREE API!)
+  // =========================================================================
+  vin?: string;
+  make?: string;
+  model?: string;
+  vehicleYear?: number;
+  trim?: string;
+  bodyClass?: string;
+  vehicleType?: string;
+  driveType?: string;
+  fuelType?: string;
+  engineCylinders?: number;
+  engineDisplacement?: string;
+  engineHP?: number;
+  transmissionStyle?: string;
+  doors?: number;
+  plantCity?: string;
+  plantCountry?: string;
+  plantCompanyName?: string;
+  series?: string;
+  gvwr?: string;
+  manufacturerName?: string;
+  
+  // =========================================================================
   // COLNECT SPECIFIC (Future - Multi-category collectibles)
   // =========================================================================
   colnectId?: number;
@@ -657,6 +681,36 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
   }
 
   // =========================================================================
+  // NHTSA DATA (Vehicles - FREE API!)
+  // =========================================================================
+  if (authority.source === 'nhtsa' || details.vin) {
+    formatted.vin = details.vin;
+    formatted.make = details.make;
+    formatted.model = details.model;
+    formatted.vehicleYear = details.year;
+    formatted.year = details.year;
+    formatted.trim = details.trim;
+    formatted.bodyClass = details.bodyClass;
+    formatted.vehicleType = details.vehicleType;
+    formatted.driveType = details.driveType;
+    formatted.fuelType = details.fuelType;
+    formatted.engineCylinders = details.engineCylinders;
+    formatted.engineDisplacement = details.engineDisplacement;
+    formatted.engineHP = details.engineHP;
+    formatted.transmissionStyle = details.transmissionStyle;
+    formatted.doors = details.doors;
+    formatted.plantCity = details.plantCity;
+    formatted.plantCountry = details.plantCountry;
+    formatted.plantCompanyName = details.plantCompanyName;
+    formatted.series = details.series;
+    formatted.gvwr = details.gvwr;
+    formatted.manufacturerName = details.manufacturerName;
+    formatted.title = `${details.year || ''} ${details.make || ''} ${details.model || ''} ${details.trim || ''}`.trim() || formatted.title;
+    formatted.externalUrl = details.vin ? `https://vpic.nhtsa.dot.gov/decoder/Decoder?VIN=${details.vin}` : formatted.externalUrl;
+    formatted.catalogNumber = details.vin || formatted.catalogNumber;
+  }
+
+  // =========================================================================
   // COLNECT DATA (Future - Multi-category collectibles)
   // =========================================================================
   if (authority.source === 'colnect' || details.colnectId) {
@@ -723,6 +777,10 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
       'cardBrand', 'cardCategory', 'cardSubject', 'subject', 'player', 'cardVariety', 'variety',
       'cardNumber', 'totalPopulation', 'popTotal', 'populationHigher', 'popHigher',
       'labelType', 'isCrossedOver', 'certDate', 'certUrl',
+      // NHTSA
+      'vin', 'make', 'model', 'trim', 'bodyClass', 'vehicleType', 'driveType',
+      'fuelType', 'engineCylinders', 'engineDisplacement', 'engineHP', 'transmissionStyle',
+      'doors', 'plantCity', 'plantCountry', 'plantCompanyName', 'series', 'gvwr', 'manufacturerName',
       // Colnect
       'colnectId', 'colnectCategory', 'itemName', 'seriesName', 'series',
       'producerName', 'producer', 'catalogCodes', 'frontPictureId', 'backPictureId',

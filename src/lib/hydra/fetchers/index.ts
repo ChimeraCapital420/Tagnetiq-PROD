@@ -14,6 +14,7 @@ export { fetchGoogleBooksData } from './google-books.js';
 export { fetchDiscogsData } from './discogs.js';
 export { fetchRetailedData } from './retailed.js';
 export { fetchPsaData, verifyPsaCerts } from './psa.js';
+export { fetchNhtsaData, validateVIN, decodeVINBatch } from './nhtsa.js';
 
 // Import for internal use
 import { fetchEbayData } from './ebay.js';
@@ -24,6 +25,7 @@ import { fetchGoogleBooksData } from './google-books.js';
 import { fetchDiscogsData } from './discogs.js';
 import { fetchRetailedData } from './retailed.js';
 import { fetchPsaData } from './psa.js';
+import { fetchNhtsaData } from './nhtsa.js';
 
 // ==================== FETCHER REGISTRY ====================
 
@@ -38,6 +40,7 @@ const FETCHER_REGISTRY: Record<string, FetcherFunction> = {
   'discogs': fetchDiscogsData,
   'retailed': fetchRetailedData,
   'psa': fetchPsaData,
+  'nhtsa': fetchNhtsaData,
 };
 
 // ==================== UNIFIED FETCH FUNCTION ====================

@@ -16,17 +16,17 @@ export const CATEGORY_API_MAP: Record<string, string[]> = {
   'pokemon_cards': ['pokemon_tcg', 'psa', 'ebay'],
   'pokemon': ['pokemon_tcg', 'psa', 'ebay'],
   'mtg_cards': ['psa', 'ebay'],
-  'sports_cards': ['psa', 'ebay'],  // PSA is the authority for sports cards
+  'sports_cards': ['psa', 'ebay'],
   'baseball_cards': ['psa', 'ebay'],
   'football_cards': ['psa', 'ebay'],
   'basketball_cards': ['psa', 'ebay'],
   'hockey_cards': ['psa', 'ebay'],
-  'graded_cards': ['psa', 'ebay'],  // Any graded card
+  'graded_cards': ['psa', 'ebay'],
   'yugioh_cards': ['psa', 'ebay'],
   'books': ['google_books', 'ebay'],
   'rare_books': ['google_books', 'ebay'],
   'textbooks': ['google_books', 'ebay'],
-  'comics': ['comicvine', 'psa', 'ebay'],  // PSA grades comics too
+  'comics': ['comicvine', 'psa', 'ebay'],
   'manga': ['comicvine', 'ebay'],
   'graphic_novels': ['comicvine', 'ebay'],
   'video_games': ['rawg', 'ebay'],
@@ -44,6 +44,14 @@ export const CATEGORY_API_MAP: Record<string, string[]> = {
   'jordans': ['retailed', 'ebay'],
   'nike': ['retailed', 'ebay'],
   'yeezy': ['retailed', 'ebay'],
+  // Vehicle categories - NHTSA VIN Decoder (FREE API!)
+  'vehicles': ['nhtsa', 'ebay'],
+  'cars': ['nhtsa', 'ebay'],
+  'trucks': ['nhtsa', 'ebay'],
+  'motorcycles': ['nhtsa', 'ebay'],
+  'automotive': ['nhtsa', 'ebay'],
+  'autos': ['nhtsa', 'ebay'],
+  // General categories
   'general': ['ebay'],
   'collectibles': ['ebay'],
   'antiques': ['ebay'],
@@ -143,6 +151,32 @@ export function detectItemCategory(
 // ==================== NAME-BASED DETECTION ====================
 
 export function detectCategoryFromName(nameLower: string): string | null {
+  // VIN Detection - 17 character alphanumeric (excluding I, O, Q)
+  const vinPattern = /\b[A-HJ-NPR-Z0-9]{17}\b/i;
+  if (vinPattern.test(nameLower) || nameLower.includes('vin')) {
+    return 'vehicles';
+  }
+  
+  // Vehicle patterns
+  const vehiclePatterns = [
+    'vehicle', 'automobile', 'automotive', 'car ', ' car', 'sedan', 'coupe',
+    'truck', 'pickup', 'suv', 'crossover', 'minivan', 'van ',
+    'motorcycle', 'motorbike', 'harley', 'honda motorcycle', 'yamaha',
+    'ford ', 'chevrolet', 'chevy', 'toyota', 'honda ', 'nissan', 'dodge',
+    'jeep', 'gmc', 'bmw', 'mercedes', 'audi', 'lexus', 'acura', 'infiniti',
+    'volkswagen', 'vw ', 'subaru', 'mazda', 'hyundai', 'kia', 'tesla',
+    'mustang', 'camaro', 'corvette', 'challenger', 'charger', 'wrangler',
+    'f-150', 'f150', 'silverado', 'ram 1500', 'tacoma', 'tundra',
+    'civic', 'accord', 'camry', 'corolla', 'altima', 'maxima',
+    'model s', 'model 3', 'model x', 'model y'
+  ];
+  
+  for (const pattern of vehiclePatterns) {
+    if (nameLower.includes(pattern)) {
+      return 'vehicles';
+    }
+  }
+  
   // PSA/Graded card detection - check early as it's very specific
   const psaPatterns = [
     'psa 10', 'psa 9', 'psa 8', 'psa 7', 'psa 6', 'psa 5',
@@ -155,7 +189,6 @@ export function detectCategoryFromName(nameLower: string): string | null {
   
   for (const pattern of psaPatterns) {
     if (nameLower.includes(pattern)) {
-      // Determine if sports card or Pokemon/TCG
       if (nameLower.includes('pokemon') || nameLower.includes('pikachu') || 
           nameLower.includes('charizard') || nameLower.includes('tcg')) {
         return 'pokemon_cards';
@@ -172,7 +205,6 @@ export function detectCategoryFromName(nameLower: string): string | null {
           nameLower.includes('hoops')) {
         return 'sports_cards';
       }
-      // Default graded items to sports cards (most common)
       return 'graded_cards';
     }
   }
@@ -278,6 +310,12 @@ export function detectCategoryFromName(nameLower: string): string | null {
 export function normalizeCategory(category: string): string {
   const catLower = category.toLowerCase().trim().replace(/[_\s-]+/g, '_');
   
+  // Vehicle normalization
+  if (catLower.includes('vehicle') || catLower.includes('car') || catLower.includes('auto') ||
+      catLower.includes('truck') || catLower.includes('motorcycle') || catLower.includes('vin')) {
+    return 'vehicles';
+  }
+  
   if (catLower.includes('pokemon') || catLower.includes('pokémon')) {
     return 'pokemon_cards';
   }
@@ -322,6 +360,22 @@ export function normalizeCategory(category: string): string {
 
 export function detectCategoryByKeywords(nameLower: string): { category: ItemCategory; confidence: number; keywords: string[] } {
   const categoryKeywords: Record<ItemCategory, string[]> = {
+    // Vehicle keywords
+    vehicles: [
+      'vehicle', 'car', 'automobile', 'automotive', 'auto', 'sedan', 'coupe', 'hatchback',
+      'truck', 'pickup', 'suv', 'crossover', 'minivan', 'van', 'wagon',
+      'motorcycle', 'motorbike', 'scooter', 'atv', 'utv',
+      'vin', 'odometer', 'mileage', 'title', 'carfax',
+      'ford', 'chevrolet', 'chevy', 'toyota', 'honda', 'nissan', 'dodge', 'ram',
+      'jeep', 'gmc', 'bmw', 'mercedes', 'audi', 'lexus', 'acura', 'infiniti',
+      'volkswagen', 'subaru', 'mazda', 'hyundai', 'kia', 'tesla', 'rivian', 'lucid',
+      'porsche', 'ferrari', 'lamborghini', 'maserati', 'bentley', 'rolls royce',
+      'mustang', 'camaro', 'corvette', 'challenger', 'charger', 'wrangler',
+      'f-150', 'f150', 'silverado', 'sierra', 'ram 1500', 'tacoma', 'tundra',
+      'civic', 'accord', 'camry', 'corolla', 'altima', 'maxima', 'sentra',
+      'model s', 'model 3', 'model x', 'model y', 'cybertruck',
+      'harley davidson', 'harley', 'indian motorcycle', 'ducati', 'kawasaki', 'suzuki'
+    ],
     coins: [
       'coin', 'penny', 'nickel', 'dime', 'quarter', 'dollar', 'cent',
       'morgan', 'liberty', 'eagle', 'buffalo', 'wheat', 'mercury',
