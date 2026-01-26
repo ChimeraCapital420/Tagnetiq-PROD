@@ -349,8 +349,7 @@ async function runMultiAIAnalysis(
   if (isProviderAvailable('perplexity')) {
     console.log(`  Stage 3 - Market: perplexity`);
     const marketPrompt = `Search for current market prices and recent sales for: "${bestContext}". Category: ${category}. Provide estimated value based on actual market data.`;
-    const perplexityVotes = await runProviderStage(['perplexity'], [], marketPrompt);
-    perplexityVotes.forEach(v => v.weight *= 1.2);
+    const perplexityVotes = await runProviderStage(['perplexity'], [], marketPrompt, { isMarketSearch: true });
     votes.push(...perplexityVotes);
   }
   
@@ -365,8 +364,7 @@ async function runMultiAIAnalysis(
         itemNameHint: bestContext,
         additionalInstructions: 'Previous AI analyses show disagreement. Provide your independent assessment.',
       });
-      const tiebreakerVotes = await runProviderStage(['deepseek'], [], tiebreakerPrompt);
-      tiebreakerVotes.forEach(v => v.weight *= 0.6);
+      const tiebreakerVotes = await runProviderStage(['deepseek'], [], tiebreakerPrompt, { isTiebreaker: true });
       votes.push(...tiebreakerVotes);
     }
   }
@@ -377,7 +375,11 @@ async function runMultiAIAnalysis(
 async function runProviderStage(
   providers: string[],
   images: string[],
-  prompt: string
+  prompt: string,
+  options?: {
+    isTiebreaker?: boolean;
+    isMarketSearch?: boolean;
+  }
 ): Promise<ModelVote[]> {
   const results = await Promise.allSettled(
     providers.map(async (providerId) => {
@@ -385,7 +387,33 @@ async function runProviderStage(
       try {
         const provider = createProviderFromId(providerId);
         const result = await provider.analyze(images, prompt);
-        const vote = createVote(providerId, result, { responseTime: Date.now() - start });
+        const responseTime = Date.now() - start;
+        
+        // Get the parsed analysis from the result
+        const analysis = result.response;
+        
+        // Handle case where analysis might be null
+        if (!analysis) {
+          console.log(`    ✗ ${providerId}: No analysis returned`);
+          return null;
+        }
+        
+        // Create provider info object for createVote
+        const providerInfo = {
+          id: providerId,
+          name: providerId.charAt(0).toUpperCase() + providerId.slice(1),
+          baseWeight: result.confidence || 0.8,
+        };
+        
+        // Create vote with correct signature: (provider, analysis, confidence, responseTime, options)
+        const vote = createVote(
+          providerInfo,
+          analysis,
+          result.confidence || 0.8,
+          responseTime,
+          options || {}
+        );
+        
         console.log(`    ✓ ${providerId}: ${vote.decision} @ $${vote.estimatedValue.toFixed(2)}`);
         return vote;
       } catch (error: any) {
