@@ -267,8 +267,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 // =============================================================================
 
 function createProviderFromId(providerId: string) {
-  // Handle case variations: 'openai' -> 'OpenAI', 'xai' -> 'xAI'
-  const nameMap: Record<string, string> = {
+  const id = providerId.toLowerCase();
+  
+  // Lookup config using lowercase key (matches AI_PROVIDERS keys)
+  const config = AI_PROVIDERS[id];
+  if (!config) {
+    throw new Error(`No config for provider: ${providerId}`);
+  }
+  
+  // Display name mapping for ProviderFactory
+  const displayNameMap: Record<string, string> = {
     'openai': 'OpenAI',
     'anthropic': 'Anthropic',
     'google': 'Google',
@@ -279,21 +287,13 @@ function createProviderFromId(providerId: string) {
     'perplexity': 'Perplexity',
   };
   
-  const providerName = nameMap[providerId.toLowerCase()];
-  if (!providerName) {
-    throw new Error(`Unknown provider: ${providerId}`);
-  }
-  
-  const config = AI_PROVIDERS[providerName as keyof typeof AI_PROVIDERS];
-  if (!config) {
-    throw new Error(`No config for provider: ${providerName}`);
-  }
+  const displayName = displayNameMap[id] || config.name;
   
   return ProviderFactory.create({
-    id: `${providerId}-analysis`,
-    name: providerName,
-    model: config.models[0],
-    baseWeight: AI_MODEL_WEIGHTS[providerId.toLowerCase() as keyof typeof AI_MODEL_WEIGHTS] || 1.0,
+    id: `${id}-analysis`,
+    name: displayName,
+    model: config.primaryModel || config.models[0],
+    baseWeight: AI_MODEL_WEIGHTS[id as keyof typeof AI_MODEL_WEIGHTS] || config.weight || 1.0,
   });
 }
 
