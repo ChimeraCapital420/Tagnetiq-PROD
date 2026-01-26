@@ -2,11 +2,10 @@
 // Price and Response Formatting for HYDRA
 // Formats final output for API responses
 
-import type { 
-  ConsensusResult, 
-  AuthorityData, 
+import type {
+  ConsensusResult,
+  AuthorityData,
   ModelVote,
-  ParsedAnalysis,
 } from '../types.js';
 import type { BlendedPrice } from './blender.js';
 
@@ -40,6 +39,8 @@ export interface FormattedAnalysisResponse {
   analysisQuality: 'OPTIMAL' | 'DEGRADED' | 'FALLBACK';
   /** Summary reasoning */
   summaryReasoning: string;
+  /** Valuation factors */
+  valuationFactors: string[];
   /** Authority data if available */
   authorityData?: FormattedAuthorityData;
   /** Consensus metrics */
@@ -90,7 +91,7 @@ export function formatPrice(
   options?: Intl.NumberFormatOptions
 ): string {
   if (value === 0 || isNaN(value)) return '$0.00';
-  
+
   const formatter = new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency,
@@ -98,38 +99,34 @@ export function formatPrice(
     maximumFractionDigits: 2,
     ...options,
   });
-  
+
   return formatter.format(value);
 }
 
 /**
  * Format price with appropriate precision
- * - Under $1: show cents ($0.50)
- * - $1-$100: show 2 decimals ($45.00)
- * - $100-$1000: show no decimals ($450)
- * - Over $1000: show with commas ($1,500)
  */
 export function formatPriceSmart(value: number, currency: string = 'USD'): string {
   if (value === 0 || isNaN(value)) return '$0';
-  
+
   if (value < 1) {
     return formatPrice(value, currency, { minimumFractionDigits: 2 });
   }
-  
+
   if (value < 100) {
     return formatPrice(value, currency, { minimumFractionDigits: 2 });
   }
-  
+
   if (value < 1000) {
-    return formatPrice(value, currency, { 
-      minimumFractionDigits: 0, 
-      maximumFractionDigits: 0 
+    return formatPrice(value, currency, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
     });
   }
-  
-  return formatPrice(value, currency, { 
-    minimumFractionDigits: 0, 
-    maximumFractionDigits: 0 
+
+  return formatPrice(value, currency, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
   });
 }
 
@@ -184,6 +181,13 @@ export function formatAnalysisResponse(
     high: estimatedValue * 1.2,
   };
 
+  // Extract valuation factors from consensus
+  const valuationFactors = consensus.valuationFactors || [
+    `${consensus.totalVotes} AI models analyzed`,
+    `${consensus.analysisQuality} analysis quality`,
+    `${Math.round(consensus.consensusMetrics.decisionAgreement * 100)}% decision agreement`,
+  ];
+
   return {
     analysisId,
     itemName: consensus.itemName,
@@ -200,6 +204,7 @@ export function formatAnalysisResponse(
     confidence: consensus.confidence,
     analysisQuality: consensus.analysisQuality,
     summaryReasoning: generateSummaryReasoning(consensus, blendedPrice),
+    valuationFactors,
     authorityData: authorityData ? formatAuthorityData(authorityData) : undefined,
     metrics: {
       totalVotes: consensus.totalVotes,
@@ -220,15 +225,15 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
     source: authority.source,
     verified: true,
   };
-  
+
   if (authority.catalogNumber) {
     formatted.catalogNumber = authority.catalogNumber;
   }
-  
+
   if (authority.title) {
     formatted.title = authority.title;
   }
-  
+
   if (authority.marketValue) {
     const mv = authority.marketValue;
     formatted.marketValue = {
@@ -237,7 +242,7 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
       high: formatPriceSmart(mv.excellent || mv.mint || 0),
     };
   }
-  
+
   return formatted;
 }
 
@@ -249,14 +254,14 @@ export function generateSummaryReasoning(
   blendedPrice: BlendedPrice | null
 ): string {
   const parts: string[] = [];
-  
+
   // Decision reasoning
   if (consensus.decision === 'BUY') {
     parts.push(`This ${consensus.itemName} appears to be a good purchase opportunity.`);
   } else {
     parts.push(`This ${consensus.itemName} may not be the best value at this time.`);
   }
-  
+
   // Confidence statement
   if (consensus.confidence >= 90) {
     parts.push(`Analysis confidence is high (${consensus.confidence}%).`);
@@ -265,17 +270,17 @@ export function generateSummaryReasoning(
   } else {
     parts.push(`Analysis confidence is limited (${consensus.confidence}%). Consider additional research.`);
   }
-  
+
   // Authority verification
   if (blendedPrice?.authorityVerified) {
     parts.push('Price verified against authority database.');
   }
-  
+
   // Quality note
   if (consensus.analysisQuality === 'FALLBACK') {
     parts.push('Limited data available; estimate may vary.');
   }
-  
+
   return parts.join(' ');
 }
 
@@ -307,16 +312,16 @@ export function formatVotes(votes: ModelVote[]): Array<{
  */
 export function formatVoteSummaryText(votes: ModelVote[]): string {
   if (votes.length === 0) return 'No votes collected';
-  
+
   const buyVotes = votes.filter(v => v.decision === 'BUY');
   const sellVotes = votes.filter(v => v.decision === 'SELL');
-  
+
   const lines = [
     `Total: ${votes.length} votes`,
     `BUY: ${buyVotes.length} | SELL: ${sellVotes.length}`,
     `Providers: ${votes.map(v => v.providerName).join(', ')}`,
   ];
-  
+
   return lines.join('\n');
 }
 
@@ -375,37 +380,43 @@ export function formatQuality(quality: 'OPTIMAL' | 'DEGRADED' | 'FALLBACK'): {
 }
 
 // =============================================================================
-// JSON FORMATTING
+// API RESPONSE FORMATTING - MATCHES FRONTEND AnalysisResult INTERFACE
 // =============================================================================
 
 /**
  * Format response for API JSON output
+ * CRITICAL: This MUST match the frontend AnalysisResult interface in src/types.ts
  */
 export function formatAPIResponse(response: FormattedAnalysisResponse): Record<string, unknown> {
   return {
-    success: true,
-    data: {
-      analysisId: response.analysisId,
-      item: {
-        name: response.itemName,
-        category: response.category,
-      },
-      valuation: {
-        decision: response.decision,
-        estimatedValue: response.estimatedValue,
-        formattedPrice: response.formattedPrice,
-        priceRange: response.priceRange,
-        confidence: response.confidence,
-        quality: response.analysisQuality,
-      },
-      reasoning: response.summaryReasoning,
-      authority: response.authorityData,
-      metrics: response.metrics,
-      meta: {
-        timestamp: response.timestamp,
-        processingTime: response.processingTime,
-      },
+    // Required fields matching AnalysisResult interface
+    id: response.analysisId,
+    itemName: response.itemName,
+    estimatedValue: response.estimatedValue,
+    decision: response.decision,
+    confidenceScore: response.confidence,
+    summary_reasoning: response.summaryReasoning,
+    valuation_factors: response.valuationFactors,
+    resale_toolkit: {
+      listInArena: true,
+      sellOnProPlatforms: true,
+      linkToMyStore: false,
+      shareToSocial: true,
     },
+    marketComps: [],
+    imageUrl: '',
+    capturedAt: response.timestamp,
+    category: response.category,
+    subCategory: response.category,
+    tags: [response.category, response.decision.toLowerCase()],
+    analysis_quality: response.analysisQuality,
+    
+    // Additional data for enhanced frontend features
+    formattedPrice: response.formattedPrice,
+    priceRange: response.priceRange,
+    metrics: response.metrics,
+    authorityData: response.authorityData,
+    processingTime: response.processingTime,
   };
 }
 
@@ -417,10 +428,31 @@ export function formatErrorResponse(
   analysisId?: string
 ): Record<string, unknown> {
   return {
-    success: false,
+    // Return minimal valid AnalysisResult to prevent frontend crash
+    id: analysisId || `error_${Date.now()}`,
+    itemName: 'Analysis Error',
+    estimatedValue: 0,
+    decision: 'SELL',
+    confidenceScore: 0,
+    summary_reasoning: typeof error === 'string' ? error : error.message,
+    valuation_factors: ['Error occurred during analysis'],
+    resale_toolkit: {
+      listInArena: false,
+      sellOnProPlatforms: false,
+      linkToMyStore: false,
+      shareToSocial: false,
+    },
+    marketComps: [],
+    imageUrl: '',
+    capturedAt: new Date().toISOString(),
+    category: 'error',
+    subCategory: 'error',
+    tags: ['error'],
+    analysis_quality: 'NO_RESULT',
+    
+    // Error details
     error: {
       message: typeof error === 'string' ? error : error.message,
-      analysisId,
       timestamp: new Date().toISOString(),
     },
   };
