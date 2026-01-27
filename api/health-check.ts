@@ -132,7 +132,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         market: {
           POKEMON_TCG: !!process.env.POKEMON_TCG_API_KEY,
           NUMISTA: !!process.env.NUMISTA_API_KEY,
-          DISCOGS: !!process.env.DISCOGS_TOKEN,
+          DISCOGS: !!process.env.DISCOGS_USER_TOKEN,
           BRICKSET: !!process.env.BRICKSET_API_KEY || !!process.env.BRICKSET_PASSWORD,
           EBAY: !!process.env.EBAY_APP_ID || !!process.env.EBAY_CLIENT_ID,
           PSA: !!process.env.PSA_API_KEY,
@@ -171,7 +171,7 @@ async function testPokemonTCG(): Promise<MarketAPIResult> {
     if (apiKey) headers['X-Api-Key'] = apiKey;
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     
     // Test with simple query - no wildcards, no special chars
     const response = await fetch(
@@ -220,10 +220,10 @@ async function testNumista(): Promise<MarketAPIResult> {
   try {
     const start = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     
     const response = await fetch(
-      `https://api.numista.com/api/v3/coins?q=quarter&count=1`,
+      `https://api.numista.com/api/v3/types?q=quarter&count=1&lang=en`,
       {
         headers: { 'Numista-API-Key': apiKey },
         signal: controller.signal,
@@ -269,7 +269,7 @@ async function testGoogleBooks(): Promise<MarketAPIResult> {
     if (apiKey) url += `&key=${apiKey}`;
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     
     const response = await fetch(url, { signal: controller.signal });
     
@@ -309,7 +309,7 @@ async function testNHTSA(): Promise<MarketAPIResult> {
   try {
     const start = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     
     const response = await fetch(
       `https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVin/${testVIN}?format=json`,
@@ -348,19 +348,19 @@ async function testNHTSA(): Promise<MarketAPIResult> {
 
 async function testDiscogs(): Promise<MarketAPIResult> {
   const name = 'Discogs';
-  const token = process.env.DISCOGS_TOKEN;
+  const token = process.env.DISCOGS_USER_TOKEN;
   
   console.log(`  🔍 Testing ${name}...`);
   
   if (!token) {
     console.log(`    ⚠️ Not configured`);
-    return { name, status: 'not_configured', message: 'DISCOGS_TOKEN not set' };
+    return { name, status: 'not_configured', message: 'DISCOGS_USER_TOKEN not set' };
   }
   
   try {
     const start = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     
     const response = await fetch(
       `https://api.discogs.com/database/search?q=Beatles&type=release&per_page=1`,
@@ -416,7 +416,7 @@ async function testBrickset(): Promise<MarketAPIResult> {
   try {
     const start = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     
     // First, get a user hash if we have username/password
     let userHash = '';
@@ -643,7 +643,7 @@ async function testPSA(): Promise<MarketAPIResult> {
   try {
     const start = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     
     // PSA cert lookup requires a valid cert number
     // Using a known cert for testing
@@ -695,3 +695,5 @@ async function testPSA(): Promise<MarketAPIResult> {
     return { name, status: 'error', message: error.message };
   }
 }
+
+
