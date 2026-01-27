@@ -171,7 +171,7 @@ async function testPokemonTCG(): Promise<MarketAPIResult> {
     if (apiKey) headers['X-Api-Key'] = apiKey;
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     
     // Test with simple query - no wildcards, no special chars
     const response = await fetch(
@@ -220,7 +220,7 @@ async function testNumista(): Promise<MarketAPIResult> {
   try {
     const start = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     
     const response = await fetch(
       `https://api.numista.com/api/v3/types?q=quarter&count=1&lang=en`,
@@ -269,7 +269,7 @@ async function testGoogleBooks(): Promise<MarketAPIResult> {
     if (apiKey) url += `&key=${apiKey}`;
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     
     const response = await fetch(url, { signal: controller.signal });
     
@@ -309,7 +309,7 @@ async function testNHTSA(): Promise<MarketAPIResult> {
   try {
     const start = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     
     const response = await fetch(
       `https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVin/${testVIN}?format=json`,
@@ -360,7 +360,7 @@ async function testDiscogs(): Promise<MarketAPIResult> {
   try {
     const start = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     
     const response = await fetch(
       `https://api.discogs.com/database/search?q=Beatles&type=release&per_page=1`,
@@ -416,7 +416,7 @@ async function testBrickset(): Promise<MarketAPIResult> {
   try {
     const start = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     
     // First, get a user hash if we have username/password
     let userHash = '';
@@ -643,7 +643,7 @@ async function testPSA(): Promise<MarketAPIResult> {
   try {
     const start = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     
     // PSA cert lookup requires a valid cert number
     // Using a known cert for testing
@@ -695,6 +695,9 @@ async function testPSA(): Promise<MarketAPIResult> {
     return { name, status: 'error', message: error.message };
   }
 }
+
+
+
 
 
 
