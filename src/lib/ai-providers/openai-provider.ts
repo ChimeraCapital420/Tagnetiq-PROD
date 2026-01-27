@@ -4,7 +4,7 @@
 
 import { BaseAIProvider, ProviderConfig } from './base-provider.js';
 import type { AIAnalysisResponse } from '../types.js';
-import { getApiKey, AI_PROVIDERS } from '../config/providers.js';
+import { getApiKey, AI_PROVIDERS } from '../hydra/config/providers.js';
 import { API_TIMEOUTS, AI_MODEL_WEIGHTS } from '../config/constants.js';
 
 // =============================================================================
