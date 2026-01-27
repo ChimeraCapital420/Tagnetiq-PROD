@@ -166,7 +166,7 @@ export async function fetchPokemonTcgData(itemName: string): Promise<MarketDataS
 
 /**
  * Retry with progressively simpler query strategies
- * FIXED v6.3: Each retry level uses a DIFFERENT query approach
+ * FIXED v6.3.1: Don't use quotes for single-word names, fix set.id lookup
  */
 async function retryWithSimpleQuery(
   itemName: string, 
@@ -187,20 +187,29 @@ async function retryWithSimpleQuery(
   
   switch (retryLevel) {
     case 1:
-      // Strategy 1: Exact name match (no wildcard)
-      simpleQuery = `name:"${pokemonName}"`;
+      // Strategy 1: Simple name search (no wildcards, no quotes)
+      simpleQuery = `name:${pokemonName}`;
       break;
     case 2:
-      // Strategy 2: Name contains (partial match)
-      simpleQuery = `name:${pokemonName.toLowerCase()}*`;
+      // Strategy 2: Lowercase name search
+      simpleQuery = `name:${pokemonName.toLowerCase()}`;
       break;
     case 3:
-      // Strategy 3: Just the Pokemon name with set info if available
-      const setName = extractSetName(itemName);
-      if (setName) {
-        simpleQuery = `name:${pokemonName}* set.name:"${setName}"`;
+      // Strategy 3: Try with set.id if we can find it
+      const setId = extractSetId(itemName);
+      if (setId) {
+        simpleQuery = `name:${pokemonName} set.id:${setId}`;
       } else {
-        simpleQuery = pokemonName; // Full text search as last resort
+        // Try with set.name
+        const setName = extractSetName(itemName);
+        if (setName) {
+          // Use quotes only for multi-word set names
+          simpleQuery = setName.includes(' ') 
+            ? `name:${pokemonName} set.name:"${setName}"`
+            : `name:${pokemonName} set.name:${setName}`;
+        } else {
+          simpleQuery = pokemonName; // Full text search as last resort
+        }
       }
       break;
     default:
@@ -326,6 +335,64 @@ async function retryWithSimpleQuery(
     }
     return createFallbackResult(itemName, itemName);
   }
+}
+
+/**
+ * Extract set ID from item description (for set.id queries)
+ * These are the actual Pokemon TCG API set IDs
+ */
+function extractSetId(itemName: string): string | null {
+  const nameLower = itemName.toLowerCase();
+  
+  // Map of keywords to actual Pokemon TCG API set IDs
+  const setIdPatterns: Record<string, string> = {
+    'celebrations': 'cel25',
+    'base set': 'base1',
+    'jungle': 'base2',
+    'fossil': 'base3',
+    'team rocket': 'base5',
+    'gym heroes': 'gym1',
+    'gym challenge': 'gym2',
+    'neo genesis': 'neo1',
+    'neo discovery': 'neo2',
+    'neo revelation': 'neo3',
+    'neo destiny': 'neo4',
+    'legendary collection': 'base6',
+    'evolving skies': 'swsh7',
+    'brilliant stars': 'swsh9',
+    'astral radiance': 'swsh10',
+    'lost origin': 'swsh11',
+    'silver tempest': 'swsh12',
+    'crown zenith': 'swsh12pt5',
+    'paldea evolved': 'sv2',
+    'obsidian flames': 'sv3',
+    'paradox rift': 'sv4',
+    'temporal forces': 'sv5',
+    'twilight masquerade': 'sv6',
+    'shrouded fable': 'sv6pt5',
+    'surging sparks': 'sv7',
+    'prismatic evolutions': 'sv8',
+    'battle styles': 'swsh5',
+    'chilling reign': 'swsh6',
+    'fusion strike': 'swsh8',
+    'vivid voltage': 'swsh4',
+    'darkness ablaze': 'swsh3',
+    'rebel clash': 'swsh2',
+    'sword shield': 'swsh1',
+    'cosmic eclipse': 'sm12',
+    'hidden fates': 'sm115',
+    'shining fates': 'swsh45',
+    'champions path': 'swsh35',
+    'scarlet violet': 'sv1',
+  };
+  
+  for (const [pattern, setId] of Object.entries(setIdPatterns)) {
+    if (nameLower.includes(pattern)) {
+      return setId;
+    }
+  }
+  
+  return null;
 }
 
 /**
@@ -460,7 +527,8 @@ function buildPokemonQuery(itemName: string): string {
   const pokemonName = extractPokemonName(itemName);
   
   if (pokemonName) {
-    let query = `name:${pokemonName}*`;
+    // FIXED v6.3.1: Start without wildcard - simpler queries work better
+    let query = `name:${pokemonName}`;
     
     // Add subtype filters if detected (but NOT in the name search)
     if (nameLower.includes('vmax')) {
@@ -472,35 +540,13 @@ function buildPokemonQuery(itemName: string): string {
     } else if (nameLower.includes(' gx')) {
       query += ' subtypes:GX';
     } else if (nameLower.includes(' ex') && !nameLower.includes('exec')) {
-      query += ' (subtypes:EX OR subtypes:"ex")';
+      query += ' subtypes:ex';
     }
     
-    // Add set filter if detected
-    const setPatterns: Record<string, string> = {
-      'celebrations': 'set.id:cel25',
-      'base set': 'set.id:base1',
-      'jungle': 'set.id:jungle',
-      'fossil': 'set.id:fossil',
-      'team rocket': 'set.id:teamrocket',
-      'scarlet violet': 'set.series:"Scarlet & Violet"',
-      'sword shield': 'set.series:"Sword & Shield"',
-      'sun moon': 'set.series:"Sun & Moon"',
-      'battle styles': 'set.id:swsh5',
-      'chilling reign': 'set.id:swsh6',
-      'evolving skies': 'set.id:swsh7',
-      'fusion strike': 'set.id:swsh8',
-      'brilliant stars': 'set.id:swsh9',
-      'astral radiance': 'set.id:swsh10',
-      'lost origin': 'set.id:swsh11',
-      'silver tempest': 'set.id:swsh12',
-      'crown zenith': 'set.id:swsh12pt5',
-    };
-    
-    for (const [pattern, filter] of Object.entries(setPatterns)) {
-      if (nameLower.includes(pattern)) {
-        query += ` ${filter}`;
-        break;
-      }
+    // Add set filter using extractSetId for correct IDs
+    const setId = extractSetId(itemName);
+    if (setId) {
+      query += ` set.id:${setId}`;
     }
     
     return query;
@@ -518,10 +564,10 @@ function buildPokemonQuery(itemName: string): string {
     .trim();
   
   if (cleanName && cleanName.length > 2) {
-    return `name:${cleanName}*`;
+    return `name:${cleanName}`;
   }
   
-  // Last resort: just return the original
+  // Last resort: just return the original as a simple search
   return itemName;
 }
 

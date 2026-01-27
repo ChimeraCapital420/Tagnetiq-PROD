@@ -170,38 +170,107 @@ function validateRequest(body: unknown): AnalyzeRequest {
 /**
  * Extract VIN from AI-identified item name or raw response
  * VINs are 17 characters: letters A-H, J-N, P, R-Z and digits 0-9
+ * 
+ * FIXED v6.3.1: Added validation to prevent false positives like "FADVENTUREBYGARYB"
+ * - VINs must contain at least 3 digits (real VINs always have digits)
+ * - VINs must not be all letters (that's just text)
+ * - Context should include vehicle-related keywords
  */
-function extractVINFromText(text: string): string | null {
+function extractVINFromText(text: string, requireVehicleContext: boolean = true): string | null {
   if (!text) return null;
   
   const normalized = text.toUpperCase();
+  const textLower = text.toLowerCase();
   
-  // Pattern 1: Standard 17-character VIN
+  // If requiring vehicle context, check for vehicle-related keywords
+  if (requireVehicleContext) {
+    const vehicleKeywords = [
+      'vin', 'vehicle', 'car', 'truck', 'suv', 'auto', 'motor',
+      'ford', 'chevy', 'chevrolet', 'toyota', 'honda', 'nissan', 'dodge',
+      'jeep', 'gmc', 'bmw', 'mercedes', 'audi', 'lexus', 'tesla',
+      'door jamb', 'dashboard', 'windshield', 'title', 'registration',
+      'odometer', 'mileage', 'carfax', 'autocheck'
+    ];
+    
+    const hasVehicleContext = vehicleKeywords.some(kw => textLower.includes(kw));
+    if (!hasVehicleContext) {
+      return null; // No vehicle context, don't extract VIN
+    }
+  }
+  
+  // Pattern 1: VIN with explicit label (highest confidence)
+  const labeledVinPattern = /VIN[:\s#-]*([A-HJ-NPR-Z0-9]{17})/gi;
+  const labeledMatch = normalized.match(labeledVinPattern);
+  if (labeledMatch) {
+    const vin = labeledMatch[0].replace(/VIN[:\s#-]*/gi, '');
+    if (isValidVINStructure(vin)) {
+      return vin;
+    }
+  }
+  
+  // Pattern 2: Standard 17-character VIN (with validation)
   const vinPattern = /\b[A-HJ-NPR-Z0-9]{17}\b/g;
   const matches = normalized.match(vinPattern);
   
   if (matches && matches.length > 0) {
-    // Validate each match (exclude I, O, Q)
     for (const match of matches) {
-      if (!/[IOQ]/i.test(match)) {
+      if (isValidVINStructure(match)) {
         return match;
       }
     }
   }
   
-  // Pattern 2: VIN with spaces or dashes (sometimes formatted)
+  // Pattern 3: VIN with spaces or dashes (sometimes formatted)
   const spacedPattern = /([A-HJ-NPR-Z0-9][\s-]?){17}/g;
   const spacedMatches = normalized.match(spacedPattern);
   if (spacedMatches) {
     for (const match of spacedMatches) {
       const cleaned = match.replace(/[\s-]/g, '');
-      if (cleaned.length === 17 && !/[IOQ]/i.test(cleaned)) {
+      if (cleaned.length === 17 && isValidVINStructure(cleaned)) {
         return cleaned;
       }
     }
   }
   
   return null;
+}
+
+/**
+ * Validate VIN structure to prevent false positives
+ * Real VINs have specific characteristics that random text doesn't
+ */
+function isValidVINStructure(vin: string): boolean {
+  if (!vin || vin.length !== 17) return false;
+  
+  // Must not contain I, O, Q (never used in VINs)
+  if (/[IOQ]/i.test(vin)) return false;
+  
+  // Must contain at least 3 digits (all real VINs have digits)
+  const digitCount = (vin.match(/\d/g) || []).length;
+  if (digitCount < 3) return false;
+  
+  // Must not be all letters (that's just text, not a VIN)
+  if (/^[A-Z]+$/i.test(vin)) return false;
+  
+  // Check for common VIN patterns:
+  // Position 1: Country of origin (1-5 = North America, S = UK, W = Germany, J = Japan, etc.)
+  const validFirstChars = '123456789ABCDEFGHJKLMNPRSTUVWXYZ';
+  if (!validFirstChars.includes(vin[0])) return false;
+  
+  // Position 9 is the check digit (0-9 or X)
+  const checkDigit = vin[8];
+  if (!/[0-9X]/.test(checkDigit)) return false;
+  
+  // Position 10 is model year (A-Y excluding I, O, Q, U, Z, or 1-9)
+  const yearChar = vin[9];
+  if (!/[A-HJ-NPR-TV-Y1-9]/.test(yearChar)) return false;
+  
+  // Positions 12-17 are the serial number (usually mostly digits)
+  const serialSection = vin.substring(11);
+  const serialDigits = (serialSection.match(/\d/g) || []).length;
+  if (serialDigits < 3) return false; // Serial section should have digits
+  
+  return true;
 }
 
 // =============================================================================
