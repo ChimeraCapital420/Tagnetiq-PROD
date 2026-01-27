@@ -175,7 +175,7 @@ async function testPokemonTCG(): Promise<MarketAPIResult> {
     
     // Test with simple query - no wildcards, no special chars
     const response = await fetch(
-      `https://api.pokemontcg.io/v2/cards?q=name:Pikachu&pageSize=1`,
+      `https://api.pokemontcg.io/v2/cards?q=name:pikachu&pageSize=1`,
       { headers, signal: controller.signal }
     );
     
@@ -695,5 +695,6 @@ async function testPSA(): Promise<MarketAPIResult> {
     return { name, status: 'error', message: error.message };
   }
 }
+
 
 
