@@ -4,7 +4,7 @@
 // This file runs SERVER-SIDE (in API routes) so uses process.env directly
 
 import { createClient } from '@supabase/supabase-js';
-import { AIProvider, ModelVote, HydraConsensus, ParsedAnalysis } from '../../types/hydra.js';
+import { AIProvider, ModelVote, HydraConsensus, ParsedAnalysis } from '../types/hydra.js';
 import { ProviderFactory } from './ai-providers/provider-factory.js';
 import { BaseAIProvider } from './ai-providers/base-provider.js';
 import { AuthorityManager } from './authorities/authority-manager.js';
