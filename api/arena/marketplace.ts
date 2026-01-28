@@ -25,7 +25,7 @@ interface MarketplaceFilters {
   limit?: number;
 }
 
-const CACHE_DURATION = 60; // Cache for 60 seconds
+const CACHE_DURATION = 60;
 const MAX_LIMIT = 50;
 const DEFAULT_LIMIT = 20;
 
@@ -67,7 +67,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const cacheKeyStr = cacheKey(
       'marketplace',
       filters.searchQuery,
-      filters.category,
       filters.minPrice,
       filters.maxPrice,
       filters.verified,
@@ -116,32 +115,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       query = query.lte('price', filters.maxPrice);
     }
 
-    // Apply condition filter (frontend sends as 'category')
-    if (filters.category && filters.category !== 'all') {
-      query = query.eq('condition', filters.category);
-    }
+    // NOTE: Category filter disabled - arena_listings doesn't have category column
+    // Categories in frontend are decorative only until we add category to DB schema
+    // Frontend sends category param but we ignore it for now
 
-    // Apply sorting - handle both 'sort' param and 'sortBy/sortOrder' params
-    if (filters.sort) {
-      switch (filters.sort) {
-        case 'price_low':
-          query = query.order('price', { ascending: true });
-          break;
-        case 'price_high':
-          query = query.order('price', { ascending: false });
-          break;
-        case 'oldest':
-          query = query.order('created_at', { ascending: true });
-          break;
-        case 'newest':
-        default:
-          query = query.order('created_at', { ascending: false });
-          break;
-      }
-    } else {
-      const sortColumn = filters.sortBy === 'price' ? 'price' : 
-                        filters.sortBy === 'title' ? 'title' : 'created_at';
-      query = query.order(sortColumn, { ascending: filters.sortOrder === 'asc' });
+    // Apply sorting
+    switch (filters.sort) {
+      case 'price_low':
+        query = query.order('price', { ascending: true });
+        break;
+      case 'price_high':
+        query = query.order('price', { ascending: false });
+        break;
+      case 'oldest':
+        query = query.order('created_at', { ascending: true });
+        break;
+      case 'newest':
+      default:
+        query = query.order('created_at', { ascending: false });
+        break;
     }
 
     // Apply pagination
@@ -155,42 +147,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Failed to fetch marketplace listings.');
     }
 
-    const totalCount = count || 0;
-
     // Transform to match frontend expectations
-    // Maps arena_listings columns -> frontend expected names
     const transformedListings = (listings || []).map(listing => ({
-      // Frontend expected fields
       id: listing.id,
-      challenge_id: listing.id, // Use listing id for routing
-      item_name: listing.title, // title -> item_name
-      asking_price: listing.price, // price -> asking_price
+      challenge_id: listing.id,
+      item_name: listing.title,
+      asking_price: listing.price,
       estimated_value: listing.price,
-      primary_photo_url: listing.images?.[0] || '/placeholder.svg', // images[0] -> primary_photo_url
-      is_verified: false, // Can enhance with vault_item verification later
+      primary_photo_url: listing.images?.[0] || '/placeholder.svg',
+      is_verified: false,
       confidence_score: null,
-      category: listing.condition, // condition -> category (for display)
+      category: listing.condition,
       condition: listing.condition,
       description: listing.description,
       created_at: listing.created_at,
       seller_id: listing.seller_id,
-      seller_name: 'Seller', // Can enhance with profile lookup later
+      seller_name: 'Seller',
       views: 0,
       watchlist_count: 0,
-      // Additional fields
       shipping_included: listing.shipping_included,
       accepts_trades: listing.accepts_trades,
       additional_photos: listing.images?.slice(1) || [],
     }));
 
-    // Return as array for simple frontend consumption
-    // Frontend expects array directly, not wrapped in { listings: [...] }
-    const response = transformedListings;
-
-    // Cache the response
-    cache.set(cacheKeyStr, response, CACHE_DURATION);
-
-    return res.status(200).json(response);
+    // Cache and return
+    cache.set(cacheKeyStr, transformedListings, CACHE_DURATION);
+    return res.status(200).json(transformedListings);
 
   } catch (error: any) {
     console.error('Error fetching marketplace listings:', error);
