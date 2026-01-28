@@ -37,11 +37,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         accepts_trades,
         status,
         created_at,
-        expires_at,
-        profiles:seller_id (
-          screen_name,
-          email
-        )
+        expires_at
       `)
       .eq('id', id)
       .single();
@@ -58,19 +54,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(404).json({ error: 'Listing not found' });
     }
 
+    // Get seller profile separately to avoid join issues
+    let sellerName = 'Anonymous';
+    let sellerEmail = 'Anonymous Seller';
+    
+    if (listing.seller_id) {
+      const { data: profile } = await supaAdmin
+        .from('profiles')
+        .select('screen_name, email')
+        .eq('id', listing.seller_id)
+        .single();
+      
+      if (profile) {
+        sellerName = profile.screen_name || 'Anonymous';
+        sellerEmail = profile.email || profile.screen_name || 'Anonymous Seller';
+      }
+    }
+
     // Transform to match frontend expectations
     const transformedListing = {
       id: listing.id,
       item_name: listing.title,
-      purchase_price: 0, // Can enhance with vault_item data later
+      purchase_price: 0,
       asking_price: listing.price,
       primary_photo_url: listing.images?.[0] || '/placeholder.svg',
       additional_photos: listing.images?.slice(1) || [],
       listing_id: listing.id,
       seller_id: listing.seller_id,
-      seller_email: listing.profiles?.email || listing.profiles?.screen_name || 'Anonymous Seller',
-      seller_name: listing.profiles?.screen_name || 'Anonymous',
-      possession_verified: false, // Can enhance later
+      seller_email: sellerEmail,
+      seller_name: sellerName,
+      possession_verified: false,
       status: listing.status,
       description: listing.description,
       condition: listing.condition,
