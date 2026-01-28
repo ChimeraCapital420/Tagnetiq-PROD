@@ -1,5 +1,5 @@
 // FILE: api/arena/messages.ts
-// Fixed to fetch sender profiles separately (no join)
+// With attachment support
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -31,10 +31,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(403).json({ error: 'Access denied.' });
       }
 
-      // Fetch messages without join
+      // Fetch messages with attachment fields
       const { data: messages, error } = await supaAdmin
         .from('secure_messages')
-        .select('id, conversation_id, sender_id, encrypted_content, read, created_at')
+        .select('id, conversation_id, sender_id, encrypted_content, read, created_at, attachment_url, attachment_type, attachment_name')
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: true });
 
@@ -55,7 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         sender: profileMap.get(msg.sender_id) || { id: msg.sender_id, screen_name: 'Unknown' }
       }));
 
-      // Mark messages as read (ones not sent by current user)
+      // Mark messages as read
       await supaAdmin
         .from('secure_messages')
         .update({ read: true })
@@ -67,10 +67,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'POST') {
-      const { conversationId, content } = req.body;
+      const { conversationId, content, attachmentUrl, attachmentType, attachmentName } = req.body;
       
-      if (!conversationId || !content) {
-        return res.status(400).json({ error: 'conversationId and content are required.' });
+      if (!conversationId || (!content && !attachmentUrl)) {
+        return res.status(400).json({ error: 'conversationId and content (or attachment) are required.' });
       }
 
       // Verify user is part of this conversation
@@ -88,14 +88,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(403).json({ error: 'Access denied.' });
       }
 
-      // Insert message
+      // Insert message with optional attachment
       const { data, error } = await supaAdmin
         .from('secure_messages')
         .insert({
           conversation_id: conversationId,
           sender_id: user.id,
-          encrypted_content: content.trim(),
+          encrypted_content: content?.trim() || '[Attachment]',
           read: false,
+          attachment_url: attachmentUrl || null,
+          attachment_type: attachmentType || null,
+          attachment_name: attachmentName || null,
         })
         .select()
         .single();
