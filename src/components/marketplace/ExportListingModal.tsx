@@ -57,7 +57,7 @@ export const ExportListingModal: React.FC<ExportListingModalProps> = ({
             List & Export
           </DialogTitle>
           <DialogDescription>
-            List on TagnetIQ and export to {PLATFORMS.length}+ marketplaces with optimized formatting
+            List on TagnetIQ & export to {PLATFORMS.length}+ marketplaces with optimized formatting
           </DialogDescription>
         </DialogHeader>
 
