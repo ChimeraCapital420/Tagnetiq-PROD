@@ -1,6 +1,5 @@
 // FILE: src/components/marketplace/ListOnMarketplaceButton.tsx
-// Updated to fetch vault_id before creating listing
-// All listings go to TagnetIQ by default (future: user preference to opt-out)
+// Fixed to match arena/listings API schema
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -35,6 +34,22 @@ interface ListOnMarketplaceButtonProps {
   size?: 'default' | 'sm' | 'lg';
   className?: string;
 }
+
+// Map our condition strings to API enum values
+const mapCondition = (condition?: string): string => {
+  const conditionMap: Record<string, string> = {
+    'mint': 'mint',
+    'near mint': 'near-mint',
+    'near-mint': 'near-mint',
+    'nearmint': 'near-mint',
+    'excellent': 'excellent',
+    'good': 'good',
+    'fair': 'fair',
+    'poor': 'poor',
+  };
+  const normalized = (condition || 'good').toLowerCase().trim();
+  return conditionMap[normalized] || 'good';
+};
 
 export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = ({
   analysisResult,
@@ -82,8 +97,8 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          name: 'My Collection',
-          description: 'Default vault for marketplace listings',
+          name: 'Marketplace Listings',
+          description: 'Items listed on the marketplace',
         }),
       });
 
@@ -104,8 +119,16 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error("Not authenticated");
 
+    // Step 1: Get or create default vault
     const vaultId = await fetchDefaultVault(session.access_token);
 
+    // Step 2: Collect all image URLs
+    const allPhotos = [
+      item.primary_photo_url,
+      ...(item.additional_photos || [])
+    ].filter(Boolean) as string[];
+
+    // Step 3: Add item to vault
     const vaultResponse = await fetch('/api/vault/items', {
       method: 'POST',
       headers: {
@@ -116,9 +139,7 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
         vault_id: vaultId,
         asset_name: item.item_name,
         valuation_data: analysisResult,
-        photos: item.additional_photos
-          ? [item.primary_photo_url, ...item.additional_photos].filter(Boolean)
-          : [item.primary_photo_url].filter(Boolean),
+        photos: allPhotos,
         category: item.category,
       }),
     });
@@ -130,29 +151,35 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
 
     const vaultItem = await vaultResponse.json();
 
+    // Step 4: Create marketplace listing with CORRECT field names
+    // Ensure description meets 20 char minimum
+    const finalDescription = description && description.length >= 20 
+      ? description 
+      : `${item.item_name}. ${description || 'Listed on TagnetIQ Marketplace.'}`.slice(0, 2000);
+
+    const listingPayload = {
+      vault_item_id: vaultItem.id,
+      title: item.item_name.slice(0, 100), // API expects 'title', max 100 chars
+      description: finalDescription,        // min 20, max 2000 chars
+      price: askingPrice,                   // API expects 'price', not 'asking_price'
+      condition: mapCondition(item.condition), // Must be enum value
+      images: allPhotos.length > 0 ? allPhotos : ['https://tagnetiq.com/placeholder.svg'], // API expects array
+      shipping_included: false,             // Required field
+      accepts_trades: false,                // Required field
+    };
+
     const listingResponse = await fetch('/api/arena/listings', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${session.access_token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        vault_item_id: vaultItem.id,
-        asking_price: askingPrice,
-        purchase_price: item.estimated_value || 0,
-        item_name: item.item_name,
-        primary_photo_url: item.primary_photo_url,
-        description: description,
-        category: item.category,
-        condition: item.condition,
-        is_verified: item.is_verified,
-        confidence_score: item.confidence_score,
-        estimated_value: item.estimated_value,
-      }),
+      body: JSON.stringify(listingPayload),
     });
 
     if (!listingResponse.ok) {
       const errorData = await listingResponse.json();
+      console.error('Listing error:', errorData);
       throw new Error(errorData.error || 'Failed to create marketplace listing.');
     }
 
