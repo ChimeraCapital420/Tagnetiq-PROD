@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { AddToVaultButton } from './vault/AddToVaultButton.js';
+import { ListOnMarketplaceButton } from './marketplace/ListOnMarketplaceButton.js';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -269,9 +270,7 @@ const AnalysisResult: React.FC = () => {
               {!isViewingHistory ? (
                 <>
                   <AddToVaultButton analysisResult={lastAnalysisResult} onSuccess={handleClear} />
-                  <Button variant="secondary" className="w-full" onClick={() => toast.info('Marketplace listing coming soon!')}>
-                    List on Marketplace
-                  </Button>
+                  <ListOnMarketplaceButton analysisResult={lastAnalysisResult} onSuccess={handleClear} />
                   <Button variant="secondary" className="w-full" onClick={() => toast.info('Social sharing coming soon!')}>
                     Share to Social
                   </Button>
@@ -356,3 +355,4 @@ const AnalysisResult: React.FC = () => {
 };
 
 export default AnalysisResult;
+
