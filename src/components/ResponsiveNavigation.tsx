@@ -1,4 +1,5 @@
 // FILE: src/components/ResponsiveNavigation.tsx
+// Updated with Messages dropdown for notifications
 
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -8,6 +9,7 @@ import { Shield, Scan, Sword, Store } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import AlertsDropdown from '@/components/arena/AlertsDropdown';
+import MessagesDropdown from '@/components/arena/MessagesDropdown';
 
 interface ResponsiveNavigationProps {
   onOpenDevicePairing?: () => void;
@@ -17,8 +19,8 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
   const location = useLocation();
   const navigate = useNavigate();
   const { profile } = useAuth();
-  const { showArenaWelcome, setIsScannerOpen } = useAppContext(); 
-  
+  const { showArenaWelcome, setIsScannerOpen } = useAppContext();
+
   const isVaultActive = location.pathname.startsWith('/vault');
   const isArenaActive = location.pathname.startsWith('/arena') && !location.pathname.includes('/marketplace');
   const isMarketplaceActive = location.pathname.includes('/marketplace');
@@ -37,7 +39,7 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
              <img src="/images/logo-main.jpg" alt="TagnetIQ Logo" className="h-10 w-auto" />
           </Link>
         </div>
-        
+
         <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end">
             <div className="w-full flex-1 md:w-auto md:flex-none">
                 <Link to="/dashboard" className="flex items-center md:hidden">
@@ -72,6 +74,10 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                         <span className="hidden sm:inline-block sm:ml-2">Vault</span>
                     </Link>
                 </Button>
+                
+                {/* Messages dropdown with unread badge */}
+                <MessagesDropdown />
+                
                 <AlertsDropdown />
                 <SettingsDropdown onOpenDevicePairing={onOpenDevicePairing} />
             </nav>
