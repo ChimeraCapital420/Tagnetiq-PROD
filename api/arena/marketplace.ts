@@ -1,9 +1,9 @@
 // FILE: api/arena/marketplace.ts
-// STATUS: QUERY PERFORMANCE OPTIMIZED - Pagination + Indexing + Caching
+// STATUS: QUERY PERFORMANCE OPTIMIZED - Fixed for arena_listings schema
+// PUBLIC endpoint - no auth required for browsing
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../_lib/security.js';
 import { cache, cacheKey } from '../_lib/cache.js';
 import { rateLimit } from '../_lib/rateLimit.js';
 
@@ -18,7 +18,8 @@ interface MarketplaceFilters {
   minPrice?: number;
   maxPrice?: number;
   verified?: boolean;
-  sortBy?: 'created_at' | 'asking_price' | 'item_name';
+  sort?: string;
+  sortBy?: 'created_at' | 'price' | 'title';
   sortOrder?: 'asc' | 'desc';
   page?: number;
   limit?: number;
@@ -35,21 +36,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Apply rate limiting
   if (!await rateLimit(req, res, { max: 60, windowMs: 60000 })) {
-    return; // Request blocked by rate limiter
+    return;
   }
 
   try {
-    // Public marketplace - no auth required for browsing
-    // await verifyUser(req);
+    // PUBLIC: No auth required for browsing marketplace
 
-    // PERFORMANCE: Parse and validate query parameters
+    // Parse and validate query parameters
     const filters: MarketplaceFilters = {
       searchQuery: typeof req.query.searchQuery === 'string' ? req.query.searchQuery.trim() : undefined,
       category: typeof req.query.category === 'string' ? req.query.category.trim() : undefined,
       minPrice: req.query.minPrice ? Math.max(0, Number(req.query.minPrice)) : undefined,
       maxPrice: req.query.maxPrice ? Math.max(0, Number(req.query.maxPrice)) : undefined,
       verified: req.query.verified === 'true',
-      sortBy: ['created_at', 'asking_price', 'item_name'].includes(req.query.sortBy as string) 
+      sort: typeof req.query.sort === 'string' ? req.query.sort : 'newest',
+      sortBy: ['created_at', 'price', 'title'].includes(req.query.sortBy as string) 
         ? req.query.sortBy as MarketplaceFilters['sortBy'] 
         : 'created_at',
       sortOrder: req.query.sortOrder === 'asc' ? 'asc' : 'desc',
@@ -62,7 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Minimum price cannot be greater than maximum price.' });
     }
 
-    // PERFORMANCE: Check cache
+    // Check cache
     const cacheKeyStr = cacheKey(
       'marketplace',
       filters.searchQuery,
@@ -70,6 +71,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       filters.minPrice,
       filters.maxPrice,
       filters.verified,
+      filters.sort,
       filters.sortBy,
       filters.sortOrder,
       filters.page,
@@ -78,67 +80,71 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     const cached = cache.get(cacheKeyStr);
     if (cached) {
-      return res.status(200).json({
-        ...cached,
-        cached: true,
-        cache_age: 'fresh'
-      });
+      return res.status(200).json(cached);
     }
 
-    // PERFORMANCE: Optimized query with proper indexing hints
+    // Query arena_listings with CORRECT column names
     let query = supaAdmin
-      .from('marketplace_listings')
+      .from('arena_listings')
       .select(`
         id,
-        challenge_id,
-        item_name,
-        item_category,
-        asking_price,
-        primary_photo_url,
+        seller_id,
+        vault_item_id,
+        title,
         description,
+        price,
+        condition,
+        images,
+        shipping_included,
+        accepts_trades,
+        status,
         created_at,
-        challenge:arena_challenges!inner(
-          id,
-          status,
-          possession_verified,
-          user_id,
-          profiles:user_id(screen_name)
-        )
+        expires_at
       `, { count: 'exact' })
-      // PERFORMANCE: Use inner join and filter for active challenges only
-      .eq('challenge.status', 'active');
+      .eq('status', 'active');
 
-    // PERFORMANCE: Apply filters with proper indexing
+    // Apply search filter on title
     if (filters.searchQuery) {
-      // Use full-text search with proper indexing
-      query = query.textSearch('item_name', filters.searchQuery, {
-        type: 'websearch',
-        config: 'english'
-      });
+      query = query.ilike('title', `%${filters.searchQuery}%`);
     }
 
-    if (filters.category) {
-      query = query.eq('item_category', filters.category);
-    }
-
+    // Apply price filters
     if (filters.minPrice !== undefined) {
-      query = query.gte('asking_price', filters.minPrice);
+      query = query.gte('price', filters.minPrice);
     }
-
     if (filters.maxPrice !== undefined) {
-      query = query.lte('asking_price', filters.maxPrice);
+      query = query.lte('price', filters.maxPrice);
     }
 
-    if (filters.verified) {
-      query = query.eq('challenge.possession_verified', true);
+    // Apply condition filter (frontend sends as 'category')
+    if (filters.category && filters.category !== 'all') {
+      query = query.eq('condition', filters.category);
     }
 
-    // PERFORMANCE: Apply sorting with index hints
-    const sortColumn = filters.sortBy === 'asking_price' ? 'asking_price' : 
-                      filters.sortBy === 'item_name' ? 'item_name' : 'created_at';
-    query = query.order(sortColumn, { ascending: filters.sortOrder === 'asc' });
+    // Apply sorting - handle both 'sort' param and 'sortBy/sortOrder' params
+    if (filters.sort) {
+      switch (filters.sort) {
+        case 'price_low':
+          query = query.order('price', { ascending: true });
+          break;
+        case 'price_high':
+          query = query.order('price', { ascending: false });
+          break;
+        case 'oldest':
+          query = query.order('created_at', { ascending: true });
+          break;
+        case 'newest':
+        default:
+          query = query.order('created_at', { ascending: false });
+          break;
+      }
+    } else {
+      const sortColumn = filters.sortBy === 'price' ? 'price' : 
+                        filters.sortBy === 'title' ? 'title' : 'created_at';
+      query = query.order(sortColumn, { ascending: filters.sortOrder === 'asc' });
+    }
 
-    // PERFORMANCE: Implement pagination
+    // Apply pagination
     const offset = (filters.page! - 1) * filters.limit!;
     query = query.range(offset, offset + filters.limit! - 1);
 
@@ -149,79 +155,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Failed to fetch marketplace listings.');
     }
 
-    // PERFORMANCE: Get total count for pagination (only when needed)
-    let totalCount = count || 0;
+    const totalCount = count || 0;
 
-    // PERFORMANCE: Transform data for optimal frontend consumption
-    const transformedListings = listings?.map(listing => ({
+    // Transform to match frontend expectations
+    // Maps arena_listings columns -> frontend expected names
+    const transformedListings = (listings || []).map(listing => ({
+      // Frontend expected fields
       id: listing.id,
-      challenge_id: listing.challenge_id,
-      item_name: listing.item_name,
-      item_category: listing.item_category,
-      asking_price: listing.asking_price,
-      primary_photo_url: listing.primary_photo_url,
+      challenge_id: listing.id, // Use listing id for routing
+      item_name: listing.title, // title -> item_name
+      asking_price: listing.price, // price -> asking_price
+      estimated_value: listing.price,
+      primary_photo_url: listing.images?.[0] || '/placeholder.svg', // images[0] -> primary_photo_url
+      is_verified: false, // Can enhance with vault_item verification later
+      confidence_score: null,
+      category: listing.condition, // condition -> category (for display)
+      condition: listing.condition,
       description: listing.description,
       created_at: listing.created_at,
-      seller_name: listing.challenge?.profiles?.screen_name || 'Anonymous',
-      is_verified: listing.challenge?.possession_verified || false,
-    })) || [];
+      seller_id: listing.seller_id,
+      seller_name: 'Seller', // Can enhance with profile lookup later
+      views: 0,
+      watchlist_count: 0,
+      // Additional fields
+      shipping_included: listing.shipping_included,
+      accepts_trades: listing.accepts_trades,
+      additional_photos: listing.images?.slice(1) || [],
+    }));
 
-    const response = {
-      listings: transformedListings,
-      pagination: {
-        page: filters.page,
-        limit: filters.limit,
-        total: totalCount,
-        totalPages: totalCount > 0 ? Math.ceil(totalCount / filters.limit!) : 0,
-        hasNext: transformedListings.length === filters.limit,
-        hasPrev: filters.page! > 1,
-      },
-      filters: filters,
-      timestamp: new Date().toISOString(),
-    };
+    // Return as array for simple frontend consumption
+    // Frontend expects array directly, not wrapped in { listings: [...] }
+    const response = transformedListings;
 
-    // PERFORMANCE: Cache the response
+    // Cache the response
     cache.set(cacheKeyStr, response, CACHE_DURATION);
 
     return res.status(200).json(response);
 
   } catch (error: any) {
     console.error('Error fetching marketplace listings:', error);
-    const message = error.message || 'An internal server error occurred.';
-    
-    if (message.includes('Authentication')) {
-      return res.status(401).json({ error: message });
-    }
-    
     return res.status(500).json({ 
       error: 'Failed to load marketplace',
-      details: process.env.NODE_ENV === 'development' ? message : 'Please try again later'
+      details: process.env.NODE_ENV === 'development' ? error.message : 'Please try again later'
     });
   }
 }
-
-/* 
-REQUIRED DATABASE INDEXES - Add these to your Supabase SQL editor:
-
--- Composite index for active marketplace listings
-CREATE INDEX IF NOT EXISTS idx_marketplace_active_challenges 
-ON marketplace_listings (asking_price DESC, created_at DESC) 
-WHERE EXISTS (
-  SELECT 1 FROM arena_challenges 
-  WHERE arena_challenges.id = marketplace_listings.challenge_id 
-  AND arena_challenges.status = 'active'
-);
-
--- Full-text search index for item names
-CREATE INDEX IF NOT EXISTS idx_marketplace_item_name_fts 
-ON marketplace_listings 
-USING gin(to_tsvector('english', item_name));
-
--- Category filtering index
-CREATE INDEX IF NOT EXISTS idx_marketplace_category 
-ON marketplace_listings (item_category, created_at DESC);
-
--- Price range filtering index
-CREATE INDEX IF NOT EXISTS idx_marketplace_price_range 
-ON marketplace_listings (asking_price, created_at DESC);
-*/
