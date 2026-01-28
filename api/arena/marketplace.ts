@@ -39,7 +39,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    await verifyUser(req); // Verify authentication
+    // Public marketplace - no auth required for browsing
+    // await verifyUser(req);
 
     // PERFORMANCE: Parse and validate query parameters
     const filters: MarketplaceFilters = {
