@@ -1,5 +1,6 @@
 // FILE: api/arena/conversations.ts
 // Updated to support P2P direct messaging + listing-based conversations
+// BACKWARD COMPATIBLE - returns array at top level
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -47,6 +48,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return null;
         }
 
+        // Determine conversation type
+        const isDirect = !convo.listing_id;
+
         // Get listing info (if listing-based conversation)
         let listing = null;
         if (convo.listing_id) {
@@ -89,30 +93,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .neq('sender_id', user.id)
           .eq('read', false);
 
+        // Return in format compatible with BOTH old and new Messages page
         return {
           id: convo.id,
-          conversation_type: convo.listing_id ? 'listing' : 'direct',
           listing_id: convo.listing_id,
-          listing,
-          other_user: otherProfile || { id: otherUserId, screen_name: 'Unknown User' },
-          last_message: lastMessage || null,
-          unread_count: unreadCount || 0,
-          is_buyer: convo.buyer_id === user.id,
+          buyer_id: convo.buyer_id,
+          seller_id: convo.seller_id,
           created_at: convo.created_at,
           updated_at: convo.updated_at,
+          // New P2P fields
+          conversation_type: isDirect ? 'direct' : 'listing',
+          other_user: otherProfile || { id: otherUserId, screen_name: 'Unknown User' },
+          // Old format fields (backward compatibility)
+          listing: listing || (convo.listing_id ? { item_name: 'Unknown Item', primary_photo_url: '/placeholder.svg' } : null),
+          buyer: convo.buyer_id === user.id 
+            ? { id: user.id, screen_name: 'You' }
+            : (otherProfile || { id: convo.buyer_id, screen_name: 'Unknown' }),
+          seller: convo.seller_id === user.id
+            ? { id: user.id, screen_name: 'You' }
+            : (otherProfile || { id: convo.seller_id, screen_name: 'Unknown' }),
+          last_message: lastMessage || null,
+          unread_count: unreadCount || 0,
+          is_seller: convo.seller_id === user.id,
+          is_buyer: convo.buyer_id === user.id,
         };
       }));
 
       // Filter out null (blocked) conversations
       const filteredConversations = enrichedConversations.filter(c => c !== null);
 
-      // Calculate total unread
-      const totalUnread = filteredConversations.reduce((sum, c) => sum + (c?.unread_count || 0), 0);
-
-      return res.status(200).json({
-        conversations: filteredConversations,
-        total_unread: totalUnread,
-      });
+      // BACKWARD COMPATIBLE: Return array directly (old format)
+      // New Messages page handles both formats
+      return res.status(200).json(filteredConversations);
     }
 
     // POST - Create new conversation (listing-based OR direct P2P)
