@@ -1,19 +1,9 @@
 // FILE: api/boardroom/chat.ts
-// Multi-provider AI chat with memory - supports 8 AI providers
+// Multi-provider AI chat - uses fetch for all providers (no extra SDKs needed)
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUser } from '../_lib/security.js';
-import Anthropic from '@anthropic-ai/sdk';
-import Groq from 'groq-sdk';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import OpenAI from 'openai';
-
-// Initialize AI clients
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 interface BoardMember {
   id: string;
@@ -99,54 +89,94 @@ function buildContext(member: BoardMember, memories: Memory[], history: any[]): 
   return context;
 }
 
-// ========== AI PROVIDER CALLS ==========
+// ========== AI PROVIDER CALLS (all using fetch) ==========
+
+// OpenAI
+async function callOpenAI(member: BoardMember, context: string, userMessage: string): Promise<string> {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: member.ai_model,
+      max_tokens: 1024,
+      messages: [
+        { role: 'system', content: member.system_prompt + context },
+        { role: 'user', content: userMessage },
+      ],
+    }),
+  });
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.choices?.[0]?.message?.content || '';
+}
 
 // Anthropic (Claude)
 async function callAnthropic(member: BoardMember, context: string, userMessage: string): Promise<string> {
-  const response = await anthropic.messages.create({
-    model: member.ai_model,
-    max_tokens: 1024,
-    system: member.system_prompt + context,
-    messages: [{ role: 'user', content: userMessage }],
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: member.ai_model,
+      max_tokens: 1024,
+      system: member.system_prompt + context,
+      messages: [{ role: 'user', content: userMessage }],
+    }),
   });
-  return response.content[0].type === 'text' ? response.content[0].text : '';
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.content?.[0]?.text || '';
 }
 
-// OpenAI (GPT-4)
-async function callOpenAI(member: BoardMember, context: string, userMessage: string): Promise<string> {
-  const response = await openai.chat.completions.create({
-    model: member.ai_model,
-    max_tokens: 1024,
-    messages: [
-      { role: 'system', content: member.system_prompt + context },
-      { role: 'user', content: userMessage },
-    ],
-  });
-  return response.choices[0]?.message?.content || '';
-}
-
-// Groq (Llama)
+// Groq
 async function callGroq(member: BoardMember, context: string, userMessage: string): Promise<string> {
-  const response = await groq.chat.completions.create({
-    model: member.ai_model,
-    max_tokens: 1024,
-    messages: [
-      { role: 'system', content: member.system_prompt + context },
-      { role: 'user', content: userMessage },
-    ],
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: member.ai_model,
+      max_tokens: 1024,
+      messages: [
+        { role: 'system', content: member.system_prompt + context },
+        { role: 'user', content: userMessage },
+      ],
+    }),
   });
-  return response.choices[0]?.message?.content || '';
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.choices?.[0]?.message?.content || '';
 }
 
 // Gemini
 async function callGemini(member: BoardMember, context: string, userMessage: string): Promise<string> {
-  const model = gemini.getGenerativeModel({ model: member.ai_model });
-  const prompt = `${member.system_prompt}\n${context}\n\nUser message: ${userMessage}`;
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${member.ai_model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ 
+          parts: [{ text: `${member.system_prompt}\n${context}\n\nUser: ${userMessage}` }] 
+        }],
+        generationConfig: { maxOutputTokens: 1024 },
+      }),
+    }
+  );
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
 
-// xAI (Grok) - OpenAI-compatible API
+// xAI (Grok)
 async function callXAI(member: BoardMember, context: string, userMessage: string): Promise<string> {
   const response = await fetch('https://api.x.ai/v1/chat/completions', {
     method: 'POST',
@@ -164,10 +194,11 @@ async function callXAI(member: BoardMember, context: string, userMessage: string
     }),
   });
   const data = await response.json();
+  if (data.error) throw new Error(data.error.message);
   return data.choices?.[0]?.message?.content || '';
 }
 
-// Perplexity - OpenAI-compatible API
+// Perplexity
 async function callPerplexity(member: BoardMember, context: string, userMessage: string): Promise<string> {
   const response = await fetch('https://api.perplexity.ai/chat/completions', {
     method: 'POST',
@@ -185,10 +216,11 @@ async function callPerplexity(member: BoardMember, context: string, userMessage:
     }),
   });
   const data = await response.json();
+  if (data.error) throw new Error(data.error.message);
   return data.choices?.[0]?.message?.content || '';
 }
 
-// DeepSeek - OpenAI-compatible API
+// DeepSeek
 async function callDeepSeek(member: BoardMember, context: string, userMessage: string): Promise<string> {
   const response = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
@@ -206,10 +238,11 @@ async function callDeepSeek(member: BoardMember, context: string, userMessage: s
     }),
   });
   const data = await response.json();
+  if (data.error) throw new Error(data.error.message);
   return data.choices?.[0]?.message?.content || '';
 }
 
-// Mistral - OpenAI-compatible API
+// Mistral
 async function callMistral(member: BoardMember, context: string, userMessage: string): Promise<string> {
   const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
     method: 'POST',
@@ -227,6 +260,7 @@ async function callMistral(member: BoardMember, context: string, userMessage: st
     }),
   });
   const data = await response.json();
+  if (data.error) throw new Error(data.error.message);
   return data.choices?.[0]?.message?.content || '';
 }
 
@@ -403,7 +437,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             title: member.title,
             avatar_url: member.avatar_url,
           },
-          content: `[${member.name} is temporarily unavailable. ${member.ai_provider} service issue.]`,
+          content: `[${member.name} is temporarily unavailable. ${member.ai_provider} error: ${memberError.message}]`,
           error: true,
         };
       }
@@ -424,10 +458,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   } catch (error: any) {
     const message = error.message || 'An unexpected error occurred.';
+    console.error('Boardroom chat error:', message);
     if (message.includes('Authentication')) {
       return res.status(401).json({ error: message });
     }
-    console.error('Boardroom chat error:', message);
     return res.status(500).json({ error: message });
   }
 }
