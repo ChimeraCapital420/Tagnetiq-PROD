@@ -1,5 +1,5 @@
 // FILE: api/boardroom/chat.ts
-// Multi-provider AI chat - standalone (no external imports for API keys)
+// Multi-provider AI chat with company context injection
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -24,8 +24,15 @@ interface Memory {
   importance: number;
 }
 
+interface CompanyContext {
+  context_type: string;
+  title: string;
+  content: string;
+  priority: number;
+}
+
 // =============================================================================
-// API KEY LOOKUP (copied from HYDRA providers.ts)
+// API KEY LOOKUP (from HYDRA providers.ts)
 // =============================================================================
 const ENV_KEYS: Record<string, string[]> = {
   openai: ['OPENAI_API_KEY', 'OPEN_AI_API_KEY'],
@@ -50,6 +57,29 @@ function getApiKey(provider: string): string | null {
     }
   }
   return null;
+}
+
+// =============================================================================
+// GET COMPANY CONTEXT - The "Company Bible" all board members know
+// =============================================================================
+async function getCompanyContext(): Promise<string> {
+  const { data } = await supaAdmin
+    .from('boardroom_company_context')
+    .select('title, content')
+    .eq('is_active', true)
+    .order('priority', { ascending: false });
+  
+  if (!data || data.length === 0) return '';
+  
+  let context = '\n\n# === TAGNETIQ COMPANY KNOWLEDGE ===\n';
+  context += 'As a board member, you have complete knowledge of the company:\n\n';
+  
+  for (const item of data) {
+    context += `${item.content}\n\n`;
+  }
+  
+  context += '# === END COMPANY KNOWLEDGE ===\n';
+  return context;
 }
 
 // Get member's memories for context
@@ -95,19 +125,19 @@ async function saveMemory(userId: string, memberId: string, content: string, typ
     });
 }
 
-// Build context for AI
-function buildContext(member: BoardMember, memories: Memory[], history: any[]): string {
-  let context = '';
+// Build context for AI - now includes company context
+function buildContext(member: BoardMember, companyContext: string, memories: Memory[], history: any[]): string {
+  let context = companyContext; // Start with company knowledge
   
   if (memories.length > 0) {
-    context += '\n\n## Your Memory (things you know about this user/company):\n';
+    context += '\n\n## Your Personal Memory (previous interactions with this CEO):\n';
     memories.forEach(m => {
       context += `- [${m.memory_type}] ${m.content}\n`;
     });
   }
   
   if (history.length > 0) {
-    context += '\n\n## Recent Conversation:\n';
+    context += '\n\n## Current Meeting Conversation:\n';
     history.forEach(msg => {
       const speaker = msg.sender_type === 'user' ? 'CEO' : msg.member_slug?.toUpperCase();
       context += `${speaker}: ${msg.content}\n`;
@@ -132,7 +162,8 @@ async function callOpenAI(member: BoardMember, context: string, userMessage: str
     },
     body: JSON.stringify({
       model: member.ai_model,
-      max_tokens: 1024,
+      max_tokens: 2048,
+      temperature: 0.8,
       messages: [
         { role: 'system', content: member.system_prompt + context },
         { role: 'user', content: userMessage },
@@ -158,7 +189,7 @@ async function callAnthropic(member: BoardMember, context: string, userMessage: 
     },
     body: JSON.stringify({
       model: member.ai_model,
-      max_tokens: 1024,
+      max_tokens: 2048,
       system: member.system_prompt + context,
       messages: [{ role: 'user', content: userMessage }],
     }),
@@ -181,7 +212,7 @@ async function callGroq(member: BoardMember, context: string, userMessage: strin
     },
     body: JSON.stringify({
       model: member.ai_model,
-      max_tokens: 1024,
+      max_tokens: 2048,
       messages: [
         { role: 'system', content: member.system_prompt + context },
         { role: 'user', content: userMessage },
@@ -205,9 +236,9 @@ async function callGoogle(member: BoardMember, context: string, userMessage: str
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ 
-          parts: [{ text: `${member.system_prompt}\n${context}\n\nUser: ${userMessage}` }] 
+          parts: [{ text: `${member.system_prompt}\n${context}\n\nCEO: ${userMessage}` }] 
         }],
-        generationConfig: { maxOutputTokens: 1024 },
+        generationConfig: { maxOutputTokens: 2048 },
       }),
     }
   );
@@ -229,7 +260,7 @@ async function callXAI(member: BoardMember, context: string, userMessage: string
     },
     body: JSON.stringify({
       model: member.ai_model,
-      max_tokens: 1024,
+      max_tokens: 2048,
       messages: [
         { role: 'system', content: member.system_prompt + context },
         { role: 'user', content: userMessage },
@@ -254,7 +285,7 @@ async function callPerplexity(member: BoardMember, context: string, userMessage:
     },
     body: JSON.stringify({
       model: member.ai_model,
-      max_tokens: 1024,
+      max_tokens: 2048,
       messages: [
         { role: 'system', content: member.system_prompt + context },
         { role: 'user', content: userMessage },
@@ -279,7 +310,7 @@ async function callDeepSeek(member: BoardMember, context: string, userMessage: s
     },
     body: JSON.stringify({
       model: member.ai_model,
-      max_tokens: 1024,
+      max_tokens: 2048,
       messages: [
         { role: 'system', content: member.system_prompt + context },
         { role: 'user', content: userMessage },
@@ -304,7 +335,7 @@ async function callMistral(member: BoardMember, context: string, userMessage: st
     },
     body: JSON.stringify({
       model: member.ai_model,
-      max_tokens: 1024,
+      max_tokens: 2048,
       messages: [
         { role: 'system', content: member.system_prompt + context },
         { role: 'user', content: userMessage },
@@ -439,14 +470,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'No valid board members to respond.' });
     }
 
-    // Get meeting history
+    // Get shared context
+    const companyContext = await getCompanyContext();
     const history = await getMeetingHistory(meeting_id);
 
     // Generate responses from each member (in parallel for speed)
     const responsePromises = members.map(async (member) => {
       try {
         const memories = await getMemberMemories(user.id, member.id);
-        const context = buildContext(member, memories, history);
+        const context = buildContext(member, companyContext, memories, history);
         const aiResponse = await getAIResponse(member, context, message);
         
         // Save response
@@ -464,12 +496,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .select()
           .single();
 
-        // Auto-extract memories
-        if (aiResponse.toLowerCase().includes('remember') || 
-            aiResponse.toLowerCase().includes('note that') ||
-            aiResponse.toLowerCase().includes('important:') ||
-            aiResponse.toLowerCase().includes('decision:')) {
-          await saveMemory(user.id, member.id, `From meeting: ${aiResponse.substring(0, 200)}`, 'decision', meeting_id, 7);
+        // Auto-extract memories from important responses
+        const lowerResponse = aiResponse.toLowerCase();
+        if (lowerResponse.includes('remember') || 
+            lowerResponse.includes('note that') ||
+            lowerResponse.includes('important:') ||
+            lowerResponse.includes('decision:') ||
+            lowerResponse.includes('action item') ||
+            lowerResponse.includes('recommend')) {
+          await saveMemory(user.id, member.id, `From meeting: ${aiResponse.substring(0, 500)}`, 'decision', meeting_id, 7);
         }
 
         return {
