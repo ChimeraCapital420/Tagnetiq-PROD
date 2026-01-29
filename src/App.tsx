@@ -37,6 +37,7 @@ import InvestorPortal from '@/pages/investor/Portal';
 import ProfilePage from '@/pages/Profile';
 import UserProfilePage from '@/pages/UserProfilePage';
 import Onboarding from '@/pages/Onboarding';
+import BoardroomPage from '@/pages/Boardroom';
 import { FeedbackModal } from '@/components/beta/FeedbackModal';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
 import DualScanner from '@/components/DualScanner';
@@ -206,6 +207,16 @@ const AppRoutes: React.FC = () => {
             />
 
             {/* Admin routes */}
+            <Route 
+                path="/boardroom" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        <OnboardingGuard>
+                            <BoardroomPage />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
             <Route 
                 path="/beta-controls" 
                 element={

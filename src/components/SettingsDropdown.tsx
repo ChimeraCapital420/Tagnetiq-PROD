@@ -9,7 +9,7 @@ import {
   DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Settings, LogOut, Sun, Moon, Palette, MessageSquare, BarChart, ShieldCheck, Beaker, Map, Leaf, User, Languages, Bluetooth, ExternalLink, CreditCard } from 'lucide-react';
+import { Settings, LogOut, Sun, Moon, Palette, MessageSquare, BarChart, ShieldCheck, Beaker, Map, Leaf, User, Languages, Bluetooth, ExternalLink, CreditCard, Building2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import { Switch } from '@/components/ui/switch';
@@ -157,6 +157,17 @@ const SettingsDropdown: React.FC = () => {
             <>
               <DropdownMenuSeparator />
               <DropdownMenuLabel className="text-xs text-muted-foreground">Admin Tools</DropdownMenuLabel>
+              <DropdownMenuItem asChild>
+                <Link to="/boardroom" className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <Building2 className="mr-2 h-4 w-4" />
+                    <div>
+                      <span>Executive Boardroom</span>
+                      <p className="text-xs text-muted-foreground">AI Board of Directors</p>
+                    </div>
+                  </div>
+                </Link>
+              </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <Link to="/admin/map" className="flex items-center justify-between">
                   <div className="flex items-center">
