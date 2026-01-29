@@ -1,12 +1,9 @@
 // FILE: api/boardroom/chat.ts
-// Multi-provider AI chat - imports getApiKey from HYDRA for consistent env vars
+// Multi-provider AI chat - standalone (no external imports for API keys)
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUser } from '../_lib/security.js';
-
-// Import HYDRA's getApiKey function - same one that works in health check
-import { getApiKey } from '../src/lib/hydra/config/providers.js';
 
 interface BoardMember {
   id: string;
@@ -25,6 +22,34 @@ interface Memory {
   content: string;
   memory_type: string;
   importance: number;
+}
+
+// =============================================================================
+// API KEY LOOKUP (copied from HYDRA providers.ts)
+// =============================================================================
+const ENV_KEYS: Record<string, string[]> = {
+  openai: ['OPENAI_API_KEY', 'OPEN_AI_API_KEY'],
+  anthropic: ['ANTHROPIC_API_KEY', 'ANTHROPIC_SECRET'],
+  google: ['GOOGLE_AI_API_KEY', 'GOOGLE_AI_TOKEN', 'GOOGLE_GENERATIVE_AI_API_KEY', 'GEMINI_API_KEY'],
+  gemini: ['GOOGLE_AI_API_KEY', 'GOOGLE_AI_TOKEN', 'GOOGLE_GENERATIVE_AI_API_KEY', 'GEMINI_API_KEY'],
+  mistral: ['MISTRAL_API_KEY'],
+  groq: ['GROQ_API_KEY'],
+  xai: ['XAI_API_KEY', 'XAI_SECRET', 'GROK_API_KEY'],
+  perplexity: ['PERPLEXITY_API_KEY', 'PPLX_API_KEY'],
+  deepseek: ['DEEPSEEK_API_KEY', 'DEEPSEEK_TOKEN'],
+};
+
+function getApiKey(provider: string): string | null {
+  const keys = ENV_KEYS[provider.toLowerCase()];
+  if (!keys) return null;
+  
+  for (const envKey of keys) {
+    const value = process.env[envKey];
+    if (value && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return null;
 }
 
 // Get member's memories for context
@@ -90,17 +115,6 @@ function buildContext(member: BoardMember, memories: Memory[], history: any[]): 
   }
   
   return context;
-}
-
-// =============================================================================
-// MAP DB PROVIDER NAMES TO HYDRA PROVIDER NAMES
-// =============================================================================
-const PROVIDER_MAP: Record<string, string> = {
-  'gemini': 'google',  // DB uses 'gemini', HYDRA uses 'google'
-};
-
-function getHydraProvider(dbProvider: string): string {
-  return PROVIDER_MAP[dbProvider] || dbProvider;
 }
 
 // ========== AI PROVIDER CALLS ==========
@@ -304,8 +318,7 @@ async function callMistral(member: BoardMember, context: string, userMessage: st
 
 // Get AI response based on provider
 async function getAIResponse(member: BoardMember, context: string, userMessage: string): Promise<string> {
-  // Map DB provider name to HYDRA provider name
-  const provider = getHydraProvider(member.ai_provider);
+  const provider = member.ai_provider.toLowerCase();
   
   switch (provider) {
     case 'anthropic':
@@ -315,6 +328,7 @@ async function getAIResponse(member: BoardMember, context: string, userMessage: 
     case 'groq':
       return callGroq(member, context, userMessage);
     case 'google':
+    case 'gemini':
       return callGoogle(member, context, userMessage);
     case 'xai':
       return callXAI(member, context, userMessage);
