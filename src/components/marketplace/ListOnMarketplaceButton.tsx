@@ -1,5 +1,5 @@
 // FILE: src/components/marketplace/ListOnMarketplaceButton.tsx
-// Enhanced with better error handling for mobile + detailed error messages
+// Fixed: Don't spread entire item into valuation_data (causes 413 errors)
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -25,7 +25,6 @@ interface AnalysisResult {
   year?: string;
   dimensions?: string;
   color?: string;
-  // Authority source data
   authoritySource?: string;
   authorityData?: any;
 }
@@ -63,13 +62,22 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
   const [isOpen, setIsOpen] = useState(false);
   const navigate = useNavigate();
 
+  // Only extract URL strings, not base64
+  const primaryPhoto = analysisResult.imageUrl || analysisResult.imageUrls?.[0] || '';
+  const additionalPhotos = analysisResult.imageUrls?.slice(1) || [];
+  
+  // Filter out any base64 images (they start with "data:")
+  const cleanPhotos = [primaryPhoto, ...additionalPhotos].filter(
+    url => url && typeof url === 'string' && !url.startsWith('data:')
+  );
+
   const marketplaceItem = {
     id: '',
     item_name: analysisResult.itemName || 'Untitled Asset',
     asking_price: analysisResult.estimatedValue || 0,
     estimated_value: analysisResult.estimatedValue,
-    primary_photo_url: analysisResult.imageUrl || analysisResult.imageUrls?.[0],
-    additional_photos: analysisResult.imageUrls?.slice(1),
+    primary_photo_url: cleanPhotos[0] || '',
+    additional_photos: cleanPhotos.slice(1),
     is_verified: analysisResult.is_verified || false,
     confidence_score: analysisResult.confidence,
     category: analysisResult.category || 'General Collectibles',
@@ -80,14 +88,12 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
     year: analysisResult.year,
     dimensions: analysisResult.dimensions,
     color: analysisResult.color,
-    // Pass authority info for AI distinction
     authoritySource: analysisResult.authoritySource,
-    authorityData: analysisResult.authorityData,
   };
 
   const fetchDefaultVault = async (accessToken: string): Promise<string> => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
       const response = await fetch('/api/vault', {
@@ -140,7 +146,6 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
     askingPrice: number,
     description: string
   ) => {
-    // Validate inputs
     if (!askingPrice || askingPrice <= 0) {
       throw new Error('Please enter a valid price greater than $0');
     }
@@ -151,7 +156,6 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error("Please sign in to list items");
 
-    // Show progress toast for mobile users
     const progressToast = toast.loading('Creating listing...', { duration: 30000 });
 
     try {
@@ -159,16 +163,26 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
       toast.loading('Step 1/3: Preparing vault...', { id: progressToast });
       const vaultId = await fetchDefaultVault(session.access_token);
 
-      // Step 2: Collect photos
-      const allPhotos = [
-        item.primary_photo_url,
-        ...(item.additional_photos || [])
-      ].filter(Boolean) as string[];
+      // Step 2: Only use clean URL photos (no base64)
+      const allPhotos = cleanPhotos.length > 0 ? cleanPhotos : [];
 
-      // Step 3: Add to vault
+      // Step 3: Add to vault with MINIMAL valuation_data (no spreading entire object!)
       toast.loading('Step 2/3: Saving to vault...', { id: progressToast });
       const vaultController = new AbortController();
       const vaultTimeout = setTimeout(() => vaultController.abort(), 20000);
+
+      // Only send essential fields - NOT the entire item object
+      const minimalValuationData = {
+        estimatedValue: askingPrice,
+        summary_reasoning: description.slice(0, 2000), // Limit description size
+        category: item.category,
+        condition: item.condition,
+        brand: item.brand || null,
+        model: item.model || null,
+        year: item.year || null,
+        confidence: item.confidence_score || null,
+        authoritySource: item.authoritySource || null,
+      };
 
       const vaultResponse = await fetch('/api/vault/items', {
         method: 'POST',
@@ -178,13 +192,9 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
         },
         body: JSON.stringify({
           vault_id: vaultId,
-          asset_name: item.item_name,
-          valuation_data: {
-            ...item,
-            estimatedValue: askingPrice,
-            summary_reasoning: description,
-          },
-          photos: allPhotos,
+          asset_name: item.item_name.slice(0, 200), // Limit name size
+          valuation_data: minimalValuationData,
+          photos: allPhotos.slice(0, 10), // Max 10 photos
           category: item.category,
         }),
         signal: vaultController.signal,
@@ -202,7 +212,7 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
       toast.loading('Step 3/3: Publishing listing...', { id: progressToast });
       
       const finalDescription = description.length >= 20 
-        ? description 
+        ? description.slice(0, 2000)
         : `${item.item_name}. ${description || 'Listed on TagnetIQ Marketplace.'}`.slice(0, 2000);
 
       const listingController = new AbortController();
@@ -220,7 +230,7 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
           description: finalDescription,
           price: askingPrice,
           condition: mapCondition(item.condition),
-          images: allPhotos.length > 0 ? allPhotos : ['https://tagnetiq.com/placeholder.svg'],
+          images: allPhotos.length > 0 ? allPhotos.slice(0, 10) : ['https://tagnetiq.com/placeholder.svg'],
           shipping_included: false,
           accepts_trades: false,
         }),
@@ -249,18 +259,19 @@ export const ListOnMarketplaceButton: React.FC<ListOnMarketplaceButtonProps> = (
     } catch (error: any) {
       toast.dismiss(progressToast);
       
-      // Detailed error message
       let errorMsg = error.message || 'Failed to create listing';
       
       if (error.name === 'AbortError') {
         errorMsg = 'Request timed out. Your connection may be slow. Please try again.';
       } else if (errorMsg.includes('fetch')) {
         errorMsg = 'Network error. Please check your internet connection.';
+      } else if (errorMsg.includes('413') || errorMsg.includes('too large')) {
+        errorMsg = 'Data too large. Try with fewer or smaller images.';
       }
       
       console.error('Listing error:', error);
       toast.error(errorMsg, { duration: 6000 });
-      throw error; // Re-throw so modal knows it failed
+      throw error;
     }
   };
 
