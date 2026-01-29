@@ -1,5 +1,5 @@
 // FILE: api/arena/conversations.ts
-// Fixed to use arena_listings instead of marketplace_listings
+// Updated to support P2P direct messaging + listing-based conversations
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -9,44 +9,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const user = await verifyUser(req);
 
+    // GET - Fetch all conversations
     if (req.method === 'GET') {
-      // Fetch all conversations for this user (as buyer or seller)
-      const { data, error } = await supaAdmin
+      const { type } = req.query; // 'all' | 'direct' | 'listing'
+
+      let query = supaAdmin
         .from('secure_conversations')
-        .select(`
-          id,
-          listing_id,
-          buyer_id,
-          seller_id,
-          created_at,
-          updated_at
-        `)
+        .select('*')
         .or(`buyer_id.eq.${user.id},seller_id.eq.${user.id}`)
         .order('updated_at', { ascending: false });
 
+      // Filter by conversation type if specified
+      if (type === 'direct') {
+        query = query.is('listing_id', null);
+      } else if (type === 'listing') {
+        query = query.not('listing_id', 'is', null);
+      }
+
+      const { data, error } = await query;
+
       if (error) throw error;
 
-      // Fetch listing details and profiles separately to avoid join issues
+      // Get blocked users to filter out
+      const { data: blocks } = await supaAdmin
+        .from('blocked_users')
+        .select('blocked_user_id')
+        .eq('user_id', user.id);
+      
+      const blockedIds = new Set((blocks || []).map(b => b.blocked_user_id));
+
+      // Enrich conversations with profiles and listing info
       const enrichedConversations = await Promise.all((data || []).map(async (convo) => {
-        // Get listing info
-        const { data: listing } = await supaAdmin
-          .from('arena_listings')
-          .select('title, images')
-          .eq('id', convo.listing_id)
-          .single();
+        const otherUserId = convo.buyer_id === user.id ? convo.seller_id : convo.buyer_id;
+        
+        // Skip if other user is blocked
+        if (blockedIds.has(otherUserId)) {
+          return null;
+        }
 
-        // Get buyer profile
-        const { data: buyer } = await supaAdmin
-          .from('profiles')
-          .select('id, screen_name')
-          .eq('id', convo.buyer_id)
-          .single();
+        // Get listing info (if listing-based conversation)
+        let listing = null;
+        if (convo.listing_id) {
+          const { data: listingData } = await supaAdmin
+            .from('arena_listings')
+            .select('title, images')
+            .eq('id', convo.listing_id)
+            .single();
+          
+          if (listingData) {
+            listing = {
+              id: convo.listing_id,
+              item_name: listingData.title,
+              primary_photo_url: listingData.images?.[0] || '/placeholder.svg'
+            };
+          }
+        }
 
-        // Get seller profile
-        const { data: seller } = await supaAdmin
+        // Get other user's profile
+        const { data: otherProfile } = await supaAdmin
           .from('profiles')
-          .select('id, screen_name')
-          .eq('id', convo.seller_id)
+          .select('id, screen_name, avatar_url')
+          .eq('id', otherUserId)
           .single();
 
         // Get last message
@@ -58,7 +81,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .limit(1)
           .single();
 
-        // Get unread count for this user
+        // Get unread count
         const { count: unreadCount } = await supaAdmin
           .from('secure_messages')
           .select('*', { count: 'exact', head: true })
@@ -67,81 +90,194 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('read', false);
 
         return {
-          ...convo,
-          listing: listing ? {
-            item_name: listing.title,
-            primary_photo_url: listing.images?.[0] || '/placeholder.svg'
-          } : null,
-          buyer: buyer || { id: convo.buyer_id, screen_name: 'Unknown' },
-          seller: seller || { id: convo.seller_id, screen_name: 'Unknown' },
+          id: convo.id,
+          conversation_type: convo.listing_id ? 'listing' : 'direct',
+          listing_id: convo.listing_id,
+          listing,
+          other_user: otherProfile || { id: otherUserId, screen_name: 'Unknown User' },
           last_message: lastMessage || null,
           unread_count: unreadCount || 0,
-          is_seller: convo.seller_id === user.id,
+          is_buyer: convo.buyer_id === user.id,
+          created_at: convo.created_at,
+          updated_at: convo.updated_at,
         };
       }));
 
-      return res.status(200).json(enrichedConversations);
+      // Filter out null (blocked) conversations
+      const filteredConversations = enrichedConversations.filter(c => c !== null);
+
+      // Calculate total unread
+      const totalUnread = filteredConversations.reduce((sum, c) => sum + (c?.unread_count || 0), 0);
+
+      return res.status(200).json({
+        conversations: filteredConversations,
+        total_unread: totalUnread,
+      });
     }
 
+    // POST - Create new conversation (listing-based OR direct P2P)
     if (req.method === 'POST') {
-      const { listingId } = req.body;
+      const { listingId, userId } = req.body;
 
-      if (!listingId) {
-        return res.status(400).json({ error: 'listingId is required.' });
+      // Must provide either listingId OR userId, not both
+      if (!listingId && !userId) {
+        return res.status(400).json({ error: 'Either listingId or userId is required.' });
       }
 
-      // Get listing from arena_listings
-      const { data: listing, error: listingError } = await supaAdmin
-        .from('arena_listings')
-        .select('seller_id')
-        .eq('id', listingId)
+      if (listingId && userId) {
+        return res.status(400).json({ error: 'Provide either listingId or userId, not both.' });
+      }
+
+      let otherUserId: string;
+      let conversationType: 'listing' | 'direct';
+
+      // LISTING-BASED CONVERSATION
+      if (listingId) {
+        conversationType = 'listing';
+
+        // Get listing
+        const { data: listing, error: listingError } = await supaAdmin
+          .from('arena_listings')
+          .select('seller_id')
+          .eq('id', listingId)
+          .single();
+
+        if (listingError || !listing) {
+          return res.status(404).json({ error: 'Listing not found.' });
+        }
+
+        if (listing.seller_id === user.id) {
+          return res.status(400).json({ error: 'Cannot message yourself.' });
+        }
+
+        otherUserId = listing.seller_id;
+
+        // Check if conversation already exists
+        const { data: existing } = await supaAdmin
+          .from('secure_conversations')
+          .select('id')
+          .eq('listing_id', listingId)
+          .eq('buyer_id', user.id)
+          .single();
+
+        if (existing) {
+          return res.status(200).json({ id: existing.id, existing: true });
+        }
+      } 
+      // DIRECT P2P CONVERSATION
+      else {
+        conversationType = 'direct';
+        otherUserId = userId;
+
+        if (otherUserId === user.id) {
+          return res.status(400).json({ error: 'Cannot message yourself.' });
+        }
+      }
+
+      // Check if other user exists
+      const { data: otherUser, error: userError } = await supaAdmin
+        .from('profiles')
+        .select('id, screen_name, profile_visibility, allow_messages_from')
+        .eq('id', otherUserId)
         .single();
 
-      if (listingError || !listing) {
-        return res.status(404).json({ error: 'Listing not found.' });
+      if (userError || !otherUser) {
+        return res.status(404).json({ error: 'User not found.' });
       }
 
-      if (listing.seller_id === user.id) {
-        return res.status(400).json({ error: 'Cannot start a conversation with yourself.' });
-      }
-
-      // Check if conversation already exists
-      const { data: existing } = await supaAdmin
-        .from('secure_conversations')
+      // Check if blocked (either direction)
+      const { data: blocked } = await supaAdmin
+        .from('blocked_users')
         .select('id')
-        .eq('listing_id', listingId)
-        .eq('buyer_id', user.id)
-        .single();
+        .or(`and(user_id.eq.${user.id},blocked_user_id.eq.${otherUserId}),and(user_id.eq.${otherUserId},blocked_user_id.eq.${user.id})`)
+        .limit(1);
 
-      if (existing) {
-        return res.status(200).json(existing);
+      if (blocked && blocked.length > 0) {
+        return res.status(403).json({ error: 'Cannot message this user.' });
+      }
+
+      // For direct messages, check messaging permissions
+      if (conversationType === 'direct') {
+        const allowMessages = otherUser.allow_messages_from || 'everyone';
+
+        if (allowMessages === 'nobody') {
+          return res.status(403).json({ error: 'This user has disabled direct messages.' });
+        }
+
+        if (allowMessages === 'friends_only') {
+          // Check if friends
+          const { data: friendship } = await supaAdmin
+            .from('user_friends')
+            .select('status')
+            .or(`and(requester_id.eq.${user.id},addressee_id.eq.${otherUserId}),and(requester_id.eq.${otherUserId},addressee_id.eq.${user.id})`)
+            .eq('status', 'accepted')
+            .limit(1);
+
+          if (!friendship || friendship.length === 0) {
+            return res.status(403).json({ error: 'Only friends can message this user.' });
+          }
+        }
+
+        // Check for existing direct conversation (either direction)
+        const { data: existingDirect } = await supaAdmin
+          .from('secure_conversations')
+          .select('id')
+          .is('listing_id', null)
+          .or(`and(buyer_id.eq.${user.id},seller_id.eq.${otherUserId}),and(buyer_id.eq.${otherUserId},seller_id.eq.${user.id})`)
+          .limit(1)
+          .single();
+
+        if (existingDirect) {
+          return res.status(200).json({ id: existingDirect.id, existing: true });
+        }
       }
 
       // Create new conversation
-      const { data, error } = await supaAdmin
+      const { data: newConvo, error: insertError } = await supaAdmin
         .from('secure_conversations')
         .insert({
-          listing_id: listingId,
+          listing_id: listingId || null,
           buyer_id: user.id,
-          seller_id: listing.seller_id
+          seller_id: otherUserId,
+          conversation_type: conversationType,
         })
         .select()
         .single();
 
-      if (error) {
-        if (error.code === '23505') {
-          const { data: existingConvo } = await supaAdmin
-            .from('secure_conversations')
-            .select('id')
-            .eq('listing_id', listingId)
-            .eq('buyer_id', user.id)
-            .single();
-          return res.status(200).json(existingConvo);
+      if (insertError) {
+        // Handle race condition - conversation might have been created
+        if (insertError.code === '23505') {
+          if (listingId) {
+            const { data: raceConvo } = await supaAdmin
+              .from('secure_conversations')
+              .select('id')
+              .eq('listing_id', listingId)
+              .eq('buyer_id', user.id)
+              .single();
+            if (raceConvo) return res.status(200).json({ id: raceConvo.id, existing: true });
+          } else {
+            const { data: raceConvo } = await supaAdmin
+              .from('secure_conversations')
+              .select('id')
+              .is('listing_id', null)
+              .or(`and(buyer_id.eq.${user.id},seller_id.eq.${otherUserId}),and(buyer_id.eq.${otherUserId},seller_id.eq.${user.id})`)
+              .limit(1)
+              .single();
+            if (raceConvo) return res.status(200).json({ id: raceConvo.id, existing: true });
+          }
         }
-        throw error;
+        throw insertError;
       }
 
-      return res.status(201).json(data);
+      return res.status(201).json({
+        id: newConvo.id,
+        conversation_type: conversationType,
+        other_user: {
+          id: otherUser.id,
+          screen_name: otherUser.screen_name,
+        },
+        existing: false,
+      });
     }
 
     res.setHeader('Allow', ['GET', 'POST']);

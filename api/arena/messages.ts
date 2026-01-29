@@ -1,5 +1,5 @@
 // FILE: api/arena/messages.ts
-// With attachment support
+// Updated to support P2P conversations + blocked user filtering
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -9,9 +9,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const user = await verifyUser(req);
 
+    // GET - Fetch messages for a conversation
     if (req.method === 'GET') {
-      const { conversationId } = req.query;
-      
+      const { conversationId, limit = '50', before } = req.query;
+
       if (!conversationId || typeof conversationId !== 'string') {
         return res.status(400).json({ error: 'conversationId is required.' });
       }
@@ -31,46 +32,83 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(403).json({ error: 'Access denied.' });
       }
 
-      // Fetch messages with attachment fields
-      const { data: messages, error } = await supaAdmin
+      // Get blocked status
+      const otherUserId = convo.buyer_id === user.id ? convo.seller_id : convo.buyer_id;
+      const { data: blocked } = await supaAdmin
+        .from('blocked_users')
+        .select('id')
+        .or(`and(user_id.eq.${user.id},blocked_user_id.eq.${otherUserId}),and(user_id.eq.${otherUserId},blocked_user_id.eq.${user.id})`)
+        .limit(1);
+
+      if (blocked && blocked.length > 0) {
+        return res.status(403).json({ error: 'This conversation is no longer available.' });
+      }
+
+      // Fetch messages
+      let query = supaAdmin
         .from('secure_messages')
-        .select('id, conversation_id, sender_id, encrypted_content, read, created_at, attachment_url, attachment_type, attachment_name')
+        .select('*')
         .eq('conversation_id', conversationId)
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: false })
+        .limit(parseInt(limit as string) || 50);
 
-      if (error) throw error;
+      if (before && typeof before === 'string') {
+        query = query.lt('created_at', before);
+      }
 
-      // Fetch sender profiles separately
+      const { data: messages, error: messagesError } = await query;
+
+      if (messagesError) throw messagesError;
+
+      // Fetch sender profiles
       const senderIds = [...new Set((messages || []).map(m => m.sender_id))];
       const { data: profiles } = await supaAdmin
         .from('profiles')
-        .select('id, screen_name')
+        .select('id, screen_name, avatar_url')
         .in('id', senderIds);
 
       const profileMap = new Map((profiles || []).map(p => [p.id, p]));
 
-      // Attach sender info to messages
+      // Enrich messages with sender info
       const enrichedMessages = (messages || []).map(msg => ({
         ...msg,
-        sender: profileMap.get(msg.sender_id) || { id: msg.sender_id, screen_name: 'Unknown' }
+        sender: profileMap.get(msg.sender_id) || { 
+          id: msg.sender_id, 
+          screen_name: 'Unknown' 
+        },
+        is_own_message: msg.sender_id === user.id,
       }));
 
-      // Mark messages as read
-      await supaAdmin
-        .from('secure_messages')
-        .update({ read: true })
-        .eq('conversation_id', conversationId)
-        .neq('sender_id', user.id)
-        .eq('read', false);
+      // Mark unread messages as read
+      const unreadIds = (messages || [])
+        .filter(m => m.sender_id !== user.id && !m.read)
+        .map(m => m.id);
 
-      return res.status(200).json(enrichedMessages);
+      if (unreadIds.length > 0) {
+        await supaAdmin
+          .from('secure_messages')
+          .update({ read: true })
+          .in('id', unreadIds);
+      }
+
+      // Reverse to chronological order for display
+      return res.status(200).json({
+        messages: enrichedMessages.reverse(),
+        marked_read: unreadIds.length,
+        has_more: (messages || []).length === (parseInt(limit as string) || 50),
+      });
     }
 
+    // POST - Send a message
     if (req.method === 'POST') {
-      const { conversationId, content, attachmentUrl, attachmentType, attachmentName } = req.body;
-      
-      if (!conversationId || (!content && !attachmentUrl)) {
-        return res.status(400).json({ error: 'conversationId and content (or attachment) are required.' });
+      const { conversationId, content, attachment_url, attachment_type, attachment_name } = req.body;
+
+      if (!conversationId) {
+        return res.status(400).json({ error: 'conversationId is required.' });
+      }
+
+      if (!content && !attachment_url) {
+        return res.status(400).json({ error: 'Message content or attachment is required.' });
       }
 
       // Verify user is part of this conversation
@@ -88,24 +126,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(403).json({ error: 'Access denied.' });
       }
 
-      // Insert message with optional attachment
-      const { data, error } = await supaAdmin
+      // Check if blocked
+      const otherUserId = convo.buyer_id === user.id ? convo.seller_id : convo.buyer_id;
+      const { data: blocked } = await supaAdmin
+        .from('blocked_users')
+        .select('id')
+        .or(`and(user_id.eq.${user.id},blocked_user_id.eq.${otherUserId}),and(user_id.eq.${otherUserId},blocked_user_id.eq.${user.id})`)
+        .limit(1);
+
+      if (blocked && blocked.length > 0) {
+        return res.status(403).json({ error: 'Cannot send messages in this conversation.' });
+      }
+
+      // Create message
+      const { data: message, error: messageError } = await supaAdmin
         .from('secure_messages')
         .insert({
           conversation_id: conversationId,
           sender_id: user.id,
-          encrypted_content: content?.trim() || '[Attachment]',
+          encrypted_content: content || '',
+          attachment_url: attachment_url || null,
+          attachment_type: attachment_type || null,
+          attachment_name: attachment_name || null,
           read: false,
-          attachment_url: attachmentUrl || null,
-          attachment_type: attachmentType || null,
-          attachment_name: attachmentName || null,
         })
         .select()
         .single();
 
-      if (error) throw error;
+      if (messageError) throw messageError;
 
-      return res.status(201).json(data);
+      // Update conversation's updated_at (trigger should do this, but just in case)
+      await supaAdmin
+        .from('secure_conversations')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', conversationId);
+
+      // Get sender profile
+      const { data: senderProfile } = await supaAdmin
+        .from('profiles')
+        .select('id, screen_name, avatar_url')
+        .eq('id', user.id)
+        .single();
+
+      return res.status(201).json({
+        ...message,
+        sender: senderProfile,
+        is_own_message: true,
+      });
     }
 
     res.setHeader('Allow', ['GET', 'POST']);
