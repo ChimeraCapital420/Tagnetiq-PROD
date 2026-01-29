@@ -35,7 +35,8 @@ import BetaConsole from '@/pages/admin/BetaConsole';
 import MapConsole from '@/pages/admin/MapConsole';
 import InvestorPortal from '@/pages/investor/Portal';
 import ProfilePage from '@/pages/Profile';
-import Onboarding from '@/pages/Onboarding'; // NEW: Import Onboarding page
+import UserProfilePage from '@/pages/UserProfilePage';
+import Onboarding from '@/pages/Onboarding';
 import { FeedbackModal } from '@/components/beta/FeedbackModal';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
 import DualScanner from '@/components/DualScanner';
@@ -145,6 +146,18 @@ const AppRoutes: React.FC = () => {
                     <ProtectedRoute isAllowed={!!user} to="/login">
                         <OnboardingGuard>
                             <ProfilePage />
+                        </OnboardingGuard>
+                    </ProtectedRoute>
+                } 
+            />
+
+            {/* User Profile route (view other users) */}
+            <Route 
+                path="/user/:userId" 
+                element={
+                    <ProtectedRoute isAllowed={!!user} to="/login">
+                        <OnboardingGuard>
+                            <UserProfilePage />
                         </OnboardingGuard>
                     </ProtectedRoute>
                 } 
