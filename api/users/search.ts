@@ -1,5 +1,5 @@
 // FILE: api/users/search.ts
-// Search for users by screen_name
+// Search for users by screen_name - FIXED
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -39,54 +39,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from('profiles')
       .select('id, screen_name, avatar_url, profile_visibility, created_at')
       .ilike('screen_name', `%${searchTerm}%`)
-      .neq('id', user.id) // Exclude self
+      .neq('id', user.id)
       .limit(searchLimit);
 
     if (error) throw error;
 
-    // Get friendship status for all found users
-    const userIds = (users || []).map(u => u.id);
-    let friendships: any[] = [];
+    // Filter out blocked users first
+    const filteredUsers = (users || []).filter(u => !blockedIds.has(u.id));
+    const userIds = filteredUsers.map(u => u.id);
+
+    // Get friendship status - FIXED: separate query per user or batch properly
+    let friendshipMap = new Map<string, { status: string; isIncoming: boolean }>();
     
     if (userIds.length > 0) {
-      const { data: friendData } = await supaAdmin
+      // Query friendships where current user is involved with any of the found users
+      const { data: friendData, error: friendError } = await supaAdmin
         .from('user_friends')
         .select('requester_id, addressee_id, status')
-        .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`)
-        .or(userIds.map(id => `requester_id.eq.${id},addressee_id.eq.${id}`).join(','));
+        .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`);
       
-      friendships = friendData || [];
-    }
-
-    // Build friendship map
-    const friendshipMap = new Map<string, { status: string; isIncoming: boolean }>();
-    friendships.forEach(f => {
-      const otherId = f.requester_id === user.id ? f.addressee_id : f.requester_id;
-      if (userIds.includes(otherId)) {
-        friendshipMap.set(otherId, {
-          status: f.status,
-          isIncoming: f.addressee_id === user.id && f.status === 'pending',
+      if (!friendError && friendData) {
+        friendData.forEach(f => {
+          const otherId = f.requester_id === user.id ? f.addressee_id : f.requester_id;
+          // Only include if the other user is in our search results
+          if (userIds.includes(otherId)) {
+            friendshipMap.set(otherId, {
+              status: f.status,
+              isIncoming: f.addressee_id === user.id && f.status === 'pending',
+            });
+          }
         });
       }
-    });
+    }
 
-    // Filter and enrich results
-    const results = (users || [])
-      .filter(u => !blockedIds.has(u.id))
-      .map(u => {
-        const friendship = friendshipMap.get(u.id);
-        return {
-          id: u.id,
-          screen_name: u.screen_name,
-          avatar_url: u.avatar_url,
-          profile_visibility: u.profile_visibility || 'public',
-          member_since: u.created_at,
-          friendship_status: friendship?.status || null,
-          is_friend: friendship?.status === 'accepted',
-          has_pending_request: friendship?.status === 'pending',
-          is_incoming_request: friendship?.isIncoming || false,
-        };
-      });
+    // Build results
+    const results = filteredUsers.map(u => {
+      const friendship = friendshipMap.get(u.id);
+      return {
+        id: u.id,
+        screen_name: u.screen_name,
+        avatar_url: u.avatar_url,
+        profile_visibility: u.profile_visibility || 'public',
+        member_since: u.created_at,
+        friendship_status: friendship?.status || null,
+        is_friend: friendship?.status === 'accepted',
+        has_pending_request: friendship?.status === 'pending',
+        is_incoming_request: friendship?.isIncoming || false,
+      };
+    });
 
     return res.status(200).json({
       users: results,

@@ -1,7 +1,7 @@
 // FILE: src/pages/arena/Messages.tsx
-// Secure messaging with real-time updates, P2P support, notifications, and read receipts
+// Secure messaging with FIXED polling (60s interval, non-intrusive)
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -20,8 +20,14 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { UserSearchModal } from '@/components/social/UserSearchModal';
 
-// Notification sound - base64 encoded short ding (unique to TagnetIQ)
+// Notification sound
 const NOTIFICATION_SOUND = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2Onp+di4J5c29scG55hI2WnJ2ZkYZ9dXBub3N6gYqRlpmZlpCJgXpzcG9xdXuDi5GVlpSQioN8dnJvcHN4foWLj5GSj4uGgHp1cXBxdHmAhouPkJCNiYR/eXVycHJ1eX+Ei4+QkI2JhH95dXJwcnV5f4SLj5CQjYmEf3l1cnBydXl/hIuPkJCNiYR/eXVycHJ1eX+EiY2PkI6Khn95dHFwcnV5f4SJjY+QjYqGf3l0cXBydXl/hImNj5CNioZ/eXRxcHJ1eX+Eh4uNjouIhH95dHFwcXR4fYKGi42Oi4eFf3l0cHBxdHh9goaLjY6Lh4V/eXRwcHF0eH2ChYqMjYuHhX55dHBwcXR4fYKFioyNi4eFf3l0cHBxdHh9goWKjI2Lh4V+eHNvcHF0eH2ChYqMjYuHhX54c29wcXR4fYKFioyNi4eFfnhzb3BxdHh8gYSJi4yKhoR+eHNvcHF0eHyBhImLjIqGhH54c29wcXR4fIGEiYuMioaEfnhzb3BxdHh8gYSIiouJhoR+eHNvb3F0eHyBhIiKi4mGhH54c29vcXR3e4CDh4mKiIWDfXdzb29xdHd7gIOHiYqIhYN9d3Nvb3F0d3uAg4eJioiFg313c29vcXR3e4CDh4mKiIWDfXdzb29wcnV4e4CDh4mKiIWDfXdzb29wcnV4e4CDh4mJh4WCfXdzbm9wcnV4e4CDh4mJh4WCfXdzbm9wcnV4e4CChouIhoSBfHZybW5vcnV4e4CChouIhoSBfHZybW5vcnV4e4CChouIhoSBfHZybW5vcnV3eoGChomHhYOAfHZybW5vcnV3eoGChomHhYOAfHZybW5vcnV3eoGChYiGhIKAfHZybW5vcnV3eoGChYiGhIKAfHZybW1ucnV3eoGChYiGhIKAfHZybW1ucnV3en+BhIeGhIJ/e3VxbW1ucnV3en+BhIeGhIJ/e3VxbW1ucnV3en+BhIaFg4F/e3VxbG1ucnV3en+BhIaFg4F/e3VxbG1ucnV2eX6Ag4WEgoB+enRwbG1ucnV2eX6Ag4WEgoB+enRwbG1ucnV2eX6Ag4WEgoB+enRwbG1tcXR2eX6Ag4SEgn9+enRwbGxtcXR2eX6Ag4SEgn9+enRwbGxtcXR2eX5/goODgX9+enRwbGxtcXR2eX5/goODgX9+enRwbGxtcXR2eX5/goODgX9+eXNva2xtcXR2eX5/goODgX9+eXNva2xtcXR1eH1/gYKCgH5+eXNva2xtcXR1eH1/gYKCgH5+eXNva2xtcXR1eH1/gYKCgH5+eXNva2xscHN1eH1/gYKCgH59eHJuamxscHN1eH1/gYKBf359eHJuamxscHN1d3x+gIGBf359eHJuamxscHN1d3x+gIGBf359eHJuamxscHN1d3x+gIGBf359eHJuamtrcHN1d3x+gIGBf359eHJuamtrcHN1d3x+f4CAgH59d3FtaWtrcHN0dnp9f4CAgH59d3FtaWtrcHN0dnp9f4CAgH59d3FtaWtrcHN0dnp8foB/f359d3FtaWtrcHN0dnp8foB/f359d3FtaWpqb3J0dnp8foB/f359d3FtaWpqb3J0dXl7fX5/f359dnBsaGpqb3J0dXl7fX5/f359dnBsaGpqb3J0dXl7fX5+fn58dW9rZ2lqb3J0dXl7fX5+fn58dW9rZ2lqb3J0dXh6fH1+fn58dW9rZ2lqb3F0dXh6fH1+fn58dW9rZ2lpbnF0dXh6fH1+fn58dG5qZmhpbnF0dXh6fH19fX17c21pZmhpbnF0dXh5e3x9fX17c21pZmhpbnFzdXh5e3x9fX17c21pZmdobXBzdXh5e3x8fHx6cm1oZWdobXBzdXh5e3x8fHx6cm1oZWdnbXBzdXd5enx8fHx6cWxnZWdnbXBydXd5enx7e3t5cGtnZGZnbXByc3Z4eXp7e3t5cGtnZGZnbXByc3Z4eXp7e3t5cGtnZGZnbG9xc3Z3eHl6ent5b2pmY2VmbG9xc3Z3eHl6ent5b2pmY2VmbG9xcnV3eHl6enp4bmllYmRlbG9xcnV2d3h5enp4bmllYmRlbG5wcnV2d3h5eXl3bWhjYWRlbG5wcnR1dnd4eXl3bWhjYWNka25wcnR1dnd4eHh2bGdiYGNka25vcXN0dXZ3d3d1a2ZhYGJja25vcXN0dXZ3d3d1a2ZhYGJja25vcXN0dXZ2dnRqZWBfYWJka25vcXN0dXZ2dnRqZWBfYWJka25vcXN0dXV1c2lkX15fYWJka25ucXJ0dHV1c2lkX15fYWJka25ucXJ0dHV1c2lkX15fYWJka25ucXJ0dHV1c2lkX15fYWJka25ucHFyc3R0cmhjXl1eYGFjam1ub3Fycw==';
+
+// ============================================================================
+// POLLING CONFIGURATION
+// ============================================================================
+const POLL_INTERVAL_MS = 60000; // 60 seconds - reasonable interval
+const POLL_INTERVAL_BACKGROUND_MS = 120000; // 2 minutes when tab not visible
 
 interface Conversation {
   id: string;
@@ -89,6 +95,8 @@ const MessagesPage: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isPollingRef = useRef(false); // Prevent concurrent polls
 
   // Initialize audio element
   useEffect(() => {
@@ -100,29 +108,109 @@ const MessagesPage: React.FC = () => {
   const playNotificationSound = () => {
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(() => {
-        // Ignore autoplay errors (user hasn't interacted yet)
-      });
+      audioRef.current.play().catch(() => {});
     }
   };
 
-  // Fetch conversations on mount
+  // ============================================================================
+  // FETCH CONVERSATIONS - with concurrency protection
+  // ============================================================================
+  const fetchConversations = useCallback(async (showLoader = false) => {
+    // Prevent concurrent fetches
+    if (isPollingRef.current) return;
+    isPollingRef.current = true;
+
+    if (showLoader) setLoadingConvos(true);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const response = await fetch('/api/arena/conversations', {
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      });
+
+      if (!response.ok) throw new Error('Failed to fetch conversations');
+
+      const data = await response.json();
+      
+      // Check for new messages (compare unread counts)
+      const newConvos = data.conversations || data;
+      const oldUnread = totalUnread;
+      const newUnread = newConvos.reduce((sum: number, c: Conversation) => sum + (c.unread_count || 0), 0);
+      
+      // Play sound if new unread messages appeared (and we're not in initial load)
+      if (!showLoader && newUnread > oldUnread) {
+        playNotificationSound();
+      }
+
+      setConversations(newConvos);
+      setTotalUnread(newUnread);
+    } catch (error) {
+      console.error('Error fetching conversations:', error);
+      // Don't show toast on background poll failures
+      if (showLoader) {
+        toast.error('Failed to load conversations');
+      }
+    } finally {
+      if (showLoader) setLoadingConvos(false);
+      isPollingRef.current = false;
+    }
+  }, [totalUnread]);
+
+  // ============================================================================
+  // POLLING SETUP - 60 second interval, respects visibility
+  // ============================================================================
   useEffect(() => {
-    fetchConversations();
-  }, []);
+    // Initial fetch with loader
+    fetchConversations(true);
+
+    // Set up polling interval
+    const startPolling = () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+      
+      const interval = document.hidden ? POLL_INTERVAL_BACKGROUND_MS : POLL_INTERVAL_MS;
+      pollIntervalRef.current = setInterval(() => {
+        fetchConversations(false); // Silent refresh
+      }, interval);
+    };
+
+    startPolling();
+
+    // Adjust polling when tab visibility changes
+    const handleVisibilityChange = () => {
+      startPolling(); // Restart with appropriate interval
+      if (!document.hidden) {
+        // Refresh immediately when tab becomes visible
+        fetchConversations(false);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Cleanup
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []); // Empty deps - only run on mount
 
   // Handle URL params for deep linking
   useEffect(() => {
     const convoId = searchParams.get('conversation');
     if (convoId && conversations.length > 0) {
       const convo = conversations.find(c => c.id === convoId);
-      if (convo) {
+      if (convo && selectedConvo?.id !== convoId) {
         selectConversation(convo);
       }
     }
   }, [searchParams, conversations]);
 
-  // Real-time subscription for new messages
+  // Real-time subscription for new messages in selected conversation
   useEffect(() => {
     if (!selectedConvo) return;
 
@@ -139,13 +227,11 @@ const MessagesPage: React.FC = () => {
         (payload) => {
           const newMsg = payload.new as Message;
           
-          // Only add if not already in list
           setMessages(prev => {
             if (prev.some(m => m.id === newMsg.id)) return prev;
             
             const isOwn = newMsg.sender_id === user?.id;
             
-            // Play sound for incoming messages
             if (!isOwn) {
               playNotificationSound();
             }
@@ -169,7 +255,6 @@ const MessagesPage: React.FC = () => {
           filter: `conversation_id=eq.${selectedConvo.id}`
         },
         (payload) => {
-          // Update read status
           const updatedMsg = payload.new as Message;
           setMessages(prev => prev.map(m => 
             m.id === updatedMsg.id ? { ...m, read: updatedMsg.read } : m
@@ -188,28 +273,6 @@ const MessagesPage: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const fetchConversations = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const response = await fetch('/api/arena/conversations', {
-        headers: { 'Authorization': `Bearer ${session.access_token}` }
-      });
-
-      if (!response.ok) throw new Error('Failed to fetch conversations');
-
-      const data = await response.json();
-      setConversations(data.conversations || data);
-      setTotalUnread(data.total_unread || 0);
-    } catch (error) {
-      console.error('Error fetching conversations:', error);
-      toast.error('Failed to load conversations');
-    } finally {
-      setLoadingConvos(false);
-    }
-  };
-
   const fetchMessages = async (conversationId: string) => {
     setLoadingMessages(true);
     try {
@@ -225,8 +288,8 @@ const MessagesPage: React.FC = () => {
       const data = await response.json();
       setMessages(data.messages || data);
       
-      // Refresh conversations to update unread counts
-      fetchConversations();
+      // Update conversation list to reflect read status (silent)
+      fetchConversations(false);
     } catch (error) {
       console.error('Error fetching messages:', error);
       toast.error('Failed to load messages');
@@ -355,7 +418,9 @@ const MessagesPage: React.FC = () => {
 
       setNewMessage('');
       removeAttachment();
-      fetchConversations();
+      
+      // Silent refresh of conversation list
+      fetchConversations(false);
     } catch (error) {
       console.error('Error sending message:', error);
       toast.error('Failed to send message');
@@ -409,7 +474,6 @@ const MessagesPage: React.FC = () => {
     );
   };
 
-  // Read receipt indicator
   const renderReadReceipt = (msg: Message) => {
     if (!msg.is_own_message) return null;
     
@@ -510,7 +574,6 @@ const MessagesPage: React.FC = () => {
                         )}
                       >
                         <div className="flex gap-3">
-                          {/* Avatar or Listing Image */}
                           <div className="w-12 h-12 rounded-md overflow-hidden bg-muted flex-shrink-0">
                             {isDirect ? (
                               <Avatar className="h-12 w-12">
@@ -580,7 +643,6 @@ const MessagesPage: React.FC = () => {
           )}>
             {selectedConvo ? (
               <>
-                {/* Header */}
                 <div className="p-4 border-b flex items-center gap-3">
                   <Button
                     variant="ghost"
@@ -591,7 +653,6 @@ const MessagesPage: React.FC = () => {
                     <ArrowLeft className="h-5 w-5" />
                   </Button>
 
-                  {/* User Avatar or Listing Image */}
                   {selectedConvo.conversation_type === 'direct' ? (
                     <Avatar 
                       className="h-10 w-10 cursor-pointer"
@@ -639,7 +700,6 @@ const MessagesPage: React.FC = () => {
                   </Badge>
                 </div>
 
-                {/* Messages */}
                 <ScrollArea className="flex-1 p-4">
                   {loadingMessages ? (
                     <div className="flex justify-center py-8">
@@ -686,7 +746,6 @@ const MessagesPage: React.FC = () => {
                   )}
                 </ScrollArea>
 
-                {/* Attachment Preview */}
                 {attachment && (
                   <div className="px-4 py-2 border-t bg-muted/50">
                     <div className="flex items-center gap-3">
@@ -714,7 +773,6 @@ const MessagesPage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Input */}
                 <div className="p-4 border-t">
                   <form
                     onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
