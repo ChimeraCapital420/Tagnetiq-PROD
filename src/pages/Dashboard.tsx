@@ -12,8 +12,12 @@ import { toast } from 'sonner';
 import { subCategories } from '@/lib/subcategories';
 import SpotlightCarousel from '@/components/dashboard/SpotlightCarousel';
 import { ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
+import { useWelcomeMessage } from '@/hooks/useWelcomeMessage';
 
 const Dashboard: React.FC = () => {
+  // Send welcome message to new users (runs once after onboarding)
+  useWelcomeMessage();
+
   const { lastAnalysisResult, selectedCategory, setSelectedCategory } = useAppContext();
   const [isSubCategoryModalOpen, setIsSubCategoryModalOpen] = useState(false);
   const [currentCategory, setCurrentCategory] = useState<{ id: string; name: string } | null>(null);
