@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { User, Palette, Volume2, Globe, Shield, Sparkles, Badge } from 'lucide-react';
+import { User, Palette, Volume2, Globe, Shield, Sparkles, Badge, Users } from 'lucide-react';
 import PremiumVoiceSelector from '@/components/PremiumVoiceSelector';
 import OracleVisualizerSelector from '@/components/profile/OracleVisualizerSelector';
 import UserInterestsManager from '@/components/profile/UserInterestsManager';
@@ -22,6 +22,8 @@ import { AvatarUploader } from '@/components/profile/AvatarUploader';
 import { BackgroundUploader } from '@/components/profile/BackgroundUploader';
 import { AccountSecurity } from '@/components/profile/AccountSecurity';
 import { NotificationPreferences } from '@/components/profile/NotificationPreferences';
+import { FriendsList } from '@/components/social/FriendsList';
+import { PrivacySettings } from '@/components/social/PrivacySettings';
 
 const ProfilePage: React.FC = () => {
   const { profile, setProfile } = useAuth();
@@ -101,10 +103,14 @@ const ProfilePage: React.FC = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-5 gap-2">
+        <TabsList className="grid w-full grid-cols-3 md:grid-cols-6 gap-2">
           <TabsTrigger value="profile" className="flex items-center gap-2">
             <User className="h-4 w-4" />
             <span className="hidden sm:inline">{t('profile.tabs.profile', 'Profile')}</span>
+          </TabsTrigger>
+          <TabsTrigger value="social" className="flex items-center gap-2">
+            <Users className="h-4 w-4" />
+            <span className="hidden sm:inline">{t('profile.tabs.social', 'Social')}</span>
           </TabsTrigger>
           <TabsTrigger value="appearance" className="flex items-center gap-2">
             <Palette className="h-4 w-4" />
@@ -162,6 +168,13 @@ const ProfilePage: React.FC = () => {
           </div>
 
           <NotificationPreferences />
+        </TabsContent>
+
+        <TabsContent value="social" className="space-y-6">
+          <div className="grid gap-6 lg:grid-cols-2">
+            <FriendsList />
+            <PrivacySettings />
+          </div>
         </TabsContent>
 
         <TabsContent value="appearance" className="space-y-6">
