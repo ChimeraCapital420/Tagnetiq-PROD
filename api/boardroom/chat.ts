@@ -1,9 +1,12 @@
 // FILE: api/boardroom/chat.ts
-// Multi-provider AI chat - uses YOUR Vercel environment variable names
+// Multi-provider AI chat - imports getApiKey from HYDRA for consistent env vars
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUser } from '../_lib/security.js';
+
+// Import HYDRA's getApiKey function - same one that works in health check
+import { getApiKey } from '../src/lib/hydra/config/providers.js';
 
 interface BoardMember {
   id: string;
@@ -90,22 +93,14 @@ function buildContext(member: BoardMember, memories: Memory[], history: any[]): 
 }
 
 // =============================================================================
-// ENVIRONMENT VARIABLE MAPPING (matches YOUR Vercel setup)
+// MAP DB PROVIDER NAMES TO HYDRA PROVIDER NAMES
 // =============================================================================
-const ENV_KEYS = {
-  openai: 'OPENAI_API_KEY',
-  anthropic: 'ANTHROPIC_SECRET',      // Your key name
-  groq: 'GROQ_API_KEY',
-  gemini: 'GOOGLE_AI_TOKEN',          // Your key name
-  xai: 'XAI_API_KEY',
-  perplexity: 'PERPLEXITY_API_KEY',
-  deepseek: 'DEEPSEEK_API_KEY',
-  mistral: 'MISTRAL_API_KEY',
+const PROVIDER_MAP: Record<string, string> = {
+  'gemini': 'google',  // DB uses 'gemini', HYDRA uses 'google'
 };
 
-function getApiKey(provider: string): string {
-  const envKey = ENV_KEYS[provider as keyof typeof ENV_KEYS] || `${provider.toUpperCase()}_API_KEY`;
-  return process.env[envKey] || '';
+function getHydraProvider(dbProvider: string): string {
+  return PROVIDER_MAP[dbProvider] || dbProvider;
 }
 
 // ========== AI PROVIDER CALLS ==========
@@ -135,7 +130,7 @@ async function callOpenAI(member: BoardMember, context: string, userMessage: str
   return data.choices?.[0]?.message?.content || '';
 }
 
-// Anthropic (Claude) - uses ANTHROPIC_SECRET
+// Anthropic (Claude)
 async function callAnthropic(member: BoardMember, context: string, userMessage: string): Promise<string> {
   const apiKey = getApiKey('anthropic');
   if (!apiKey) throw new Error('Anthropic API key not configured');
@@ -184,10 +179,10 @@ async function callGroq(member: BoardMember, context: string, userMessage: strin
   return data.choices?.[0]?.message?.content || '';
 }
 
-// Gemini - uses GOOGLE_AI_TOKEN
-async function callGemini(member: BoardMember, context: string, userMessage: string): Promise<string> {
-  const apiKey = getApiKey('gemini');
-  if (!apiKey) throw new Error('Gemini API key not configured');
+// Google Gemini
+async function callGoogle(member: BoardMember, context: string, userMessage: string): Promise<string> {
+  const apiKey = getApiKey('google');
+  if (!apiKey) throw new Error('Google AI API key not configured');
   
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${member.ai_model}:generateContent?key=${apiKey}`,
@@ -244,7 +239,7 @@ async function callPerplexity(member: BoardMember, context: string, userMessage:
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: member.ai_model, // Will use 'sonar-pro' from updated DB
+      model: member.ai_model,
       max_tokens: 1024,
       messages: [
         { role: 'system', content: member.system_prompt + context },
@@ -309,15 +304,18 @@ async function callMistral(member: BoardMember, context: string, userMessage: st
 
 // Get AI response based on provider
 async function getAIResponse(member: BoardMember, context: string, userMessage: string): Promise<string> {
-  switch (member.ai_provider) {
+  // Map DB provider name to HYDRA provider name
+  const provider = getHydraProvider(member.ai_provider);
+  
+  switch (provider) {
     case 'anthropic':
       return callAnthropic(member, context, userMessage);
     case 'openai':
       return callOpenAI(member, context, userMessage);
     case 'groq':
       return callGroq(member, context, userMessage);
-    case 'gemini':
-      return callGemini(member, context, userMessage);
+    case 'google':
+      return callGoogle(member, context, userMessage);
     case 'xai':
       return callXAI(member, context, userMessage);
     case 'perplexity':
@@ -500,11 +498,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
   } catch (error: any) {
-    const message = error.message || 'An unexpected error occurred.';
-    console.error('Boardroom chat error:', message);
-    if (message.includes('Authentication')) {
-      return res.status(401).json({ error: message });
+    const errMsg = error.message || 'An unexpected error occurred.';
+    console.error('Boardroom chat error:', errMsg);
+    if (errMsg.includes('Authentication')) {
+      return res.status(401).json({ error: errMsg });
     }
-    return res.status(500).json({ error: message });
+    return res.status(500).json({ error: errMsg });
   }
 }
