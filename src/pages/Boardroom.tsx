@@ -1,5 +1,5 @@
 // FILE: src/pages/Boardroom.tsx
-// Executive Boardroom - Private AI Board of Directors
+// Executive Boardroom - Private AI Board of Directors with Tasks, Briefings, and Voice
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -12,15 +12,21 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Send, Loader2, Plus, Users, User, MessageSquare, 
   History, Brain, Vote, Swords, Lock, ChevronRight,
-  Sparkles, AlertCircle
+  Sparkles, AlertCircle, Sun, FileText, Volume2,
+  ChevronDown, ChevronUp, Briefcase, RefreshCw, Calendar
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+
+// ============================================================================
+// INTERFACES
+// ============================================================================
 
 interface BoardMember {
   id: string;
@@ -34,6 +40,8 @@ interface BoardMember {
   expertise: string[];
   voice_style: string;
   display_order: number;
+  capabilities?: { name: string; description: string; autonomous: boolean }[];
+  workload?: { pending: number; completed: number };
 }
 
 interface Meeting {
@@ -67,6 +75,37 @@ interface BoardResponse {
   error?: boolean;
 }
 
+interface BriefingSection {
+  member_slug: string;
+  member_name: string;
+  title: string;
+  content: string;
+  priority: number;
+}
+
+interface Briefing {
+  id: string;
+  briefing_date: string;
+  briefing_type: string;
+  sections: BriefingSection[];
+  summary: string;
+  action_items: any[];
+  read_at: string | null;
+  created_at: string;
+}
+
+interface DashboardStats {
+  total_members: number;
+  active_meetings: number;
+  pending_tasks: number;
+  tasks_completed_this_week: number;
+  has_unread_briefing: boolean;
+}
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
 const MEETING_TYPES = [
   { id: 'full_board', name: 'Full Board Meeting', icon: Users, description: 'All members respond to your question' },
   { id: 'one_on_one', name: '1:1 Executive Session', icon: User, description: 'Private meeting with one board member' },
@@ -80,17 +119,109 @@ const AI_PROVIDER_COLORS: Record<string, string> = {
   openai: 'bg-green-500/20 text-green-400',
   groq: 'bg-blue-500/20 text-blue-400',
   gemini: 'bg-purple-500/20 text-purple-400',
+  google: 'bg-purple-500/20 text-purple-400',
   xai: 'bg-red-500/20 text-red-400',
   perplexity: 'bg-cyan-500/20 text-cyan-400',
   deepseek: 'bg-indigo-500/20 text-indigo-400',
   mistral: 'bg-yellow-500/20 text-yellow-400',
 };
 
+const QUICK_TASKS = [
+  { id: 'social-posts', label: 'Social Posts', assignedTo: 'glitch', taskType: 'social_media_posts' },
+  { id: 'competitor-analysis', label: 'Competitor Intel', assignedTo: 'athena', taskType: 'competitive_analysis' },
+  { id: 'market-research', label: 'Market Research', assignedTo: 'scuba', taskType: 'market_research' },
+  { id: 'investor-narrative', label: 'Investor Pitch', assignedTo: 'athena', taskType: 'investor_narrative' },
+  { id: 'terms-of-service', label: 'Terms of Service', assignedTo: 'lexicoda', taskType: 'terms_of_service' },
+  { id: 'privacy-policy', label: 'Privacy Policy', assignedTo: 'lexicoda', taskType: 'privacy_policy' },
+  { id: 'financial-projections', label: 'Financials', assignedTo: 'griffin', taskType: 'financial_projections' },
+  { id: 'api-design', label: 'API Design', assignedTo: 'vulcan', taskType: 'api_design' },
+];
+
+// ============================================================================
+// VOICE PLAYER COMPONENT (inline for simplicity)
+// ============================================================================
+
+const VoiceButton: React.FC<{ text: string; memberSlug: string; memberName: string }> = ({ 
+  text, memberSlug, memberName 
+}) => {
+  const [loading, setLoading] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const playVoice = async () => {
+    if (playing && audioRef.current) {
+      audioRef.current.pause();
+      setPlaying(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const response = await fetch('/api/boardroom/voice', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ text, member_slug: memberSlug }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+
+      // Convert base64 to audio
+      const audioBlob = new Blob(
+        [Uint8Array.from(atob(data.audio), c => c.charCodeAt(0))],
+        { type: 'audio/mpeg' }
+      );
+      const audioUrl = URL.createObjectURL(audioBlob);
+
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+
+      audioRef.current = new Audio(audioUrl);
+      audioRef.current.onended = () => setPlaying(false);
+      audioRef.current.play();
+      setPlaying(true);
+    } catch (err: any) {
+      toast.error(err.message || 'Voice playback failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-6 w-6 p-0"
+      onClick={playVoice}
+      disabled={loading}
+      title={`Listen to ${memberName}`}
+    >
+      {loading ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <Volume2 className={cn("h-3 w-3", playing && "text-primary")} />
+      )}
+    </Button>
+  );
+};
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
+
 const BoardroomPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Core state
   const [hasAccess, setHasAccess] = useState<boolean | null>(null);
   const [members, setMembers] = useState<BoardMember[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -104,12 +235,23 @@ const BoardroomPage: React.FC = () => {
   const [newMeetingType, setNewMeetingType] = useState('full_board');
   const [newMeetingTitle, setNewMeetingTitle] = useState('');
 
-  // Check access and load data
+  // Dashboard state
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [briefing, setBriefing] = useState<Briefing | null>(null);
+  const [briefingLoading, setBriefingLoading] = useState(false);
+  const [briefingExpanded, setBriefingExpanded] = useState(true);
+  const [tasksExpanded, setTasksExpanded] = useState(false);
+  const [taskLoading, setTaskLoading] = useState<string | null>(null);
+  const [taskResults, setTaskResults] = useState<{ id: string; content: string; member: string }[]>([]);
+
+  // ============================================================================
+  // DATA LOADING
+  // ============================================================================
+
   useEffect(() => {
     checkAccessAndLoad();
   }, []);
 
-  // Auto-scroll messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -137,11 +279,111 @@ const BoardroomPage: React.FC = () => {
       setHasAccess(true);
       setMembers(data.members || []);
       setMeetings(data.meetings || []);
+      setStats(data.stats || null);
+
+      // Check for today's briefing
+      if (data.todays_briefing) {
+        setBriefing(data.todays_briefing);
+      }
     } catch (error) {
       console.error('Boardroom load error:', error);
       setHasAccess(false);
     }
   };
+
+  // ============================================================================
+  // BRIEFING FUNCTIONS
+  // ============================================================================
+
+  const generateBriefing = async () => {
+    setBriefingLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const response = await fetch('/api/boardroom/briefing', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ type: 'morning' }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+
+      setBriefing(data);
+      toast.success('Briefing generated!');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to generate briefing');
+    } finally {
+      setBriefingLoading(false);
+    }
+  };
+
+  const fetchBriefing = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const response = await fetch('/api/boardroom/briefing', {
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      });
+
+      const data = await response.json();
+      if (data.id) {
+        setBriefing(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch briefing:', err);
+    }
+  };
+
+  // ============================================================================
+  // TASK FUNCTIONS
+  // ============================================================================
+
+  const executeTask = async (task: typeof QUICK_TASKS[0]) => {
+    setTaskLoading(task.id);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const response = await fetch('/api/boardroom/tasks', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          assigned_to: task.assignedTo,
+          title: task.label,
+          task_type: task.taskType,
+          execute_now: true,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+
+      setTaskResults(prev => [{
+        id: task.id,
+        content: data.deliverable,
+        member: data.member?.name || task.assignedTo,
+      }, ...prev]);
+
+      toast.success(`${task.label} completed!`);
+    } catch (err: any) {
+      toast.error(err.message || 'Task failed');
+    } finally {
+      setTaskLoading(null);
+    }
+  };
+
+  // ============================================================================
+  // MEETING FUNCTIONS
+  // ============================================================================
 
   const createMeeting = async () => {
     if (!newMeetingTitle.trim()) {
@@ -221,7 +463,6 @@ const BoardroomPage: React.FC = () => {
     const messageText = newMessage;
     setNewMessage('');
 
-    // Determine which members will respond
     let respondingMembers: string[] = [];
     if (activeMeeting.meeting_type === 'full_board' || activeMeeting.meeting_type === 'vote') {
       respondingMembers = members.map(m => m.slug);
@@ -236,7 +477,6 @@ const BoardroomPage: React.FC = () => {
 
     setLoadingResponses(respondingMembers);
 
-    // Add user message immediately
     const tempUserMsg: Message = {
       id: `temp-${Date.now()}`,
       sender_type: 'user',
@@ -265,7 +505,6 @@ const BoardroomPage: React.FC = () => {
 
       const data = await response.json();
 
-      // Replace temp message and add responses
       setMessages(prev => {
         const filtered = prev.filter(m => m.id !== tempUserMsg.id);
         const newMessages: Message[] = [
@@ -284,9 +523,8 @@ const BoardroomPage: React.FC = () => {
 
     } catch (error) {
       toast.error('Failed to get board response');
-      // Remove temp message on error
       setMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
-      setNewMessage(messageText); // Restore message
+      setNewMessage(messageText);
     } finally {
       setSending(false);
       setLoadingResponses([]);
@@ -295,7 +533,10 @@ const BoardroomPage: React.FC = () => {
 
   const getMemberBySlug = (slug: string) => members.find(m => m.slug === slug);
 
-  // Access denied screen
+  // ============================================================================
+  // RENDER - ACCESS DENIED
+  // ============================================================================
+
   if (hasAccess === false) {
     return (
       <div className="container mx-auto p-4 md:p-8 max-w-2xl">
@@ -315,7 +556,10 @@ const BoardroomPage: React.FC = () => {
     );
   }
 
-  // Loading screen
+  // ============================================================================
+  // RENDER - LOADING
+  // ============================================================================
+
   if (hasAccess === null) {
     return (
       <div className="container mx-auto p-4 md:p-8 flex items-center justify-center min-h-[60vh]">
@@ -323,6 +567,10 @@ const BoardroomPage: React.FC = () => {
       </div>
     );
   }
+
+  // ============================================================================
+  // RENDER - MAIN
+  // ============================================================================
 
   return (
     <div className="container mx-auto p-4 md:p-8">
@@ -431,8 +679,199 @@ const BoardroomPage: React.FC = () => {
         </Dialog>
       </div>
 
+      {/* ================================================================== */}
+      {/* DAILY BRIEFING SECTION */}
+      {/* ================================================================== */}
+      <Collapsible open={briefingExpanded} onOpenChange={setBriefingExpanded} className="mb-6">
+        <Card>
+          <CollapsibleTrigger asChild>
+            <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Sun className="h-5 w-5 text-yellow-500" />
+                  <div>
+                    <CardTitle className="text-lg">Daily Briefing</CardTitle>
+                    <CardDescription>
+                      {briefing 
+                        ? `Generated ${new Date(briefing.created_at).toLocaleTimeString()}`
+                        : 'Your board is ready to brief you'}
+                    </CardDescription>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!briefing && (
+                    <Button 
+                      size="sm" 
+                      onClick={(e) => { e.stopPropagation(); generateBriefing(); }}
+                      disabled={briefingLoading}
+                    >
+                      {briefingLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                      )}
+                      Generate Briefing
+                    </Button>
+                  )}
+                  {briefingExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </div>
+              </div>
+            </CardHeader>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <CardContent>
+              {briefingLoading ? (
+                <div className="py-8 text-center">
+                  <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-primary" />
+                  <p className="text-muted-foreground">
+                    Scuba Steve is scanning market news, Athena is analyzing strategy...
+                  </p>
+                </div>
+              ) : briefing ? (
+                <div className="space-y-4">
+                  {/* Executive Summary */}
+                  <div className="bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/20 dark:to-orange-950/20 p-4 rounded-lg border border-amber-200 dark:border-amber-800">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h4 className="font-semibold text-amber-900 dark:text-amber-100 mb-2">
+                          Executive Summary
+                        </h4>
+                        <p className="text-amber-800 dark:text-amber-200 text-sm">
+                          {briefing.summary}
+                        </p>
+                      </div>
+                      <VoiceButton text={briefing.summary} memberSlug="griffin" memberName="Griffin" />
+                    </div>
+                  </div>
+
+                  {/* Sections */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {briefing.sections.map((section, idx) => (
+                      <Card key={idx} className="p-4">
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm">{section.title}</span>
+                            <Badge variant="outline" className="text-xs">{section.member_name}</Badge>
+                          </div>
+                          <VoiceButton 
+                            text={section.content} 
+                            memberSlug={section.member_slug} 
+                            memberName={section.member_name} 
+                          />
+                        </div>
+                        <p className="text-xs text-muted-foreground line-clamp-4">{section.content}</p>
+                      </Card>
+                    ))}
+                  </div>
+
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={generateBriefing}
+                    disabled={briefingLoading}
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Regenerate Briefing
+                  </Button>
+                </div>
+              ) : (
+                <div className="py-8 text-center">
+                  <Sun className="h-12 w-12 text-yellow-500/30 mx-auto mb-4" />
+                  <p className="text-muted-foreground mb-4">
+                    No briefing yet today. Click above to have your board prepare one.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
+
+      {/* ================================================================== */}
+      {/* QUICK TASKS SECTION */}
+      {/* ================================================================== */}
+      <Collapsible open={tasksExpanded} onOpenChange={setTasksExpanded} className="mb-6">
+        <Card>
+          <CollapsibleTrigger asChild>
+            <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Briefcase className="h-5 w-5 text-blue-500" />
+                  <div>
+                    <CardTitle className="text-lg">Quick Tasks</CardTitle>
+                    <CardDescription>Assign work to board members with one click</CardDescription>
+                  </div>
+                </div>
+                {tasksExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </div>
+            </CardHeader>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <CardContent>
+              <div className="flex flex-wrap gap-2 mb-4">
+                {QUICK_TASKS.map((task) => {
+                  const member = getMemberBySlug(task.assignedTo);
+                  const isLoading = taskLoading === task.id;
+                  const hasResult = taskResults.some(r => r.id === task.id);
+
+                  return (
+                    <Button
+                      key={task.id}
+                      variant={hasResult ? "secondary" : "outline"}
+                      size="sm"
+                      disabled={isLoading}
+                      onClick={() => executeTask(task)}
+                      className="h-auto py-2 px-3"
+                    >
+                      {isLoading ? (
+                        <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                      ) : hasResult ? (
+                        <FileText className="h-3 w-3 mr-2 text-green-500" />
+                      ) : (
+                        <FileText className="h-3 w-3 mr-2" />
+                      )}
+                      <span>{task.label}</span>
+                      <Badge variant="outline" className="ml-2 text-[10px]">
+                        {member?.name || task.assignedTo}
+                      </Badge>
+                    </Button>
+                  );
+                })}
+              </div>
+
+              {/* Task Results */}
+              {taskResults.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-sm font-medium">Completed Deliverables</h4>
+                  {taskResults.map((result, idx) => (
+                    <Card key={idx} className="p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <Badge variant="secondary">{result.member}</Badge>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => navigator.clipboard.writeText(result.content)}
+                        >
+                          Copy
+                        </Button>
+                      </div>
+                      <pre className="text-xs bg-muted p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap">
+                        {result.content}
+                      </pre>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
+
+      {/* ================================================================== */}
+      {/* MAIN GRID - SIDEBAR + CHAT */}
+      {/* ================================================================== */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Sidebar - Board Members & History */}
+        {/* Sidebar */}
         <div className="lg:col-span-1 space-y-4">
           <Tabs defaultValue="board">
             <TabsList className="w-full">
@@ -441,7 +880,7 @@ const BoardroomPage: React.FC = () => {
             </TabsList>
 
             <TabsContent value="board" className="mt-4">
-              <ScrollArea className="h-[60vh]">
+              <ScrollArea className="h-[50vh]">
                 <div className="space-y-2 pr-2">
                   {members.map((member) => (
                     <Card key={member.slug} className="p-3">
@@ -465,12 +904,10 @@ const BoardroomPage: React.FC = () => {
             </TabsContent>
 
             <TabsContent value="history" className="mt-4">
-              <ScrollArea className="h-[60vh]">
+              <ScrollArea className="h-[50vh]">
                 <div className="space-y-2 pr-2">
                   {meetings.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-8">
-                      No meetings yet
-                    </p>
+                    <p className="text-sm text-muted-foreground text-center py-8">No meetings yet</p>
                   ) : (
                     meetings.map((meeting) => (
                       <Card
@@ -501,12 +938,11 @@ const BoardroomPage: React.FC = () => {
           </Tabs>
         </div>
 
-        {/* Main Chat Area */}
+        {/* Chat Area */}
         <div className="lg:col-span-3">
-          <Card className="h-[70vh] flex flex-col">
+          <Card className="h-[60vh] flex flex-col">
             {activeMeeting ? (
               <>
-                {/* Meeting Header */}
                 <div className="p-4 border-b flex items-center justify-between">
                   <div>
                     <h2 className="font-semibold">{activeMeeting.title}</h2>
@@ -519,7 +955,6 @@ const BoardroomPage: React.FC = () => {
                   </Badge>
                 </div>
 
-                {/* Messages */}
                 <ScrollArea className="flex-1 p-4">
                   <div className="space-y-4">
                     {messages.map((msg) => {
@@ -527,10 +962,7 @@ const BoardroomPage: React.FC = () => {
                       const member = msg.member_slug ? getMemberBySlug(msg.member_slug) : null;
 
                       return (
-                        <div
-                          key={msg.id}
-                          className={cn("flex gap-3", isUser && "flex-row-reverse")}
-                        >
+                        <div key={msg.id} className={cn("flex gap-3", isUser && "flex-row-reverse")}>
                           {!isUser && member && (
                             <Avatar className="h-10 w-10 flex-shrink-0">
                               <AvatarImage src={member.avatar_url} />
@@ -544,6 +976,12 @@ const BoardroomPage: React.FC = () => {
                                 <Badge className={cn("text-[10px]", AI_PROVIDER_COLORS[msg.ai_provider || member.ai_provider])}>
                                   {msg.ai_provider || member.ai_provider}
                                 </Badge>
+                                {/* VOICE BUTTON */}
+                                <VoiceButton 
+                                  text={msg.content} 
+                                  memberSlug={member.slug} 
+                                  memberName={member.name} 
+                                />
                               </div>
                             )}
                             <div className={cn(
@@ -557,7 +995,6 @@ const BoardroomPage: React.FC = () => {
                       );
                     })}
 
-                    {/* Loading indicators */}
                     {loadingResponses.map((slug) => {
                       const member = getMemberBySlug(slug);
                       if (!member) return null;
@@ -582,13 +1019,9 @@ const BoardroomPage: React.FC = () => {
                   </div>
                 </ScrollArea>
 
-                {/* Input */}
                 {activeMeeting.status === 'active' && (
                   <div className="p-4 border-t">
-                    <form
-                      onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
-                      className="flex gap-2"
-                    >
+                    <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-2">
                       <Textarea
                         value={newMessage}
                         onChange={(e) => setNewMessage(e.target.value)}
@@ -603,11 +1036,7 @@ const BoardroomPage: React.FC = () => {
                         }}
                       />
                       <Button type="submit" disabled={sending || !newMessage.trim()}>
-                        {sending ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Send className="h-4 w-4" />
-                        )}
+                        {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                       </Button>
                     </form>
                   </div>
