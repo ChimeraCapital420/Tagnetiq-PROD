@@ -1,5 +1,5 @@
 // FILE: api/boardroom/index.ts
-// Executive Boardroom - Private feature for admin/whitelisted users only
+// Executive Boardroom - Dashboard data including tasks and capabilities
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -35,12 +35,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(403).json({ error: 'Boardroom access not authorized.' });
     }
 
-    // GET - Get board members and user's meetings
+    // GET - Get board members, meetings, tasks, and capabilities
     if (req.method === 'GET') {
-      // Get all board members
+      // Get all board members with their capabilities
       const { data: members, error: membersError } = await supaAdmin
         .from('boardroom_members')
-        .select('id, slug, name, role, title, ai_provider, avatar_url, personality, expertise, voice_style, display_order')
+        .select(`
+          id, slug, name, role, title, ai_provider, avatar_url, 
+          personality, expertise, voice_style, display_order,
+          boardroom_member_capabilities (
+            capability, description, autonomous
+          )
+        `)
         .eq('is_active', true)
         .order('display_order');
 
@@ -56,7 +62,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (meetingsError) throw meetingsError;
 
-      // Get pending action items
+      // Get pending action items (legacy)
       const { data: actionItems } = await supaAdmin
         .from('boardroom_action_items')
         .select('*')
@@ -65,11 +71,116 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .order('priority', { ascending: false })
         .limit(10);
 
+      // ============================================
+      // NEW: Get task statistics
+      // ============================================
+      
+      // Pending tasks
+      const { count: pendingTasksCount } = await supaAdmin
+        .from('boardroom_tasks')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .in('status', ['pending', 'in_progress']);
+
+      // Completed tasks (last 7 days)
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      
+      const { data: recentCompletedTasks } = await supaAdmin
+        .from('boardroom_tasks')
+        .select('id, title, assigned_to, task_type, completed_at, deliverable_type')
+        .eq('user_id', user.id)
+        .eq('status', 'completed')
+        .gte('completed_at', sevenDaysAgo.toISOString())
+        .order('completed_at', { ascending: false })
+        .limit(10);
+
+      // Tasks by member (for workload visualization)
+      const { data: tasksByMember } = await supaAdmin
+        .from('boardroom_tasks')
+        .select('assigned_to, status')
+        .eq('user_id', user.id)
+        .in('status', ['pending', 'in_progress', 'completed']);
+
+      // Aggregate tasks by member
+      const memberWorkload: Record<string, { pending: number; completed: number }> = {};
+      (tasksByMember || []).forEach(task => {
+        if (!memberWorkload[task.assigned_to]) {
+          memberWorkload[task.assigned_to] = { pending: 0, completed: 0 };
+        }
+        if (task.status === 'completed') {
+          memberWorkload[task.assigned_to].completed++;
+        } else {
+          memberWorkload[task.assigned_to].pending++;
+        }
+      });
+
+      // ============================================
+      // NEW: Get today's briefing if exists
+      // ============================================
+      const today = new Date().toISOString().split('T')[0];
+      const { data: todaysBriefing } = await supaAdmin
+        .from('boardroom_briefings')
+        .select('id, briefing_type, summary, read_at, created_at')
+        .eq('user_id', user.id)
+        .eq('briefing_date', today)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      // ============================================
+      // NEW: Get scheduled actions
+      // ============================================
+      const { data: scheduledActions } = await supaAdmin
+        .from('boardroom_scheduled_actions')
+        .select('id, member_slug, action_type, schedule, last_run, next_run, is_active')
+        .eq('user_id', user.id)
+        .eq('is_active', true);
+
+      // ============================================
+      // Format member capabilities for easier use
+      // ============================================
+      const formattedMembers = (members || []).map(member => ({
+        ...member,
+        capabilities: (member.boardroom_member_capabilities || []).map((cap: any) => ({
+          name: cap.capability,
+          description: cap.description,
+          autonomous: cap.autonomous,
+        })),
+        workload: memberWorkload[member.slug] || { pending: 0, completed: 0 },
+      }));
+
+      // Remove the raw join data
+      formattedMembers.forEach((m: any) => delete m.boardroom_member_capabilities);
+
       return res.status(200).json({
-        members,
+        // Core data
+        members: formattedMembers,
         meetings: meetings || [],
         action_items: actionItems || [],
         access_level: accessLevel,
+        
+        // Task system
+        tasks: {
+          pending_count: pendingTasksCount || 0,
+          recent_completed: recentCompletedTasks || [],
+          by_member: memberWorkload,
+        },
+        
+        // Briefings
+        todays_briefing: todaysBriefing || null,
+        
+        // Automation
+        scheduled_actions: scheduledActions || [],
+        
+        // Quick stats
+        stats: {
+          total_members: formattedMembers.length,
+          active_meetings: (meetings || []).filter(m => m.status === 'active').length,
+          pending_tasks: pendingTasksCount || 0,
+          tasks_completed_this_week: (recentCompletedTasks || []).length,
+          has_unread_briefing: todaysBriefing && !todaysBriefing.read_at,
+        },
       });
     }
 
