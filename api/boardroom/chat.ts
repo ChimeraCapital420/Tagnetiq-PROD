@@ -1,5 +1,5 @@
 // FILE: api/boardroom/chat.ts
-// Multi-provider AI chat - uses fetch for all providers (no extra SDKs needed)
+// Multi-provider AI chat - uses YOUR Vercel environment variable names
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -89,15 +89,37 @@ function buildContext(member: BoardMember, memories: Memory[], history: any[]): 
   return context;
 }
 
-// ========== AI PROVIDER CALLS (all using fetch) ==========
+// =============================================================================
+// ENVIRONMENT VARIABLE MAPPING (matches YOUR Vercel setup)
+// =============================================================================
+const ENV_KEYS = {
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_SECRET',      // Your key name
+  groq: 'GROQ_API_KEY',
+  gemini: 'GOOGLE_AI_TOKEN',          // Your key name
+  xai: 'XAI_API_KEY',
+  perplexity: 'PERPLEXITY_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  mistral: 'MISTRAL_API_KEY',
+};
+
+function getApiKey(provider: string): string {
+  const envKey = ENV_KEYS[provider as keyof typeof ENV_KEYS] || `${provider.toUpperCase()}_API_KEY`;
+  return process.env[envKey] || '';
+}
+
+// ========== AI PROVIDER CALLS ==========
 
 // OpenAI
 async function callOpenAI(member: BoardMember, context: string, userMessage: string): Promise<string> {
+  const apiKey = getApiKey('openai');
+  if (!apiKey) throw new Error('OpenAI API key not configured');
+  
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: member.ai_model,
@@ -113,13 +135,16 @@ async function callOpenAI(member: BoardMember, context: string, userMessage: str
   return data.choices?.[0]?.message?.content || '';
 }
 
-// Anthropic (Claude)
+// Anthropic (Claude) - uses ANTHROPIC_SECRET
 async function callAnthropic(member: BoardMember, context: string, userMessage: string): Promise<string> {
+  const apiKey = getApiKey('anthropic');
+  if (!apiKey) throw new Error('Anthropic API key not configured');
+  
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+      'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
@@ -136,11 +161,14 @@ async function callAnthropic(member: BoardMember, context: string, userMessage: 
 
 // Groq
 async function callGroq(member: BoardMember, context: string, userMessage: string): Promise<string> {
+  const apiKey = getApiKey('groq');
+  if (!apiKey) throw new Error('Groq API key not configured');
+  
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: member.ai_model,
@@ -156,10 +184,13 @@ async function callGroq(member: BoardMember, context: string, userMessage: strin
   return data.choices?.[0]?.message?.content || '';
 }
 
-// Gemini
+// Gemini - uses GOOGLE_AI_TOKEN
 async function callGemini(member: BoardMember, context: string, userMessage: string): Promise<string> {
+  const apiKey = getApiKey('gemini');
+  if (!apiKey) throw new Error('Gemini API key not configured');
+  
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${member.ai_model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${member.ai_model}:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -178,11 +209,14 @@ async function callGemini(member: BoardMember, context: string, userMessage: str
 
 // xAI (Grok)
 async function callXAI(member: BoardMember, context: string, userMessage: string): Promise<string> {
+  const apiKey = getApiKey('xai');
+  if (!apiKey) throw new Error('xAI API key not configured');
+  
   const response = await fetch('https://api.x.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.XAI_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: member.ai_model,
@@ -200,14 +234,17 @@ async function callXAI(member: BoardMember, context: string, userMessage: string
 
 // Perplexity
 async function callPerplexity(member: BoardMember, context: string, userMessage: string): Promise<string> {
+  const apiKey = getApiKey('perplexity');
+  if (!apiKey) throw new Error('Perplexity API key not configured');
+  
   const response = await fetch('https://api.perplexity.ai/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: member.ai_model,
+      model: member.ai_model, // Will use 'sonar-pro' from updated DB
       max_tokens: 1024,
       messages: [
         { role: 'system', content: member.system_prompt + context },
@@ -222,11 +259,14 @@ async function callPerplexity(member: BoardMember, context: string, userMessage:
 
 // DeepSeek
 async function callDeepSeek(member: BoardMember, context: string, userMessage: string): Promise<string> {
+  const apiKey = getApiKey('deepseek');
+  if (!apiKey) throw new Error('DeepSeek API key not configured');
+  
   const response = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: member.ai_model,
@@ -244,11 +284,14 @@ async function callDeepSeek(member: BoardMember, context: string, userMessage: s
 
 // Mistral
 async function callMistral(member: BoardMember, context: string, userMessage: string): Promise<string> {
+  const apiKey = getApiKey('mistral');
+  if (!apiKey) throw new Error('Mistral API key not configured');
+  
   const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: member.ai_model,
