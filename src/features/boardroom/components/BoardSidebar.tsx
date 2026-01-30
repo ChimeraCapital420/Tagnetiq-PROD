@@ -1,41 +1,36 @@
 // FILE: src/features/boardroom/components/BoardSidebar.tsx
-// Sidebar showing all board members with clickable avatars
+// Sidebar showing board members and meetings
 
 import React, { useState } from 'react';
 import { 
   Users, 
-  ChevronLeft, 
+  MessageSquare,
+  Calendar,
   ChevronRight,
-  Phone,
-  PhoneOff,
-  Settings,
-  Volume2,
-  VolumeX,
+  Clock,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { BoardMemberAvatar } from './BoardMemberAvatar';
 import { ExecutiveProfileModal } from './ExecutiveProfileModal';
-import type { BoardMember } from '../types';
+import type { BoardMember, Meeting } from '../types';
 
 // =============================================================================
-// TYPES
+// TYPES - Matching actual usage in Boardroom.tsx
 // =============================================================================
 
 interface BoardSidebarProps {
   members: BoardMember[];
+  meetings?: Meeting[];
+  activeMeetingId?: string | null;
+  onSelectMeeting?: (meeting: Meeting) => void;
+  // Optional voice/member selection props for future use
   activeMemberId?: string | null;
   speakingMemberId?: string | null;
-  onSelectMember: (memberId: string) => void;
-  onStartVoiceChat: (memberId: string) => void;
-  isCollapsed?: boolean;
-  onToggleCollapse?: () => void;
-  globalVoiceEnabled?: boolean;
-  onToggleGlobalVoice?: (enabled: boolean) => void;
+  onSelectMember?: (memberId: string) => void;
+  onStartVoiceChat?: (memberId: string) => void;
   className?: string;
 }
 
@@ -44,19 +39,19 @@ interface BoardSidebarProps {
 // =============================================================================
 
 export const BoardSidebar: React.FC<BoardSidebarProps> = ({
-  members,
+  members = [],
+  meetings = [],
+  activeMeetingId,
+  onSelectMeeting,
   activeMemberId,
   speakingMemberId,
   onSelectMember,
   onStartVoiceChat,
-  isCollapsed = false,
-  onToggleCollapse,
-  globalVoiceEnabled = true,
-  onToggleGlobalVoice,
   className,
 }) => {
   const [selectedMemberForProfile, setSelectedMemberForProfile] = useState<BoardMember | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'members' | 'meetings'>('members');
 
   const handleAvatarClick = (member: BoardMember) => {
     setSelectedMemberForProfile(member);
@@ -64,212 +59,183 @@ export const BoardSidebar: React.FC<BoardSidebarProps> = ({
   };
 
   const handleStartTextChat = (memberId: string) => {
-    onSelectMember(memberId);
+    if (onSelectMember) {
+      onSelectMember(memberId);
+    }
     setIsProfileOpen(false);
   };
 
   const handleStartVoiceChat = (memberId: string) => {
-    onStartVoiceChat(memberId);
+    if (onStartVoiceChat) {
+      onStartVoiceChat(memberId);
+    }
     setIsProfileOpen(false);
   };
 
-  const availableCount = members.filter(m => m.status === 'available').length;
-  const busyCount = members.filter(m => m.status === 'busy').length;
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  };
 
-  // Collapsed view - just avatars
-  if (isCollapsed) {
-    return (
-      <>
-        <div className={cn(
-          "flex flex-col items-center py-4 px-2 border-r bg-muted/30 w-16",
-          className
-        )}>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onToggleCollapse}
-            className="mb-4"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </Button>
-
-          <ScrollArea className="flex-1 w-full">
-            <div className="flex flex-col items-center gap-3">
-              {members.map((member) => (
-                <BoardMemberAvatar
-                  key={member.id}
-                  member={member}
-                  size="md"
-                  isActive={activeMemberId === member.id}
-                  isSpeaking={speakingMemberId === member.id}
-                  onClick={() => handleAvatarClick(member)}
-                  onStartVoiceChat={() => handleStartVoiceChat(member.id)}
-                  onStartTextChat={() => handleStartTextChat(member.id)}
-                  onOpenSettings={() => handleAvatarClick(member)}
-                />
-              ))}
-            </div>
-          </ScrollArea>
-
-          {/* Global voice toggle */}
-          {onToggleGlobalVoice && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => onToggleGlobalVoice(!globalVoiceEnabled)}
-              className="mt-4"
-            >
-              {globalVoiceEnabled ? (
-                <Volume2 className="w-4 h-4" />
-              ) : (
-                <VolumeX className="w-4 h-4" />
-              )}
-            </Button>
-          )}
-        </div>
-
-        {/* Profile Modal */}
-        <ExecutiveProfileModal
-          isOpen={isProfileOpen}
-          onClose={() => setIsProfileOpen(false)}
-          member={selectedMemberForProfile}
-          onStartVoiceChat={handleStartVoiceChat}
-          onStartTextChat={handleStartTextChat}
-          onUpdateSettings={() => {}}
-        />
-      </>
-    );
-  }
-
-  // Expanded view
   return (
     <>
       <div className={cn(
-        "flex flex-col border-r bg-muted/30 w-72",
+        "lg:col-span-1 bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden",
         className
       )}>
-        {/* Header */}
-        <div className="p-4 border-b">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Users className="w-5 h-5" />
-              <h2 className="font-semibold">Board Members</h2>
-            </div>
-            {onToggleCollapse && (
-              <Button variant="ghost" size="icon" onClick={onToggleCollapse}>
-                <ChevronLeft className="w-4 h-4" />
-              </Button>
+        {/* Tab Headers */}
+        <div className="flex border-b border-slate-700">
+          <button
+            onClick={() => setActiveTab('members')}
+            className={cn(
+              "flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2",
+              activeTab === 'members'
+                ? "bg-slate-700/50 text-white border-b-2 border-amber-500"
+                : "text-slate-400 hover:text-white hover:bg-slate-700/30"
             )}
-          </div>
-          
-          {/* Status summary */}
-          <div className="flex gap-2 mt-2">
-            <Badge variant="secondary" className="bg-green-500/10 text-green-600">
-              {availableCount} available
-            </Badge>
-            {busyCount > 0 && (
-              <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-600">
-                {busyCount} busy
-              </Badge>
+          >
+            <Users className="w-4 h-4" />
+            Board ({members?.length || 0})
+          </button>
+          <button
+            onClick={() => setActiveTab('meetings')}
+            className={cn(
+              "flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2",
+              activeTab === 'meetings'
+                ? "bg-slate-700/50 text-white border-b-2 border-amber-500"
+                : "text-slate-400 hover:text-white hover:bg-slate-700/30"
             )}
-          </div>
+          >
+            <MessageSquare className="w-4 h-4" />
+            Meetings ({meetings?.length || 0})
+          </button>
         </div>
 
-        {/* Global Voice Control */}
-        {onToggleGlobalVoice && (
-          <div className="px-4 py-3 border-b bg-muted/50">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                {globalVoiceEnabled ? (
-                  <Volume2 className="w-4 h-4 text-green-500" />
-                ) : (
-                  <VolumeX className="w-4 h-4 text-muted-foreground" />
-                )}
-                <span className="text-sm">Voice Responses</span>
-              </div>
-              <Switch
-                checked={globalVoiceEnabled}
-                onCheckedChange={onToggleGlobalVoice}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Members list */}
-        <ScrollArea className="flex-1">
-          <div className="p-2">
-            {members.map((member) => (
-              <div
-                key={member.id}
-                className={cn(
-                  "flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors",
-                  "hover:bg-muted/80",
-                  activeMemberId === member.id && "bg-blue-500/10 border border-blue-500/20",
-                  speakingMemberId === member.id && "bg-green-500/10 border border-green-500/20"
-                )}
-                onClick={() => handleAvatarClick(member)}
-              >
-                <BoardMemberAvatar
-                  member={member}
-                  size="lg"
-                  isActive={activeMemberId === member.id}
-                  isSpeaking={speakingMemberId === member.id}
-                  showTooltip={false}
-                />
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium truncate">{member.name}</span>
-                    {speakingMemberId === member.id && (
-                      <Badge variant="secondary" className="bg-green-500/20 text-green-600 text-xs">
-                        Speaking
-                      </Badge>
+        <ScrollArea className="h-[500px]">
+          {/* Members Tab */}
+          {activeTab === 'members' && (
+            <div className="p-3 space-y-2">
+              {(!members || members.length === 0) ? (
+                <div className="text-center py-8 text-slate-400">
+                  <Users className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No board members available</p>
+                </div>
+              ) : (
+                members.map((member) => (
+                  <div
+                    key={member.id || member.slug}
+                    onClick={() => handleAvatarClick(member)}
+                    className={cn(
+                      "flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all",
+                      "hover:bg-slate-700/50 border border-transparent",
+                      activeMemberId === (member.id || member.slug) && "bg-amber-500/10 border-amber-500/30",
+                      speakingMemberId === (member.id || member.slug) && "bg-green-500/10 border-green-500/30"
                     )}
-                  </div>
-                  <p className="text-xs text-muted-foreground truncate">{member.role}</p>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {member.specialties.slice(0, 2).map((s, i) => (
-                      <span key={i} className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+                  >
+                    <BoardMemberAvatar
+                      member={member}
+                      size="md"
+                      isActive={activeMemberId === (member.id || member.slug)}
+                      isSpeaking={speakingMemberId === (member.id || member.slug)}
+                      showTooltip={false}
+                    />
+                    
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-white truncate">
+                          {member.name}
+                        </span>
+                        {speakingMemberId === (member.id || member.slug) && (
+                          <Badge className="bg-green-500/20 text-green-400 text-xs">
+                            Speaking
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400 truncate">
+                        {member.title || member.role}
+                      </p>
+                      {/* Use expertise with fallback to specialties, with null check */}
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {(member.expertise || member.specialties || []).slice(0, 2).map((skill, i) => (
+                          <span 
+                            key={i} 
+                            className="text-[10px] text-slate-500 bg-slate-700/50 px-1.5 py-0.5 rounded"
+                          >
+                            {typeof skill === 'string' ? skill : ''}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
 
-                {/* Quick actions */}
-                <div className="flex flex-col gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="w-7 h-7"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleStartVoiceChat(member.id);
-                    }}
-                  >
-                    <Phone className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="w-7 h-7"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleAvatarClick(member);
-                    }}
-                  >
-                    <Settings className="w-3.5 h-3.5" />
-                  </Button>
+                    <ChevronRight className="w-4 h-4 text-slate-500" />
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Meetings Tab */}
+          {activeTab === 'meetings' && (
+            <div className="p-3 space-y-2">
+              {(!meetings || meetings.length === 0) ? (
+                <div className="text-center py-8 text-slate-400">
+                  <Calendar className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No meetings yet</p>
+                  <p className="text-xs mt-1">Start a new meeting to begin</p>
                 </div>
-              </div>
-            ))}
-          </div>
+              ) : (
+                meetings.map((meeting) => (
+                  <div
+                    key={meeting.id}
+                    onClick={() => onSelectMeeting?.(meeting)}
+                    className={cn(
+                      "p-3 rounded-lg cursor-pointer transition-all border",
+                      "hover:bg-slate-700/50",
+                      activeMeetingId === meeting.id 
+                        ? "bg-amber-500/10 border-amber-500/30" 
+                        : "border-transparent"
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-medium text-white truncate">
+                          {meeting.title || 'Untitled Meeting'}
+                        </h4>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Badge 
+                            variant="secondary" 
+                            className={cn(
+                              "text-xs",
+                              meeting.status === 'active' 
+                                ? "bg-green-500/20 text-green-400"
+                                : "bg-slate-600 text-slate-300"
+                            )}
+                          >
+                            {meeting.status || 'active'}
+                          </Badge>
+                          <span className="text-xs text-slate-500">
+                            {meeting.meeting_type || meeting.type || 'General'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-1 mt-2 text-xs text-slate-500">
+                      <Clock className="w-3 h-3" />
+                      {formatDate(meeting.created_at || meeting.started_at)}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </ScrollArea>
-
-        {/* Footer hint */}
-        <div className="p-3 border-t text-xs text-center text-muted-foreground">
-          Click an advisor to view profile • Right-click for quick actions
-        </div>
       </div>
 
       {/* Profile Modal */}
