@@ -1,4 +1,5 @@
 // FILE: src/components/DualScanner.tsx (ENHANCED MULTI-MODAL ANALYSIS SYSTEM WITH BLUETOOTH)
+// FIXED: Added image compression to prevent FUNCTION_PAYLOAD_TOO_LARGE errors
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useZxing } from 'react-zxing';
@@ -10,7 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import CameraSettingsModal from './CameraSettingsModal.js';
-import DevicePairingModal from './DevicePairingModal.js'; // NEW IMPORT
+import DevicePairingModal from './DevicePairingModal.js';
 import './DualScanner.css';
 import { AnalysisResult } from '@/types';
 
@@ -29,6 +30,8 @@ interface CapturedItem {
     extractedText?: string;
     barcodes?: string[];
     videoFrames?: string[];
+    originalSize?: number;
+    compressedSize?: number;
   };
 }
 
@@ -36,6 +39,106 @@ interface DualScannerProps {
   isOpen: boolean;
   onClose: () => void;
 }
+
+// =============================================================================
+// IMAGE COMPRESSION UTILITY (prevents FUNCTION_PAYLOAD_TOO_LARGE)
+// =============================================================================
+
+interface CompressionOptions {
+  maxWidth?: number;
+  maxHeight?: number;
+  maxSizeMB?: number;
+  quality?: number;
+}
+
+const DEFAULT_COMPRESSION: CompressionOptions = {
+  maxWidth: 1920,
+  maxHeight: 1920,
+  maxSizeMB: 2.5, // Stay well under Vercel's 4.5MB limit
+  quality: 0.85,
+};
+
+async function compressImage(
+  dataUrl: string,
+  options: CompressionOptions = {}
+): Promise<{ compressed: string; originalSize: number; compressedSize: number }> {
+  const opts = { ...DEFAULT_COMPRESSION, ...options };
+  
+  // Get original size
+  const originalSize = Math.round((dataUrl.length * 3) / 4); // Approximate base64 to bytes
+  
+  // If already small enough, return as-is
+  const maxBytes = opts.maxSizeMB! * 1024 * 1024;
+  if (originalSize < maxBytes * 0.8) {
+    return { compressed: dataUrl, originalSize, compressedSize: originalSize };
+  }
+  
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      // Calculate new dimensions
+      let { width, height } = img;
+      
+      if (width > opts.maxWidth! || height > opts.maxHeight!) {
+        const ratio = Math.min(opts.maxWidth! / width, opts.maxHeight! / height);
+        width = Math.floor(width * ratio);
+        height = Math.floor(height * ratio);
+      }
+      
+      // Draw to canvas
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Could not get canvas context'));
+        return;
+      }
+      
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      // Compress with reducing quality until under limit
+      let quality = opts.quality!;
+      let compressed = canvas.toDataURL('image/jpeg', quality);
+      let compressedSize = Math.round((compressed.length * 3) / 4);
+      
+      while (compressedSize > maxBytes && quality > 0.1) {
+        quality -= 0.1;
+        compressed = canvas.toDataURL('image/jpeg', quality);
+        compressedSize = Math.round((compressed.length * 3) / 4);
+      }
+      
+      // If still too large, resize further
+      if (compressedSize > maxBytes && width > 800) {
+        canvas.width = Math.floor(width * 0.7);
+        canvas.height = Math.floor(height * 0.7);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        compressed = canvas.toDataURL('image/jpeg', 0.8);
+        compressedSize = Math.round((compressed.length * 3) / 4);
+      }
+      
+      console.log(`📸 Compressed: ${(originalSize / 1024 / 1024).toFixed(2)}MB → ${(compressedSize / 1024 / 1024).toFixed(2)}MB`);
+      
+      resolve({ compressed, originalSize, compressedSize });
+    };
+    
+    img.onerror = () => reject(new Error('Failed to load image for compression'));
+    img.src = dataUrl;
+  });
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+// =============================================================================
+// MAIN COMPONENT
+// =============================================================================
 
 const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const { setLastAnalysisResult, setIsAnalyzing, selectedCategory } = useAppContext();
@@ -45,12 +148,13 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const [capturedItems, setCapturedItems] = useState<CapturedItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isDevicePairingOpen, setIsDevicePairingOpen] = useState(false); // NEW STATE
+  const [isDevicePairingOpen, setIsDevicePairingOpen] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
   const [isRecording, setIsRecording] = useState(false);
   const [videoChunks, setVideoChunks] = useState<Blob[]>([]);
   const [isAnalyzingBarcodes, setIsAnalyzingBarcodes] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -95,7 +199,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       const img = new Image();
       img.onload = async () => {
         try {
-          // Create a canvas to process the image
           const canvas = document.createElement('canvas');
           const ctx = canvas.getContext('2d');
           canvas.width = img.width;
@@ -103,11 +206,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
           
           if (ctx) {
             ctx.drawImage(img, 0, 0);
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            
-            // Try to decode barcodes from the image
-            // This is a simplified version - in reality, you'd use a proper barcode library
-            // For now, we'll return empty array but the structure is ready
+            // Barcode detection would go here
             resolve([]);
           } else {
             resolve([]);
@@ -155,7 +254,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
           
           if (context) {
             context.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
-            frames.push(canvas.toDataURL('image/jpeg', 0.95));
+            frames.push(canvas.toDataURL('image/jpeg', 0.85)); // Compress video frames too
           }
           
           currentFrame++;
@@ -174,13 +273,9 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     });
   };
 
-  // Simulated OCR text extraction (would use Tesseract.js in production)
+  // Simulated OCR text extraction
   const extractTextFromDocument = async (imageData: string): Promise<string> => {
-    // Placeholder for OCR functionality
-    // In production, you would use:
-    // const worker = await createWorker();
-    // const { data: { text } } = await worker.recognize(imageData);
-    return ""; // Return empty for now, but structure is ready
+    return "";
   };
 
   const stopCamera = useCallback(() => {
@@ -218,7 +313,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   useEffect(() => {
     const getDevices = async () => {
       try {
-        await navigator.mediaDevices.getUserMedia({ video: true }); // Request permission
+        await navigator.mediaDevices.getUserMedia({ video: true });
         const availableDevices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = availableDevices.filter(d => d.kind === 'videoinput');
         setDevices(videoDevices);
@@ -244,34 +339,66 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     return () => stopCamera();
   }, [isOpen, startCamera, stopCamera]);
 
+  // FIXED: Add captured item WITH compression
   const addCapturedItem = async (item: Omit<CapturedItem, 'id' | 'selected'>) => {
-    const newItem: CapturedItem = {
-      ...item,
-      id: uuidv4(),
-      selected: true,
-    };
+    setIsCompressing(true);
     
-    // Enhanced processing based on item type
-    if (item.type === 'photo') {
-      // Detect barcodes in the captured image
-      const barcodes = await detectBarcodesInImage(item.data);
-      if (barcodes.length > 0) {
+    try {
+      let processedData = item.data;
+      let originalSize = 0;
+      let compressedSize = 0;
+      
+      // Compress images and photos
+      if (item.type === 'photo' || item.type === 'document') {
+        const result = await compressImage(item.data);
+        processedData = result.compressed;
+        originalSize = result.originalSize;
+        compressedSize = result.compressedSize;
+        
+        // Show compression feedback if significant
+        if (originalSize > 1024 * 1024 && compressedSize < originalSize * 0.7) {
+          toast.info(`Image compressed: ${formatFileSize(originalSize)} → ${formatFileSize(compressedSize)}`);
+        }
+      }
+      
+      const newItem: CapturedItem = {
+        ...item,
+        id: uuidv4(),
+        selected: true,
+        data: processedData,
+        thumbnail: item.type === 'document' ? item.thumbnail : processedData,
+        metadata: {
+          ...item.metadata,
+          originalSize,
+          compressedSize,
+        },
+      };
+      
+      // Enhanced processing based on item type
+      if (item.type === 'photo') {
+        const barcodes = await detectBarcodesInImage(processedData);
+        if (barcodes.length > 0) {
+          newItem.metadata = {
+            ...newItem.metadata,
+            barcodes
+          };
+          toast.success(`Found ${barcodes.length} barcode(s) in image`);
+        }
+      } else if (item.type === 'document') {
+        const extractedText = await extractTextFromDocument(processedData);
         newItem.metadata = {
           ...newItem.metadata,
-          barcodes
+          extractedText
         };
-        toast.success(`Found ${barcodes.length} barcode(s) in image`);
       }
-    } else if (item.type === 'document') {
-      // Extract text from document
-      const extractedText = await extractTextFromDocument(item.data);
-      newItem.metadata = {
-        ...newItem.metadata,
-        extractedText
-      };
+      
+      setCapturedItems(prev => [...prev, newItem].slice(-15));
+    } catch (error) {
+      console.error('Error processing captured item:', error);
+      toast.error('Failed to process image');
+    } finally {
+      setIsCompressing(false);
     }
-    
-    setCapturedItems(prev => [...prev, newItem].slice(-15)); // Keep max 15 items
   };
 
   const toggleItemSelection = (itemId: string) => {
@@ -308,7 +435,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  // NEW: Handle Bluetooth device connected
   const handleBluetoothDeviceConnected = (device: any) => {
     toast.success(`Connected to ${device.name}`, {
       description: "Device is now available as a camera source"
@@ -316,7 +442,8 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     setIsDevicePairingOpen(false);
   };
   
-  const captureImage = () => {
+  // FIXED: Capture image with compression
+  const captureImage = async () => {
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
@@ -325,9 +452,10 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       const context = canvas.getContext('2d');
       if (context) {
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+        // Use 0.92 quality initially, compression will reduce further if needed
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
         
-        addCapturedItem({
+        await addCapturedItem({
           type: 'photo',
           data: dataUrl,
           thumbnail: dataUrl,
@@ -357,7 +485,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         
         if (context) {
           context.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
-          const thumbnail = canvas.toDataURL('image/jpeg', 0.8);
+          const thumbnail = canvas.toDataURL('image/jpeg', 0.7);
           URL.revokeObjectURL(videoUrl);
           resolve(thumbnail);
         } else {
@@ -402,13 +530,21 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
           const videoFrames = await extractVideoFrames(videoBlob, 5);
           const videoUrl = URL.createObjectURL(videoBlob);
           
+          // Compress video frames
+          const compressedFrames = await Promise.all(
+            videoFrames.map(async (frame) => {
+              const result = await compressImage(frame, { maxWidth: 1280, quality: 0.8 });
+              return result.compressed;
+            })
+          );
+          
           addCapturedItem({
             type: 'video',
             data: videoUrl,
             thumbnail: thumbnail,
             name: `Video ${capturedItems.filter(i => i.type === 'video').length + 1}`,
             metadata: {
-              videoFrames: videoFrames
+              videoFrames: compressedFrames
             }
           });
         } catch (error) {
@@ -436,14 +572,21 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  // FIXED: Handle image upload WITH compression
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
-    files.forEach((file) => {
+    
+    for (const file of files) {
+      // Check file size and warn if very large
+      if (file.size > 10 * 1024 * 1024) {
+        toast.info(`Compressing large image: ${formatFileSize(file.size)}`);
+      }
+      
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
         if (e.target?.result) {
           const dataUrl = e.target.result as string;
-          addCapturedItem({
+          await addCapturedItem({
             type: 'photo',
             data: dataUrl,
             thumbnail: dataUrl,
@@ -452,23 +595,24 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         }
       };
       reader.readAsDataURL(file);
-    });
+    }
     
-    // Reset input
     if (event.target) {
       event.target.value = '';
     }
   };
 
-  const handleDocumentUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  // FIXED: Handle document upload WITH compression
+  const handleDocumentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
-    files.forEach((file) => {
+    
+    for (const file of files) {
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
         if (e.target?.result) {
           const dataUrl = e.target.result as string;
           
-          // Create a document-style thumbnail
+          // Create document thumbnail
           const canvas = document.createElement('canvas');
           const ctx = canvas.getContext('2d');
           canvas.width = 200;
@@ -486,7 +630,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
           
           const thumbnailUrl = canvas.toDataURL('image/png');
           
-          // Enhanced document type detection
           const fileName = file.name.toLowerCase();
           let documentType: CapturedItem['metadata']['documentType'] = 'other';
           
@@ -502,7 +645,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
             documentType = 'authenticity';
           }
           
-          addCapturedItem({
+          await addCapturedItem({
             type: 'document',
             data: dataUrl,
             thumbnail: thumbnailUrl,
@@ -517,15 +660,13 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         }
       };
       reader.readAsDataURL(file);
-    });
+    }
     
-    // Reset input
     if (event.target) {
       event.target.value = '';
     }
   };
 
-  // Enhanced batch barcode scanning for all captured images
   const scanAllImagesForBarcodes = async () => {
     setIsAnalyzingBarcodes(true);
     const imageItems = capturedItems.filter(item => item.type === 'photo');
@@ -555,6 +696,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     toast.success(`Found ${totalBarcodesFound} barcodes across ${imageItems.length} images`);
   };
 
+  // FIXED: Process analysis with final compression safety check
   const processMultiModalAnalysis = async () => {
     const selectedItems = capturedItems.filter(item => item.selected);
     
@@ -574,19 +716,20 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     toast.info(`Analyzing ${selectedItems.length} items with multi-AI system...`);
 
     try {
-      // Enhanced payload preparation
+      // Calculate total payload size before sending
+      let totalPayloadSize = 0;
+      
       const analysisData = {
         scanType: 'multi-modal',
         items: await Promise.all(selectedItems.map(async (item) => {
           let processedData = item.data;
           let additionalFrames: string[] = [];
           
-          // For videos, use multiple frames
+          // For videos, use compressed frames
           if (item.type === 'video' && item.metadata?.videoFrames) {
             additionalFrames = item.metadata.videoFrames;
             processedData = item.metadata.videoFrames[0] || item.thumbnail;
           } else if (item.type === 'video') {
-            // Fallback: extract single frame
             try {
               const videoBlob = await fetch(item.data).then(r => r.blob());
               const videoUrl = URL.createObjectURL(videoBlob);
@@ -604,20 +747,32 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               });
 
               const canvas = document.createElement('canvas');
-              canvas.width = tempVideo.videoWidth || 640;
-              canvas.height = tempVideo.videoHeight || 480;
+              canvas.width = Math.min(tempVideo.videoWidth || 640, 1280);
+              canvas.height = Math.min(tempVideo.videoHeight || 480, 720);
               const context = canvas.getContext('2d');
               
               if (context) {
                 context.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
-                processedData = canvas.toDataURL('image/jpeg', 0.95);
+                processedData = canvas.toDataURL('image/jpeg', 0.85);
               }
               
               URL.revokeObjectURL(videoUrl);
             } catch (error) {
               console.error('Error processing video:', error);
             }
+          } else if (item.type === 'photo' || item.type === 'document') {
+            // Final safety compression check - ensure under 2MB per image
+            const currentSize = Math.round((processedData.length * 3) / 4);
+            if (currentSize > 2 * 1024 * 1024) {
+              console.log(`⚠️ Re-compressing large image: ${formatFileSize(currentSize)}`);
+              const result = await compressImage(processedData, { maxSizeMB: 1.5, quality: 0.75 });
+              processedData = result.compressed;
+            }
           }
+          
+          // Track payload size
+          totalPayloadSize += processedData.length;
+          additionalFrames.forEach(f => totalPayloadSize += f.length);
           
           return {
             type: item.type,
@@ -635,6 +790,14 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         subcategory_id: selectedCategory || 'general'
       };
 
+      // Final payload size check
+      const estimatedBytes = (totalPayloadSize * 3) / 4;
+      console.log(`📦 Total payload size: ${formatFileSize(estimatedBytes)}`);
+      
+      if (estimatedBytes > 4 * 1024 * 1024) {
+        toast.warning(`Large payload detected (${formatFileSize(estimatedBytes)}). Analysis may take longer.`);
+      }
+
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: {
@@ -647,6 +810,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       if (!response.ok) {
         const errorText = await response.text();
         console.error("Analysis API Error Response Text:", errorText);
+        
+        // Check for payload too large error
+        if (response.status === 413 || errorText.includes('PAYLOAD_TOO_LARGE') || errorText.includes('body exceeded')) {
+          throw new Error('Image too large for analysis. Please try with a smaller image or fewer items.');
+        }
+        
         try {
             const errorData = JSON.parse(errorText);
             throw new Error(errorData.error || `Analysis request failed with status ${response.status}.`);
@@ -713,7 +882,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               <Button variant="ghost" size="icon" onClick={() => setIsSettingsOpen(true)}>
                 <SettingsIcon />
               </Button>
-              {/* NEW: Bluetooth button */}
               <Button variant="ghost" size="icon" onClick={() => setIsDevicePairingOpen(true)}>
                 <Bluetooth />
               </Button>
@@ -761,6 +929,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                   ● REC
                 </div>
               )}
+              {/* Compression indicator */}
+              {isCompressing && (
+                <div style={{ position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(59, 130, 246, 0.9)', color: 'white', padding: '8px 16px', borderRadius: '20px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Compressing...
+                </div>
+              )}
             </div>
           </main>
           
@@ -802,7 +976,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
             {scanMode === 'image' && (
               <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Button onClick={captureImage} className="capture-button" size="icon" disabled={isProcessing || capturedItems.length >= 15}>
+                  <Button 
+                    onClick={captureImage} 
+                    className="capture-button" 
+                    size="icon" 
+                    disabled={isProcessing || isCompressing || capturedItems.length >= 15}
+                  >
                       <Circle className="w-16 h-16 fill-white" />
                   </Button>
               </div>
@@ -822,12 +1001,11 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               </div>
             )}
             
-            {/* ENHANCED MULTI-MODAL ANALYSIS BUTTON */}
             {selectedCount > 0 && (
               <div style={{ position: 'absolute', right: '1rem', bottom: '8rem', zIndex: 10 }}>
                 <Button 
                   onClick={processMultiModalAnalysis} 
-                  disabled={isProcessing} 
+                  disabled={isProcessing || isCompressing} 
                   size="lg" 
                   className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
                 >
@@ -837,7 +1015,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               </div>
             )}
             
-            {/* ENHANCED CAPTURED ITEMS GRID */}
             <div className="captured-previews" style={{ 
               display: 'flex', 
               gap: '0.5rem', 
@@ -864,10 +1041,9 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                       borderRadius: '8px'
                     }}
                     onClick={() => toggleItemSelection(item.id)}
-                    title={`${item.name} (${item.type})`}
+                    title={`${item.name} (${item.type})${item.metadata?.compressedSize ? ` - ${formatFileSize(item.metadata.compressedSize)}` : ''}`}
                   />
                   
-                  {/* Enhanced selection indicator */}
                   {item.selected && (
                     <div style={{
                       position: 'absolute',
@@ -887,7 +1063,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                     </div>
                   )}
                   
-                  {/* Enhanced type indicator */}
                   <div style={{
                     position: 'absolute',
                     bottom: '2px',
@@ -903,7 +1078,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                     {getItemIcon(item.type, item.metadata)}
                   </div>
                   
-                  {/* Barcode indicator */}
                   {item.metadata?.barcodes && item.metadata.barcodes.length > 0 && (
                     <div style={{
                       position: 'absolute',
@@ -920,7 +1094,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                     </div>
                   )}
                   
-                  {/* Remove button (appears on hover) */}
                   <Button 
                     variant="ghost" 
                     size="icon"
@@ -971,7 +1144,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         currentDeviceId={selectedDeviceId}
         onDeviceChange={setSelectedDeviceId}
       />
-      {/* NEW: Device Pairing Modal */}
       <DevicePairingModal
         isOpen={isDevicePairingOpen}
         onClose={() => setIsDevicePairingOpen(false)}
