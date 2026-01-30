@@ -1,6 +1,6 @@
 // FILE: api/boardroom/context.ts
 // Manage company context documents for the AI Board
-// These documents are injected into every board member's system prompt
+// Supports text input AND file uploads (.md, .txt, .docx)
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -16,8 +16,79 @@ interface CompanyContextDocument {
   category: string;
   priority: number;
   is_active: boolean;
+  source_type?: 'manual' | 'upload' | 'api';
+  source_filename?: string;
   created_at?: string;
   updated_at?: string;
+}
+
+// =============================================================================
+// HELPER: Parse uploaded file content
+// =============================================================================
+function parseFileContent(base64Content: string, filename: string, mimeType: string): string {
+  // Decode base64
+  const buffer = Buffer.from(base64Content, 'base64');
+  
+  // Handle different file types
+  if (mimeType === 'text/plain' || mimeType === 'text/markdown' || filename.endsWith('.md') || filename.endsWith('.txt')) {
+    return buffer.toString('utf-8');
+  }
+  
+  // For .docx, we'd need a parser - for now, return a message
+  if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || filename.endsWith('.docx')) {
+    // Basic extraction - in production you'd use mammoth or similar
+    const text = buffer.toString('utf-8');
+    // Try to extract readable text (very basic)
+    const cleaned = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (cleaned.length > 100) {
+      return cleaned;
+    }
+    return `[DOCX file uploaded: ${filename}] - For full extraction, paste the text content directly or use a .md/.txt file.`;
+  }
+  
+  // JSON files
+  if (mimeType === 'application/json' || filename.endsWith('.json')) {
+    try {
+      const json = JSON.parse(buffer.toString('utf-8'));
+      return JSON.stringify(json, null, 2);
+    } catch {
+      return buffer.toString('utf-8');
+    }
+  }
+  
+  // Default: try as text
+  return buffer.toString('utf-8');
+}
+
+// =============================================================================
+// HELPER: Auto-detect category from content
+// =============================================================================
+function detectCategory(title: string, content: string): string {
+  const text = `${title} ${content}`.toLowerCase();
+  
+  if (text.includes('tech stack') || text.includes('architecture') || text.includes('api') || text.includes('database')) {
+    return 'tech_stack';
+  }
+  if (text.includes('revenue') || text.includes('financial') || text.includes('projection') || text.includes('burn rate')) {
+    return 'financial';
+  }
+  if (text.includes('market') || text.includes('competitor') || text.includes('tam') || text.includes('addressable')) {
+    return 'market';
+  }
+  if (text.includes('product') || text.includes('feature') || text.includes('roadmap')) {
+    return 'product';
+  }
+  if (text.includes('legal') || text.includes('compliance') || text.includes('terms') || text.includes('privacy')) {
+    return 'legal';
+  }
+  if (text.includes('strategy') || text.includes('okr') || text.includes('objective') || text.includes('goal')) {
+    return 'strategy';
+  }
+  if (text.includes('company') || text.includes('mission') || text.includes('vision') || text.includes('team')) {
+    return 'company';
+  }
+  
+  return 'general';
 }
 
 // =============================================================================
@@ -45,7 +116,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { id, category, active_only } = req.query;
 
       if (id) {
-        // Get single document
         const { data: doc, error } = await supaAdmin
           .from('boardroom_company_context')
           .select('*')
@@ -56,7 +126,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json(doc);
       }
 
-      // List all documents
       let query = supaAdmin
         .from('boardroom_company_context')
         .select('*')
@@ -78,7 +147,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ error: 'Failed to fetch documents' });
       }
 
-      // Calculate total token estimate (rough: 4 chars = 1 token)
       const totalChars = docs?.reduce((sum, doc) => sum + (doc.content?.length || 0), 0) || 0;
       const estimatedTokens = Math.ceil(totalChars / 4);
 
@@ -94,23 +162,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // =========================================================================
-    // POST - Add a new context document
+    // POST - Add a new context document (supports file upload)
     // =========================================================================
     if (req.method === 'POST') {
-      const { title, content, category, priority, is_active } = req.body;
+      const { 
+        title, 
+        content, 
+        category, 
+        priority, 
+        is_active,
+        // File upload fields
+        file_content,  // base64 encoded
+        file_name,
+        file_type,
+      } = req.body;
 
-      if (!title || !content) {
-        return res.status(400).json({ error: 'title and content are required' });
+      let finalContent = content;
+      let finalTitle = title;
+      let sourceType: 'manual' | 'upload' = 'manual';
+      let sourceFilename: string | undefined;
+
+      // Handle file upload
+      if (file_content && file_name) {
+        finalContent = parseFileContent(file_content, file_name, file_type || 'text/plain');
+        finalTitle = title || file_name.replace(/\.[^/.]+$/, ''); // Remove extension for title
+        sourceType = 'upload';
+        sourceFilename = file_name;
       }
+
+      if (!finalTitle || !finalContent) {
+        return res.status(400).json({ error: 'title and content are required (or upload a file)' });
+      }
+
+      // Auto-detect category if not provided
+      const finalCategory = category || detectCategory(finalTitle, finalContent);
 
       const { data: doc, error } = await supaAdmin
         .from('boardroom_company_context')
         .insert({
-          title,
-          content,
-          category: category || 'general',
+          title: finalTitle,
+          content: finalContent,
+          category: finalCategory,
           priority: priority ?? 5,
           is_active: is_active ?? true,
+          source_type: sourceType,
+          source_filename: sourceFilename,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
@@ -125,6 +221,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(201).json({
         message: 'Document added to company context',
         document: doc,
+        auto_detected_category: !category ? finalCategory : undefined,
       });
     }
 
