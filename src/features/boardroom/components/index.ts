@@ -10,7 +10,7 @@ export { ChatInput } from './ChatInput';
 export { DailyBriefing } from './DailyBriefing';
 export { ErrorBoundary } from './ErrorBoundary';
 export { ExecutiveProfileModal } from './ExecutiveProfileModal';
-export { Header } from './Header';
+export { Header, Header as BoardroomHeader } from './Header';
 export { MessageBubble } from './MessageBubble';
 export { NewMeetingDialog } from './NewMeetingDialog';
 export { QuickTasks } from './QuickTasks';
