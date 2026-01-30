@@ -505,19 +505,30 @@ const BoardroomPage: React.FC = () => {
 
       const data = await response.json();
 
+      // FIX: Safely handle potentially undefined responses array
       setMessages(prev => {
         const filtered = prev.filter(m => m.id !== tempUserMsg.id);
-        const newMessages: Message[] = [
-          { ...data.user_message, sender_type: 'user' },
-          ...data.responses.map((r: BoardResponse) => ({
-            id: `response-${r.member.slug}-${Date.now()}`,
-            sender_type: 'board_member' as const,
-            member_slug: r.member.slug,
-            content: r.content,
-            created_at: new Date().toISOString(),
-            ai_provider: r.member.ai_provider,
-          })),
-        ];
+        
+        // Build new messages array with null checks
+        const newMessages: Message[] = [];
+        
+        // Add user message if it exists
+        if (data.user_message) {
+          newMessages.push({ ...data.user_message, sender_type: 'user' });
+        }
+        
+        // Safely map responses with fallback to empty array
+        const responseMessages = (data.responses || []).map((r: BoardResponse) => ({
+          id: `response-${r.member?.slug || 'unknown'}-${Date.now()}-${Math.random()}`,
+          sender_type: 'board_member' as const,
+          member_slug: r.member?.slug,
+          content: r.content || '[No response]',
+          created_at: new Date().toISOString(),
+          ai_provider: r.member?.ai_provider,
+        }));
+        
+        newMessages.push(...responseMessages);
+        
         return [...filtered, ...newMessages];
       });
 
@@ -744,9 +755,9 @@ const BoardroomPage: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Sections */}
+                  {/* Sections - FIX: Safe access with fallback to empty array */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {briefing.sections.map((section, idx) => (
+                    {(briefing.sections || []).map((section, idx) => (
                       <Card key={idx} className="p-4">
                         <div className="flex items-start justify-between mb-2">
                           <div className="flex items-center gap-2">
