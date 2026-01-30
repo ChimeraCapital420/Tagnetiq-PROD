@@ -1,5 +1,5 @@
 // FILE: api/users/search.ts
-// Search for users by screen_name - FIXED
+// Search for users by screen_name - SIMPLIFIED & DEFENSIVE
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -22,46 +22,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const searchLimit = Math.min(50, parseInt(limit as string) || 20);
     const searchTerm = q.trim();
 
-    // Get blocked users (both directions)
-    const { data: blocks } = await supaAdmin
-      .from('blocked_users')
-      .select('user_id, blocked_user_id')
-      .or(`user_id.eq.${user.id},blocked_user_id.eq.${user.id}`);
+    // ===========================================
+    // STEP 1: Get blocked users (with error handling)
+    // ===========================================
+    let blockedIds = new Set<string>();
+    try {
+      const { data: blocks } = await supaAdmin
+        .from('blocked_users')
+        .select('user_id, blocked_user_id')
+        .or(`user_id.eq.${user.id},blocked_user_id.eq.${user.id}`);
 
-    const blockedIds = new Set<string>();
-    (blocks || []).forEach(b => {
-      if (b.user_id === user.id) blockedIds.add(b.blocked_user_id);
-      if (b.blocked_user_id === user.id) blockedIds.add(b.user_id);
-    });
+      (blocks || []).forEach(b => {
+        if (b.user_id === user.id) blockedIds.add(b.blocked_user_id);
+        if (b.blocked_user_id === user.id) blockedIds.add(b.user_id);
+      });
+    } catch (blockError) {
+      // Table might not exist - continue without blocking
+      console.warn('blocked_users query failed:', blockError);
+    }
 
-    // Search users by screen_name (case-insensitive)
-    const { data: users, error } = await supaAdmin
+    // ===========================================
+    // STEP 2: Search profiles
+    // ===========================================
+    const { data: users, error: searchError } = await supaAdmin
       .from('profiles')
       .select('id, screen_name, avatar_url, profile_visibility, created_at')
       .ilike('screen_name', `%${searchTerm}%`)
       .neq('id', user.id)
       .limit(searchLimit);
 
-    if (error) throw error;
+    if (searchError) {
+      console.error('Profile search error:', searchError);
+      throw searchError;
+    }
 
-    // Filter out blocked users first
+    // Filter out blocked users
     const filteredUsers = (users || []).filter(u => !blockedIds.has(u.id));
-    const userIds = filteredUsers.map(u => u.id);
 
-    // Get friendship status - FIXED: separate query per user or batch properly
+    // ===========================================
+    // STEP 3: Get friendships (with error handling)
+    // ===========================================
     let friendshipMap = new Map<string, { status: string; isIncoming: boolean }>();
     
-    if (userIds.length > 0) {
-      // Query friendships where current user is involved with any of the found users
-      const { data: friendData, error: friendError } = await supaAdmin
-        .from('user_friends')
-        .select('requester_id, addressee_id, status')
-        .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`);
-      
-      if (!friendError && friendData) {
-        friendData.forEach(f => {
+    if (filteredUsers.length > 0) {
+      try {
+        const { data: friendData } = await supaAdmin
+          .from('user_friends')
+          .select('requester_id, addressee_id, status')
+          .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`);
+        
+        const userIds = filteredUsers.map(u => u.id);
+        
+        (friendData || []).forEach(f => {
           const otherId = f.requester_id === user.id ? f.addressee_id : f.requester_id;
-          // Only include if the other user is in our search results
           if (userIds.includes(otherId)) {
             friendshipMap.set(otherId, {
               status: f.status,
@@ -69,10 +82,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
           }
         });
+      } catch (friendError) {
+        // Table might not exist - continue without friendships
+        console.warn('user_friends query failed:', friendError);
       }
     }
 
-    // Build results
+    // ===========================================
+    // STEP 4: Build results
+    // ===========================================
     const results = filteredUsers.map(u => {
       const friendship = friendshipMap.get(u.id);
       return {
@@ -96,10 +114,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   } catch (error: any) {
     const message = error.message || 'An unexpected error occurred';
+    console.error('User search error:', error);
+    
     if (message.includes('Authentication')) {
       return res.status(401).json({ error: message });
     }
-    console.error('User search error:', message);
+    
     return res.status(500).json({ error: message });
   }
 }
