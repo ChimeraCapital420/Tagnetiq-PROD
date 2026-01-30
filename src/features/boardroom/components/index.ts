@@ -4,6 +4,7 @@
 export { AccessDenied } from './AccessDenied';
 export { BoardSidebar } from './BoardSidebar';
 export { BoardMemberAvatar } from './BoardMemberAvatar';
+export { BoardroomErrorBoundary } from './BoardroomErrorBoundary';
 export { ChatArea } from './ChatArea';
 export { ChatInput } from './ChatInput';
 export { DailyBriefing } from './DailyBriefing';
