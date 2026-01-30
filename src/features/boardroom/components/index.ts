@@ -1,15 +1,18 @@
 // FILE: src/features/boardroom/components/index.ts
-// Barrel exports for all boardroom components
+// Barrel export for all boardroom components
 
-export { BoardroomErrorBoundary, withBoardroomErrorBoundary } from './BoardroomErrorBoundary';
 export { AccessDenied } from './AccessDenied';
-export { BoardroomHeader } from './BoardroomHeader';
-export { VoiceButton } from './VoiceButton';
-export { VoiceInputButton, MobileVoiceBar } from './VoiceInputButton';
-export { VoiceBoardroom } from './VoiceBoardroom';
-export { DailyBriefing } from './DailyBriefing';
-export { QuickTasks } from './QuickTasks';
 export { BoardSidebar } from './BoardSidebar';
-export { MessageBubble, LoadingBubble } from './MessageBubble';
+export { BoardMemberAvatar } from './BoardMemberAvatar';
 export { ChatArea } from './ChatArea';
+export { ChatInput } from './ChatInput';
+export { DailyBriefing } from './DailyBriefing';
+export { ErrorBoundary } from './ErrorBoundary';
+export { ExecutiveProfileModal } from './ExecutiveProfileModal';
+export { Header } from './Header';
+export { MessageBubble } from './MessageBubble';
 export { NewMeetingDialog } from './NewMeetingDialog';
+export { QuickTasks } from './QuickTasks';
+export { VoiceBoardroom } from './VoiceBoardroom';
+export { VoiceButton } from './VoiceButton';
+export { VoiceInputButton } from './VoiceInputButton';

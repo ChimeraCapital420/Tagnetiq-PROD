@@ -5,4 +5,4 @@ export { useBoardroom } from './useBoardroom';
 export { useBriefing } from './useBriefing';
 export { useMeeting } from './useMeeting';
 export { useTasks } from './useTasks';
-export { useVoiceInput } from './useVoiceInput';
+export { useVoiceInput, type UseVoiceInputOptions, type UseVoiceInputReturn } from './useVoiceInput';
