@@ -5,6 +5,8 @@ export { BoardroomErrorBoundary, withBoardroomErrorBoundary } from './BoardroomE
 export { AccessDenied } from './AccessDenied';
 export { BoardroomHeader } from './BoardroomHeader';
 export { VoiceButton } from './VoiceButton';
+export { VoiceInputButton, MobileVoiceBar } from './VoiceInputButton';
+export { VoiceBoardroom } from './VoiceBoardroom';
 export { DailyBriefing } from './DailyBriefing';
 export { QuickTasks } from './QuickTasks';
 export { BoardSidebar } from './BoardSidebar';
