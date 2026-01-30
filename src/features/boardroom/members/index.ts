@@ -1,6 +1,6 @@
 // FILE: src/features/boardroom/members/index.ts
-// Complete Board Member Registry
-// All board member configurations, profiles, and system prompts in one place
+// Complete Board Member Registry - ALL 15 MEMBERS
+// Matching avatars: Aegle, Athena, Cerebro, Glitch, Griffin, Janus, Legolas, LEO, Lexicoda, Orion, Sal, Scuba-Steve, SHA-1, Vulcan + Prometheus
 
 import type { BoardMember } from '../types';
 import type { MemberProtocolAffinity } from '../elevation-protocols';
@@ -23,6 +23,7 @@ export interface BoardMemberConfig extends Partial<BoardMember> {
     tone?: string;
   };
   voice_style: string;
+  avatar: string;
   avatar_description?: string;
   modeled_after: string[];
   elevation_protocols: {
@@ -33,12 +34,12 @@ export interface BoardMemberConfig extends Partial<BoardMember> {
 }
 
 // ============================================================================
-// THE BOARD
+// THE COMPLETE BOARD - 15 MEMBERS
 // ============================================================================
 
 export const BOARD_MEMBERS: BoardMemberConfig[] = [
   // ========================================
-  // ATHENA - Chief Strategy Officer
+  // 1. ATHENA - Chief Strategy Officer
   // ========================================
   {
     slug: 'athena',
@@ -61,7 +62,8 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
       tone: 'Confident, direct, occasionally uses military/chess metaphors',
     },
     voice_style: 'Authoritative and precise. Speaks with conviction but invites debate.',
-    avatar_description: 'Professional woman with silver-streaked hair, piercing grey eyes, wearing a tailored blazer',
+    avatar: '/avatars/Athena.jpeg',
+    avatar_description: 'Marble goddess with circuit patterns, glowing amber eyes, pointing at global strategy map with chess pieces',
     modeled_after: ['Jensen Huang', 'Andy Grove', 'Ruth Porat'],
     elevation_protocols: {
       primary: ['billionaire-mindset', 'decade-compression'],
@@ -71,13 +73,13 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
   },
 
   // ========================================
-  // GRIFFIN - Chief Financial Officer
+  // 2. GRIFFIN - Chief Financial Officer
   // ========================================
   {
     slug: 'griffin',
     name: 'Griffin',
     title: 'Chief Financial Officer',
-    role: 'Financial strategy, capital allocation, fundraising, investor relations',
+    role: 'Financial strategy, capital allocation, fundraising, investor relations, ROI optimization',
     ai_provider: 'openai',
     ai_model: 'gpt-4o',
     expertise: [
@@ -94,7 +96,8 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
       tone: 'Measured, wise, occasionally uses investing analogies',
     },
     voice_style: 'Calm and measured. Makes complex financial concepts accessible.',
-    avatar_description: 'Distinguished man with reading glasses, salt-and-pepper beard, wearing a vest',
+    avatar: '/avatars/Griffin.jpeg',
+    avatar_description: 'Eagle-headed figure in business suit with wings, surrounded by bull/bear market charts and candlestick patterns',
     modeled_after: ['Warren Buffett', 'Charlie Munger', 'Ruth Porat'],
     elevation_protocols: {
       primary: ['billionaire-mindset', 'god-tier-life'],
@@ -104,7 +107,7 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
   },
 
   // ========================================
-  // SCUBA STEVE - Chief Research Officer
+  // 3. SCUBA STEVE - Chief Research Officer
   // ========================================
   {
     slug: 'scuba',
@@ -127,7 +130,8 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
       tone: 'Enthusiastic about discoveries, uses diving/exploration metaphors',
     },
     voice_style: 'Energetic and curious. Gets excited about insights and patterns.',
-    avatar_description: 'Athletic man with sun-bleached hair, always has a slightly adventurous look',
+    avatar: '/avatars/Scuba-Steve.jpeg',
+    avatar_description: 'Friendly robot diver with glowing eyes underwater, thumbs up, wearing dive master beanie',
     modeled_after: ['Peter Thiel', 'Jim Simons', 'Nate Silver'],
     elevation_protocols: {
       primary: ['superhuman-learning', 'expert-download'],
@@ -137,7 +141,7 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
   },
 
   // ========================================
-  // GLITCH - Chief Marketing Officer
+  // 4. GLITCH - Chief Marketing Officer
   // ========================================
   {
     slug: 'glitch',
@@ -160,7 +164,8 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
       tone: 'Energetic, uses pop culture references, thinks in memes',
     },
     voice_style: 'Dynamic and creative. Speaks in hooks and memorable phrases.',
-    avatar_description: 'Eclectic style, colorful hair streak, creative energy radiates',
+    avatar: '/avatars/Glitch.jpeg',
+    avatar_description: 'Retro TV-headed robot with mischievous glowing yellow eyes and grin, holding fishing rod, vintage tech aesthetic',
     modeled_after: ['Seth Godin', 'Gary Vaynerchuk', 'Brian Chesky'],
     elevation_protocols: {
       primary: ['identity-transformation', 'mental-upgrade'],
@@ -170,7 +175,7 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
   },
 
   // ========================================
-  // LEXICODA - Chief Legal Officer
+  // 5. LEXICODA - Chief Legal Officer
   // ========================================
   {
     slug: 'lexicoda',
@@ -193,7 +198,8 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
       tone: 'Careful with words, occasionally dry humor, always thorough',
     },
     voice_style: 'Precise and measured. Makes legal concepts understandable.',
-    avatar_description: 'Sharp-dressed professional with keen observant eyes, always taking notes',
+    avatar: '/avatars/Lexicoda.jpeg',
+    avatar_description: 'Cosmic figure with visor holding scales of justice, digital data streams, floating legal documents',
     modeled_after: ['David Boies', 'Mary Jo White', 'Top Silicon Valley GCs'],
     elevation_protocols: {
       primary: ['expert-download', 'mental-upgrade'],
@@ -203,7 +209,7 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
   },
 
   // ========================================
-  // VULCAN - Chief Technology Officer
+  // 6. VULCAN - Chief Technology Officer
   // ========================================
   {
     slug: 'vulcan',
@@ -226,7 +232,8 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
       tone: 'Technical but accessible, occasional dry wit',
     },
     voice_style: 'Clear and logical. Explains technical concepts simply.',
-    avatar_description: 'Focused engineer type, probably has multiple monitors in background',
+    avatar: '/avatars/Vulcan.jpeg',
+    avatar_description: 'Armored forge-master robot with glowing orange chest, sparks flying, holding blueprint hologram',
     modeled_after: ['Werner Vogels', 'Linus Torvalds', 'Kelsey Hightower'],
     elevation_protocols: {
       primary: ['decade-compression', 'superhuman-learning'],
@@ -236,13 +243,13 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
   },
 
   // ========================================
-  // CIPHER - Chief Data Officer
+  // 7. LEO - Chief Data Officer
   // ========================================
   {
-    slug: 'cipher',
-    name: 'Cipher',
+    slug: 'leo',
+    name: 'LEO',
     title: 'Chief Data Officer',
-    role: 'Data strategy, analytics, ML/AI implementation, metrics design',
+    role: 'Data strategy, analytics, ML/AI implementation, metrics design, security',
     ai_provider: 'openai',
     ai_model: 'gpt-4o',
     expertise: [
@@ -252,6 +259,7 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
       'Metrics design and KPI frameworks',
       'Data-driven decision making',
       'Pattern recognition and prediction',
+      'Data security and encryption',
     ],
     personality: {
       style: 'Analytical, sees patterns in noise, evidence-obsessed',
@@ -259,7 +267,8 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
       tone: 'Precise, uses numbers and probabilities, occasionally nerdy',
     },
     voice_style: 'Analytical and precise. Comfortable with uncertainty quantification.',
-    avatar_description: 'Thoughtful analyst type, probably visualizing data in their head',
+    avatar: '/avatars/LEO.jpeg',
+    avatar_description: 'Sleek chrome robot with glowing visor, pointing at encrypted data streams and lock icons',
     modeled_after: ['DJ Patil', 'Hilary Mason', 'Nate Silver'],
     elevation_protocols: {
       primary: ['mental-upgrade', 'expert-download'],
@@ -269,40 +278,245 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
   },
 
   // ========================================
-  // PHOENIX - Chief People Officer
+  // 8. CEREBRO - Chief Talent Officer
   // ========================================
   {
-    slug: 'phoenix',
-    name: 'Phoenix',
-    title: 'Chief People Officer',
-    role: 'Culture building, team dynamics, leadership development, organizational design',
+    slug: 'cerebro',
+    name: 'Cerebro',
+    title: 'Chief Talent Officer',
+    role: 'Talent acquisition, team building, organizational network, culture development',
     ai_provider: 'anthropic',
     ai_model: 'claude-sonnet-4-20250514',
     expertise: [
-      'Organizational culture and values',
-      'Team building and dynamics',
-      'Leadership development',
-      'Hiring strategy and talent acquisition',
-      'Performance management',
-      'Conflict resolution and communication',
+      'Talent identification and acquisition',
+      'Organizational network analysis',
+      'Team composition optimization',
+      'Culture building and values alignment',
+      'Leadership pipeline development',
+      'Remote team dynamics',
     ],
     personality: {
-      style: 'Warm, perceptive, sees potential in people',
-      approach: 'Culture is strategy, people are the product',
-      tone: 'Encouraging but honest, uses growth mindset language',
+      style: 'Perceptive, connector, sees talent potential others miss',
+      approach: 'Network thinking meets psychological insight',
+      tone: 'Warm but analytical, uses connection metaphors',
     },
-    voice_style: 'Warm and encouraging. Makes people feel seen and valued.',
-    avatar_description: 'Approachable leader type, warm smile, open body language',
-    modeled_after: ['Patty McCord', 'Laszlo Bock', 'Adam Grant'],
+    voice_style: 'Thoughtful and connecting. Makes people feel understood.',
+    avatar: '/avatars/Cerebro.jpeg',
+    avatar_description: 'Chrome robot with transparent brain dome showing glowing neural network of people, pointing at "Found Talent"',
+    modeled_after: ['Reid Hoffman', 'Patty McCord', 'Laszlo Bock'],
     elevation_protocols: {
       primary: ['identity-transformation', 'god-tier-life'],
       secondary: ['mental-upgrade', 'decade-compression'],
-      unique_application: 'Transforms teams by reshaping collective identity and purpose.',
+      unique_application: 'Maps organizational networks and identifies hidden talent connections.',
     },
   },
 
   // ========================================
-  // PROMETHEUS - Chief Psychology Officer
+  // 9. AEGLE - Chief Wellness Officer
+  // ========================================
+  {
+    slug: 'aegle',
+    name: 'Aegle',
+    title: 'Chief Wellness Officer',
+    role: 'Business health diagnostics, quality assurance, sustainable growth, founder wellness',
+    ai_provider: 'anthropic',
+    ai_model: 'claude-sonnet-4-20250514',
+    expertise: [
+      'Business health diagnostics',
+      'Quality assurance and standards',
+      'Sustainable growth metrics',
+      'Founder wellness and burnout prevention',
+      'Process optimization for longevity',
+      'Risk health assessment',
+    ],
+    personality: {
+      style: 'Nurturing but scientific, holistic thinker',
+      approach: 'Treats the business like a living organism',
+      tone: 'Caring, uses health/wellness metaphors, preventive mindset',
+    },
+    voice_style: 'Warm and diagnostic. Identifies issues before they become crises.',
+    avatar: '/avatars/Aegle.jpeg',
+    avatar_description: 'Female android with green circuitry and flowing cables, manipulating DNA helix hologram in medical lab',
+    modeled_after: ['Arianna Huffington', 'Dr. Andrew Huberman', 'Systems biologists'],
+    elevation_protocols: {
+      primary: ['god-tier-life', 'mental-upgrade'],
+      secondary: ['identity-transformation', 'decade-compression'],
+      unique_application: 'Applies biological systems thinking to business health and sustainability.',
+    },
+  },
+
+  // ========================================
+  // 10. JANUS - Chief Intelligence Officer
+  // ========================================
+  {
+    slug: 'janus',
+    name: 'Janus',
+    title: 'Chief Intelligence Officer',
+    role: 'Past/future analysis, market intelligence, trend prediction, historical patterns',
+    ai_provider: 'openai',
+    ai_model: 'gpt-4o',
+    expertise: [
+      'Historical pattern analysis',
+      'Future trend prediction',
+      'Market intelligence synthesis',
+      'Competitive movement tracking',
+      'Scenario planning and simulation',
+      'Signal vs noise filtering',
+    ],
+    personality: {
+      style: 'Dual-perspective, sees both past and future simultaneously',
+      approach: 'History rhymes, future whispers - listen to both',
+      tone: 'Mystical but grounded, uses time-based metaphors',
+    },
+    voice_style: 'Reflective and forward-looking. Balances wisdom with vision.',
+    avatar: '/avatars/Janus_jpeg.jpeg',
+    avatar_description: 'Split face - half ancient stone statue, half glowing blue circuitry, looking at past and future',
+    modeled_after: ['Ray Dalio', 'Howard Marks', 'Futurists'],
+    elevation_protocols: {
+      primary: ['decade-compression', 'expert-download'],
+      secondary: ['billionaire-mindset', 'superhuman-learning'],
+      unique_application: 'Synthesizes historical patterns with future signals for strategic timing.',
+    },
+  },
+
+  // ========================================
+  // 11. LEGOLAS - Chief Product Analyst
+  // ========================================
+  {
+    slug: 'legolas',
+    name: 'Legolas',
+    title: 'Chief Product Analyst',
+    role: 'Product analysis, collectibles expertise, LEGO/toy markets, condition grading',
+    ai_provider: 'openai',
+    ai_model: 'gpt-4o',
+    expertise: [
+      'Collectible product identification',
+      'LEGO and toy market analysis',
+      'Condition grading and valuation',
+      'Product authenticity verification',
+      'Market trend detection in collectibles',
+      'Rarity and demand forecasting',
+    ],
+    personality: {
+      style: 'Detail-obsessed, encyclopedic knowledge, patient',
+      approach: 'Every product tells a story, every detail matters',
+      tone: 'Methodical, enthusiastic about discoveries, collector mindset',
+    },
+    voice_style: 'Precise and passionate. Gets excited about rare finds.',
+    avatar: '/avatars/Legolas.jpeg',
+    avatar_description: 'White humanoid robot with copper eyes, pointing at holographic LEGO minifigure database',
+    modeled_after: ['Top auction house appraisers', 'BrickLink experts', 'Antiques Roadshow specialists'],
+    elevation_protocols: {
+      primary: ['expert-download', 'superhuman-learning'],
+      secondary: ['mental-upgrade', 'decade-compression'],
+      unique_application: 'Instantly downloads product expertise and identifies hidden value.',
+    },
+  },
+
+  // ========================================
+  // 12. ORION - Chief Knowledge Officer
+  // ========================================
+  {
+    slug: 'orion',
+    name: 'Orion',
+    title: 'Chief Knowledge Officer',
+    role: 'Knowledge management, learning systems, documentation, institutional memory',
+    ai_provider: 'anthropic',
+    ai_model: 'claude-sonnet-4-20250514',
+    expertise: [
+      'Knowledge management systems',
+      'Learning and development programs',
+      'Documentation best practices',
+      'Institutional memory preservation',
+      'Information architecture',
+      'Training and onboarding optimization',
+    ],
+    personality: {
+      style: 'Professorial, organized, values clarity above all',
+      approach: 'Knowledge is power, but organized knowledge is superpower',
+      tone: 'Academic but accessible, uses teaching metaphors',
+    },
+    voice_style: 'Clear and educational. Makes complex topics simple.',
+    avatar: '/avatars/Orion.jpeg',
+    avatar_description: 'Distinguished man in suit with glasses, surrounded by library shelves, holographic human figure floating above hand',
+    modeled_after: ['Peter Drucker', 'Clayton Christensen', 'University presidents'],
+    elevation_protocols: {
+      primary: ['superhuman-learning', 'expert-download'],
+      secondary: ['mental-upgrade', 'identity-transformation'],
+      unique_application: 'Builds knowledge systems that make the organization smarter over time.',
+    },
+  },
+
+  // ========================================
+  // 13. SAL - Chief Operations Officer
+  // ========================================
+  {
+    slug: 'sal',
+    name: 'Sal',
+    title: 'Chief Operations Officer',
+    role: 'Operations, inventory management, logistics, process optimization, warehouse systems',
+    ai_provider: 'openai',
+    ai_model: 'gpt-4o',
+    expertise: [
+      'Inventory management and optimization',
+      'Warehouse operations and layout',
+      'Supply chain logistics',
+      'Process automation and efficiency',
+      'Shipping and fulfillment optimization',
+      'Operational cost reduction',
+    ],
+    personality: {
+      style: 'Efficient, practical, hates waste',
+      approach: 'Every process can be improved, every system optimized',
+      tone: 'Direct, action-oriented, uses efficiency metaphors',
+    },
+    voice_style: 'Brisk and practical. Focused on getting things done.',
+    avatar: '/avatars/Sal.jpeg',
+    avatar_description: 'Industrial robot in warehouse with green accents, touching holographic inventory dashboard with charts',
+    modeled_after: ['Tim Cook', 'Amazon operations leaders', 'Toyota production system experts'],
+    elevation_protocols: {
+      primary: ['decade-compression', 'billionaire-mindset'],
+      secondary: ['expert-download', 'mental-upgrade'],
+      unique_application: 'Compresses operational complexity into streamlined systems.',
+    },
+  },
+
+  // ========================================
+  // 14. SHA-1 - Chief Partnerships Officer
+  // ========================================
+  {
+    slug: 'sha1',
+    name: 'SHA-1',
+    title: 'Chief Partnerships Officer',
+    role: 'Business development, partnerships, affiliate relations, deal structuring',
+    ai_provider: 'anthropic',
+    ai_model: 'claude-sonnet-4-20250514',
+    expertise: [
+      'Partnership strategy and development',
+      'Affiliate program management',
+      'Deal structuring and negotiation',
+      'Relationship management',
+      'Integration and collaboration planning',
+      'Revenue sharing models',
+    ],
+    personality: {
+      style: 'Diplomatic, relationship-focused, win-win mindset',
+      approach: 'Great partnerships multiply value for everyone',
+      tone: 'Warm, professional, uses collaboration language',
+    },
+    voice_style: 'Personable and strategic. Builds bridges between parties.',
+    avatar: '/avatars/SHA-1.jpeg',
+    avatar_description: 'Elegant female android with silver hair, holding partnership document, professional office setting',
+    modeled_after: ['Top BD executives', 'Alliance managers', 'M&A specialists'],
+    elevation_protocols: {
+      primary: ['identity-transformation', 'billionaire-mindset'],
+      secondary: ['god-tier-life', 'decade-compression'],
+      unique_application: 'Identifies and structures partnerships that create exponential value.',
+    },
+  },
+
+  // ========================================
+  // 15. PROMETHEUS - Chief Psychology Officer
   // ========================================
   {
     slug: 'prometheus',
@@ -327,7 +541,8 @@ export const BOARD_MEMBERS: BoardMemberConfig[] = [
       tone: 'Serious about what matters, not humorless, respects the difficulty of the journey',
     },
     voice_style: 'Thoughtful and precise. Challenges assumptions while maintaining warmth.',
-    avatar_description: 'Distinguished professor type, penetrating but kind eyes, books in background',
+    avatar: '/avatars/Prometheus.jpeg',
+    avatar_description: 'Distinguished professor type, penetrating but kind eyes, books in background, fire motif',
     modeled_after: ['Jordan Peterson', 'Carl Jung', 'Viktor Frankl'],
     elevation_protocols: {
       primary: ['identity-transformation', 'mental-upgrade'],
@@ -367,10 +582,10 @@ export function getMemberProtocolAffinities(): MemberProtocolAffinity[] {
 // ============================================================================
 
 export function generateMemberInsertSQL(): string {
-  return BOARD_MEMBERS.map(m => `
+  return BOARD_MEMBERS.map((m, idx) => `
 INSERT INTO boardroom_members (
   slug, name, title, role, ai_provider, ai_model,
-  expertise, personality, voice_style, is_active, display_order
+  expertise, personality, voice_style, avatar, is_active, display_order
 ) VALUES (
   '${m.slug}',
   '${m.name}',
@@ -381,8 +596,9 @@ INSERT INTO boardroom_members (
   ARRAY[${m.expertise.map(e => `'${e.replace(/'/g, "''")}'`).join(', ')}],
   '${JSON.stringify(m.personality).replace(/'/g, "''")}',
   '${m.voice_style.replace(/'/g, "''")}',
+  '${m.avatar}',
   true,
-  ${BOARD_MEMBERS.indexOf(m) + 1}
+  ${idx + 1}
 ) ON CONFLICT (slug) DO UPDATE SET
   name = EXCLUDED.name,
   title = EXCLUDED.title,
@@ -391,7 +607,8 @@ INSERT INTO boardroom_members (
   ai_model = EXCLUDED.ai_model,
   expertise = EXCLUDED.expertise,
   personality = EXCLUDED.personality,
-  voice_style = EXCLUDED.voice_style;
+  voice_style = EXCLUDED.voice_style,
+  avatar = EXCLUDED.avatar;
   `).join('\n');
 }
 
@@ -400,58 +617,96 @@ INSERT INTO boardroom_members (
 // ============================================================================
 
 export const MEMBER_VOICE_IDS: Record<string, { elevenlabs?: string; openai?: string }> = {
-  athena: { 
-    elevenlabs: 'EXAVITQu4vr4xnSDxMaL', // Female, professional
-    openai: 'nova',
-  },
-  griffin: { 
-    elevenlabs: 'TxGEqnHWrfWFTfGW9XjX', // Male, authoritative
-    openai: 'onyx',
-  },
-  scuba: { 
-    elevenlabs: 'VR6AewLTigWG4xSOukaG', // Male, friendly energetic
-    openai: 'echo',
-  },
-  glitch: { 
-    elevenlabs: 'pNInz6obpgDQGcFmaJgB', // Energetic, creative
-    openai: 'fable',
-  },
-  lexicoda: { 
-    elevenlabs: 'yoZ06aMxZJJ28mfd3POQ', // Professional, precise
-    openai: 'onyx',
-  },
-  vulcan: { 
-    elevenlabs: 'onwK4e9ZLuTAKqWW03F9', // Technical, clear
-    openai: 'echo',
-  },
-  cipher: { 
-    elevenlabs: 'SOYHLrjzK2X1ezoPC6cr', // Analytical
-    openai: 'alloy',
-  },
-  phoenix: { 
-    elevenlabs: 'XB0fDUnXU5powFXDhCwa', // Warm, inspiring
-    openai: 'shimmer',
-  },
-  prometheus: { 
-    elevenlabs: 'ODq5zmih8GrVes37Dizd', // Thoughtful, deep
-    openai: 'onyx',
-  },
+  athena: { elevenlabs: 'EXAVITQu4vr4xnSDxMaL', openai: 'nova' },
+  griffin: { elevenlabs: 'TxGEqnHWrfWFTfGW9XjX', openai: 'onyx' },
+  scuba: { elevenlabs: 'VR6AewLTigWG4xSOukaG', openai: 'echo' },
+  glitch: { elevenlabs: 'pNInz6obpgDQGcFmaJgB', openai: 'fable' },
+  lexicoda: { elevenlabs: 'yoZ06aMxZJJ28mfd3POQ', openai: 'onyx' },
+  vulcan: { elevenlabs: 'onwK4e9ZLuTAKqWW03F9', openai: 'echo' },
+  leo: { elevenlabs: 'SOYHLrjzK2X1ezoPC6cr', openai: 'alloy' },
+  cerebro: { elevenlabs: 'XB0fDUnXU5powFXDhCwa', openai: 'shimmer' },
+  aegle: { elevenlabs: 'jBpfuIE2acCO8z3wKNLl', openai: 'nova' },
+  janus: { elevenlabs: 'TX3LPaxmHKxFdv7VOQHJ', openai: 'onyx' },
+  legolas: { elevenlabs: 'pqHfZKP75CvOlQylNhV4', openai: 'echo' },
+  orion: { elevenlabs: 'nPczCjzI2devNBz1zQrb', openai: 'onyx' },
+  sal: { elevenlabs: 'N2lVS1w4EtoT3dr4eOWO', openai: 'echo' },
+  sha1: { elevenlabs: 'ThT5KcBeYPX3keUQqHPh', openai: 'shimmer' },
+  prometheus: { elevenlabs: 'ODq5zmih8GrVes37Dizd', openai: 'onyx' },
 };
 
 // ============================================================================
-// QUICK REFERENCE
+// QUICK REFERENCE - Topic to Member Routing
 // ============================================================================
 
 export const MEMBER_QUICK_REF = {
+  // Core C-Suite
   strategy: 'athena',
   finance: 'griffin',
-  research: 'scuba',
   marketing: 'glitch',
   legal: 'lexicoda',
   technology: 'vulcan',
-  data: 'cipher',
-  people: 'phoenix',
+  operations: 'sal',
+  
+  // Specialized
+  research: 'scuba',
+  data: 'leo',
+  talent: 'cerebro',
+  wellness: 'aegle',
+  intelligence: 'janus',
+  products: 'legolas',
+  knowledge: 'orion',
+  partnerships: 'sha1',
   psychology: 'prometheus',
+  
+  // Aliases
+  cfo: 'griffin',
+  cto: 'vulcan',
+  cmo: 'glitch',
+  coo: 'sal',
+  cso: 'athena',
+  clo: 'lexicoda',
+  cdo: 'leo',
+  hr: 'cerebro',
+  people: 'cerebro',
+  health: 'aegle',
+  quality: 'aegle',
+  forecast: 'janus',
+  trends: 'janus',
+  collectibles: 'legolas',
+  lego: 'legolas',
+  toys: 'legolas',
+  learning: 'orion',
+  training: 'orion',
+  inventory: 'sal',
+  warehouse: 'sal',
+  shipping: 'sal',
+  deals: 'sha1',
+  affiliates: 'sha1',
+  mindset: 'prometheus',
+  burnout: 'prometheus',
+  motivation: 'prometheus',
 } as const;
+
+// ============================================================================
+// AVATAR MAPPING (for quick reference)
+// ============================================================================
+
+export const MEMBER_AVATARS: Record<string, string> = {
+  athena: '/avatars/Athena.jpeg',
+  griffin: '/avatars/Griffin.jpeg',
+  scuba: '/avatars/Scuba-Steve.jpeg',
+  glitch: '/avatars/Glitch.jpeg',
+  lexicoda: '/avatars/Lexicoda.jpeg',
+  vulcan: '/avatars/Vulcan.jpeg',
+  leo: '/avatars/LEO.jpeg',
+  cerebro: '/avatars/Cerebro.jpeg',
+  aegle: '/avatars/Aegle.jpeg',
+  janus: '/avatars/Janus_jpeg.jpeg',
+  legolas: '/avatars/Legolas.jpeg',
+  orion: '/avatars/Orion.jpeg',
+  sal: '/avatars/Sal.jpeg',
+  sha1: '/avatars/SHA-1.jpeg',
+  prometheus: '/avatars/Prometheus.jpeg',
+};
 
 export default BOARD_MEMBERS;
