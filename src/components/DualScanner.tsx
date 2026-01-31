@@ -1,5 +1,6 @@
 // FILE: src/components/DualScanner.tsx (ENHANCED MULTI-MODAL ANALYSIS SYSTEM WITH BLUETOOTH)
 // FIXED: Added image compression to prevent FUNCTION_PAYLOAD_TOO_LARGE errors
+// FIXED: Added Supabase image upload for marketplace image persistence
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useZxing } from 'react-zxing';
@@ -24,6 +25,8 @@ interface CapturedItem {
   thumbnail: string;
   name: string;
   selected: boolean;
+  // NEW: Store original uncompressed data for upload
+  originalData?: string;
   metadata?: {
     documentType?: 'certificate' | 'grading' | 'appraisal' | 'receipt' | 'authenticity' | 'other';
     description?: string;
@@ -137,6 +140,77 @@ function formatFileSize(bytes: number): string {
 }
 
 // =============================================================================
+// SUPABASE IMAGE UPLOAD UTILITY (for marketplace persistence)
+// =============================================================================
+
+/**
+ * Upload an image to Supabase storage and return the public URL
+ * Images are stored in 'user-images' bucket for marketplace display
+ */
+async function uploadImageToSupabase(
+  base64Data: string,
+  userId: string,
+  itemIndex: number
+): Promise<string | null> {
+  try {
+    // Convert base64 to blob
+    const base64Response = await fetch(base64Data);
+    const blob = await base64Response.blob();
+    
+    // Generate unique filename
+    const timestamp = Date.now();
+    const filename = `${userId}/${timestamp}_${itemIndex}.jpg`;
+    
+    // Upload to Supabase storage
+    const { data, error } = await supabase.storage
+      .from('user-images')
+      .upload(filename, blob, {
+        contentType: 'image/jpeg',
+        upsert: true,
+      });
+    
+    if (error) {
+      console.error('❌ Supabase upload error:', error);
+      return null;
+    }
+    
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from('user-images')
+      .getPublicUrl(filename);
+    
+    console.log(`✅ Uploaded image to Supabase: ${filename}`);
+    return urlData.publicUrl;
+    
+  } catch (error) {
+    console.error('❌ Image upload failed:', error);
+    return null;
+  }
+}
+
+/**
+ * Upload multiple images and return array of public URLs
+ */
+async function uploadImagesToSupabase(
+  items: CapturedItem[],
+  userId: string
+): Promise<string[]> {
+  const uploadPromises = items.map(async (item, index) => {
+    // Use original uncompressed data if available, otherwise use data
+    const imageData = item.originalData || item.data;
+    return uploadImageToSupabase(imageData, userId, index);
+  });
+  
+  const results = await Promise.all(uploadPromises);
+  
+  // Filter out null results (failed uploads)
+  const validUrls = results.filter((url): url is string => url !== null);
+  
+  console.log(`📦 Uploaded ${validUrls.length}/${items.length} images to Supabase`);
+  return validUrls;
+}
+
+// =============================================================================
 // MAIN COMPONENT
 // =============================================================================
 
@@ -155,6 +229,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const [videoChunks, setVideoChunks] = useState<Blob[]>([]);
   const [isAnalyzingBarcodes, setIsAnalyzingBarcodes] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -339,16 +414,17 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     return () => stopCamera();
   }, [isOpen, startCamera, stopCamera]);
 
-  // FIXED: Add captured item WITH compression
+  // FIXED: Add captured item WITH compression, preserving original for upload
   const addCapturedItem = async (item: Omit<CapturedItem, 'id' | 'selected'>) => {
     setIsCompressing(true);
     
     try {
       let processedData = item.data;
+      let originalData = item.data; // Preserve original for Supabase upload
       let originalSize = 0;
       let compressedSize = 0;
       
-      // Compress images and photos
+      // Compress images and photos for API, but keep original for storage
       if (item.type === 'photo' || item.type === 'document') {
         const result = await compressImage(item.data);
         processedData = result.compressed;
@@ -366,6 +442,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         id: uuidv4(),
         selected: true,
         data: processedData,
+        originalData: originalData, // NEW: Store original for Supabase upload
         thumbnail: item.type === 'document' ? item.thumbnail : processedData,
         metadata: {
           ...item.metadata,
@@ -442,7 +519,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     setIsDevicePairingOpen(false);
   };
   
-  // FIXED: Capture image with compression
+  // FIXED: Capture image with compression, preserving original
   const captureImage = async () => {
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
@@ -572,7 +649,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  // FIXED: Handle image upload WITH compression
+  // FIXED: Handle image upload WITH compression, preserving original
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
     
@@ -696,7 +773,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     toast.success(`Found ${totalBarcodesFound} barcodes across ${imageItems.length} images`);
   };
 
-  // FIXED: Process analysis with final compression safety check
+  // FIXED: Process analysis with Supabase image upload for marketplace persistence
   const processMultiModalAnalysis = async () => {
     const selectedItems = capturedItems.filter(item => item.selected);
     
@@ -705,7 +782,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       return;
     }
 
-    if (!session?.access_token) {
+    if (!session?.access_token || !session?.user?.id) {
       toast.error("Authentication required. Please sign in again.");
       return;
     }
@@ -716,11 +793,35 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     toast.info(`Analyzing ${selectedItems.length} items with multi-AI system...`);
 
     try {
+      // =======================================================================
+      // NEW: Upload original images to Supabase FIRST for marketplace persistence
+      // =======================================================================
+      setIsUploading(true);
+      toast.info("Uploading images for marketplace...");
+      
+      const imageItems = selectedItems.filter(item => item.type === 'photo' || item.type === 'document');
+      let originalImageUrls: string[] = [];
+      
+      if (imageItems.length > 0) {
+        originalImageUrls = await uploadImagesToSupabase(imageItems, session.user.id);
+        
+        if (originalImageUrls.length > 0) {
+          console.log(`✅ Uploaded ${originalImageUrls.length} images to Supabase storage`);
+        } else {
+          console.warn('⚠️ No images were uploaded to Supabase');
+        }
+      }
+      
+      setIsUploading(false);
+      // =======================================================================
+      
       // Calculate total payload size before sending
       let totalPayloadSize = 0;
       
       const analysisData = {
         scanType: 'multi-modal',
+        // NEW: Include original image URLs for database persistence
+        originalImageUrls: originalImageUrls,
         items: await Promise.all(selectedItems.map(async (item) => {
           let processedData = item.data;
           let additionalFrames: string[] = [];
@@ -825,11 +926,14 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       }
       
       const analysisResult: AnalysisResult = await response.json();
+      
+      // Include both the uploaded URLs and local thumbnails in the result
       setLastAnalysisResult({ 
         ...analysisResult, 
         id: uuidv4(), 
-        imageUrls: selectedItems.map(item => item.thumbnail) 
+        imageUrls: originalImageUrls.length > 0 ? originalImageUrls : selectedItems.map(item => item.thumbnail)
       });
+      
       toast.success("Enhanced multi-modal analysis complete!");
 
     } catch (error) {
@@ -841,6 +945,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     } finally {
       setIsProcessing(false);
       setIsAnalyzing(false);
+      setIsUploading(false);
     }
   };
 
@@ -935,6 +1040,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                   <Loader2 className="w-4 h-4 animate-spin" /> Compressing...
                 </div>
               )}
+              {/* Upload indicator */}
+              {isUploading && (
+                <div style={{ position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', background: 'rgba(34, 197, 94, 0.9)', color: 'white', padding: '8px 16px', borderRadius: '20px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Uploading to marketplace...
+                </div>
+              )}
             </div>
           </main>
           
@@ -980,7 +1091,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                     onClick={captureImage} 
                     className="capture-button" 
                     size="icon" 
-                    disabled={isProcessing || isCompressing || capturedItems.length >= 15}
+                    disabled={isProcessing || isCompressing || isUploading || capturedItems.length >= 15}
                   >
                       <Circle className="w-16 h-16 fill-white" />
                   </Button>
@@ -1005,12 +1116,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               <div style={{ position: 'absolute', right: '1rem', bottom: '8rem', zIndex: 10 }}>
                 <Button 
                   onClick={processMultiModalAnalysis} 
-                  disabled={isProcessing || isCompressing} 
+                  disabled={isProcessing || isCompressing || isUploading} 
                   size="lg" 
                   className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
                 >
-                  {isProcessing ? <Loader2 className="animate-spin mr-2" /> : <Zap className="mr-2" />}
-                  AI Analyze {selectedCount} Item{selectedCount > 1 ? 's' : ''}
+                  {isProcessing || isUploading ? <Loader2 className="animate-spin mr-2" /> : <Zap className="mr-2" />}
+                  {isUploading ? 'Uploading...' : `AI Analyze ${selectedCount} Item${selectedCount > 1 ? 's' : ''}`}
                 </Button>
               </div>
             )}

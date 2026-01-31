@@ -3,6 +3,7 @@
 // Orchestrates modular components for multi-AI consensus analysis
 // FIXED v6.3: AI category now properly passed as 3rd parameter to detectItemCategory
 // FIXED v6.3: Vision prompt now instructs VIN extraction from images
+// UPDATED v6.4: Now accepts and persists originalImageUrls for marketplace integration
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -65,12 +66,14 @@ interface AnalyzeRequest {
   analysisId?: string;
   categoryHint?: string;
   condition?: string;
+  originalImageUrls?: string[];  // NEW: Original quality URLs for marketplace
 }
 
 interface MultiModalItem {
   type: 'photo' | 'video' | 'document' | 'certificate';
   name: string;
   data: string;
+  originalUrl?: string;  // NEW: Original URL from Supabase storage
   additionalFrames?: string[];
   metadata?: {
     documentType?: string;
@@ -120,6 +123,22 @@ function validateRequest(body: unknown): AnalyzeRequest {
       }
     });
     
+    // NEW: Collect original URLs for marketplace (filter out blob: URLs)
+    const originalImageUrls: string[] = [];
+    items.forEach(item => {
+      if (item.originalUrl && !item.originalUrl.startsWith('blob:')) {
+        originalImageUrls.push(item.originalUrl);
+      }
+    });
+    // Also check top-level originalImageUrls array
+    if (Array.isArray(rawBody.originalImageUrls)) {
+      (rawBody.originalImageUrls as string[]).forEach(url => {
+        if (url && !url.startsWith('blob:') && !originalImageUrls.includes(url)) {
+          originalImageUrls.push(url);
+        }
+      });
+    }
+    
     // Generate item name - let AI identify from image
     let itemName = '';
     
@@ -144,13 +163,14 @@ function validateRequest(body: unknown): AnalyzeRequest {
       analysisId: typeof rawBody.analysisId === 'string' ? rawBody.analysisId : `analysis_${Date.now()}`,
       categoryHint: categoryHint !== 'general' ? categoryHint : undefined,
       condition: typeof rawBody.condition === 'string' ? rawBody.condition : 'good',
+      originalImageUrls: originalImageUrls.length > 0 ? originalImageUrls : undefined,  // NEW
     };
   }
   
   // ==========================================================================
   // HANDLE STANDARD FORMAT (direct itemName)
   // ==========================================================================
-  const { itemName, imageBase64, userId, analysisId, categoryHint, condition } = rawBody;
+  const { itemName, imageBase64, userId, analysisId, categoryHint, condition, originalImageUrls } = rawBody;
   
   // itemName can be empty if we have an image - AI will identify it
   return {
@@ -160,6 +180,7 @@ function validateRequest(body: unknown): AnalyzeRequest {
     analysisId: typeof analysisId === 'string' ? analysisId : `analysis_${Date.now()}`,
     categoryHint: typeof categoryHint === 'string' ? categoryHint : undefined,
     condition: typeof condition === 'string' ? condition : 'good',
+    originalImageUrls: Array.isArray(originalImageUrls) ? originalImageUrls.filter((u): u is string => typeof u === 'string' && !u.startsWith('blob:')) : undefined,  // NEW
   };
 }
 
@@ -307,11 +328,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Either an image or item name is required');
     }
     
-    console.log(`\n🔥 === HYDRA v6.0 ANALYSIS START ===`);
+    console.log(`\n🔥 === HYDRA v6.4 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
     console.log(`🖼️ Primary Image: ${hasImage ? 'Yes' : 'No'}`);
     console.log(`🖼️ Additional Images: ${request.additionalImages?.length || 0}`);
+    console.log(`🔗 Original URLs for Marketplace: ${request.originalImageUrls?.length || 0}`);  // NEW
     
     // 2. Build images array
     const images: string[] = [];
@@ -515,14 +537,30 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
       processingTime
     );
     
-    // Save to Supabase (non-blocking)
+    // NEW: Add image URLs to response for marketplace integration
+    const responseWithImages = {
+      ...response,
+      imageUrls: request.originalImageUrls || [],
+      thumbnailUrl: request.originalImageUrls?.[0] || null,
+    };
+    
+    // Save to Supabase (non-blocking) - NOW WITH IMAGE URLS
     if (isSupabaseAvailable()) {
-      saveAnalysisAsync(analysisId, consensus, finalCategory, request.userId, allVotes, authorityData, processingTime);
+      saveAnalysisAsync(
+        analysisId, 
+        consensus, 
+        finalCategory, 
+        request.userId, 
+        allVotes, 
+        authorityData, 
+        processingTime,
+        request.originalImageUrls  // NEW: Pass image URLs to save function
+      );
     }
     
     console.log(`\n  ✅ Complete in ${processingTime}ms\n`);
     
-    return res.status(200).json(formatAPIResponse(response));
+    return res.status(200).json(formatAPIResponse(responseWithImages));
     
   } catch (error: any) {
     console.error(`❌ Error:`, error.message);

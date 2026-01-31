@@ -1,6 +1,8 @@
 // FILE: src/lib/hydra/storage/supabase.ts
 // Supabase Storage Operations for HYDRA
 // Handles saving analysis results and retrieving cached data
+// FIXED: Table name changed from 'analyses' to 'analysis_history'
+// UPDATED: Now includes image_urls for marketplace integration
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { ConsensusResult, ModelVote, AuthorityData } from '../types.js';
@@ -24,6 +26,8 @@ export interface AnalysisRecord {
   authority_data?: Record<string, unknown>;
   votes?: Record<string, unknown>[];
   processing_time?: number;
+  image_urls?: string[];  // Original quality image URLs for marketplace
+  thumbnail_url?: string; // Primary thumbnail for display
   created_at: string;
   updated_at: string;
 }
@@ -39,13 +43,20 @@ export interface StorageConfig {
   supabaseUrl?: string;
   /** Supabase anon key */
   supabaseKey?: string;
-  /** Table name for analyses (default: 'analyses') */
+  /** Table name for analyses (default: 'analysis_history') */
   tableName?: string;
   /** Cache table name (default: 'analysis_cache') */
   cacheTableName?: string;
   /** Cache TTL in seconds (default: 3600 = 1 hour) */
   cacheTTL?: number;
 }
+
+// =============================================================================
+// CONSTANTS - FIXED TABLE NAME
+// =============================================================================
+
+const DEFAULT_TABLE_NAME = 'analysis_history';  // FIXED: Was 'analyses'
+const DEFAULT_CACHE_TABLE_NAME = 'analysis_cache';
 
 // =============================================================================
 // SUPABASE CLIENT
@@ -89,6 +100,8 @@ export function isSupabaseAvailable(): boolean {
 
 /**
  * Save analysis result to Supabase
+ * FIXED: Now writes to 'analysis_history' table
+ * UPDATED: Now includes image_urls for marketplace integration
  */
 export async function saveAnalysis(
   analysisId: string,
@@ -98,6 +111,7 @@ export async function saveAnalysis(
   votes?: ModelVote[],
   authorityData?: AuthorityData | null,
   processingTime?: number,
+  imageUrls?: string[],
   config?: StorageConfig
 ): Promise<{ success: boolean; error?: string }> {
   const client = getSupabaseClient(config);
@@ -106,7 +120,7 @@ export async function saveAnalysis(
     return { success: false, error: 'Supabase not configured' };
   }
   
-  const tableName = config?.tableName || 'analyses';
+  const tableName = config?.tableName || DEFAULT_TABLE_NAME;
   
   try {
     const record: Partial<AnalysisRecord> = {
@@ -134,20 +148,25 @@ export async function saveAnalysis(
         weight: v.weight,
       })),
       processing_time: processingTime,
+      // Save image URLs for marketplace
+      image_urls: imageUrls && imageUrls.length > 0 ? imageUrls : undefined,
+      thumbnail_url: imageUrls && imageUrls.length > 0 ? imageUrls[0] : undefined,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    
+    console.log(`💾 Saving to ${tableName}: ${analysisId} (${imageUrls?.length || 0} images)`);
     
     const { error } = await client
       .from(tableName)
       .upsert(record, { onConflict: 'id' });
     
     if (error) {
-      console.error('❌ Failed to save analysis:', error);
+      console.error(`❌ Failed to save analysis to ${tableName}:`, error);
       return { success: false, error: error.message };
     }
     
-    console.log(`✅ Analysis ${analysisId} saved to Supabase`);
+    console.log(`✅ Analysis ${analysisId} saved to ${tableName}`);
     return { success: true };
     
   } catch (error: any) {
@@ -158,6 +177,7 @@ export async function saveAnalysis(
 
 /**
  * Save analysis asynchronously (fire and forget)
+ * UPDATED: Now includes image_urls parameter
  */
 export function saveAnalysisAsync(
   analysisId: string,
@@ -166,10 +186,49 @@ export function saveAnalysisAsync(
   userId?: string,
   votes?: ModelVote[],
   authorityData?: AuthorityData | null,
-  processingTime?: number
+  processingTime?: number,
+  imageUrls?: string[]
 ): void {
-  saveAnalysis(analysisId, consensus, category, userId, votes, authorityData, processingTime)
+  saveAnalysis(analysisId, consensus, category, userId, votes, authorityData, processingTime, imageUrls)
     .catch(error => console.error('Background save failed:', error));
+}
+
+/**
+ * Update analysis with image URLs (for cases where images are uploaded after analysis)
+ */
+export async function updateAnalysisImages(
+  analysisId: string,
+  imageUrls: string[],
+  config?: StorageConfig
+): Promise<{ success: boolean; error?: string }> {
+  const client = getSupabaseClient(config);
+  
+  if (!client) {
+    return { success: false, error: 'Supabase not configured' };
+  }
+  
+  const tableName = config?.tableName || DEFAULT_TABLE_NAME;
+  
+  try {
+    const { error } = await client
+      .from(tableName)
+      .update({ 
+        image_urls: imageUrls,
+        thumbnail_url: imageUrls[0] || null,
+        updated_at: new Date().toISOString() 
+      })
+      .eq('id', analysisId);
+    
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    
+    console.log(`✅ Updated analysis ${analysisId} with ${imageUrls.length} images`);
+    return { success: true };
+    
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
 }
 
 /**
@@ -186,7 +245,7 @@ export async function updateAnalysis(
     return { success: false, error: 'Supabase not configured' };
   }
   
-  const tableName = config?.tableName || 'analyses';
+  const tableName = config?.tableName || DEFAULT_TABLE_NAME;
   
   try {
     const { error } = await client
@@ -220,7 +279,7 @@ export async function getAnalysis(
   
   if (!client) return null;
   
-  const tableName = config?.tableName || 'analyses';
+  const tableName = config?.tableName || DEFAULT_TABLE_NAME;
   
   try {
     const { data, error } = await client
@@ -239,6 +298,24 @@ export async function getAnalysis(
 }
 
 /**
+ * Get analysis by ID with image URLs
+ * Convenience method that ensures image_urls are included
+ */
+export async function getAnalysisWithImages(
+  analysisId: string,
+  config?: StorageConfig
+): Promise<(AnalysisRecord & { image_urls: string[] }) | null> {
+  const analysis = await getAnalysis(analysisId, config);
+  
+  if (!analysis) return null;
+  
+  return {
+    ...analysis,
+    image_urls: analysis.image_urls || [],
+  };
+}
+
+/**
  * Get analyses by user ID
  */
 export async function getAnalysesByUser(
@@ -250,7 +327,7 @@ export async function getAnalysesByUser(
   
   if (!client) return [];
   
-  const tableName = config?.tableName || 'analyses';
+  const tableName = config?.tableName || DEFAULT_TABLE_NAME;
   
   try {
     const { data, error } = await client
@@ -280,7 +357,7 @@ export async function getRecentAnalyses(
   
   if (!client) return [];
   
-  const tableName = config?.tableName || 'analyses';
+  const tableName = config?.tableName || DEFAULT_TABLE_NAME;
   
   try {
     const { data, error } = await client
@@ -328,7 +405,7 @@ export async function getCachedAnalysis(
   
   if (!client) return null;
   
-  const cacheTableName = config?.cacheTableName || 'analysis_cache';
+  const cacheTableName = config?.cacheTableName || DEFAULT_CACHE_TABLE_NAME;
   
   try {
     const { data, error } = await client
@@ -359,7 +436,7 @@ export async function cacheAnalysis(
   
   if (!client) return { success: false };
   
-  const cacheTableName = config?.cacheTableName || 'analysis_cache';
+  const cacheTableName = config?.cacheTableName || DEFAULT_CACHE_TABLE_NAME;
   const ttl = config?.cacheTTL || 3600; // 1 hour default
   
   try {
@@ -391,7 +468,7 @@ export async function clearExpiredCache(
   
   if (!client) return { deleted: 0 };
   
-  const cacheTableName = config?.cacheTableName || 'analysis_cache';
+  const cacheTableName = config?.cacheTableName || DEFAULT_CACHE_TABLE_NAME;
   
   try {
     const { data, error } = await client
@@ -426,7 +503,7 @@ export async function getAnalysisStats(
   
   if (!client) return null;
   
-  const tableName = config?.tableName || 'analyses';
+  const tableName = config?.tableName || DEFAULT_TABLE_NAME;
   
   try {
     // Get total count
@@ -487,7 +564,9 @@ export default {
   saveAnalysis,
   saveAnalysisAsync,
   updateAnalysis,
+  updateAnalysisImages,
   getAnalysis,
+  getAnalysisWithImages,
   getAnalysesByUser,
   getRecentAnalyses,
   generateItemHash,

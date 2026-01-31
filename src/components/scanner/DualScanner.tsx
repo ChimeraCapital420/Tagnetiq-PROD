@@ -1,6 +1,6 @@
 // FILE: src/components/scanner/DualScanner.tsx
 // Refactored multi-modal scanner - thin orchestrator using modular hooks
-// Original quality preserved for marketplace, compressed for AI analysis
+// UPDATED: Now sends original URLs to API for marketplace persistence
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useZxing } from 'react-zxing';
@@ -124,6 +124,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       capturedAt: new Date().toISOString(),
       category: 'barcode',
       imageUrl: '',
+      imageUrls: [],
       marketComps: [],
       resale_toolkit: { listInArena: true, sellOnProPlatforms: true, linkToMyStore: false, shareToSocial: true },
       tags: ['barcode'],
@@ -249,7 +250,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   };
 
   // ========================================
-  // ANALYSIS
+  // ANALYSIS - UPDATED to include original URLs
   // ========================================
 
   const handleAnalyze = async () => {
@@ -269,21 +270,33 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     toast.info(`Analyzing ${selectedCount} items...`);
 
     try {
-      // Get compressed data for AI (originals stay in storage for marketplace)
+      // Get compressed data for AI
       const analysisPayload = getAnalysisPayload();
       
+      // Get original URLs for marketplace (filter out blob: URLs)
+      const originalUrls = getOriginalUrls().filter(url => !url.startsWith('blob:'));
+      
+      // UPDATED: Build payload with originalUrls included
+      const requestPayload = {
+        scanType: 'multi-modal',
+        items: analysisPayload.map((item, index) => ({
+          ...item,
+          originalUrl: originalUrls[index] || null,  // Include original URL with each item
+        })),
+        category_id: selectedCategory?.split('-')[0] || 'general',
+        subcategory_id: selectedCategory || 'general',
+        originalImageUrls: originalUrls,  // Also send as top-level array
+      };
+
+      console.log('📤 Sending analysis request with', originalUrls.length, 'original URLs');
+
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({
-          scanType: 'multi-modal',
-          items: analysisPayload,
-          category_id: selectedCategory?.split('-')[0] || 'general',
-          subcategory_id: selectedCategory || 'general',
-        }),
+        body: JSON.stringify(requestPayload),
       });
 
       if (!response.ok) {
@@ -296,15 +309,20 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
       const result: AnalysisResult = await response.json();
       
-      // Include original URLs for marketplace uploads
-      const originalUrls = getOriginalUrls();
+      // The API now returns imageUrls - use them, or fallback to local URLs
+      const finalImageUrls = result.imageUrls?.length > 0 
+        ? result.imageUrls 
+        : originalUrls;
       
       setLastAnalysisResult({
         ...result,
-        id: uuidv4(),
-        imageUrls: originalUrls, // Full quality for marketplace!
+        id: result.id || uuidv4(),
+        imageUrls: finalImageUrls,
+        imageUrl: finalImageUrls[0] || '',
+        thumbnailUrl: result.thumbnailUrl || finalImageUrls[0] || '',
       });
       
+      console.log('✅ Analysis complete with', finalImageUrls.length, 'images');
       toast.success('Analysis complete!');
     } catch (error) {
       console.error('Analysis error:', error);
