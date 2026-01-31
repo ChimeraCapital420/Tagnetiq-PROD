@@ -6,7 +6,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getThemeConfig } from '@/lib/themes';
 
 // --- START: Self-Contained Seasonal & Animated Components ---
-// All styles and components are now inside this one file to guarantee they work.
 
 const SeasonalCSS = () => (
   <style>{`
@@ -41,9 +40,16 @@ const FallOverlay = () => <div className="particles-overlay">{[...Array(20)].map
 const BlurUpImage: React.FC<{ src: string; alt?: string }> = ({ src, alt = '' }) => {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
-    // Create a tiny 20x20 blurred placeholder
+    // Reset states when src changes
+    setImageLoaded(false);
+    setLoadError(false);
+    
+    console.log('🖼️ [BG-MGR] Loading background image:', src);
+
+    // Create a tiny gradient placeholder based on the URL
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -51,7 +57,6 @@ const BlurUpImage: React.FC<{ src: string; alt?: string }> = ({ src, alt = '' })
     canvas.width = 20;
     canvas.height = 20;
     
-    // Generate a simple gradient placeholder based on the URL
     const gradient = ctx.createLinearGradient(0, 0, 20, 20);
     const hue = src.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % 360;
     gradient.addColorStop(0, `hsl(${hue}, 50%, 40%)`);
@@ -64,17 +69,28 @@ const BlurUpImage: React.FC<{ src: string; alt?: string }> = ({ src, alt = '' })
     // Load the actual image
     const img = new Image();
     img.onload = () => {
+      console.log('🖼️ [BG-MGR] ✅ Background image loaded successfully');
       setImageSrc(src);
       setImageLoaded(true);
     };
+    img.onerror = (e) => {
+      console.error('🖼️ [BG-MGR] ❌ Background image failed to load:', src, e);
+      setLoadError(true);
+    };
     img.src = src;
   }, [src]);
+
+  // Don't render if there was an error
+  if (loadError) {
+    console.warn('🖼️ [BG-MGR] Skipping render due to load error');
+    return null;
+  }
 
   return (
     <>
       {imageSrc && (
         <div
-          className="fixed inset-0 z-[-2] bg-cover bg-center"
+          className="fixed inset-0 z-[-2] bg-cover bg-center bg-no-repeat"
           style={{
             backgroundImage: `url(${imageSrc})`,
             filter: imageLoaded ? 'none' : 'blur(40px)',
@@ -93,6 +109,14 @@ const BackgroundManager: React.FC = () => {
   const { profile } = useAuth();
   const themeConfig = getThemeConfig(theme, themeMode);
 
+  // Debug: Log when profile changes
+  useEffect(() => {
+    console.log('🖼️ [BG-MGR] Profile updated:', {
+      hasProfile: !!profile,
+      customBgUrl: profile?.custom_background_url || 'none',
+    });
+  }, [profile?.custom_background_url]);
+
   // PERFORMANCE: Convert to WebP when available
   const staticThemeImageMap: { [key: string]: string } = {
     executive: '/images/executive-bg.webp',
@@ -105,11 +129,10 @@ const BackgroundManager: React.FC = () => {
   };
 
   // Fallback to JPG if WebP doesn't exist
-  const getImageUrl = (theme: string): string => {
-    const webpUrl = staticThemeImageMap[theme];
+  const getImageUrl = (themeName: string): string => {
+    const webpUrl = staticThemeImageMap[themeName];
     if (webpUrl) return webpUrl;
-    // Fallback to JPG
-    return `/images/${theme}-bg.jpg`;
+    return `/images/${themeName}-bg.jpg`;
   };
 
   const renderSeasonalOverlay = () => {
@@ -123,15 +146,20 @@ const BackgroundManager: React.FC = () => {
   };
   
   const getBackgroundImageUrl = (): string | null => {
-    // 1. Prioritize user's custom background URL
+    // 1. HIGHEST PRIORITY: User's custom background URL
     if (profile?.custom_background_url) {
+      console.log('🖼️ [BG-MGR] Using custom background:', profile.custom_background_url);
       return profile.custom_background_url;
     }
-    // 2. Fallback to the theme-based image if seasonal is off
+    
+    // 2. Theme-based image (only if seasonal mode is off)
     if (seasonalMode === 'off' && staticThemeImageMap[theme]) {
+      console.log('🖼️ [BG-MGR] Using theme background:', theme);
       return getImageUrl(theme);
     }
-    // 3. No image if a seasonal mode is on or no theme image exists
+    
+    // 3. No background image
+    console.log('🖼️ [BG-MGR] No background image (seasonal mode or no theme image)');
     return null;
   };
 
@@ -149,7 +177,7 @@ const BackgroundManager: React.FC = () => {
     <>
       <SeasonalCSS />
       
-      {/* PERFORMANCE: Base color layer for instant load */}
+      {/* LAYER 1: Base color layer for instant load (z-[-3]) */}
       <div
         className="fixed inset-0 z-[-3] transition-colors duration-500"
         style={{
@@ -157,22 +185,22 @@ const BackgroundManager: React.FC = () => {
         }}
       />
       
-      {/* PERFORMANCE: Blur-up image layer */}
+      {/* LAYER 2: Background image with blur-up effect (z-[-2]) */}
       {backgroundImageUrl && (
         <BlurUpImage src={backgroundImageUrl} alt="Background" />
       )}
       
-      {/* PERFORMANCE: Opacity layer */}
+      {/* LAYER 3: Darkening overlay for readability (z-[-1]) */}
       {backgroundImageUrl && (
         <div
-          className="fixed inset-0 z-[-1] bg-black transition-opacity duration-500"
+          className="fixed inset-0 z-[-1] bg-black/40 transition-opacity duration-500"
           style={{
-            opacity: themeMode === 'dark' ? 0 : 0.4,
+            opacity: themeMode === 'dark' ? 0.5 : 0.3,
           }}
         />
       )}
       
-      {/* Seasonal gradient overlay */}
+      {/* LAYER 4: Seasonal gradient overlay (z-[-1]) */}
       {seasonalGradient && (
         <div 
           className="fixed inset-0 z-[-1]"
@@ -180,7 +208,7 @@ const BackgroundManager: React.FC = () => {
         />
       )}
       
-      {/* Seasonal particles */}
+      {/* LAYER 5: Seasonal particles (z-[0]) */}
       {renderSeasonalOverlay()}
     </>
   );

@@ -16,8 +16,12 @@ interface PendingUpload {
   localPreviewUrl: string;
 }
 
+// Supabase project URL for constructing public URLs
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const BACKGROUNDS_BUCKET = 'backgrounds';
+
 export const BackgroundUploader: React.FC = () => {
-  const { profile, setProfile } = useAuth();
+  const { profile, setProfile, session } = useAuth();
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -67,6 +71,8 @@ export const BackgroundUploader: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    console.log('📸 [BG] File selected:', file.name, file.type, file.size);
+
     // Validate file type
     if (!file.type.startsWith('image/')) {
       toast.error(t('background.invalidType', 'Please select an image file'));
@@ -86,6 +92,8 @@ export const BackgroundUploader: React.FC = () => {
 
     // Create local preview URL (no upload yet)
     const localPreviewUrl = URL.createObjectURL(file);
+    
+    console.log('📸 [BG] Preview URL created:', localPreviewUrl);
     
     // Clear any pending URL
     setPendingUrl('');
@@ -131,7 +139,7 @@ export const BackgroundUploader: React.FC = () => {
       
       toast.info(t('background.previewReady', 'Preview ready - tap Save to apply'));
     } catch (error) {
-      console.error('URL preview error:', error);
+      console.error('📸 [BG] URL preview error:', error);
       toast.error(t('background.urlLoadFailed', 'Could not load image from URL'));
     } finally {
       setUploading(false);
@@ -151,40 +159,70 @@ export const BackgroundUploader: React.FC = () => {
 
   // Commit the pending changes - ACTUALLY uploads/saves
   const handleSave = async () => {
-    if (!profile) return;
+    if (!profile || !session) {
+      toast.error('Please sign in to save background');
+      return;
+    }
     
     setUploading(true);
+    console.log('📸 [BG] Starting save...');
 
     try {
       let newBackgroundUrl: string;
 
       if (pendingUpload) {
-        // Upload file to Supabase Storage
+        // Upload file to Supabase Storage via signed URL
         const file = pendingUpload.file;
         const fileExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
         const fileName = `bg-${Date.now()}.${fileExt}`;
         
-        // User-isolated path: backgrounds/{userId}/{filename}
-        const filePath = `backgrounds/${profile.id}/${fileName}`;
+        console.log('📸 [BG] Requesting signed upload URL...');
 
-        const { error: uploadError } = await supabase.storage
-          .from('user-uploads')
-          .upload(filePath, file, {
-            cacheControl: '3600',
-            upsert: true,
-          });
+        // Step 1: Get signed upload URL from our API
+        const response = await fetch('/api/user/background-upload', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            fileName,
+            fileType: file.type,
+          }),
+        });
 
-        if (uploadError) {
-          console.error('Storage upload error:', uploadError);
-          throw new Error(`Upload failed: ${uploadError.message}`);
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          console.error('📸 [BG] Signed URL error:', response.status, errorData);
+          throw new Error(errorData.error || `Failed to get upload URL: ${response.status}`);
         }
 
-        // Get public URL
-        const { data: urlData } = supabase.storage
-          .from('user-uploads')
-          .getPublicUrl(filePath);
+        const { signedUrl, token, path, filePath } = await response.json();
+        const uploadPath = filePath || path;
+        
+        console.log('📸 [BG] Got signed URL, uploading to:', uploadPath);
 
-        newBackgroundUrl = urlData.publicUrl;
+        // Step 2: Upload directly to signed URL
+        const uploadResponse = await fetch(signedUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': file.type,
+          },
+          body: file,
+        });
+
+        if (!uploadResponse.ok) {
+          console.error('📸 [BG] Upload failed:', uploadResponse.status);
+          throw new Error(`Upload failed: ${uploadResponse.status}`);
+        }
+
+        console.log('📸 [BG] Upload successful!');
+
+        // Step 3: Construct the public URL
+        // Format: {SUPABASE_URL}/storage/v1/object/public/{bucket}/{path}
+        newBackgroundUrl = `${SUPABASE_URL}/storage/v1/object/public/${BACKGROUNDS_BUCKET}/${uploadPath}`;
+        
+        console.log('📸 [BG] Public URL:', newBackgroundUrl);
         
         // Cleanup local preview URL
         URL.revokeObjectURL(pendingUpload.localPreviewUrl);
@@ -192,45 +230,51 @@ export const BackgroundUploader: React.FC = () => {
       } else if (pendingUrl) {
         // Using external URL
         newBackgroundUrl = pendingUrl;
+        console.log('📸 [BG] Using external URL:', newBackgroundUrl);
       } else {
+        console.log('📸 [BG] Nothing to save');
         return; // Nothing to save
       }
 
-      // Update profile in database
+      // Step 4: Update profile in database
+      console.log('📸 [BG] Updating profile...');
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ custom_background_url: newBackgroundUrl })
         .eq('id', profile.id);
 
       if (updateError) {
-        console.error('Profile update error:', updateError);
+        console.error('📸 [BG] Profile update error:', updateError);
         throw new Error(`Failed to save: ${updateError.message}`);
       }
 
-      // Delete old background from storage if it was a custom upload
-      if (savedUrl && savedUrl.includes('user-uploads')) {
+      // Step 5: Delete old background from storage if it was a custom upload
+      if (savedUrl && savedUrl.includes(`/${BACKGROUNDS_BUCKET}/`)) {
         try {
-          const urlParts = savedUrl.split('/user-uploads/');
+          // Extract path from URL
+          const urlParts = savedUrl.split(`/${BACKGROUNDS_BUCKET}/`);
           if (urlParts[1]) {
             const oldPath = urlParts[1].split('?')[0];
-            await supabase.storage.from('user-uploads').remove([oldPath]);
+            console.log('📸 [BG] Cleaning up old file:', oldPath);
+            await supabase.storage.from(BACKGROUNDS_BUCKET).remove([oldPath]);
           }
         } catch (cleanupError) {
-          console.warn('Failed to cleanup old background:', cleanupError);
+          console.warn('📸 [BG] Cleanup warning:', cleanupError);
         }
       }
 
-      // Update local state
+      // Step 6: Update local state
       setProfile({ ...profile, custom_background_url: newBackgroundUrl });
       setSavedUrl(newBackgroundUrl);
       setPendingUpload(null);
       setPendingUrl('');
       setUrlInput('');
       
+      console.log('📸 [BG] ✅ Save complete!');
       toast.success(t('background.saved', 'Background saved!'));
       
     } catch (error: unknown) {
-      console.error('Background save error:', error);
+      console.error('📸 [BG] Save error:', error);
       const message = error instanceof Error ? error.message : t('background.saveFailed', 'Failed to save background');
       toast.error(message);
     } finally {
@@ -243,18 +287,20 @@ export const BackgroundUploader: React.FC = () => {
     if (!profile) return;
 
     setRemoving(true);
+    console.log('📸 [BG] Removing background...');
 
     try {
       // Remove from storage if it's a custom upload
-      if (savedUrl && savedUrl.includes('user-uploads')) {
+      if (savedUrl && savedUrl.includes(`/${BACKGROUNDS_BUCKET}/`)) {
         try {
-          const urlParts = savedUrl.split('/user-uploads/');
+          const urlParts = savedUrl.split(`/${BACKGROUNDS_BUCKET}/`);
           if (urlParts[1]) {
             const filePath = urlParts[1].split('?')[0];
-            await supabase.storage.from('user-uploads').remove([filePath]);
+            console.log('📸 [BG] Deleting file:', filePath);
+            await supabase.storage.from(BACKGROUNDS_BUCKET).remove([filePath]);
           }
         } catch (storageError) {
-          console.warn('Storage cleanup error:', storageError);
+          console.warn('📸 [BG] Storage cleanup warning:', storageError);
         }
       }
 
@@ -276,9 +322,10 @@ export const BackgroundUploader: React.FC = () => {
       setPendingUrl('');
       setUrlInput('');
       
+      console.log('📸 [BG] ✅ Background removed');
       toast.success(t('background.removed', 'Background removed'));
     } catch (error) {
-      console.error('Background removal error:', error);
+      console.error('📸 [BG] Remove error:', error);
       toast.error(t('background.removeFailed', 'Failed to remove background'));
     } finally {
       setRemoving(false);
@@ -310,8 +357,12 @@ export const BackgroundUploader: React.FC = () => {
               alt="Background preview" 
               className="w-full h-40 object-cover"
               onError={(e) => {
-                (e.target as HTMLImageElement).src = '';
+                console.error('📸 [BG] Preview image failed to load:', displayUrl);
+                (e.target as HTMLImageElement).style.display = 'none';
                 toast.error(t('background.loadError', 'Failed to load image'));
+              }}
+              onLoad={() => {
+                console.log('📸 [BG] Preview image loaded successfully');
               }}
             />
             
