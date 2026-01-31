@@ -1,6 +1,6 @@
 // FILE: src/components/AppShell.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
@@ -16,6 +16,7 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Track background image loading for smooth transitions
   const [bgLoaded, setBgLoaded] = useState(false);
   const [currentBgUrl, setCurrentBgUrl] = useState<string | null>(null);
+  const lastLoggedUrl = useRef<string | null>(null);
 
   // Theme-based background images
   const themeImageMap: { [key: string]: string } = {
@@ -35,31 +36,17 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const isInvestorPage = location.pathname === '/investor' || location.pathname === '/admin/investors';
 
     // Priority 1: Page-specific backgrounds (always override for branding)
-    if (isHomePage) {
-      return '/images/welcome.jpg';
-    }
-    if (isAuthPage) {
-      return '/images/auth-background.jpg';
-    }
-    if (isInvestorPage) {
-      return '/images/investor-splash.jpg';
-    }
+    if (isHomePage) return '/images/welcome.jpg';
+    if (isAuthPage) return '/images/auth-background.jpg';
+    if (isInvestorPage) return '/images/investor-splash.jpg';
 
     // Priority 2: User's custom background (logged-in users only)
     if (user && profile?.custom_background_url) {
-      console.log('🖼️ [AppShell] Using custom background:', profile.custom_background_url);
       return profile.custom_background_url;
     }
 
     // Priority 3: Theme-based background
-    const themeImage = themeImageMap[theme];
-    if (themeImage) {
-      console.log('🖼️ [AppShell] Using theme background:', theme);
-      return themeImage;
-    }
-
-    // No background image
-    return '';
+    return themeImageMap[theme] || '';
   };
 
   const backgroundImageUrl = getBackgroundImageUrl();
@@ -72,35 +59,34 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       return;
     }
 
-    // If same URL, no need to reload
+    // Skip if same URL already loaded
     if (backgroundImageUrl === currentBgUrl) {
       return;
     }
 
-    console.log('🖼️ [AppShell] Loading background:', backgroundImageUrl);
+    // Log only when URL actually changes (not on every render)
+    if (backgroundImageUrl !== lastLoggedUrl.current) {
+      const isCustom = backgroundImageUrl.includes('supabase');
+      if (isCustom) {
+        console.log('🖼️ [BG] Custom background active');
+      }
+      lastLoggedUrl.current = backgroundImageUrl;
+    }
+
     setBgLoaded(false);
 
     const img = new Image();
     img.onload = () => {
-      console.log('🖼️ [AppShell] ✅ Background loaded');
       setCurrentBgUrl(backgroundImageUrl);
       setBgLoaded(true);
     };
     img.onerror = () => {
-      console.error('🖼️ [AppShell] ❌ Background failed to load:', backgroundImageUrl);
+      console.warn('🖼️ [BG] Failed to load:', backgroundImageUrl);
       setCurrentBgUrl(null);
       setBgLoaded(true);
     };
     img.src = backgroundImageUrl;
   }, [backgroundImageUrl, currentBgUrl]);
-
-  // Debug: Log when custom background changes
-  useEffect(() => {
-    console.log('🖼️ [AppShell] Profile updated:', {
-      hasUser: !!user,
-      customBgUrl: profile?.custom_background_url || 'none',
-    });
-  }, [user, profile?.custom_background_url]);
 
   const getPageStyles = (): React.CSSProperties => {
     const themeConfig = getThemeConfig(theme, themeMode);
@@ -112,10 +98,9 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       backgroundPosition: 'center',
       backgroundAttachment: 'fixed',
       backgroundRepeat: 'no-repeat',
-      transition: 'background-color 0.5s ease, background-image 0.5s ease',
+      transition: 'background-color 0.5s ease',
     };
 
-    // Apply background image if loaded
     if (currentBgUrl && bgLoaded) {
       styles.backgroundImage = `url(${currentBgUrl})`;
     }
@@ -131,7 +116,6 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           className="fixed inset-0 pointer-events-none z-0"
           style={{
             backgroundColor: themeMode === 'dark' ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.2)',
-            transition: 'background-color 0.5s ease',
           }}
         />
       )}
@@ -139,7 +123,6 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       <ThemeAnimationManager />
       <SeasonalManager />
       
-      {/* Content with relative positioning to sit above overlay */}
       <div className="relative z-10">
         {children}
       </div>
