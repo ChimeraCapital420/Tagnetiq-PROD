@@ -84,8 +84,8 @@ function saveRememberedDevice(deviceId: string, deviceName: string): void {
     const names = JSON.parse(localStorage.getItem(`${STORAGE_KEY}_names`) || '{}');
     names[deviceId] = deviceName;
     localStorage.setItem(`${STORAGE_KEY}_names`, JSON.stringify(names));
-  } catch (e) {
-    console.warn('📶 [BT] Could not save device:', e);
+  } catch {
+    // Silent fail
   }
 }
 
@@ -98,8 +98,8 @@ function removeRememberedDevice(deviceId: string): void {
     const names = JSON.parse(localStorage.getItem(`${STORAGE_KEY}_names`) || '{}');
     delete names[deviceId];
     localStorage.setItem(`${STORAGE_KEY}_names`, JSON.stringify(names));
-  } catch (e) {
-    console.warn('📶 [BT] Could not remove device:', e);
+  } catch {
+    // Silent fail
   }
 }
 
@@ -143,10 +143,9 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
           const available = await navigator.bluetooth.getAvailability();
           if (isMountedRef.current) {
             setIsEnabled(available);
-            console.log(`📶 [BT] Available: ${available}`);
           }
         }
-      } catch (e) {
+      } catch {
         // Silent fail - assume available
       }
     };
@@ -159,7 +158,6 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
       const handleAvailabilityChange = (event: any) => {
         if (isMountedRef.current) {
           setIsEnabled(event.value);
-          console.log(`📶 [BT] Availability changed: ${event.value}`);
         }
       };
       // @ts-ignore
@@ -183,8 +181,6 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   const handleDeviceDisconnected = useCallback((deviceId: string) => {
     if (!isMountedRef.current) return;
     
-    console.log(`📶 [BT] Disconnected: ${deviceId}`);
-    
     setConnectedDevices(prev => prev.filter(d => d.id !== deviceId));
     setAvailableDevices(prev => 
       prev.map(d => d.id === deviceId ? { ...d, connected: false } : d)
@@ -205,7 +201,6 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
       return null;
     }
 
-    console.log('📶 [BT] Requesting device...');
     setError(null);
 
     try {
@@ -213,8 +208,6 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
         acceptAllDevices: true,
         optionalServices: BLUETOOTH_SERVICES,
       });
-
-      console.log(`📶 [BT] Selected: ${device.name} (${device.id})`);
 
       deviceRefs.current.set(device.id, device);
 
@@ -246,11 +239,10 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
 
     } catch (e: any) {
       if (e.name === 'NotFoundError') {
-        console.log('📶 [BT] User cancelled');
+        // User cancelled - not an error
         return null;
       }
       
-      console.error('📶 [BT] Request error:', e);
       if (isMountedRef.current) {
         setError(e.message || 'Failed to request device');
       }
@@ -263,7 +255,6 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   // Start scanning
   // ---------------------------------------------------------------------------
   const startScan = useCallback(async (): Promise<void> => {
-    console.log('📶 [BT] Starting scan...');
     setIsScanning(true);
     setError(null);
 
@@ -282,7 +273,6 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   // Stop scanning
   // ---------------------------------------------------------------------------
   const stopScan = useCallback((): void => {
-    console.log('📶 [BT] Stopping scan...');
     setIsScanning(false);
     
     if (scanAbortController.current) {
@@ -295,7 +285,6 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   // Connect to device
   // ---------------------------------------------------------------------------
   const connectDevice = useCallback(async (deviceId: string): Promise<boolean> => {
-    console.log(`📶 [BT] Connecting: ${deviceId}`);
     setError(null);
 
     const deviceInfo = availableDevices.find(d => d.id === deviceId);
@@ -306,14 +295,11 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
     }
 
     try {
-      console.log('📶 [BT] Connecting to GATT...');
       const gatt = await deviceInfo.device.gatt?.connect();
       
       if (!gatt) {
         throw new Error('Could not connect to device');
       }
-
-      console.log('📶 [BT] ✅ Connected');
 
       const connectedInfo: BluetoothDevice = {
         ...deviceInfo,
@@ -336,7 +322,6 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
       return true;
 
     } catch (e: any) {
-      console.error('📶 [BT] Connect error:', e);
       if (isMountedRef.current) {
         setError(e.message || 'Failed to connect');
       }
@@ -349,8 +334,6 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   // Disconnect from device
   // ---------------------------------------------------------------------------
   const disconnectDevice = useCallback(async (deviceId: string): Promise<void> => {
-    console.log(`📶 [BT] Disconnecting: ${deviceId}`);
-
     const deviceInfo = connectedDevices.find(d => d.id === deviceId);
     if (deviceInfo?.gatt?.connected) {
       deviceInfo.gatt.disconnect();
@@ -370,8 +353,6 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   // Forget device
   // ---------------------------------------------------------------------------
   const forgetDevice = useCallback((deviceId: string): void => {
-    console.log(`📶 [BT] Forgetting: ${deviceId}`);
-    
     disconnectDevice(deviceId);
     
     if (isMountedRef.current) {
