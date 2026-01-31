@@ -19,7 +19,7 @@ export interface UseCameraOptions {
 
 export interface UseCameraReturn {
   /** Ref to attach to video element */
-  videoRef: React.RefObject<HTMLVideoElement>;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
   /** Whether camera stream is active */
   isActive: boolean;
   /** Whether camera is initializing */
@@ -83,8 +83,9 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
   const [error, setError] = useState<string | null>(null);
 
   // Refs
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const isMountedRef = useRef(true);
 
   // ==========================================================================
   // DEVICE ENUMERATION
@@ -94,7 +95,9 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
     try {
       const allDevices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = allDevices.filter(d => d.kind === 'videoinput');
-      setDevices(videoDevices);
+      if (isMountedRef.current) {
+        setDevices(videoDevices);
+      }
       console.log(`📷 [CAMERA] Found ${videoDevices.length} video devices`);
       return videoDevices;
     } catch (err) {
@@ -117,6 +120,8 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
     console.log(`📷 [CAMERA] Facing mode: ${facingMode}`);
     console.log(`📷 [CAMERA] Selected device: ${selectedDeviceId || 'auto'}`);
 
+    if (!isMountedRef.current) return;
+    
     setIsLoading(true);
     setError(null);
 
@@ -142,6 +147,13 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
       console.log(`📷 [CAMERA] Requesting stream with constraints:`, constraints);
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      
+      if (!isMountedRef.current) {
+        // Component unmounted while waiting for camera
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      
       streamRef.current = stream;
 
       // Attach to video element
@@ -168,21 +180,27 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
         });
       }
 
-      setIsActive(true);
-      console.log(`📷 [CAMERA] ✅ Camera started successfully`);
+      if (isMountedRef.current) {
+        setIsActive(true);
+        console.log(`📷 [CAMERA] ✅ Camera started successfully`);
 
-      // Re-enumerate devices (may have more info after permission granted)
-      await enumerateDevices();
+        // Re-enumerate devices (may have more info after permission granted)
+        await enumerateDevices();
+      }
 
     } catch (err: any) {
       console.error(`📷 [CAMERA] ❌ Failed to start:`, err);
       
-      const errorMessage = getErrorMessage(err);
-      setError(errorMessage);
-      onError?.(err);
+      if (isMountedRef.current) {
+        const errorMessage = getErrorMessage(err);
+        setError(errorMessage);
+        onError?.(err);
+      }
       
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [facingMode, selectedDeviceId, onError, enumerateDevices]);
 
@@ -191,22 +209,28 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
   // ==========================================================================
 
   const stopCamera = useCallback(() => {
+    // Guard: Don't spam logs if there's nothing to stop
+    if (!streamRef.current) {
+      return;
+    }
+    
     console.log(`📷 [CAMERA] Stopping camera...`);
 
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => {
-        track.stop();
-        console.log(`📷 [CAMERA] Stopped track: ${track.kind}`);
-      });
-      streamRef.current = null;
-    }
+    streamRef.current.getTracks().forEach(track => {
+      track.stop();
+      console.log(`📷 [CAMERA] Stopped track: ${track.kind}`);
+    });
+    streamRef.current = null;
 
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
 
-    setIsActive(false);
-    setError(null);
+    if (isMountedRef.current) {
+      setIsActive(false);
+      setError(null);
+    }
+    
     console.log(`📷 [CAMERA] ✅ Camera stopped`);
   }, []);
 
@@ -257,9 +281,13 @@ export function useCamera(options: UseCameraOptions = {}): UseCameraReturn {
   // ==========================================================================
 
   useEffect(() => {
+    isMountedRef.current = true;
+    
     return () => {
-      console.log(`📷 [CAMERA] Unmounting - cleaning up...`);
+      isMountedRef.current = false;
+      
       if (streamRef.current) {
+        console.log(`📷 [CAMERA] Unmounting - cleaning up...`);
         streamRef.current.getTracks().forEach(track => track.stop());
         streamRef.current = null;
       }

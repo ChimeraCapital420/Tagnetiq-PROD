@@ -1,10 +1,9 @@
 // FILE: src/components/profile/BackgroundUploader.tsx
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Upload, Link2, X, Loader2, Image as ImageIcon, Check, RotateCcw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -38,6 +37,22 @@ export const BackgroundUploader: React.FC = () => {
   const displayUrl = pendingUpload?.localPreviewUrl || pendingUrl || savedUrl;
   const hasPendingChanges = !!(pendingUpload || pendingUrl);
 
+  // Sync savedUrl when profile changes
+  useEffect(() => {
+    if (profile?.custom_background_url !== undefined) {
+      setSavedUrl(profile.custom_background_url || '');
+    }
+  }, [profile?.custom_background_url]);
+
+  // Cleanup blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      if (pendingUpload?.localPreviewUrl) {
+        URL.revokeObjectURL(pendingUpload.localPreviewUrl);
+      }
+    };
+  }, [pendingUpload?.localPreviewUrl]);
+
   const validateImageUrl = (url: string): boolean => {
     try {
       const urlObj = new URL(url);
@@ -64,6 +79,11 @@ export const BackgroundUploader: React.FC = () => {
       return;
     }
 
+    // Revoke old preview URL if exists
+    if (pendingUpload?.localPreviewUrl) {
+      URL.revokeObjectURL(pendingUpload.localPreviewUrl);
+    }
+
     // Create local preview URL (no upload yet)
     const localPreviewUrl = URL.createObjectURL(file);
     
@@ -76,10 +96,8 @@ export const BackgroundUploader: React.FC = () => {
     
     toast.info(t('background.previewReady', 'Preview ready - tap Save to apply'));
     
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    // Reset file input for re-selection
+    event.target.value = '';
   };
 
   // Handle URL preview - validates and shows preview
@@ -96,7 +114,7 @@ export const BackgroundUploader: React.FC = () => {
     try {
       // Test if image loads
       await new Promise<void>((resolve, reject) => {
-        const img = new Image();
+        const img = new window.Image();
         img.onload = () => resolve();
         img.onerror = () => reject(new Error('Failed to load image'));
         img.src = urlInput;
@@ -192,15 +210,13 @@ export const BackgroundUploader: React.FC = () => {
       // Delete old background from storage if it was a custom upload
       if (savedUrl && savedUrl.includes('user-uploads')) {
         try {
-          // Extract path: backgrounds/{userId}/{filename}
           const urlParts = savedUrl.split('/user-uploads/');
           if (urlParts[1]) {
-            const oldPath = urlParts[1].split('?')[0]; // Remove query params
+            const oldPath = urlParts[1].split('?')[0];
             await supabase.storage.from('user-uploads').remove([oldPath]);
           }
         } catch (cleanupError) {
           console.warn('Failed to cleanup old background:', cleanupError);
-          // Don't fail the whole operation for cleanup
         }
       }
 
@@ -213,9 +229,10 @@ export const BackgroundUploader: React.FC = () => {
       
       toast.success(t('background.saved', 'Background saved!'));
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Background save error:', error);
-      toast.error(error.message || t('background.saveFailed', 'Failed to save background'));
+      const message = error instanceof Error ? error.message : t('background.saveFailed', 'Failed to save background');
+      toast.error(message);
     } finally {
       setUploading(false);
     }
@@ -267,15 +284,6 @@ export const BackgroundUploader: React.FC = () => {
       setRemoving(false);
     }
   };
-
-  // Cleanup on unmount
-  React.useEffect(() => {
-    return () => {
-      if (pendingUpload?.localPreviewUrl) {
-        URL.revokeObjectURL(pendingUpload.localPreviewUrl);
-      }
-    };
-  }, [pendingUpload]);
 
   return (
     <Card>
