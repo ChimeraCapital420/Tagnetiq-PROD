@@ -44,10 +44,11 @@ export interface CameraSettings {
 
 export interface UseCameraControlsReturn {
   // State
-  capabilities: CameraCapabilities | null;
+  capabilities: CameraCapabilities; // CHANGED: Never null, always safe object
   settings: CameraSettings;
   isApplying: boolean;
   error: string | null;
+  isReady: boolean; // NEW: True when we have a real track with capabilities
   
   // Actions
   setTorch: (enabled: boolean) => Promise<void>;
@@ -80,6 +81,24 @@ const DEFAULT_SETTINGS: CameraSettings = {
   frameRate: 30,
 };
 
+// NEW: Safe default capabilities - all features disabled
+const EMPTY_CAPABILITIES: CameraCapabilities = {
+  torch: false,
+  zoom: null,
+  focusMode: [],
+  exposureMode: [],
+  whiteBalanceMode: [],
+  brightness: null,
+  contrast: null,
+  saturation: null,
+  sharpness: null,
+  pan: null,
+  tilt: null,
+  width: null,
+  height: null,
+  frameRate: null,
+};
+
 const PRESETS: Record<string, Partial<CameraSettings>> = {
   default: DEFAULT_SETTINGS,
   lowLight: {
@@ -110,11 +129,12 @@ const PRESETS: Record<string, Partial<CameraSettings>> = {
 export function useCameraControls(
   videoTrack: MediaStreamTrack | null
 ): UseCameraControlsReturn {
-  // State
-  const [capabilities, setCapabilities] = useState<CameraCapabilities | null>(null);
+  // State - CHANGED: capabilities starts with safe empty object, never null
+  const [capabilities, setCapabilities] = useState<CameraCapabilities>(EMPTY_CAPABILITIES);
   const [settings, setSettings] = useState<CameraSettings>(DEFAULT_SETTINGS);
   const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isReady, setIsReady] = useState(false); // NEW
 
   // Ref to track component mount status
   const isMounted = useRef(true);
@@ -124,8 +144,10 @@ export function useCameraControls(
   // ---------------------------------------------------------------------------
 
   const refreshCapabilities = useCallback(() => {
+    // No track = reset to empty capabilities
     if (!videoTrack) {
-      setCapabilities(null);
+      setCapabilities(EMPTY_CAPABILITIES);
+      setIsReady(false);
       return;
     }
 
@@ -136,7 +158,8 @@ export function useCameraControls(
       
       if (!caps) {
         console.log('📷 [CONTROLS] getCapabilities() not supported');
-        setCapabilities(null);
+        setCapabilities(EMPTY_CAPABILITIES);
+        setIsReady(false);
         return;
       }
 
@@ -149,93 +172,94 @@ export function useCameraControls(
         
         // Zoom
         zoom: caps.zoom ? {
-          min: (caps.zoom as any).min || 1,
-          max: (caps.zoom as any).max || 1,
-          step: (caps.zoom as any).step || 0.1,
+          min: (caps.zoom as any).min ?? 1,
+          max: (caps.zoom as any).max ?? 1,
+          step: (caps.zoom as any).step ?? 0.1,
         } : null,
         
         // Focus modes
-        focusMode: (caps.focusMode as string[]) || [],
+        focusMode: (caps.focusMode as string[]) ?? [],
         
         // Exposure modes
-        exposureMode: (caps.exposureMode as string[]) || [],
+        exposureMode: (caps.exposureMode as string[]) ?? [],
         
         // White balance
-        whiteBalanceMode: (caps.whiteBalanceMode as string[]) || [],
+        whiteBalanceMode: (caps.whiteBalanceMode as string[]) ?? [],
         
         // Brightness (not standard, but some cameras support)
         brightness: (caps as any).brightness ? {
-          min: (caps as any).brightness.min || 0,
-          max: (caps as any).brightness.max || 100,
-          step: (caps as any).brightness.step || 1,
+          min: (caps as any).brightness.min ?? 0,
+          max: (caps as any).brightness.max ?? 100,
+          step: (caps as any).brightness.step ?? 1,
         } : null,
         
         // Contrast
         contrast: (caps as any).contrast ? {
-          min: (caps as any).contrast.min || 0,
-          max: (caps as any).contrast.max || 100,
-          step: (caps as any).contrast.step || 1,
+          min: (caps as any).contrast.min ?? 0,
+          max: (caps as any).contrast.max ?? 100,
+          step: (caps as any).contrast.step ?? 1,
         } : null,
         
         // Saturation
         saturation: (caps as any).saturation ? {
-          min: (caps as any).saturation.min || 0,
-          max: (caps as any).saturation.max || 100,
-          step: (caps as any).saturation.step || 1,
+          min: (caps as any).saturation.min ?? 0,
+          max: (caps as any).saturation.max ?? 100,
+          step: (caps as any).saturation.step ?? 1,
         } : null,
         
         // Sharpness
         sharpness: (caps as any).sharpness ? {
-          min: (caps as any).sharpness.min || 0,
-          max: (caps as any).sharpness.max || 100,
-          step: (caps as any).sharpness.step || 1,
+          min: (caps as any).sharpness.min ?? 0,
+          max: (caps as any).sharpness.max ?? 100,
+          step: (caps as any).sharpness.step ?? 1,
         } : null,
         
         // Pan
         pan: (caps as any).pan ? {
-          min: (caps as any).pan.min || -180,
-          max: (caps as any).pan.max || 180,
-          step: (caps as any).pan.step || 1,
+          min: (caps as any).pan.min ?? -180,
+          max: (caps as any).pan.max ?? 180,
+          step: (caps as any).pan.step ?? 1,
         } : null,
         
         // Tilt
         tilt: (caps as any).tilt ? {
-          min: (caps as any).tilt.min || -180,
-          max: (caps as any).tilt.max || 180,
-          step: (caps as any).tilt.step || 1,
+          min: (caps as any).tilt.min ?? -180,
+          max: (caps as any).tilt.max ?? 180,
+          step: (caps as any).tilt.step ?? 1,
         } : null,
         
         // Resolution
         width: caps.width ? {
-          min: (caps.width as any).min || 320,
-          max: (caps.width as any).max || 4096,
+          min: (caps.width as any).min ?? 320,
+          max: (caps.width as any).max ?? 4096,
         } : null,
         height: caps.height ? {
-          min: (caps.height as any).min || 240,
-          max: (caps.height as any).max || 2160,
+          min: (caps.height as any).min ?? 240,
+          max: (caps.height as any).max ?? 2160,
         } : null,
         
         // Frame rate
         frameRate: caps.frameRate ? {
-          min: (caps.frameRate as any).min || 1,
-          max: (caps.frameRate as any).max || 60,
+          min: (caps.frameRate as any).min ?? 1,
+          max: (caps.frameRate as any).max ?? 60,
         } : null,
       };
 
       setCapabilities(detected);
+      setIsReady(true); // Mark as ready
 
       // Update settings with current track values
       if (trackSettings) {
         setSettings(prev => ({
           ...prev,
-          torch: (trackSettings as any).torch || false,
-          zoom: trackSettings.zoom || 1,
-          focusMode: (trackSettings.focusMode as any) || 'continuous',
+          torch: (trackSettings as any).torch ?? false,
+          zoom: trackSettings.zoom ?? 1,
+          focusMode: (trackSettings.focusMode as any) ?? 'continuous',
           resolution: {
-            width: trackSettings.width || 1920,
-            height: trackSettings.height || 1080,
+            width: trackSettings.width ?? 1920,
+            height: trackSettings.height ?? 1080,
           },
-          frameRate: trackSettings.frameRate || 30,
+          frameRate: trackSettings.frameRate ?? 30,
         }));
       }
 
@@ -248,7 +272,8 @@ export function useCameraControls(
 
     } catch (err) {
       console.error('📷 [CONTROLS] Failed to detect capabilities:', err);
-      setCapabilities(null);
+      setCapabilities(EMPTY_CAPABILITIES);
+      setIsReady(false);
     }
   }, [videoTrack]);
 
@@ -305,7 +330,8 @@ export function useCameraControls(
   // ---------------------------------------------------------------------------
 
   const setTorch = useCallback(async (enabled: boolean) => {
-    if (!capabilities?.torch) {
+    // Safe check - capabilities is never null now, but torch might be false
+    if (!capabilities.torch) {
       toast.error('Torch not available', {
         description: 'This camera does not support flashlight control'
       });
@@ -320,14 +346,14 @@ export function useCameraControls(
       setSettings(prev => ({ ...prev, torch: enabled }));
       toast.success(enabled ? 'Flashlight on' : 'Flashlight off');
     }
-  }, [capabilities, applyConstraints]);
+  }, [capabilities.torch, applyConstraints]);
 
   // ---------------------------------------------------------------------------
   // ZOOM CONTROL
   // ---------------------------------------------------------------------------
 
   const setZoom = useCallback(async (level: number) => {
-    if (!capabilities?.zoom) {
+    if (!capabilities.zoom) {
       toast.error('Zoom not available', {
         description: 'This camera does not support digital zoom'
       });
@@ -347,14 +373,14 @@ export function useCameraControls(
     if (success) {
       setSettings(prev => ({ ...prev, zoom: clampedLevel }));
     }
-  }, [capabilities, applyConstraints]);
+  }, [capabilities.zoom, applyConstraints]);
 
   // ---------------------------------------------------------------------------
   // FOCUS MODE
   // ---------------------------------------------------------------------------
 
   const setFocusMode = useCallback(async (mode: 'continuous' | 'single-shot' | 'manual') => {
-    if (!capabilities?.focusMode.includes(mode)) {
+    if (!capabilities.focusMode.includes(mode)) {
       toast.error('Focus mode not available', {
         description: `This camera does not support "${mode}" focus`
       });
@@ -369,14 +395,14 @@ export function useCameraControls(
       setSettings(prev => ({ ...prev, focusMode: mode }));
       toast.success(`Focus: ${mode}`);
     }
-  }, [capabilities, applyConstraints]);
+  }, [capabilities.focusMode, applyConstraints]);
 
   // ---------------------------------------------------------------------------
   // BRIGHTNESS (via CSS filter if not supported natively)
   // ---------------------------------------------------------------------------
 
   const setBrightness = useCallback(async (value: number) => {
-    if (capabilities?.brightness) {
+    if (capabilities.brightness) {
       // Native support
       await applyConstraints({
         advanced: [{ brightness: value } as any]
@@ -384,14 +410,14 @@ export function useCameraControls(
     }
     // Always update state (will be applied via CSS filter in component)
     setSettings(prev => ({ ...prev, brightness: value }));
-  }, [capabilities, applyConstraints]);
+  }, [capabilities.brightness, applyConstraints]);
 
   // ---------------------------------------------------------------------------
   // CONTRAST (via CSS filter if not supported natively)
   // ---------------------------------------------------------------------------
 
   const setContrast = useCallback(async (value: number) => {
-    if (capabilities?.contrast) {
+    if (capabilities.contrast) {
       // Native support
       await applyConstraints({
         advanced: [{ contrast: value } as any]
@@ -399,14 +425,14 @@ export function useCameraControls(
     }
     // Always update state (will be applied via CSS filter in component)
     setSettings(prev => ({ ...prev, contrast: value }));
-  }, [capabilities, applyConstraints]);
+  }, [capabilities.contrast, applyConstraints]);
 
   // ---------------------------------------------------------------------------
   // SATURATION (via CSS filter if not supported natively)
   // ---------------------------------------------------------------------------
 
   const setSaturation = useCallback(async (value: number) => {
-    if (capabilities?.saturation) {
+    if (capabilities.saturation) {
       // Native support
       await applyConstraints({
         advanced: [{ saturation: value } as any]
@@ -414,7 +440,7 @@ export function useCameraControls(
     }
     // Always update state (will be applied via CSS filter in component)
     setSettings(prev => ({ ...prev, saturation: value }));
-  }, [capabilities, applyConstraints]);
+  }, [capabilities.saturation, applyConstraints]);
 
   // ---------------------------------------------------------------------------
   // RESOLUTION
@@ -454,7 +480,7 @@ export function useCameraControls(
   const resetToDefaults = useCallback(async () => {
     setSettings(DEFAULT_SETTINGS);
     
-    // Apply default constraints
+    // Apply default constraints only if we have a track
     if (videoTrack) {
       await applyConstraints({
         width: { ideal: DEFAULT_SETTINGS.resolution.width },
@@ -494,11 +520,12 @@ export function useCameraControls(
   // ---------------------------------------------------------------------------
 
   return {
-    // State
+    // State - capabilities is NEVER null now
     capabilities,
     settings,
     isApplying,
     error,
+    isReady, // NEW: Use this to check if camera is actually available
     
     // Actions
     setTorch,
@@ -518,3 +545,23 @@ export function useCameraControls(
 }
 
 export default useCameraControls;
+```
+
+---
+
+## Key Changes:
+
+| Before | After |
+|--------|-------|
+| `capabilities: CameraCapabilities \| null` | `capabilities: CameraCapabilities` (never null) |
+| `useState<CameraCapabilities \| null>(null)` | `useState<CameraCapabilities>(EMPTY_CAPABILITIES)` |
+| No way to know if ready | Added `isReady: boolean` |
+| `||` for defaults | `??` for safer nullish coalescing |
+
+---
+
+## Part 2: Find the consuming component
+
+After deploying this fix, the crash should stop. But to be thorough, **share this file** so I can add proper guards there too:
+```
+src/components/DualScanner.tsx
