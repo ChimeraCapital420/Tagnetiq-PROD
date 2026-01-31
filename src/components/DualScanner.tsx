@@ -9,7 +9,7 @@ import {
   X, FlipHorizontal, Upload, Circle, Zap, Loader2, ScanLine,
   ImageIcon, Video, Settings as SettingsIcon, Focus, Check,
   FileText, Award, ShieldCheck, Trash2, Search, Bluetooth,
-  Grid3X3, Flashlight
+  Flashlight
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAppContext } from '@/contexts/AppContext';
@@ -190,20 +190,26 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   // ---------------------------------------------------------------------------
   // CAMERA MANAGEMENT
   // ---------------------------------------------------------------------------
+  
   const stopCamera = useCallback(() => {
-    console.log('📷 [CAMERA] Stopping camera...');
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => {
-        track.stop();
-        console.log(`📷 [CAMERA] Stopped track: ${track.kind}`);
-      });
-      streamRef.current = null;
+    // Guard: Nothing to stop - exit silently
+    if (!streamRef.current) {
+      return;
     }
+    
+    console.log('📷 [DUAL] Stopping camera...');
+    streamRef.current.getTracks().forEach(track => track.stop());
+    streamRef.current = null;
   }, []);
 
   const startCamera = useCallback(async () => {
-    stopCamera();
-    console.log('📷 [CAMERA] Starting camera...');
+    // Stop existing stream first
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
+    console.log('📷 [DUAL] Manual startCamera called');
 
     if (!navigator.mediaDevices?.getUserMedia) {
       toast.error('Camera not supported in this browser');
@@ -216,10 +222,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
           deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
           width: { ideal: 1920 },
           height: { ideal: 1080 },
-          // Request torch capability if available
-          ...(cameraControls.capabilities.torch && { torch: false }),
         },
-        // Include audio for video recording
         audio: scanMode === 'video' ? { echoCancellation: true, noiseSuppression: true } : false,
       });
       
@@ -229,22 +232,13 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         videoRef.current.srcObject = stream;
       }
       
-      console.log('📷 [CAMERA] Stream started successfully');
-      
-      // Log available capabilities
-      const track = stream.getVideoTracks()[0];
-      if (track) {
-        const capabilities = track.getCapabilities?.() || {};
-        console.log('📷 [CAMERA] Capabilities:', capabilities);
-      }
+      console.log('📷 [DUAL] ✅ Camera ready');
     } catch (err) {
-      console.error('📷 [CAMERA] Error:', err);
-      toast.error('Camera access denied.', {
-        description: 'Please enable camera permissions in your browser settings.',
-      });
+      console.error('📷 [DUAL] Error:', err);
+      toast.error('Camera access denied.');
       onClose();
     }
-  }, [selectedDeviceId, onClose, stopCamera, scanMode, cameraControls.capabilities.torch]);
+  }, [selectedDeviceId, scanMode, onClose]);
 
   // Enumerate devices on mount
   useEffect(() => {
@@ -273,14 +267,58 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   }, [isOpen, selectedDeviceId]);
 
   // Start/stop camera based on modal state
+  // Note: Inlined camera logic to avoid dependency loops
   useEffect(() => {
     if (isOpen) {
-      startCamera();
-    } else {
-      stopCamera();
+      // Start camera when modal opens
+      const initCamera = async () => {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          toast.error('Camera not supported in this browser');
+          return;
+        }
+
+        // Stop any existing stream first
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
+
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            },
+            audio: scanMode === 'video' ? { echoCancellation: true, noiseSuppression: true } : false,
+          });
+          
+          streamRef.current = stream;
+          
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+          }
+          
+          console.log('📷 [DUAL] Camera started');
+        } catch (err) {
+          console.error('📷 [DUAL] Camera error:', err);
+          toast.error('Camera access denied');
+          onClose();
+        }
+      };
+
+      initCamera();
     }
-    return () => stopCamera();
-  }, [isOpen, startCamera, stopCamera]);
+
+    // Cleanup function
+    return () => {
+      if (streamRef.current) {
+        console.log('📷 [DUAL] Cleanup - stopping camera');
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+    };
+  }, [isOpen, selectedDeviceId, scanMode, onClose]);
 
   // ---------------------------------------------------------------------------
   // CAPTURE FUNCTIONS
@@ -668,7 +706,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   };
 
   const handleManualFocus = () => {
-    if (cameraControls.capabilities.focusMode) {
+    if (cameraControls.capabilities.focusMode.length > 0) {
       // Trigger single-shot autofocus
       cameraControls.setFocusMode('single-shot');
       toast.info('Focusing...');

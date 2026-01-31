@@ -52,7 +52,7 @@ export function useCameraCapture(
   const streamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isMountedRef = useRef(true);
-  const hasEnumeratedRef = useRef(false); // Prevent multiple enumerations
+  const hasEnumeratedRef = useRef(false);
 
   const [isReady, setIsReady] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
@@ -64,26 +64,20 @@ export function useCameraCapture(
   // ========================================
 
   const enumerateDevices = useCallback(async () => {
-    // Only enumerate once to prevent loops
     if (hasEnumeratedRef.current) {
       return devices;
     }
     
     try {
-      // Try to enumerate without requesting permission first
       let allDevices = await navigator.mediaDevices.enumerateDevices();
       let videoDevices = allDevices.filter(d => d.kind === 'videoinput');
       
-      // If we don't have labels, we need permission
       const needsPermission = videoDevices.some(d => !d.label);
       
       if (needsPermission && videoDevices.length > 0) {
-        // Request minimal permission just to get labels
         const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        // Immediately stop - we just needed permission
         tempStream.getTracks().forEach(track => track.stop());
         
-        // Re-enumerate with permission granted
         allDevices = await navigator.mediaDevices.enumerateDevices();
         videoDevices = allDevices.filter(d => d.kind === 'videoinput');
       }
@@ -100,7 +94,6 @@ export function useCameraCapture(
         setDevices(mappedDevices);
         hasEnumeratedRef.current = true;
         
-        // Select initial device if not set
         if (!currentDeviceId && mappedDevices.length > 0) {
           const preferred = preferRearCamera
             ? mappedDevices.find(d => d.isRearCamera)
@@ -121,12 +114,11 @@ export function useCameraCapture(
   // ========================================
 
   const stopCamera = useCallback(() => {
-    // Guard: Nothing to stop
     if (!streamRef.current) {
       return;
     }
     
-    console.log('📷 [CAPTURE] Stopping camera...');
+    console.log('📷 [CAPTURE] Stopping...');
     streamRef.current.getTracks().forEach(track => track.stop());
     streamRef.current = null;
     
@@ -138,14 +130,13 @@ export function useCameraCapture(
   const startCamera = useCallback(async (deviceId?: string) => {
     if (!isMountedRef.current) return;
     
-    // Stop existing stream first
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
 
     const targetDeviceId = deviceId || currentDeviceId;
-    console.log('📷 [CAPTURE] Starting camera...', targetDeviceId || 'auto');
+    console.log('📷 [CAPTURE] Starting...', targetDeviceId || 'auto');
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -175,10 +166,10 @@ export function useCameraCapture(
       
       if (isMountedRef.current) {
         setIsReady(true);
-        console.log('📷 [CAPTURE] ✅ Camera ready');
+        console.log('📷 [CAPTURE] ✅ Ready');
       }
     } catch (error) {
-      console.error('📷 [CAPTURE] Camera start error:', error);
+      console.error('📷 [CAPTURE] Error:', error);
       toast.error('Camera access denied', {
         description: 'Please enable camera permissions in your browser settings.',
       });
@@ -214,7 +205,6 @@ export function useCameraCapture(
     try {
       const video = videoRef.current;
       
-      // Create or reuse canvas
       if (!canvasRef.current) {
         canvasRef.current = document.createElement('canvas');
       }
@@ -228,7 +218,6 @@ export function useCameraCapture(
 
       ctx.drawImage(video, 0, 0);
       
-      // Return full-quality capture
       return canvas.toDataURL('image/jpeg', 0.95);
     } catch (error) {
       console.error('Capture error:', error);
@@ -251,14 +240,12 @@ export function useCameraCapture(
     const track = streamRef.current.getVideoTracks()[0];
     if (!track) return;
 
-    // Check if focus is supported
     const capabilities = track.getCapabilities?.() as MediaTrackCapabilities & { focusMode?: string[] };
     if (capabilities?.focusMode?.includes('manual')) {
       track.applyConstraints?.({
         advanced: [{ focusMode: 'manual' } as any],
       });
       
-      // Reset to continuous after a moment
       setTimeout(() => {
         track.applyConstraints?.({
           advanced: [{ focusMode: 'continuous' } as any],
@@ -271,14 +258,12 @@ export function useCameraCapture(
   // LIFECYCLE
   // ========================================
 
-  // Track mount state and cleanup
   useEffect(() => {
     isMountedRef.current = true;
     
     return () => {
       isMountedRef.current = false;
       
-      // Cleanup stream on unmount
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
         streamRef.current = null;
@@ -286,15 +271,12 @@ export function useCameraCapture(
     };
   }, []);
 
-  // Enumerate devices once on mount
   useEffect(() => {
     enumerateDevices();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-start if requested (separate effect, runs once)
   useEffect(() => {
     if (autoStart && !isReady) {
-      // Small delay to ensure devices are enumerated
       const timer = setTimeout(() => {
         if (isMountedRef.current && !streamRef.current) {
           startCamera();
