@@ -20,7 +20,6 @@ export interface BluetoothDevice {
 }
 
 export interface UseBluetoothManagerReturn {
-  // State
   isSupported: boolean;
   isEnabled: boolean;
   isScanning: boolean;
@@ -28,8 +27,6 @@ export interface UseBluetoothManagerReturn {
   connectedDevices: BluetoothDevice[];
   connectedDevice: BluetoothDevice | null;
   error: string | null;
-  
-  // Actions
   startScan: () => Promise<void>;
   stopScan: () => void;
   connectDevice: (deviceId: string) => Promise<boolean>;
@@ -48,6 +45,9 @@ const BLUETOOTH_SERVICES = [
 ];
 
 const STORAGE_KEY = 'bluetooth_paired_devices';
+
+// Module-level flag - persists across StrictMode remounts
+let hasCheckedBluetoothAvailability = false;
 
 // =============================================================================
 // HELPER FUNCTIONS
@@ -108,7 +108,6 @@ function removeRememberedDevice(deviceId: string): void {
 // =============================================================================
 
 export function useBluetoothManager(): UseBluetoothManagerReturn {
-  // State
   const [isSupported] = useState<boolean>(checkBluetoothSupport());
   const [isEnabled, setIsEnabled] = useState<boolean>(true);
   const [isScanning, setIsScanning] = useState<boolean>(false);
@@ -116,14 +115,12 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   const [connectedDevices, setConnectedDevices] = useState<BluetoothDevice[]>([]);
   const [error, setError] = useState<string | null>(null);
   
-  // Refs
   const isMountedRef = useRef(true);
-  const hasCheckedAvailabilityRef = useRef(false);
   const scanAbortController = useRef<AbortController | null>(null);
   const deviceRefs = useRef<Map<string, globalThis.BluetoothDevice>>(new Map());
 
   // ---------------------------------------------------------------------------
-  // Check Bluetooth availability on mount (runs once)
+  // Check Bluetooth availability on mount (runs once per page load)
   // ---------------------------------------------------------------------------
   useEffect(() => {
     isMountedRef.current = true;
@@ -132,11 +129,11 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
       return;
     }
 
-    // Guard: Only check once
-    if (hasCheckedAvailabilityRef.current) {
+    // Guard: Only check once per page load (module-level)
+    if (hasCheckedBluetoothAvailability) {
       return;
     }
-    hasCheckedAvailabilityRef.current = true;
+    hasCheckedBluetoothAvailability = true;
 
     const checkAvailability = async () => {
       try {
@@ -394,7 +391,6 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
     return () => {
       isMountedRef.current = false;
       
-      // Disconnect all devices on unmount
       connectedDevices.forEach(device => {
         if (device.gatt?.connected) {
           device.gatt.disconnect();
@@ -403,9 +399,6 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
     };
   }, [connectedDevices]);
 
-  // ---------------------------------------------------------------------------
-  // Return
-  // ---------------------------------------------------------------------------
   return {
     isSupported,
     isEnabled,
