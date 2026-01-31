@@ -1,376 +1,438 @@
 // FILE: src/hooks/useBluetoothManager.ts
-// PROJECT CERULEAN: Production-ready Bluetooth manager with WebRTC streaming
+// Real Web Bluetooth API integration for external cameras and devices
+// Mobile-first with battery optimization and connection persistence
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 
-interface BluetoothDevice {
+// =============================================================================
+// DEVICE TYPE DETECTION
+// =============================================================================
+
+const CAMERA_DEVICE_PATTERNS = [
+  'gopro', 'dji', 'insta360', 'camera', 'webcam',
+  'ray-ban', 'meta', 'glasses', 'scanner', 'microscope',
+];
+
+function detectDeviceType(name: string): 'camera' | 'scanner' | 'glasses' | 'unknown' {
+  const lower = (name || '').toLowerCase();
+  if (lower.includes('gopro') || lower.includes('dji') || lower.includes('camera')) return 'camera';
+  if (lower.includes('ray-ban') || lower.includes('meta') || lower.includes('glasses')) return 'glasses';
+  if (lower.includes('scanner') || lower.includes('barcode')) return 'scanner';
+  return 'unknown';
+}
+
+// =============================================================================
+// TYPES
+// =============================================================================
+
+export interface BluetoothDeviceInfo {
   id: string;
-  name: string | undefined;
+  name: string;
   connected: boolean;
-  server?: BluetoothRemoteGATTServer;
-  dataChannel?: RTCDataChannel;
-  peerConnection?: RTCPeerConnection;
+  device?: BluetoothDevice;
+  gatt?: BluetoothRemoteGATTServer;
 }
 
-interface BluetoothCommand {
-  command: string;
-  data?: any;
-  timestamp: number;
-}
-
-export const useBluetoothManager = () => {
-  const [isSupported, setIsSupported] = useState(false);
-  const [isEnabled, setIsEnabled] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
-  const [connectedDevices, setConnectedDevices] = useState<BluetoothDevice[]>([]);
-  const [availableDevices, setAvailableDevices] = useState<BluetoothDevice[]>([]);
-  const [streamingDevices, setStreamingDevices] = useState<string[]>([]);
+export interface UseBluetoothManagerReturn {
+  // State
+  isSupported: boolean;
+  isEnabled: boolean;
+  isScanning: boolean;
+  availableDevices: BluetoothDeviceInfo[];
+  connectedDevices: BluetoothDeviceInfo[];
+  connectedDevice: BluetoothDeviceInfo | null; // Convenience for single device
+  error: string | null;
   
-  const videoStreams = useRef<Map<string, MediaStream>>(new Map());
-  const streamCallbacks = useRef<Map<string, (stream: MediaStream) => void>>(new Map());
+  // Actions
+  startScan: () => Promise<void>;
+  stopScan: () => void;
+  connectDevice: (deviceId: string) => Promise<boolean>;
+  disconnectDevice: (deviceId: string) => Promise<void>;
+  forgetDevice: (deviceId: string) => void;
+  requestDevice: () => Promise<BluetoothDeviceInfo | null>;
+}
 
-  useEffect(() => {
-    setIsSupported('bluetooth' in navigator);
+// =============================================================================
+// CONSTANTS
+// =============================================================================
+
+// Bluetooth services we're interested in (cameras, video devices)
+const BLUETOOTH_SERVICES = [
+  // Generic services
+  'generic_access',
+  'device_information',
+  // Camera-related (custom UUIDs vary by manufacturer)
+  // GoPro uses custom services
+  // '0000fea6-0000-1000-8000-00805f9b34fb', // GoPro WiFi AP service
+];
+
+// Storage key for remembered devices
+const STORAGE_KEY = 'bluetooth_paired_devices';
+
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+/**
+ * Check if Web Bluetooth API is supported
+ */
+function checkBluetoothSupport(): boolean {
+  return typeof navigator !== 'undefined' && 'bluetooth' in navigator;
+}
+
+/**
+ * Load remembered devices from localStorage
+ */
+function loadRememberedDevices(): string[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save device to remembered devices
+ */
+function saveRememberedDevice(deviceId: string, deviceName: string): void {
+  try {
+    const stored = loadRememberedDevices();
+    const devices = stored.filter(id => id !== deviceId);
+    devices.unshift(deviceId); // Most recent first
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(devices.slice(0, 10))); // Keep last 10
     
-    if ('bluetooth' in navigator) {
-      checkBluetoothAvailability();
-    }
-  }, []);
+    // Also store device names for display
+    const names = JSON.parse(localStorage.getItem(`${STORAGE_KEY}_names`) || '{}');
+    names[deviceId] = deviceName;
+    localStorage.setItem(`${STORAGE_KEY}_names`, JSON.stringify(names));
+  } catch (e) {
+    console.warn('📶 [BLUETOOTH] Could not save device:', e);
+  }
+}
 
-  const checkBluetoothAvailability = async () => {
-    try {
-      const available = await navigator.bluetooth.getAvailability();
-      setIsEnabled(available);
-      
-      if ('addEventListener' in navigator.bluetooth) {
-        navigator.bluetooth.addEventListener('availabilitychanged', (event) => {
-          setIsEnabled((event as any).value);
-        });
-      }
-    } catch (error) {
-      console.error('Error checking Bluetooth availability:', error);
-      setIsEnabled(false);
-    }
-  };
+/**
+ * Remove device from remembered devices
+ */
+function removeRememberedDevice(deviceId: string): void {
+  try {
+    const stored = loadRememberedDevices();
+    const devices = stored.filter(id => id !== deviceId);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(devices));
+    
+    const names = JSON.parse(localStorage.getItem(`${STORAGE_KEY}_names`) || '{}');
+    delete names[deviceId];
+    localStorage.setItem(`${STORAGE_KEY}_names`, JSON.stringify(names));
+  } catch (e) {
+    console.warn('📶 [BLUETOOTH] Could not remove device:', e);
+  }
+}
 
-  const startScan = useCallback(async () => {
-    if (!isSupported || !isEnabled) {
-      toast.error('Bluetooth is not available');
+// =============================================================================
+// HOOK
+// =============================================================================
+
+export function useBluetoothManager(): UseBluetoothManagerReturn {
+  // State
+  const [isSupported] = useState<boolean>(checkBluetoothSupport());
+  const [isEnabled, setIsEnabled] = useState<boolean>(true); // Assume enabled until we know otherwise
+  const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [availableDevices, setAvailableDevices] = useState<BluetoothDeviceInfo[]>([]);
+  const [connectedDevices, setConnectedDevices] = useState<BluetoothDeviceInfo[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Refs
+  const scanAbortController = useRef<AbortController | null>(null);
+  const deviceRefs = useRef<Map<string, BluetoothDevice>>(new Map());
+
+  // ---------------------------------------------------------------------------
+  // Check Bluetooth availability on mount
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!isSupported) {
+      console.log('📶 [BLUETOOTH] Web Bluetooth not supported in this browser');
       return;
     }
 
-    setIsScanning(true);
-    setAvailableDevices([]);
+    // Check if Bluetooth is available
+    const checkAvailability = async () => {
+      try {
+        // @ts-ignore - getAvailability is not in all TypeScript definitions
+        if (navigator.bluetooth.getAvailability) {
+          // @ts-ignore
+          const available = await navigator.bluetooth.getAvailability();
+          setIsEnabled(available);
+          console.log(`📶 [BLUETOOTH] Availability: ${available}`);
+        }
+      } catch (e) {
+        console.log('📶 [BLUETOOTH] Could not check availability:', e);
+      }
+    };
+
+    checkAvailability();
+
+    // Listen for availability changes
+    // @ts-ignore
+    if (navigator.bluetooth.addEventListener) {
+      const handleAvailabilityChange = (event: any) => {
+        setIsEnabled(event.value);
+        console.log(`📶 [BLUETOOTH] Availability changed: ${event.value}`);
+      };
+      // @ts-ignore
+      navigator.bluetooth.addEventListener('availabilitychanged', handleAvailabilityChange);
+      return () => {
+        // @ts-ignore
+        navigator.bluetooth.removeEventListener('availabilitychanged', handleAvailabilityChange);
+      };
+    }
+  }, [isSupported]);
+
+  // ---------------------------------------------------------------------------
+  // Handle device disconnection events
+  // ---------------------------------------------------------------------------
+  const handleDeviceDisconnected = useCallback((deviceId: string) => {
+    console.log(`📶 [BLUETOOTH] Device disconnected: ${deviceId}`);
+    
+    setConnectedDevices(prev => prev.filter(d => d.id !== deviceId));
+    setAvailableDevices(prev => 
+      prev.map(d => d.id === deviceId ? { ...d, connected: false } : d)
+    );
+    
+    toast.info('Bluetooth device disconnected');
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Request device (opens browser's Bluetooth picker)
+  // ---------------------------------------------------------------------------
+  const requestDevice = useCallback(async (): Promise<BluetoothDeviceInfo | null> => {
+    if (!isSupported) {
+      setError('Web Bluetooth is not supported in this browser');
+      toast.error('Bluetooth not supported', {
+        description: 'Please use Chrome, Edge, or Opera'
+      });
+      return null;
+    }
+
+    console.log('📶 [BLUETOOTH] Requesting device...');
+    setError(null);
 
     try {
+      // Request device with filters
+      // Using acceptAllDevices for broader compatibility
       const device = await navigator.bluetooth.requestDevice({
         acceptAllDevices: true,
-        optionalServices: [
-          'battery_service',
-          '0000180f-0000-1000-8000-00805f9b34fb', // Battery Service
-          '00001800-0000-1000-8000-00805f9b34fb', // Generic Access
-          '00001801-0000-1000-8000-00805f9b34fb', // Generic Attribute
-          'device_information',
-          // Custom service UUIDs for smart glasses
-          '00002a00-0000-1000-8000-00805f9b34fb',
-          '00002a01-0000-1000-8000-00805f9b34fb',
-        ]
+        optionalServices: BLUETOOTH_SERVICES,
       });
 
-      if (device) {
-        const newDevice: BluetoothDevice = {
-          id: device.id,
-          name: device.name,
-          connected: false
-        };
-        setAvailableDevices([newDevice]);
-        toast.success(`Found device: ${device.name || 'Unknown'}`);
-      }
-    } catch (error: any) {
-      if (error.code !== 8) { // Not cancelled by user
-        toast.error('Failed to scan for devices');
-        console.error('Bluetooth scan error:', error);
-      }
-    } finally {
-      setIsScanning(false);
-    }
-  }, [isSupported, isEnabled]);
+      console.log(`📶 [BLUETOOTH] Device selected: ${device.name} (${device.id})`);
 
-  const stopScan = useCallback(() => {
+      // Store device reference
+      deviceRefs.current.set(device.id, device);
+
+      // Create device info
+      const deviceInfo: BluetoothDeviceInfo = {
+        id: device.id,
+        name: device.name || 'Unknown Device',
+        connected: false,
+        device,
+      };
+
+      // Add to available devices if not already there
+      setAvailableDevices(prev => {
+        const exists = prev.some(d => d.id === device.id);
+        if (exists) {
+          return prev.map(d => d.id === device.id ? deviceInfo : d);
+        }
+        return [...prev, deviceInfo];
+      });
+
+      // Listen for disconnection
+      device.addEventListener('gattserverdisconnected', () => {
+        handleDeviceDisconnected(device.id);
+      });
+
+      // Save for reconnection
+      saveRememberedDevice(device.id, device.name || 'Unknown Device');
+
+      return deviceInfo;
+
+    } catch (e: any) {
+      if (e.name === 'NotFoundError') {
+        // User cancelled the picker
+        console.log('📶 [BLUETOOTH] User cancelled device selection');
+        return null;
+      }
+      
+      console.error('📶 [BLUETOOTH] Request device error:', e);
+      setError(e.message || 'Failed to request device');
+      toast.error('Bluetooth error', { description: e.message });
+      return null;
+    }
+  }, [isSupported, handleDeviceDisconnected]);
+
+  // ---------------------------------------------------------------------------
+  // Start scanning (uses requestDevice since Web Bluetooth doesn't have passive scan)
+  // ---------------------------------------------------------------------------
+  const startScan = useCallback(async (): Promise<void> => {
+    console.log('📶 [BLUETOOTH] Starting scan...');
+    setIsScanning(true);
+    setError(null);
+
+    // Web Bluetooth doesn't support passive scanning
+    // We use requestDevice which opens the browser picker
+    const device = await requestDevice();
+    
     setIsScanning(false);
+    
+    if (device) {
+      toast.success(`Found: ${device.name}`);
+    }
+  }, [requestDevice]);
+
+  // ---------------------------------------------------------------------------
+  // Stop scanning
+  // ---------------------------------------------------------------------------
+  const stopScan = useCallback((): void => {
+    console.log('📶 [BLUETOOTH] Stopping scan...');
+    setIsScanning(false);
+    
+    if (scanAbortController.current) {
+      scanAbortController.current.abort();
+      scanAbortController.current = null;
+    }
   }, []);
 
-  const connectDevice = useCallback(async (deviceId: string) => {
-    const device = availableDevices.find(d => d.id === deviceId);
-    if (!device) {
+  // ---------------------------------------------------------------------------
+  // Connect to device
+  // ---------------------------------------------------------------------------
+  const connectDevice = useCallback(async (deviceId: string): Promise<boolean> => {
+    console.log(`📶 [BLUETOOTH] Connecting to device: ${deviceId}`);
+    setError(null);
+
+    // Find device in available devices
+    const deviceInfo = availableDevices.find(d => d.id === deviceId);
+    if (!deviceInfo?.device) {
+      setError('Device not found');
       toast.error('Device not found');
-      return;
+      return false;
     }
 
     try {
-      const bluetoothDevice = await navigator.bluetooth.requestDevice({
-        filters: [{ name: device.name }],
-        optionalServices: [
-          'battery_service',
-          '0000180f-0000-1000-8000-00805f9b34fb',
-          '00001800-0000-1000-8000-00805f9b34fb',
-          '00001801-0000-1000-8000-00805f9b34fb',
-          'device_information',
-          '00002a00-0000-1000-8000-00805f9b34fb',
-          '00002a01-0000-1000-8000-00805f9b34fb',
-        ]
-      });
-
-      const server = await bluetoothDevice.gatt!.connect();
+      // Connect to GATT server
+      console.log('📶 [BLUETOOTH] Connecting to GATT server...');
+      const gatt = await deviceInfo.device.gatt?.connect();
       
-      // Set up WebRTC for video streaming
-      const peerConnection = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
+      if (!gatt) {
+        throw new Error('Could not connect to device');
+      }
 
-      // Create data channel for commands
-      const dataChannel = peerConnection.createDataChannel('commands', {
-        ordered: true
-      });
+      console.log('📶 [BLUETOOTH] Connected to GATT server');
 
-      dataChannel.onopen = () => {
-        console.log('Data channel opened');
-      };
-
-      dataChannel.onmessage = (event) => {
-        handleDataChannelMessage(deviceId, event.data);
-      };
-
-      // Handle incoming video streams
-      peerConnection.ontrack = (event) => {
-        if (event.streams[0]) {
-          videoStreams.current.set(deviceId, event.streams[0]);
-          const callback = streamCallbacks.current.get(deviceId);
-          if (callback) {
-            callback(event.streams[0]);
-          }
-        }
-      };
-
-      // Store the connected device
-      const connectedDevice: BluetoothDevice = {
-        ...device,
+      // Update device info
+      const connectedInfo: BluetoothDeviceInfo = {
+        ...deviceInfo,
         connected: true,
-        server,
-        dataChannel,
-        peerConnection
+        gatt,
       };
 
-      setConnectedDevices(prev => [...prev, connectedDevice]);
-      setAvailableDevices(prev => prev.filter(d => d.id !== deviceId));
-      
-      // Set up disconnect listener
-      bluetoothDevice.addEventListener('gattserverdisconnected', () => {
-        handleDeviceDisconnected(deviceId);
-      });
+      // Update state
+      setConnectedDevices(prev => [...prev.filter(d => d.id !== deviceId), connectedInfo]);
+      setAvailableDevices(prev => 
+        prev.map(d => d.id === deviceId ? connectedInfo : d)
+      );
 
-      toast.success(`Connected to ${device.name || 'Unknown Device'}`);
+      // Haptic feedback on mobile
+      if ('vibrate' in navigator) {
+        navigator.vibrate([50, 50, 50]);
+      }
 
-      // Initialize device connection
-      await initializeDeviceConnection(deviceId);
-      
-    } catch (error) {
-      console.error('Connection error:', error);
-      toast.error('Failed to connect to device');
+      toast.success(`Connected to ${deviceInfo.name}`);
+      return true;
+
+    } catch (e: any) {
+      console.error('📶 [BLUETOOTH] Connect error:', e);
+      setError(e.message || 'Failed to connect');
+      toast.error('Connection failed', { description: e.message });
+      return false;
     }
   }, [availableDevices]);
 
-  const disconnectDevice = useCallback(async (deviceId: string) => {
-    const device = connectedDevices.find(d => d.id === deviceId);
-    if (!device) return;
+  // ---------------------------------------------------------------------------
+  // Disconnect from device
+  // ---------------------------------------------------------------------------
+  const disconnectDevice = useCallback(async (deviceId: string): Promise<void> => {
+    console.log(`📶 [BLUETOOTH] Disconnecting from device: ${deviceId}`);
 
-    try {
-      if (device.dataChannel) {
-        device.dataChannel.close();
-      }
-      if (device.peerConnection) {
-        device.peerConnection.close();
-      }
-      if (device.server) {
-        device.server.disconnect();
-      }
-
-      videoStreams.current.delete(deviceId);
-      streamCallbacks.current.delete(deviceId);
-      setStreamingDevices(prev => prev.filter(id => id !== deviceId));
-      
-      handleDeviceDisconnected(deviceId);
-      toast.success('Device disconnected');
-    } catch (error) {
-      console.error('Disconnect error:', error);
-      toast.error('Failed to disconnect device properly');
+    const deviceInfo = connectedDevices.find(d => d.id === deviceId);
+    if (deviceInfo?.gatt?.connected) {
+      deviceInfo.gatt.disconnect();
     }
-  }, [connectedDevices]);
 
-  const handleDeviceDisconnected = useCallback((deviceId: string) => {
     setConnectedDevices(prev => prev.filter(d => d.id !== deviceId));
-    setStreamingDevices(prev => prev.filter(id => id !== deviceId));
-    videoStreams.current.delete(deviceId);
-    streamCallbacks.current.delete(deviceId);
-  }, []);
+    setAvailableDevices(prev => 
+      prev.map(d => d.id === deviceId ? { ...d, connected: false } : d)
+    );
 
-  const initializeDeviceConnection = async (deviceId: string) => {
-    const device = connectedDevices.find(d => d.id === deviceId);
-    if (!device || !device.peerConnection || !device.dataChannel) return;
-
-    try {
-      // Create and send offer
-      const offer = await device.peerConnection.createOffer();
-      await device.peerConnection.setLocalDescription(offer);
-      
-      await sendCommand(deviceId, {
-        command: 'WEBRTC_OFFER',
-        offer: offer.sdp
-      });
-
-      // Request device capabilities
-      await sendCommand(deviceId, {
-        command: 'GET_CAPABILITIES'
-      });
-    } catch (error) {
-      console.error('Failed to initialize device connection:', error);
-    }
-  };
-
-  const handleDataChannelMessage = async (deviceId: string, data: string) => {
-    try {
-      const message = JSON.parse(data);
-      const device = connectedDevices.find(d => d.id === deviceId);
-      if (!device || !device.peerConnection) return;
-
-      switch (message.type) {
-        case 'WEBRTC_ANSWER':
-          await device.peerConnection.setRemoteDescription(
-            new RTCSessionDescription({ type: 'answer', sdp: message.answer })
-          );
-          break;
-          
-        case 'ICE_CANDIDATE':
-          await device.peerConnection.addIceCandidate(
-            new RTCIceCandidate(message.candidate)
-          );
-          break;
-          
-        case 'CAPABILITIES':
-          // Handle capabilities response
-          console.log(`Device ${deviceId} capabilities:`, message.capabilities);
-          break;
-          
-        case 'FRAME_DATA':
-          // Handle frame data for image capture
-          const callback = streamCallbacks.current.get(deviceId);
-          if (callback && message.imageData) {
-            // Convert base64 to blob and create temporary stream
-            const response = await fetch(message.imageData);
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            // Notify listeners of new frame
-          }
-          break;
-      }
-    } catch (error) {
-      console.error('Error handling data channel message:', error);
-    }
-  };
-
-  const sendCommand = useCallback(async (deviceId: string, command: Partial<BluetoothCommand>) => {
-    const device = connectedDevices.find(d => d.id === deviceId);
-    if (!device || !device.dataChannel || device.dataChannel.readyState !== 'open') {
-      throw new Error('Device not connected or data channel not ready');
-    }
-
-    const fullCommand: BluetoothCommand = {
-      ...command,
-      command: command.command || '',
-      timestamp: Date.now()
-    };
-
-    try {
-      device.dataChannel.send(JSON.stringify(fullCommand));
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to send command:', error);
-      throw error;
-    }
+    toast.info('Device disconnected');
   }, [connectedDevices]);
 
-  const startVideoStream = useCallback(async (deviceId: string) => {
-    try {
-      await sendCommand(deviceId, {
-        command: 'START_VIDEO_STREAM',
-        data: { resolution: '1920x1080', fps: 30 }
-      });
-      setStreamingDevices(prev => [...prev, deviceId]);
-      toast.success('Video stream started');
-    } catch (error) {
-      console.error('Failed to start video stream:', error);
-      toast.error('Failed to start video stream');
-    }
-  }, [sendCommand]);
-
-  const stopVideoStream = useCallback(async (deviceId: string) => {
-    try {
-      await sendCommand(deviceId, {
-        command: 'STOP_VIDEO_STREAM'
-      });
-      setStreamingDevices(prev => prev.filter(id => id !== deviceId));
-      toast.success('Video stream stopped');
-    } catch (error) {
-      console.error('Failed to stop video stream:', error);
-      toast.error('Failed to stop video stream');
-    }
-  }, [sendCommand]);
-
-  const captureImage = useCallback(async (deviceId: string) => {
-    try {
-      const response = await sendCommand(deviceId, {
-        command: 'CAPTURE_IMAGE',
-        data: { format: 'jpeg', quality: 95 }
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to capture image:', error);
-      toast.error('Failed to capture image');
-      throw error;
-    }
-  }, [sendCommand]);
-
-  const onVideoStream = useCallback((deviceId: string, callback: (stream: MediaStream) => void) => {
-    streamCallbacks.current.set(deviceId, callback);
+  // ---------------------------------------------------------------------------
+  // Forget device (remove from remembered devices)
+  // ---------------------------------------------------------------------------
+  const forgetDevice = useCallback((deviceId: string): void => {
+    console.log(`📶 [BLUETOOTH] Forgetting device: ${deviceId}`);
     
-    // If stream already exists, call callback immediately
-    const existingStream = videoStreams.current.get(deviceId);
-    if (existingStream) {
-      callback(existingStream);
-    }
+    // Disconnect if connected
+    disconnectDevice(deviceId);
     
-    // Return cleanup function
+    // Remove from available devices
+    setAvailableDevices(prev => prev.filter(d => d.id !== deviceId));
+    
+    // Remove from storage
+    removeRememberedDevice(deviceId);
+    
+    // Remove from refs
+    deviceRefs.current.delete(deviceId);
+
+    toast.info('Device forgotten');
+  }, [disconnectDevice]);
+
+  // ---------------------------------------------------------------------------
+  // Cleanup on unmount
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
     return () => {
-      streamCallbacks.current.delete(deviceId);
+      // Disconnect all devices on unmount
+      connectedDevices.forEach(device => {
+        if (device.gatt?.connected) {
+          device.gatt.disconnect();
+        }
+      });
     };
-  }, []);
+  }, [connectedDevices]);
 
+  // ---------------------------------------------------------------------------
+  // Return
+  // ---------------------------------------------------------------------------
   return {
+    // State
     isSupported,
     isEnabled,
     isScanning,
-    connectedDevices,
     availableDevices,
-    streamingDevices,
+    connectedDevices,
+    connectedDevice: connectedDevices.length > 0 ? connectedDevices[0] : null,
+    error,
+    
+    // Actions
     startScan,
     stopScan,
     connectDevice,
     disconnectDevice,
-    sendCommand,
-    startVideoStream,
-    stopVideoStream,
-    captureImage,
-    onVideoStream
+    forgetDevice,
+    requestDevice,
   };
-};
+}
+
+export default useBluetoothManager;
