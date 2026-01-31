@@ -145,7 +145,7 @@ function formatFileSize(bytes: number): string {
 
 /**
  * Upload an image to Supabase storage and return the public URL
- * Images are stored in 'user-images' bucket for marketplace display
+ * Images are stored in 'user-uploads' bucket for marketplace display
  */
 async function uploadImageToSupabase(
   base64Data: string,
@@ -153,37 +153,56 @@ async function uploadImageToSupabase(
   itemIndex: number
 ): Promise<string | null> {
   try {
+    console.log(`📤 [UPLOAD] Starting upload for image ${itemIndex}...`);
+    console.log(`📤 [UPLOAD] User ID: ${userId}`);
+    console.log(`📤 [UPLOAD] Data length: ${base64Data.length} chars`);
+    
+    // Validate base64 data
+    if (!base64Data || !base64Data.startsWith('data:')) {
+      console.error('❌ [UPLOAD] Invalid base64 data - does not start with data:');
+      return null;
+    }
+    
     // Convert base64 to blob
     const base64Response = await fetch(base64Data);
     const blob = await base64Response.blob();
+    console.log(`📤 [UPLOAD] Blob created: ${(blob.size / 1024).toFixed(1)}KB, type: ${blob.type}`);
     
     // Generate unique filename
     const timestamp = Date.now();
     const filename = `${userId}/${timestamp}_${itemIndex}.jpg`;
+    console.log(`📤 [UPLOAD] Filename: ${filename}`);
     
     // Upload to Supabase storage
+    console.log(`📤 [UPLOAD] Calling supabase.storage.from('user-uploads').upload...`);
     const { data, error } = await supabase.storage
-      .from('user-images')
+      .from('user-uploads')
       .upload(filename, blob, {
         contentType: 'image/jpeg',
         upsert: true,
       });
     
     if (error) {
-      console.error('❌ Supabase upload error:', error);
+      console.error('❌ [UPLOAD] Supabase storage error:', JSON.stringify(error));
+      console.error('❌ [UPLOAD] Error message:', error.message);
       return null;
     }
     
+    console.log(`📤 [UPLOAD] Upload success, data:`, JSON.stringify(data));
+    
     // Get public URL
     const { data: urlData } = supabase.storage
-      .from('user-images')
+      .from('user-uploads')
       .getPublicUrl(filename);
     
-    console.log(`✅ Uploaded image to Supabase: ${filename}`);
+    console.log(`✅ [UPLOAD] Public URL: ${urlData.publicUrl}`);
     return urlData.publicUrl;
     
-  } catch (error) {
-    console.error('❌ Image upload failed:', error);
+  } catch (error: any) {
+    console.error('❌ [UPLOAD] Exception during upload:', error);
+    console.error('❌ [UPLOAD] Error name:', error?.name);
+    console.error('❌ [UPLOAD] Error message:', error?.message);
+    console.error('❌ [UPLOAD] Error stack:', error?.stack);
     return null;
   }
 }
@@ -195,18 +214,33 @@ async function uploadImagesToSupabase(
   items: CapturedItem[],
   userId: string
 ): Promise<string[]> {
-  const uploadPromises = items.map(async (item, index) => {
+  console.log(`📦 [BATCH UPLOAD] Starting upload of ${items.length} images for user ${userId}`);
+  
+  const results: (string | null)[] = [];
+  
+  // Upload sequentially to avoid overwhelming the connection
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
     // Use original uncompressed data if available, otherwise use data
     const imageData = item.originalData || item.data;
-    return uploadImageToSupabase(imageData, userId, index);
-  });
-  
-  const results = await Promise.all(uploadPromises);
+    console.log(`📦 [BATCH UPLOAD] Image ${i}: originalData=${!!item.originalData}, dataLength=${imageData?.length || 0}`);
+    
+    if (!imageData) {
+      console.error(`❌ [BATCH UPLOAD] No image data for item ${i}`);
+      results.push(null);
+      continue;
+    }
+    
+    const url = await uploadImageToSupabase(imageData, userId, i);
+    results.push(url);
+  }
   
   // Filter out null results (failed uploads)
   const validUrls = results.filter((url): url is string => url !== null);
   
-  console.log(`📦 Uploaded ${validUrls.length}/${items.length} images to Supabase`);
+  console.log(`📦 [BATCH UPLOAD] Complete: ${validUrls.length}/${items.length} images uploaded`);
+  console.log(`📦 [BATCH UPLOAD] URLs:`, validUrls);
+  
   return validUrls;
 }
 
@@ -787,6 +821,10 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       return;
     }
 
+    console.log('🚀 [ANALYSIS] Starting processMultiModalAnalysis');
+    console.log(`🚀 [ANALYSIS] User ID: ${session.user.id}`);
+    console.log(`🚀 [ANALYSIS] Selected items: ${selectedItems.length}`);
+
     setIsProcessing(true);
     setIsAnalyzing(true);
     onClose();
@@ -794,33 +832,47 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
     try {
       // =======================================================================
-      // NEW: Upload original images to Supabase FIRST for marketplace persistence
+      // STEP 1: Upload original images to Supabase for marketplace persistence
       // =======================================================================
       setIsUploading(true);
-      toast.info("Uploading images for marketplace...");
       
       const imageItems = selectedItems.filter(item => item.type === 'photo' || item.type === 'document');
+      console.log(`📤 [ANALYSIS] Image items to upload: ${imageItems.length}`);
+      
       let originalImageUrls: string[] = [];
       
       if (imageItems.length > 0) {
+        toast.info("Uploading images to storage...");
+        
+        // Log what we're about to upload
+        imageItems.forEach((item, i) => {
+          console.log(`📤 [ANALYSIS] Item ${i}: type=${item.type}, hasOriginal=${!!item.originalData}, dataLen=${item.data?.length || 0}`);
+        });
+        
         originalImageUrls = await uploadImagesToSupabase(imageItems, session.user.id);
         
         if (originalImageUrls.length > 0) {
-          console.log(`✅ Uploaded ${originalImageUrls.length} images to Supabase storage`);
+          console.log(`✅ [ANALYSIS] Uploaded ${originalImageUrls.length} images to Supabase storage`);
+          toast.success(`Uploaded ${originalImageUrls.length} image(s)`);
         } else {
-          console.warn('⚠️ No images were uploaded to Supabase');
+          console.warn('⚠️ [ANALYSIS] No images were uploaded to Supabase - check bucket exists and policies');
+          toast.warning('Images could not be uploaded - continuing with analysis');
         }
+      } else {
+        console.log('📤 [ANALYSIS] No image items to upload');
       }
       
       setIsUploading(false);
       // =======================================================================
+      
+      console.log(`📤 [ANALYSIS] Final originalImageUrls to send: ${JSON.stringify(originalImageUrls)}`);
       
       // Calculate total payload size before sending
       let totalPayloadSize = 0;
       
       const analysisData = {
         scanType: 'multi-modal',
-        // NEW: Include original image URLs for database persistence
+        // Include original image URLs for database persistence
         originalImageUrls: originalImageUrls,
         items: await Promise.all(selectedItems.map(async (item) => {
           let processedData = item.data;
