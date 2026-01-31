@@ -59,6 +59,9 @@ export interface Profile {
   
   // Arena intro field
   has_seen_arena_intro?: boolean;
+  
+  // Custom background - user personalization
+  custom_background_url?: string | null;
 }
 
 export interface ScanHistory {
@@ -171,7 +174,7 @@ export const DatabaseHelper = {
   async updateProfitTracking(userId: string, scanId: string, profitMade: number): Promise<boolean> {
     const { error: scanError } = await supabase.from('scan_history').update({ profit_made: profitMade, item_sold: true, sale_date: new Date().toISOString() }).eq('id', scanId);
     if (scanError) { console.error('Error updating scan profit:', scanError); return false; }
-    const { error: profileError } = await supabase.rpc('increment_profit', { user_id: userId, profit_amount: profitMade });
+    const { error: profileError } = await supabase.rpc('increment_profit', { user_id: viserId, profit_amount: profitMade });
     if (profileError) { console.error('Error updating profile totals:', profileError); return false; }
     return true;
   }
