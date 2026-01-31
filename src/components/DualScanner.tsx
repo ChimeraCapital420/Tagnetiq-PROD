@@ -1,21 +1,22 @@
 // FILE: src/components/DualScanner.tsx
-// REFACTORED: Now uses extracted hooks and utilities from Phase 1 & 2
-// Mobile-first multi-modal scanner with image persistence
+// REFACTORED: Phase 4 Complete - All camera controls, grid overlay, audio meter wired up
+// Mobile-first: compression on device, haptic feedback, battery-conscious
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useZxing } from 'react-zxing';
 import { v4 as uuidv4 } from 'uuid';
 import {
   X, FlipHorizontal, Upload, Circle, Zap, Loader2, ScanLine,
   ImageIcon, Video, Settings as SettingsIcon, Focus, Check,
-  FileText, Award, ShieldCheck, Trash2, Search, Bluetooth
+  FileText, Award, ShieldCheck, Trash2, Search, Bluetooth,
+  Grid3X3, Flashlight
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import CameraSettingsModal from './CameraSettingsModal.js';
-import DevicePairingModal from './DevicePairingModal.js';
+import CameraSettingsModal from './CameraSettingsModal';
+import DevicePairingModal from './DevicePairingModal';
 import './DualScanner.css';
 import { AnalysisResult } from '@/types';
 
@@ -25,6 +26,14 @@ import { AnalysisResult } from '@/types';
 import type { CapturedItem, ScanMode } from '@/types/scanner';
 import { compressImage, formatBytes } from '@/lib/scanner/compression';
 import { uploadImages } from '@/lib/scanner/upload';
+
+// =============================================================================
+// PHASE 4 IMPORTS - Real Camera Controls & Grid Overlay
+// =============================================================================
+import { useGridOverlay } from '@/hooks/useGridOverlay';
+import { useCameraControls } from '@/hooks/useCameraControls';
+import { GridOverlay, GridToggleButton } from './GridOverlay';
+import { FloatingAudioMeter } from './AudioLevelMeter';
 
 // =============================================================================
 // TYPES
@@ -58,6 +67,8 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const [isAnalyzingBarcodes, setIsAnalyzingBarcodes] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [videoDimensions, setVideoDimensions] = useState({ width: 640, height: 480 });
+  const [cssFilter, setCssFilter] = useState<string>('none');
 
   // ---------------------------------------------------------------------------
   // REFS
@@ -70,6 +81,75 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   // ---------------------------------------------------------------------------
+  // PHASE 4 HOOKS - Grid Overlay & Camera Controls
+  // ---------------------------------------------------------------------------
+  const gridOverlay = useGridOverlay();
+  
+  // Extract video track from stream (memoized to prevent unnecessary re-renders)
+  const videoTrack = useMemo(() => {
+    return streamRef.current?.getVideoTracks()[0] || null;
+  }, [streamRef.current]);
+  
+  // Camera controls hook - provides torch, zoom, focus, brightness, etc.
+  const cameraControls = useCameraControls(videoTrack);
+
+  // ---------------------------------------------------------------------------
+  // TRACK VIDEO DIMENSIONS (for GridOverlay)
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const updateDimensions = () => {
+      if (video.clientWidth > 0 && video.clientHeight > 0) {
+        setVideoDimensions({
+          width: video.clientWidth,
+          height: video.clientHeight
+        });
+      }
+    };
+
+    // ResizeObserver for responsive grid
+    const resizeObserver = new ResizeObserver(updateDimensions);
+    resizeObserver.observe(video);
+
+    // Also update on video metadata loaded
+    video.addEventListener('loadedmetadata', updateDimensions);
+    
+    // Initial update
+    updateDimensions();
+
+    return () => {
+      resizeObserver.disconnect();
+      video.removeEventListener('loadedmetadata', updateDimensions);
+    };
+  }, [isOpen]);
+
+  // ---------------------------------------------------------------------------
+  // HANDLE SETTINGS CHANGE FROM CameraSettingsModal
+  // ---------------------------------------------------------------------------
+  const handleSettingsChange = useCallback((settings: {
+    filter?: string;
+    grid?: { enabled: boolean; type: string; opacity: number };
+  }) => {
+    // Apply CSS filter to video element (fallback when native controls unavailable)
+    if (settings.filter) {
+      setCssFilter(settings.filter);
+    }
+    
+    // Sync grid settings if passed from modal
+    if (settings.grid) {
+      gridOverlay.setEnabled(settings.grid.enabled);
+      if (settings.grid.type) {
+        gridOverlay.setType(settings.grid.type as any);
+      }
+      if (settings.grid.opacity !== undefined) {
+        gridOverlay.setOpacity(settings.grid.opacity);
+      }
+    }
+  }, [gridOverlay]);
+
+  // ---------------------------------------------------------------------------
   // BARCODE SCANNER (react-zxing)
   // ---------------------------------------------------------------------------
   const { ref: zxingRef } = useZxing({
@@ -77,6 +157,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     onResult(result) {
       if (scanMode === 'barcode' && !isProcessing) {
         setIsProcessing(true);
+        
+        // Haptic feedback on barcode detect
+        if ('vibrate' in navigator) {
+          navigator.vibrate([50, 30, 50]);
+        }
+        
         toast.success(`Barcode detected: ${result.getText()}`);
         setLastAnalysisResult({
           id: uuidv4(),
@@ -130,13 +216,27 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
           deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
           width: { ideal: 1920 },
           height: { ideal: 1080 },
-        }
+          // Request torch capability if available
+          ...(cameraControls.capabilities.torch && { torch: false }),
+        },
+        // Include audio for video recording
+        audio: scanMode === 'video' ? { echoCancellation: true, noiseSuppression: true } : false,
       });
+      
       streamRef.current = stream;
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
+      
       console.log('📷 [CAMERA] Stream started successfully');
+      
+      // Log available capabilities
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        const capabilities = track.getCapabilities?.() || {};
+        console.log('📷 [CAMERA] Capabilities:', capabilities);
+      }
     } catch (err) {
       console.error('📷 [CAMERA] Error:', err);
       toast.error('Camera access denied.', {
@@ -144,7 +244,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       });
       onClose();
     }
-  }, [selectedDeviceId, onClose, stopCamera]);
+  }, [selectedDeviceId, onClose, stopCamera, scanMode, cameraControls.capabilities.torch]);
 
   // Enumerate devices on mount
   useEffect(() => {
@@ -155,7 +255,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         const videoDevices = availableDevices.filter(d => d.kind === 'videoinput');
         setDevices(videoDevices);
         if (!selectedDeviceId && videoDevices.length > 0) {
-          const rearCamera = videoDevices.find(d => d.label.toLowerCase().includes('back'));
+          // Prefer rear camera on mobile
+          const rearCamera = videoDevices.find(d => 
+            d.label.toLowerCase().includes('back') || 
+            d.label.toLowerCase().includes('rear') ||
+            d.label.toLowerCase().includes('environment')
+          );
           setSelectedDeviceId(rearCamera?.deviceId || videoDevices[0].deviceId);
         }
       } catch (err) {
@@ -423,6 +528,11 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+      
+      // Haptic feedback
+      if ('vibrate' in navigator) {
+        navigator.vibrate([50, 30, 50]);
+      }
     }
   }, [isRecording]);
 
@@ -547,15 +657,42 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       const currentIndex = devices.findIndex(d => d.deviceId === selectedDeviceId);
       const nextIndex = (currentIndex + 1) % devices.length;
       setSelectedDeviceId(devices[nextIndex].deviceId);
+      
+      // Haptic feedback
+      if ('vibrate' in navigator) {
+        navigator.vibrate(30);
+      }
     } else {
       toast.info('No other camera detected.');
     }
   };
 
   const handleManualFocus = () => {
-    if (videoRef.current) {
+    if (cameraControls.capabilities.focusMode) {
+      // Trigger single-shot autofocus
+      cameraControls.setFocusMode('single-shot');
+      toast.info('Focusing...');
+      
+      // Haptic feedback
+      if ('vibrate' in navigator) {
+        navigator.vibrate(20);
+      }
+    } else if (videoRef.current) {
       videoRef.current.focus();
       toast.info('Attempting to focus camera.');
+    }
+  };
+
+  const handleTorchToggle = () => {
+    if (cameraControls.capabilities.torch) {
+      cameraControls.setTorch(!cameraControls.settings.torch);
+      
+      // Haptic feedback
+      if ('vibrate' in navigator) {
+        navigator.vibrate(30);
+      }
+    } else {
+      toast.info('Flashlight not available on this device');
     }
   };
 
@@ -771,11 +908,11 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
           {/* Header */}
           <header className="dual-scanner-header">
             <div className="flex gap-2">
-              <Button variant="ghost" size="icon" onClick={() => setIsSettingsOpen(true)}>
-                <SettingsIcon />
+              <Button variant="ghost" size="icon" onClick={() => setIsSettingsOpen(true)} title="Camera Settings">
+                <SettingsIcon className="w-5 h-5" />
               </Button>
-              <Button variant="ghost" size="icon" onClick={() => setIsDevicePairingOpen(true)}>
-                <Bluetooth />
+              <Button variant="ghost" size="icon" onClick={() => setIsDevicePairingOpen(true)} title="Bluetooth Devices">
+                <Bluetooth className="w-5 h-5" />
               </Button>
             </div>
             <div className="flex items-center gap-2">
@@ -798,13 +935,14 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               )}
             </div>
             <Button variant="ghost" size="icon" onClick={onClose}>
-              <X />
+              <X className="w-5 h-5" />
             </Button>
           </header>
 
           {/* Main Video Area */}
           <main className="dual-scanner-main">
             <div className="relative w-full h-full bg-black">
+              {/* Video Feed */}
               <video
                 ref={(node) => {
                   videoRef.current = node;
@@ -815,16 +953,67 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                 autoPlay
                 playsInline
                 className="w-full h-full object-contain"
+                style={{ filter: cssFilter }}
               />
 
+              {/* ============================================================ */}
+              {/* GRID OVERLAY - Renders composition guides on camera feed */}
+              {/* ============================================================ */}
+              <GridOverlay
+                width={videoDimensions.width}
+                height={videoDimensions.height}
+                enabled={gridOverlay.settings.enabled}
+                type={gridOverlay.settings.type}
+                opacity={gridOverlay.settings.opacity}
+                color={gridOverlay.settings.color}
+              />
+
+              {/* Barcode Reticle */}
               {scanMode === 'barcode' && <div className="barcode-reticle" />}
 
+              {/* ============================================================ */}
+              {/* TOP CAMERA CONTROLS - Quick access buttons */}
+              {/* ============================================================ */}
+              <div className="absolute top-3 right-3 flex gap-2 z-20">
+                {/* Grid Toggle Button */}
+                <GridToggleButton className="bg-black/50 backdrop-blur-sm" />
+                
+                {/* Torch/Flashlight Toggle (if supported) */}
+                {cameraControls.capabilities.torch && (
+                  <button
+                    onClick={handleTorchToggle}
+                    className={`p-2 rounded-full transition-all touch-manipulation ${
+                      cameraControls.settings.torch
+                        ? 'bg-yellow-500 text-black shadow-lg shadow-yellow-500/50'
+                        : 'bg-black/50 backdrop-blur-sm text-white/80 hover:bg-black/70'
+                    }`}
+                    title={cameraControls.settings.torch ? 'Turn off flashlight' : 'Turn on flashlight'}
+                  >
+                    <Flashlight className="w-5 h-5" />
+                  </button>
+                )}
+              </div>
+
+              {/* ============================================================ */}
+              {/* AUDIO LEVEL METER - Shows during video recording */}
+              {/* ============================================================ */}
+              {isRecording && streamRef.current && (
+                <FloatingAudioMeter
+                  stream={streamRef.current}
+                  position="bottom-right"
+                  autoStart
+                />
+              )}
+
+              {/* Recording Indicator */}
               {isRecording && (
-                <div className="absolute top-5 left-1/2 -translate-x-1/2 bg-red-500/90 text-white px-4 py-2 rounded-full text-sm font-bold">
-                  ● REC
+                <div className="absolute top-5 left-1/2 -translate-x-1/2 bg-red-500/90 text-white px-4 py-2 rounded-full text-sm font-bold flex items-center gap-2 animate-pulse">
+                  <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                  REC
                 </div>
               )}
 
+              {/* Processing Indicators */}
               {isCompressing && (
                 <div className="absolute top-5 left-1/2 -translate-x-1/2 bg-blue-500/90 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin" /> Compressing...
@@ -843,8 +1032,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
           <footer className="dual-scanner-footer">
             {/* Control Buttons */}
             <div className="scanner-controls">
-              <Button variant="ghost" size="icon" onClick={handleFlipCamera}><FlipHorizontal /></Button>
-              <Button variant="ghost" size="icon" onClick={handleManualFocus}><Focus /></Button>
+              <Button variant="ghost" size="icon" onClick={handleFlipCamera} title="Flip Camera">
+                <FlipHorizontal className="w-5 h-5" />
+              </Button>
+              <Button variant="ghost" size="icon" onClick={handleManualFocus} title="Focus">
+                <Focus className="w-5 h-5" />
+              </Button>
               <input
                 type="file"
                 ref={imageInputRef}
@@ -853,8 +1046,8 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                 className="hidden"
                 onChange={handleImageUpload}
               />
-              <Button variant="ghost" size="icon" onClick={() => imageInputRef.current?.click()}>
-                <Upload />
+              <Button variant="ghost" size="icon" onClick={() => imageInputRef.current?.click()} title="Upload Image">
+                <Upload className="w-5 h-5" />
               </Button>
               <input
                 type="file"
@@ -864,16 +1057,17 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                 className="hidden"
                 onChange={handleDocumentUpload}
               />
-              <Button variant="ghost" size="icon" onClick={() => documentInputRef.current?.click()}>
-                <FileText />
+              <Button variant="ghost" size="icon" onClick={() => documentInputRef.current?.click()} title="Upload Document">
+                <FileText className="w-5 h-5" />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={scanAllImagesForBarcodes}
                 disabled={isAnalyzingBarcodes || capturedItems.filter(i => i.type === 'photo').length === 0}
+                title="Scan Images for Barcodes"
               >
-                {isAnalyzingBarcodes ? <Loader2 className="animate-spin" /> : <Search />}
+                {isAnalyzingBarcodes ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
               </Button>
             </div>
 
@@ -882,7 +1076,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               <div className="relative flex items-center justify-center">
                 <Button
                   onClick={captureImage}
-                  className="capture-button"
+                  className="capture-button touch-manipulation"
                   size="icon"
                   disabled={isProcessing || isCompressing || isUploading || capturedItems.length >= 15}
                 >
@@ -895,7 +1089,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               <div className="relative flex items-center justify-center">
                 <Button
                   onClick={isRecording ? stopVideoRecording : startVideoRecording}
-                  className="capture-button"
+                  className="capture-button touch-manipulation"
                   size="icon"
                   disabled={isProcessing}
                   style={{ backgroundColor: isRecording ? '#ef4444' : 'transparent' }}
@@ -912,7 +1106,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                   onClick={processMultiModalAnalysis}
                   disabled={isProcessing || isCompressing || isUploading}
                   size="lg"
-                  className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
+                  className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 touch-manipulation shadow-lg"
                 >
                   {isProcessing || isUploading ? <Loader2 className="animate-spin mr-2" /> : <Zap className="mr-2" />}
                   {isUploading ? 'Uploading...' : `AI Analyze ${selectedCount} Item${selectedCount > 1 ? 's' : ''}`}
@@ -927,7 +1121,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                   <img
                     src={item.thumbnail}
                     alt={item.name}
-                    className={`cursor-pointer transition-all border-2 rounded-lg ${
+                    className={`cursor-pointer transition-all border-2 rounded-lg touch-manipulation ${
                       item.selected
                         ? 'border-blue-500 ring-2 ring-blue-300 scale-105'
                         : 'border-gray-300 opacity-70 hover:opacity-100'
@@ -970,27 +1164,43 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
             {/* Mode Toggle */}
             <div className="mode-toggle">
-              <Button onClick={() => setScanMode('image')} variant={scanMode === 'image' ? 'secondary' : 'ghost'}>
-                <ImageIcon className="mr-2" />Photo
+              <Button 
+                onClick={() => setScanMode('image')} 
+                variant={scanMode === 'image' ? 'secondary' : 'ghost'}
+                className="touch-manipulation"
+              >
+                <ImageIcon className="mr-2 w-4 h-4" />Photo
               </Button>
-              <Button onClick={() => setScanMode('barcode')} variant={scanMode === 'barcode' ? 'secondary' : 'ghost'}>
-                <ScanLine className="mr-2" />Barcode
+              <Button 
+                onClick={() => setScanMode('barcode')} 
+                variant={scanMode === 'barcode' ? 'secondary' : 'ghost'}
+                className="touch-manipulation"
+              >
+                <ScanLine className="mr-2 w-4 h-4" />Barcode
               </Button>
-              <Button onClick={() => setScanMode('video')} variant={scanMode === 'video' ? 'secondary' : 'ghost'}>
-                <Video className="mr-2" />Video
+              <Button 
+                onClick={() => setScanMode('video')} 
+                variant={scanMode === 'video' ? 'secondary' : 'ghost'}
+                className="touch-manipulation"
+              >
+                <Video className="mr-2 w-4 h-4" />Video
               </Button>
             </div>
           </footer>
         </div>
       </div>
 
-      {/* Modals */}
+      {/* ================================================================== */}
+      {/* MODALS - NOW WITH VIDEOTRACK AND ONSETTINGSCHANGE WIRED UP! */}
+      {/* ================================================================== */}
       <CameraSettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         availableDevices={devices}
         currentDeviceId={selectedDeviceId}
         onDeviceChange={setSelectedDeviceId}
+        videoTrack={videoTrack}
+        onSettingsChange={handleSettingsChange}
       />
       <DevicePairingModal
         isOpen={isDevicePairingOpen}
