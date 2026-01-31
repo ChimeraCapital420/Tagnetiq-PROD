@@ -44,11 +44,11 @@ export interface CameraSettings {
 
 export interface UseCameraControlsReturn {
   // State
-  capabilities: CameraCapabilities; // CHANGED: Never null, always safe object
+  capabilities: CameraCapabilities;
   settings: CameraSettings;
   isApplying: boolean;
   error: string | null;
-  isReady: boolean; // NEW: True when we have a real track with capabilities
+  isReady: boolean;
   
   // Actions
   setTorch: (enabled: boolean) => Promise<void>;
@@ -81,7 +81,7 @@ const DEFAULT_SETTINGS: CameraSettings = {
   frameRate: 30,
 };
 
-// NEW: Safe default capabilities - all features disabled
+// Safe default capabilities - all features disabled until camera is ready
 const EMPTY_CAPABILITIES: CameraCapabilities = {
   torch: false,
   zoom: null,
@@ -129,12 +129,12 @@ const PRESETS: Record<string, Partial<CameraSettings>> = {
 export function useCameraControls(
   videoTrack: MediaStreamTrack | null
 ): UseCameraControlsReturn {
-  // State - CHANGED: capabilities starts with safe empty object, never null
+  // State - capabilities starts with safe empty object, never null
   const [capabilities, setCapabilities] = useState<CameraCapabilities>(EMPTY_CAPABILITIES);
   const [settings, setSettings] = useState<CameraSettings>(DEFAULT_SETTINGS);
   const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isReady, setIsReady] = useState(false); // NEW
+  const [isReady, setIsReady] = useState(false);
 
   // Ref to track component mount status
   const isMounted = useRef(true);
@@ -246,7 +246,7 @@ export function useCameraControls(
       };
 
       setCapabilities(detected);
-      setIsReady(true); // Mark as ready
+      setIsReady(true);
 
       // Update settings with current track values
       if (trackSettings) {
@@ -330,7 +330,6 @@ export function useCameraControls(
   // ---------------------------------------------------------------------------
 
   const setTorch = useCallback(async (enabled: boolean) => {
-    // Safe check - capabilities is never null now, but torch might be false
     if (!capabilities.torch) {
       toast.error('Torch not available', {
         description: 'This camera does not support flashlight control'
@@ -520,12 +519,12 @@ export function useCameraControls(
   // ---------------------------------------------------------------------------
 
   return {
-    // State - capabilities is NEVER null now
+    // State - capabilities is NEVER null, safe to access .torch etc
     capabilities,
     settings,
     isApplying,
     error,
-    isReady, // NEW: Use this to check if camera is actually available
+    isReady,
     
     // Actions
     setTorch,
@@ -545,23 +544,3 @@ export function useCameraControls(
 }
 
 export default useCameraControls;
-```
-
----
-
-## Key Changes:
-
-| Before | After |
-|--------|-------|
-| `capabilities: CameraCapabilities \| null` | `capabilities: CameraCapabilities` (never null) |
-| `useState<CameraCapabilities \| null>(null)` | `useState<CameraCapabilities>(EMPTY_CAPABILITIES)` |
-| No way to know if ready | Added `isReady: boolean` |
-| `||` for defaults | `??` for safer nullish coalescing |
-
----
-
-## Part 2: Find the consuming component
-
-After deploying this fix, the crash should stop. But to be thorough, **share this file** so I can add proper guards there too:
-```
-src/components/DualScanner.tsx
