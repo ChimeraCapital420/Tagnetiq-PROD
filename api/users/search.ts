@@ -1,125 +1,74 @@
 // FILE: api/users/search.ts
-// Search for users by screen_name - SIMPLIFIED & DEFENSIVE
+// Search users by username, screen_name, or email for messaging/connections
 
-import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyUser } from '../_lib/security.js';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'GET') {
-    res.setHeader('Allow', ['GET']);
-    return res.status(405).json({ error: 'Method Not Allowed' });
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
   }
 
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Get auth token
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const token = authHeader.replace('Bearer ', '');
+
   try {
-    const user = await verifyUser(req);
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Verify the requesting user
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !user) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+
+    // Get search query
     const { q, limit = '20' } = req.query;
+    const searchQuery = (q as string || '').trim().toLowerCase();
+    const resultLimit = Math.min(parseInt(limit as string) || 20, 50);
 
-    if (!q || typeof q !== 'string' || q.trim().length < 2) {
-      return res.status(400).json({ error: 'Search query (q) must be at least 2 characters' });
+    if (!searchQuery || searchQuery.length < 2) {
+      return res.status(400).json({ error: 'Search query must be at least 2 characters' });
     }
 
-    const searchLimit = Math.min(50, parseInt(limit as string) || 20);
-    const searchTerm = q.trim();
-
-    // ===========================================
-    // STEP 1: Get blocked users (with error handling)
-    // ===========================================
-    let blockedIds = new Set<string>();
-    try {
-      const { data: blocks } = await supaAdmin
-        .from('blocked_users')
-        .select('user_id, blocked_user_id')
-        .or(`user_id.eq.${user.id},blocked_user_id.eq.${user.id}`);
-
-      (blocks || []).forEach(b => {
-        if (b.user_id === user.id) blockedIds.add(b.blocked_user_id);
-        if (b.blocked_user_id === user.id) blockedIds.add(b.user_id);
-      });
-    } catch (blockError) {
-      // Table might not exist - continue without blocking
-      console.warn('blocked_users query failed:', blockError);
-    }
-
-    // ===========================================
-    // STEP 2: Search profiles
-    // ===========================================
-    const { data: users, error: searchError } = await supaAdmin
+    // Search profiles by username, screen_name, or email
+    const { data: profiles, error: searchError } = await supabase
       .from('profiles')
-      .select('id, screen_name, avatar_url, profile_visibility, created_at')
-      .ilike('screen_name', `%${searchTerm}%`)
+      .select('id, username, screen_name, full_name, avatar_url')
+      .or(`username.ilike.%${searchQuery}%,screen_name.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%`)
       .neq('id', user.id)
-      .limit(searchLimit);
+      .order('username', { ascending: true })
+      .limit(resultLimit);
 
     if (searchError) {
-      console.error('Profile search error:', searchError);
-      throw searchError;
+      console.error('Search error:', searchError);
+      return res.status(500).json({ error: 'Search failed', details: searchError.message });
     }
-
-    // Filter out blocked users
-    const filteredUsers = (users || []).filter(u => !blockedIds.has(u.id));
-
-    // ===========================================
-    // STEP 3: Get friendships (with error handling)
-    // ===========================================
-    let friendshipMap = new Map<string, { status: string; isIncoming: boolean }>();
-    
-    if (filteredUsers.length > 0) {
-      try {
-        const { data: friendData } = await supaAdmin
-          .from('user_friends')
-          .select('requester_id, addressee_id, status')
-          .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`);
-        
-        const userIds = filteredUsers.map(u => u.id);
-        
-        (friendData || []).forEach(f => {
-          const otherId = f.requester_id === user.id ? f.addressee_id : f.requester_id;
-          if (userIds.includes(otherId)) {
-            friendshipMap.set(otherId, {
-              status: f.status,
-              isIncoming: f.addressee_id === user.id && f.status === 'pending',
-            });
-          }
-        });
-      } catch (friendError) {
-        // Table might not exist - continue without friendships
-        console.warn('user_friends query failed:', friendError);
-      }
-    }
-
-    // ===========================================
-    // STEP 4: Build results
-    // ===========================================
-    const results = filteredUsers.map(u => {
-      const friendship = friendshipMap.get(u.id);
-      return {
-        id: u.id,
-        screen_name: u.screen_name,
-        avatar_url: u.avatar_url,
-        profile_visibility: u.profile_visibility || 'public',
-        member_since: u.created_at,
-        friendship_status: friendship?.status || null,
-        is_friend: friendship?.status === 'accepted',
-        has_pending_request: friendship?.status === 'pending',
-        is_incoming_request: friendship?.isIncoming || false,
-      };
-    });
 
     return res.status(200).json({
-      users: results,
-      count: results.length,
-      query: searchTerm,
+      users: profiles || [],
+      count: profiles?.length || 0,
+      query: searchQuery,
     });
 
   } catch (error: any) {
-    const message = error.message || 'An unexpected error occurred';
     console.error('User search error:', error);
-    
-    if (message.includes('Authentication')) {
-      return res.status(401).json({ error: message });
-    }
-    
-    return res.status(500).json({ error: message });
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 }
