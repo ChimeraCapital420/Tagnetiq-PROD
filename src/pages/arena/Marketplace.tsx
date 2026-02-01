@@ -1,17 +1,17 @@
 // FILE: src/pages/arena/Marketplace.tsx
-// TagnetIQ Marketplace v2.0 - "Gallery Commerce" Design
-// Clean, curated, collector-focused marketplace
+// TagnetIQ Marketplace v3.0 - With My Listings, Mark Sold, Delete, Dynamic Categories
+// Mobile-first with touch actions
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence, PanInfo } from 'framer-motion';
 import { 
   Search, SlidersHorizontal, Grid3X3, LayoutGrid, 
   ShieldCheck, TrendingUp, TrendingDown, Minus,
-  ExternalLink, Share2, Heart, HeartOff, Eye,
-  Package, Filter, X, ChevronDown, Sparkles,
-  DollarSign, Tag, Clock, MapPin, Star,
-  Copy, Facebook, Globe, Store
+  ExternalLink, Heart, HeartOff, Eye,
+  Package, Filter, User,
+  CheckCircle2, Trash2, MoreVertical, Edit,
+  AlertCircle, RefreshCw, Plus, Copy, Facebook, Globe, Store
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -25,6 +25,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,7 +36,6 @@ import {
 import {
   Sheet,
   SheetContent,
-  SheetDescription,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -53,8 +53,19 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 import { useAppContext } from '@/contexts/AppContext';
+import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
 // =============================================================================
@@ -73,13 +84,18 @@ interface MarketplaceItem {
   confidence_score?: number;
   category?: string;
   condition?: string;
+  seller_id?: string;
   seller_name?: string;
   seller_rating?: number;
   location?: string;
   listed_at?: string;
+  created_at?: string;
   views?: number;
   watchlist_count?: number;
   description?: string;
+  status?: 'active' | 'sold' | 'deleted';
+  sold_at?: string;
+  sold_price?: number;
 }
 
 interface FilterState {
@@ -90,38 +106,42 @@ interface FilterState {
   condition: string;
 }
 
+interface DynamicCategory {
+  id: string;
+  count: number;
+  label?: string;
+  icon?: any;
+}
+
 // =============================================================================
 // CONSTANTS
 // =============================================================================
 
-const CATEGORIES = [
+const DEFAULT_CATEGORIES = [
   { id: 'all', label: 'All Items', icon: Package },
-  { id: 'coins', label: 'Coins', icon: DollarSign },
+  { id: 'coins', label: 'Coins', icon: Package },
   { id: 'trading_cards', label: 'Trading Cards', icon: Grid3X3 },
-  { id: 'sports_cards', label: 'Sports Cards', icon: Star },
-  { id: 'vinyl_records', label: 'Vinyl', icon: Star },
-  { id: 'comics', label: 'Comics', icon: Star },
-  { id: 'stamps', label: 'Stamps', icon: Tag },
-  { id: 'toys', label: 'Toys & Games', icon: Package },
-  { id: 'art', label: 'Art', icon: Sparkles },
-  { id: 'jewelry', label: 'Jewelry', icon: Sparkles },
-  { id: 'watches', label: 'Watches', icon: Clock },
-  { id: 'memorabilia', label: 'Memorabilia', icon: Star },
+  { id: 'pokemon_cards', label: 'Pokemon', icon: Package },
+  { id: 'sports_cards', label: 'Sports Cards', icon: Package },
+  { id: 'vinyl_records', label: 'Vinyl', icon: Package },
+  { id: 'comics', label: 'Comics', icon: Package },
+  { id: 'lego', label: 'LEGO', icon: Package },
+  { id: 'video_games', label: 'Video Games', icon: Package },
+  { id: 'sneakers', label: 'Sneakers', icon: Package },
+  { id: 'general', label: 'Other', icon: Package },
 ];
 
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest First' },
+  { value: 'oldest', label: 'Oldest First' },
   { value: 'price_low', label: 'Price: Low to High' },
   { value: 'price_high', label: 'Price: High to Low' },
-  { value: 'best_deal', label: 'Best Deals' },
-  { value: 'most_viewed', label: 'Most Viewed' },
-  { value: 'ending_soon', label: 'Ending Soon' },
 ];
 
 const CONDITION_OPTIONS = [
   { value: 'all', label: 'Any Condition' },
   { value: 'mint', label: 'Mint / New' },
-  { value: 'near_mint', label: 'Near Mint' },
+  { value: 'near-mint', label: 'Near Mint' },
   { value: 'excellent', label: 'Excellent' },
   { value: 'good', label: 'Good' },
   { value: 'fair', label: 'Fair' },
@@ -133,118 +153,144 @@ const EXPORT_PLATFORMS = [
   { id: 'mercari', name: 'Mercari', icon: Store, color: 'bg-red-500' },
   { id: 'craigslist', name: 'Craigslist', icon: Globe, color: 'bg-purple-500' },
   { id: 'offerup', name: 'OfferUp', icon: Store, color: 'bg-green-500' },
-  { id: 'poshmark', name: 'Poshmark', icon: Store, color: 'bg-pink-500' },
 ];
 
 // =============================================================================
-// HELPER COMPONENTS
+// HELPER FUNCTIONS
 // =============================================================================
 
-/**
- * Price Fairness Indicator
- * Compares asking price to HYDRA estimated value
- */
+function getCategoryLabel(id: string): string {
+  const found = DEFAULT_CATEGORIES.find(c => c.id === id);
+  if (found) return found.label;
+  return id.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+function getCategoryIcon(id: string): any {
+  const found = DEFAULT_CATEGORIES.find(c => c.id === id);
+  return found?.icon || Package;
+}
+
+// =============================================================================
+// SUB-COMPONENTS
+// =============================================================================
+
 const PriceFairnessIndicator: React.FC<{ 
   askingPrice: number; 
   estimatedValue?: number;
-  size?: 'sm' | 'md';
-}> = ({ askingPrice, estimatedValue, size = 'sm' }) => {
+}> = ({ askingPrice, estimatedValue }) => {
   if (!estimatedValue || estimatedValue === 0) return null;
   
   const ratio = askingPrice / estimatedValue;
   
-  let status: 'great' | 'fair' | 'high';
-  let label: string;
   let Icon: any;
   let colorClass: string;
+  let label: string;
   
   if (ratio <= 0.85) {
-    status = 'great';
-    label = 'Great Deal';
     Icon = TrendingDown;
     colorClass = 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20';
+    label = 'Great Deal';
   } else if (ratio <= 1.15) {
-    status = 'fair';
-    label = 'Fair Price';
     Icon = Minus;
     colorClass = 'text-amber-400 bg-amber-400/10 border-amber-400/20';
+    label = 'Fair Price';
   } else {
-    status = 'high';
-    label = 'Above Market';
     Icon = TrendingUp;
     colorClass = 'text-rose-400 bg-rose-400/10 border-rose-400/20';
-  }
-  
-  if (size === 'sm') {
-    return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className={cn(
-              'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium border',
-              colorClass
-            )}>
-              <Icon className="h-3 w-3" />
-            </div>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-medium">{label}</p>
-            <p className="text-xs text-muted-foreground">
-              HYDRA Value: ${estimatedValue.toLocaleString()}
-            </p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    );
-  }
-  
-  return (
-    <div className={cn(
-      'inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium border',
-      colorClass
-    )}>
-      <Icon className="h-3.5 w-3.5" />
-      <span>{label}</span>
-    </div>
-  );
-};
-
-/**
- * Confidence Score Badge
- */
-const ConfidenceBadge: React.FC<{ score?: number }> = ({ score }) => {
-  if (!score) return null;
-  
-  const percentage = Math.round(score * 100);
-  let colorClass = 'bg-zinc-500/20 text-zinc-400';
-  
-  if (percentage >= 95) {
-    colorClass = 'bg-emerald-500/20 text-emerald-400';
-  } else if (percentage >= 85) {
-    colorClass = 'bg-amber-500/20 text-amber-400';
-  } else if (percentage >= 70) {
-    colorClass = 'bg-orange-500/20 text-orange-400';
+    label = 'Above Market';
   }
   
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Badge variant="secondary" className={cn('text-xs font-mono', colorClass)}>
-            {percentage}%
-          </Badge>
+          <div className={cn(
+            'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium border',
+            colorClass
+          )}>
+            <Icon className="h-3 w-3" />
+          </div>
         </TooltipTrigger>
         <TooltipContent>
-          <p>HYDRA Confidence Score</p>
+          <p className="font-medium">{label}</p>
+          <p className="text-xs text-muted-foreground">
+            Est. Value: ${estimatedValue.toLocaleString()}
+          </p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );
 };
 
-/**
- * Export to Platform Dropdown
- */
+const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
+  if (status === 'active') return null;
+  
+  if (status === 'sold') {
+    return (
+      <Badge className="bg-emerald-500/90 text-white border-0">
+        <CheckCircle2 className="h-3 w-3 mr-1" />
+        Sold
+      </Badge>
+    );
+  }
+  
+  return (
+    <Badge variant="secondary" className="bg-zinc-700">
+      {status}
+    </Badge>
+  );
+};
+
+const OwnerActionsDropdown: React.FC<{
+  item: MarketplaceItem;
+  onMarkSold: () => void;
+  onDelete: () => void;
+  onEdit: () => void;
+}> = ({ item, onMarkSold, onDelete, onEdit }) => {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button 
+          variant="secondary" 
+          size="sm" 
+          className="h-8 w-8 p-0 bg-white/10 hover:bg-white/20"
+          onClick={(e) => e.preventDefault()}
+        >
+          <MoreVertical className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        {item.status === 'active' && (
+          <>
+            <DropdownMenuItem onClick={onMarkSold} className="text-emerald-400">
+              <CheckCircle2 className="h-4 w-4 mr-2" />
+              Mark as Sold
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onEdit}>
+              <Edit className="h-4 w-4 mr-2" />
+              Edit Listing
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        {item.status === 'sold' && (
+          <>
+            <DropdownMenuItem onClick={onEdit}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Relist Item
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        <DropdownMenuItem onClick={onDelete} className="text-red-400">
+          <Trash2 className="h-4 w-4 mr-2" />
+          Delete Listing
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+};
+
 const ExportDropdown: React.FC<{ 
   item: MarketplaceItem;
   onExport: (item: MarketplaceItem, platform: string) => void;
@@ -256,6 +302,7 @@ const ExportDropdown: React.FC<{
           variant="secondary" 
           size="sm" 
           className="h-8 gap-1.5 bg-white/5 hover:bg-white/10 border-white/10"
+          onClick={(e) => e.preventDefault()}
         >
           <ExternalLink className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Export</span>
@@ -284,7 +331,7 @@ const ExportDropdown: React.FC<{
             navigator.clipboard.writeText(
               `${item.item_name} - $${item.asking_price}\n${window.location.origin}/arena/challenge/${item.challenge_id}`
             );
-            toast.success('Listing copied to clipboard');
+            toast.success('Link copied to clipboard');
           }}
           className="gap-2 cursor-pointer"
         >
@@ -296,29 +343,44 @@ const ExportDropdown: React.FC<{
   );
 };
 
-/**
- * Marketplace Item Card
- */
 const MarketplaceCard: React.FC<{
   item: MarketplaceItem;
   layout: 'grid' | 'compact';
+  isOwner: boolean;
   onWatchlist: (id: string) => void;
   onExport: (item: MarketplaceItem, platform: string) => void;
+  onMarkSold: (item: MarketplaceItem) => void;
+  onDelete: (item: MarketplaceItem) => void;
   isWatchlisted?: boolean;
-}> = ({ item, layout, onWatchlist, onExport, isWatchlisted = false }) => {
+}> = ({ item, layout, isOwner, onWatchlist, onExport, onMarkSold, onDelete, isWatchlisted = false }) => {
+  const navigate = useNavigate();
   const [imageLoaded, setImageLoaded] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+  const [swipeOffset, setSwipeOffset] = useState(0);
   
   const timeAgo = useMemo(() => {
-    if (!item.listed_at) return null;
-    const diff = Date.now() - new Date(item.listed_at).getTime();
+    const dateStr = item.created_at || item.listed_at;
+    if (!dateStr) return null;
+    const diff = Date.now() - new Date(dateStr).getTime();
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
     if (days === 0) return 'Today';
     if (days === 1) return 'Yesterday';
-    if (days < 7) return `${days} days ago`;
-    if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
-    return `${Math.floor(days / 30)} months ago`;
-  }, [item.listed_at]);
+    if (days < 7) return `${days}d ago`;
+    if (days < 30) return `${Math.floor(days / 7)}w ago`;
+    return `${Math.floor(days / 30)}mo ago`;
+  }, [item.created_at, item.listed_at]);
+
+  const handleDragEnd = (_: any, info: PanInfo) => {
+    const threshold = 80;
+    if (info.offset.x < -threshold && isOwner && item.status === 'active') {
+      onMarkSold(item);
+    } else if (info.offset.x > threshold && isOwner) {
+      onDelete(item);
+    }
+    setSwipeOffset(0);
+  };
+
+  const isSold = item.status === 'sold';
 
   return (
     <motion.div
@@ -329,23 +391,47 @@ const MarketplaceCard: React.FC<{
       transition={{ duration: 0.2 }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      drag={isOwner ? 'x' : false}
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.2}
+      onDrag={(_, info) => setSwipeOffset(info.offset.x)}
+      onDragEnd={handleDragEnd}
+      style={{ x: swipeOffset }}
+      className="relative"
     >
+      {isOwner && (
+        <>
+          <div className={cn(
+            'absolute inset-y-0 left-0 w-20 flex items-center justify-center rounded-l-xl transition-opacity',
+            'bg-red-500/80',
+            swipeOffset > 40 ? 'opacity-100' : 'opacity-0'
+          )}>
+            <Trash2 className="h-6 w-6 text-white" />
+          </div>
+          <div className={cn(
+            'absolute inset-y-0 right-0 w-20 flex items-center justify-center rounded-r-xl transition-opacity',
+            'bg-emerald-500/80',
+            swipeOffset < -40 ? 'opacity-100' : 'opacity-0'
+          )}>
+            <CheckCircle2 className="h-6 w-6 text-white" />
+          </div>
+        </>
+      )}
+      
       <Link to={`/arena/challenge/${item.challenge_id}`}>
         <Card className={cn(
           'group relative overflow-hidden transition-all duration-300',
           'bg-gradient-to-b from-zinc-900/50 to-zinc-950/80',
           'border-zinc-800/50 hover:border-zinc-700/80',
           'hover:shadow-xl hover:shadow-black/20',
-          layout === 'compact' && 'flex flex-row h-32'
+          layout === 'compact' && 'flex flex-row h-32',
+          isSold && 'opacity-75'
         )}>
-          {/* Image Container */}
           <div className={cn(
             'relative overflow-hidden bg-zinc-900',
             layout === 'grid' ? 'aspect-square' : 'w-32 h-32 flex-shrink-0'
           )}>
-            {!imageLoaded && (
-              <Skeleton className="absolute inset-0" />
-            )}
+            {!imageLoaded && <Skeleton className="absolute inset-0" />}
             <img
               src={item.primary_photo_url || '/placeholder.svg'}
               alt={item.item_name}
@@ -353,14 +439,19 @@ const MarketplaceCard: React.FC<{
               className={cn(
                 'w-full h-full object-cover transition-transform duration-500',
                 'group-hover:scale-110',
-                !imageLoaded && 'opacity-0'
+                !imageLoaded && 'opacity-0',
+                isSold && 'grayscale'
               )}
             />
             
-            {/* Overlay Gradient */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            {isSold && (
+              <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                <Badge className="bg-emerald-500 text-white text-lg px-4 py-1">
+                  SOLD
+                </Badge>
+              </div>
+            )}
             
-            {/* Top Badges */}
             <div className="absolute top-2 left-2 right-2 flex items-start justify-between">
               <div className="flex flex-col gap-1.5">
                 {item.is_verified && (
@@ -369,18 +460,25 @@ const MarketplaceCard: React.FC<{
                     Verified
                   </Badge>
                 )}
-                <PriceFairnessIndicator 
-                  askingPrice={item.asking_price} 
-                  estimatedValue={item.estimated_value}
-                />
+                <StatusBadge status={item.status || 'active'} />
+                {!isSold && (
+                  <PriceFairnessIndicator 
+                    askingPrice={item.asking_price} 
+                    estimatedValue={item.estimated_value}
+                  />
+                )}
               </div>
               
-              <ConfidenceBadge score={item.confidence_score} />
+              {isOwner && (
+                <Badge variant="secondary" className="bg-blue-500/20 text-blue-300 border-blue-500/30">
+                  <User className="h-3 w-3 mr-1" />
+                  Yours
+                </Badge>
+              )}
             </div>
             
-            {/* Quick Actions (visible on hover) */}
             <AnimatePresence>
-              {isHovered && layout === 'grid' && (
+              {isHovered && layout === 'grid' && !isSold && (
                 <motion.div 
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -388,38 +486,45 @@ const MarketplaceCard: React.FC<{
                   className="absolute bottom-2 left-2 right-2 flex gap-2"
                   onClick={(e) => e.preventDefault()}
                 >
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="flex-1 h-8 bg-white/10 backdrop-blur-sm hover:bg-white/20 border-white/10"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      onWatchlist(item.id);
-                    }}
-                  >
-                    {isWatchlisted ? (
-                      <HeartOff className="h-3.5 w-3.5 mr-1.5" />
-                    ) : (
-                      <Heart className="h-3.5 w-3.5 mr-1.5" />
-                    )}
-                    {isWatchlisted ? 'Remove' : 'Watch'}
-                  </Button>
+                  {isOwner ? (
+                    <OwnerActionsDropdown
+                      item={item}
+                      onMarkSold={() => onMarkSold(item)}
+                      onDelete={() => onDelete(item)}
+                      onEdit={() => navigate(`/arena/edit/${item.id}`)}
+                    />
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="flex-1 h-8 bg-white/10 backdrop-blur-sm hover:bg-white/20"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        onWatchlist(item.id);
+                      }}
+                    >
+                      {isWatchlisted ? (
+                        <HeartOff className="h-3.5 w-3.5 mr-1.5" />
+                      ) : (
+                        <Heart className="h-3.5 w-3.5 mr-1.5" />
+                      )}
+                      {isWatchlisted ? 'Remove' : 'Watch'}
+                    </Button>
+                  )}
                   <ExportDropdown item={item} onExport={onExport} />
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
           
-          {/* Content */}
           <CardContent className={cn(
             'flex flex-col',
             layout === 'grid' ? 'p-4' : 'p-3 flex-1 justify-center'
           )}>
-            {/* Category & Time */}
-            <div className="flex items-center gap-2 mb-1.5">
+            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
               {item.category && (
                 <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 bg-zinc-800/50">
-                  {item.category}
+                  {getCategoryLabel(item.category)}
                 </Badge>
               )}
               {timeAgo && (
@@ -427,7 +532,6 @@ const MarketplaceCard: React.FC<{
               )}
             </div>
             
-            {/* Title */}
             <h3 className={cn(
               'font-semibold text-zinc-100 leading-tight',
               layout === 'grid' ? 'text-sm line-clamp-2 mb-2' : 'text-sm line-clamp-1 mb-1'
@@ -435,37 +539,32 @@ const MarketplaceCard: React.FC<{
               {item.item_name}
             </h3>
             
-            {/* Price Row */}
             <div className="flex items-baseline gap-2 mt-auto">
-              <span className="text-lg font-bold text-white">
-                ${item.asking_price.toLocaleString()}
+              <span className={cn(
+                'text-lg font-bold',
+                isSold ? 'text-emerald-400' : 'text-white'
+              )}>
+                ${(isSold ? item.sold_price || item.asking_price : item.asking_price).toLocaleString()}
               </span>
-              {item.estimated_value && item.estimated_value !== item.asking_price && (
+              {isSold && item.sold_price !== item.asking_price && (
                 <span className="text-xs text-zinc-500 line-through">
-                  ${item.estimated_value.toLocaleString()}
+                  ${item.asking_price.toLocaleString()}
                 </span>
               )}
             </div>
             
-            {/* Meta Info */}
             {layout === 'grid' && (
               <div className="flex items-center gap-3 mt-2 text-[11px] text-zinc-500">
-                {item.views !== undefined && (
+                {item.seller_name && !isOwner && (
+                  <span className="flex items-center gap-1 truncate">
+                    <User className="h-3 w-3" />
+                    {item.seller_name}
+                  </span>
+                )}
+                {item.views !== undefined && item.views > 0 && (
                   <span className="flex items-center gap-1">
                     <Eye className="h-3 w-3" />
                     {item.views}
-                  </span>
-                )}
-                {item.watchlist_count !== undefined && (
-                  <span className="flex items-center gap-1">
-                    <Heart className="h-3 w-3" />
-                    {item.watchlist_count}
-                  </span>
-                )}
-                {item.location && (
-                  <span className="flex items-center gap-1 truncate">
-                    <MapPin className="h-3 w-3" />
-                    {item.location}
                   </span>
                 )}
               </div>
@@ -477,31 +576,49 @@ const MarketplaceCard: React.FC<{
   );
 };
 
-/**
- * Category Pills
- */
 const CategoryPills: React.FC<{
   selected: string;
   onSelect: (category: string) => void;
-}> = ({ selected, onSelect }) => {
+  dynamicCategories: DynamicCategory[];
+}> = ({ selected, onSelect, dynamicCategories }) => {
+  const categories = useMemo(() => {
+    const allCat = { id: 'all', label: 'All Items', icon: Package, count: 0 };
+    
+    if (dynamicCategories.length === 0) {
+      return [allCat, ...DEFAULT_CATEGORIES.slice(1)];
+    }
+    
+    const dynamicWithLabels = dynamicCategories.map(dc => ({
+      id: dc.id,
+      label: getCategoryLabel(dc.id),
+      icon: getCategoryIcon(dc.id),
+      count: dc.count
+    }));
+    
+    return [allCat, ...dynamicWithLabels];
+  }, [dynamicCategories]);
+
   return (
     <ScrollArea className="w-full whitespace-nowrap">
       <div className="flex gap-2 pb-2">
-        {CATEGORIES.map((cat) => (
+        {categories.map((cat) => (
           <Button
             key={cat.id}
             variant={selected === cat.id ? 'default' : 'outline'}
             size="sm"
             onClick={() => onSelect(cat.id)}
             className={cn(
-              'rounded-full px-4 h-9 flex-shrink-0 transition-all',
+              'rounded-full px-4 h-9 flex-shrink-0 transition-all gap-1.5',
               selected === cat.id 
                 ? 'bg-white text-black hover:bg-zinc-200' 
                 : 'bg-zinc-900/50 border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700'
             )}
           >
-            <cat.icon className="h-3.5 w-3.5 mr-1.5" />
+            <cat.icon className="h-3.5 w-3.5" />
             {cat.label}
+            {cat.count > 0 && (
+              <span className="text-[10px] opacity-60">({cat.count})</span>
+            )}
           </Button>
         ))}
       </div>
@@ -510,9 +627,6 @@ const CategoryPills: React.FC<{
   );
 };
 
-/**
- * Filter Panel (Sheet for mobile, sidebar for desktop)
- */
 const FilterPanel: React.FC<{
   filters: FilterState;
   onChange: (filters: FilterState) => void;
@@ -520,7 +634,6 @@ const FilterPanel: React.FC<{
 }> = ({ filters, onChange, maxPrice }) => {
   return (
     <div className="space-y-6">
-      {/* Sort */}
       <div className="space-y-2">
         <Label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
           Sort By
@@ -542,7 +655,6 @@ const FilterPanel: React.FC<{
         </Select>
       </div>
       
-      {/* Price Range */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <Label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
@@ -559,31 +671,8 @@ const FilterPanel: React.FC<{
           step={10}
           className="py-2"
         />
-        <div className="flex gap-2">
-          <Input
-            type="number"
-            placeholder="Min"
-            value={filters.priceRange[0]}
-            onChange={(e) => onChange({ 
-              ...filters, 
-              priceRange: [parseInt(e.target.value) || 0, filters.priceRange[1]] 
-            })}
-            className="bg-zinc-900/50 border-zinc-800 h-9"
-          />
-          <Input
-            type="number"
-            placeholder="Max"
-            value={filters.priceRange[1]}
-            onChange={(e) => onChange({ 
-              ...filters, 
-              priceRange: [filters.priceRange[0], parseInt(e.target.value) || maxPrice] 
-            })}
-            className="bg-zinc-900/50 border-zinc-800 h-9"
-          />
-        </div>
       </div>
       
-      {/* Condition */}
       <div className="space-y-2">
         <Label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
           Condition
@@ -605,11 +694,10 @@ const FilterPanel: React.FC<{
         </Select>
       </div>
       
-      {/* Verified Only */}
       <div className="flex items-center justify-between py-2">
         <div className="space-y-0.5">
           <Label className="text-sm">Verified Only</Label>
-          <p className="text-xs text-zinc-500">Show HYDRA verified items</p>
+          <p className="text-xs text-zinc-500">HYDRA verified items</p>
         </div>
         <Switch
           checked={filters.verifiedOnly}
@@ -619,7 +707,6 @@ const FilterPanel: React.FC<{
       
       <Separator className="bg-zinc-800" />
       
-      {/* Reset */}
       <Button
         variant="outline"
         className="w-full border-zinc-800 hover:bg-zinc-800"
@@ -644,13 +731,22 @@ const FilterPanel: React.FC<{
 const Marketplace: React.FC = () => {
   const { searchArenaQuery, setSearchArenaQuery } = useAppContext();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   
-  // State
+  // Auth state
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  
+  // Data state
   const [items, setItems] = useState<MarketplaceItem[]>([]);
+  const [dynamicCategories, setDynamicCategories] = useState<DynamicCategory[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // UI state
   const [searchTerm, setSearchTerm] = useState(searchArenaQuery || searchParams.get('q') || '');
   const [layout, setLayout] = useState<'grid' | 'compact'>('grid');
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<'all' | 'mine'>('all');
+  const [showSold, setShowSold] = useState(false);
   const [filters, setFilters] = useState<FilterState>({
     category: searchParams.get('category') || 'all',
     priceRange: [0, 10000],
@@ -658,8 +754,51 @@ const Marketplace: React.FC = () => {
     sortBy: 'newest',
     condition: 'all',
   });
+  
+  // Dialog state
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; item: MarketplaceItem | null }>({ 
+    open: false, 
+    item: null 
+  });
+  const [soldDialog, setSoldDialog] = useState<{ open: boolean; item: MarketplaceItem | null }>({ 
+    open: false, 
+    item: null 
+  });
 
-  // Fetch marketplace data
+  // =============================================================================
+  // AUTH HELPER
+  // =============================================================================
+  
+  const getAuthHeaders = useCallback(async (): Promise<HeadersInit> => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      throw new Error('Not authenticated');
+    }
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`
+    };
+  }, []);
+
+  // Get current user on mount
+  useEffect(() => {
+    const getUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setCurrentUserId(user?.id || null);
+    };
+    getUser();
+    
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
+      setCurrentUserId(session?.user?.id || null);
+    });
+    
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // =============================================================================
+  // DATA FETCHING
+  // =============================================================================
+
   const fetchMarketplaceData = useCallback(async (query: string) => {
     setLoading(true);
     try {
@@ -668,6 +807,15 @@ const Marketplace: React.FC = () => {
       if (filters.category !== 'all') params.set('category', filters.category);
       if (filters.verifiedOnly) params.set('verified', 'true');
       params.set('sort', filters.sortBy);
+      params.set('include_categories', 'true');
+      params.set('format', 'v2');
+      
+      if (viewMode === 'mine' && currentUserId) {
+        params.set('seller_id', currentUserId);
+        params.set('status', showSold ? 'all' : 'active');
+      } else {
+        params.set('status', 'active');
+      }
       
       const url = `/api/arena/marketplace?${params.toString()}`;
       const response = await fetch(url);
@@ -675,7 +823,15 @@ const Marketplace: React.FC = () => {
       if (!response.ok) throw new Error('Failed to fetch marketplace data.');
       
       const data = await response.json();
-      setItems(data);
+      
+      if (Array.isArray(data)) {
+        setItems(data);
+      } else {
+        setItems(data.listings || []);
+        if (data.categories) {
+          setDynamicCategories(data.categories);
+        }
+      }
     } catch (error) {
       toast.error("Error Loading Marketplace", { 
         description: (error as Error).message 
@@ -683,9 +839,8 @@ const Marketplace: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [filters.category, filters.verifiedOnly, filters.sortBy]);
+  }, [filters.category, filters.verifiedOnly, filters.sortBy, viewMode, currentUserId, showSold]);
 
-  // Initial load
   useEffect(() => {
     if (searchArenaQuery) {
       setSearchTerm(searchArenaQuery);
@@ -694,16 +849,18 @@ const Marketplace: React.FC = () => {
     } else {
       fetchMarketplaceData(searchTerm);
     }
-  }, [searchArenaQuery, fetchMarketplaceData, setSearchArenaQuery]);
+  }, [searchArenaQuery, fetchMarketplaceData, setSearchArenaQuery, viewMode, showSold]);
 
-  // Handle search
+  // =============================================================================
+  // EVENT HANDLERS
+  // =============================================================================
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     fetchMarketplaceData(searchTerm);
     setSearchParams(searchTerm ? { q: searchTerm } : {});
   };
 
-  // Handle category change
   const handleCategoryChange = (category: string) => {
     setFilters(prev => ({ ...prev, category }));
     setSearchParams(params => {
@@ -716,7 +873,6 @@ const Marketplace: React.FC = () => {
     });
   };
 
-  // Handle watchlist toggle
   const handleWatchlistToggle = (itemId: string) => {
     setWatchlist(prev => {
       const next = new Set(prev);
@@ -731,48 +887,118 @@ const Marketplace: React.FC = () => {
     });
   };
 
-  // Handle export
   const handleExport = async (item: MarketplaceItem, platform: string) => {
     toast.loading(`Preparing ${platform} listing...`, { id: 'export' });
     
-    // Simulate export preparation
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 500));
     
     const platformUrls: Record<string, string> = {
-      ebay: `https://www.ebay.com/sl/sell`,
-      facebook: `https://www.facebook.com/marketplace/create/item`,
-      mercari: `https://www.mercari.com/sell/`,
-      craigslist: `https://post.craigslist.org/`,
-      offerup: `https://offerup.com/post`,
-      poshmark: `https://poshmark.com/create-listing`,
+      ebay: 'https://www.ebay.com/sl/sell',
+      facebook: 'https://www.facebook.com/marketplace/create/item',
+      mercari: 'https://www.mercari.com/sell/',
+      craigslist: 'https://post.craigslist.org/',
+      offerup: 'https://offerup.com/post',
     };
     
-    // Copy listing details to clipboard
-    const listingText = `
-${item.item_name}
-
-Price: $${item.asking_price}
-${item.condition ? `Condition: ${item.condition}` : ''}
-${item.description || ''}
-
-Listed on TagnetIQ Marketplace
-    `.trim();
+    const listingText = `${item.item_name}\n\nPrice: $${item.asking_price}\n${item.condition ? `Condition: ${item.condition}` : ''}\n${item.description || ''}\n\nListed on TagnetIQ`;
     
     await navigator.clipboard.writeText(listingText);
     
     toast.success(`Opening ${platform}`, {
       id: 'export',
       description: 'Listing details copied to clipboard',
-      action: {
-        label: 'Open',
-        onClick: () => window.open(platformUrls[platform], '_blank'),
-      },
     });
     
     window.open(platformUrls[platform], '_blank');
   };
 
-  // Filter items
+  const handleMarkSold = (item: MarketplaceItem) => {
+    if (!currentUserId) {
+      toast.error('Please log in to manage your listings');
+      return;
+    }
+    setSoldDialog({ open: true, item });
+  };
+
+  const confirmMarkSold = async () => {
+    const item = soldDialog.item;
+    if (!item) return;
+    
+    try {
+      const headers = await getAuthHeaders();
+      
+      const response = await fetch(`/api/arena/listings/${item.id}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ action: 'mark_sold' })
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to mark as sold');
+      }
+      
+      toast.success('Listing marked as sold! 🎉');
+      
+      setItems(prev => prev.map(i => 
+        i.id === item.id 
+          ? { ...i, status: 'sold' as const, sold_at: new Date().toISOString() } 
+          : i
+      ));
+    } catch (error: any) {
+      if (error.message === 'Not authenticated') {
+        toast.error('Please log in to manage your listings');
+      } else {
+        toast.error('Failed to mark as sold', { description: error.message });
+      }
+    } finally {
+      setSoldDialog({ open: false, item: null });
+    }
+  };
+
+  const handleDelete = (item: MarketplaceItem) => {
+    if (!currentUserId) {
+      toast.error('Please log in to manage your listings');
+      return;
+    }
+    setDeleteDialog({ open: true, item });
+  };
+
+  const confirmDelete = async () => {
+    const item = deleteDialog.item;
+    if (!item) return;
+    
+    try {
+      const headers = await getAuthHeaders();
+      
+      const response = await fetch(`/api/arena/listings/${item.id}`, {
+        method: 'DELETE',
+        headers
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to delete');
+      }
+      
+      toast.success('Listing deleted');
+      
+      setItems(prev => prev.filter(i => i.id !== item.id));
+    } catch (error: any) {
+      if (error.message === 'Not authenticated') {
+        toast.error('Please log in to manage your listings');
+      } else {
+        toast.error('Failed to delete listing', { description: error.message });
+      }
+    } finally {
+      setDeleteDialog({ open: false, item: null });
+    }
+  };
+
+  // =============================================================================
+  // COMPUTED VALUES
+  // =============================================================================
+
   const filteredItems = useMemo(() => {
     return items.filter(item => {
       if (filters.priceRange[0] > 0 && item.asking_price < filters.priceRange[0]) return false;
@@ -783,14 +1009,18 @@ Listed on TagnetIQ Marketplace
     });
   }, [items, filters]);
 
-  // Stats
   const stats = useMemo(() => ({
     total: filteredItems.length,
     verified: filteredItems.filter(i => i.is_verified).length,
     avgPrice: filteredItems.length 
       ? Math.round(filteredItems.reduce((sum, i) => sum + i.asking_price, 0) / filteredItems.length)
       : 0,
+    sold: filteredItems.filter(i => i.status === 'sold').length,
   }), [filteredItems]);
+
+  // =============================================================================
+  // RENDER
+  // =============================================================================
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-950 to-black">
@@ -799,50 +1029,95 @@ Listed on TagnetIQ Marketplace
         <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/10 via-transparent to-blue-500/10" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-zinc-800/20 via-transparent to-transparent" />
         
-        <div className="container mx-auto px-4 py-8 relative">
-          {/* Title */}
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+        <div className="container mx-auto px-4 py-6 md:py-8 relative">
+          {/* Title Row */}
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-4">
             <div>
-              <h1 className="text-3xl md:text-4xl font-bold text-white tracking-tight">
+              <h1 className="text-2xl md:text-4xl font-bold text-white tracking-tight">
                 Marketplace
               </h1>
-              <p className="text-zinc-400 mt-1">
-                Discover verified collectibles from trusted sellers
+              <p className="text-zinc-400 mt-1 text-sm md:text-base">
+                {viewMode === 'mine' ? 'Manage your listings' : 'Discover verified collectibles'}
               </p>
             </div>
             
             {/* Quick Stats */}
-            <div className="flex gap-6 text-sm">
+            <div className="flex gap-4 md:gap-6 text-sm">
               <div className="text-center">
-                <div className="text-2xl font-bold text-white">{stats.total}</div>
-                <div className="text-zinc-500">Listings</div>
+                <div className="text-xl md:text-2xl font-bold text-white">{stats.total}</div>
+                <div className="text-zinc-500 text-xs">Listings</div>
               </div>
+              {viewMode === 'mine' && stats.sold > 0 && (
+                <div className="text-center">
+                  <div className="text-xl md:text-2xl font-bold text-emerald-400">{stats.sold}</div>
+                  <div className="text-zinc-500 text-xs">Sold</div>
+                </div>
+              )}
               <div className="text-center">
-                <div className="text-2xl font-bold text-emerald-400">{stats.verified}</div>
-                <div className="text-zinc-500">Verified</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-white">${stats.avgPrice}</div>
-                <div className="text-zinc-500">Avg Price</div>
+                <div className="text-xl md:text-2xl font-bold text-white">${stats.avgPrice}</div>
+                <div className="text-zinc-500 text-xs">Avg Price</div>
               </div>
             </div>
           </div>
           
+          {/* View Mode Tabs */}
+          <div className="flex items-center gap-4 mb-4">
+            <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as 'all' | 'mine')}>
+              <TabsList className="bg-zinc-900/50 border border-zinc-800">
+                <TabsTrigger value="all" className="data-[state=active]:bg-white data-[state=active]:text-black">
+                  <Package className="h-4 w-4 mr-2" />
+                  All Listings
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="mine" 
+                  className="data-[state=active]:bg-white data-[state=active]:text-black"
+                  disabled={!currentUserId}
+                >
+                  <User className="h-4 w-4 mr-2" />
+                  My Listings
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            
+            {viewMode === 'mine' && (
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="show-sold"
+                  checked={showSold}
+                  onCheckedChange={setShowSold}
+                />
+                <Label htmlFor="show-sold" className="text-sm text-zinc-400">
+                  Show sold
+                </Label>
+              </div>
+            )}
+            
+            {currentUserId && (
+              <Button 
+                onClick={() => navigate('/vault')}
+                className="ml-auto bg-emerald-600 hover:bg-emerald-700"
+                size="sm"
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                <span className="hidden sm:inline">List Item</span>
+              </Button>
+            )}
+          </div>
+          
           {/* Search Bar */}
-          <form onSubmit={handleSearch} className="flex gap-2 mb-6">
+          <form onSubmit={handleSearch} className="flex gap-2 mb-4">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
               <Input
-                placeholder="Search collectibles, cards, coins, vinyl..."
+                placeholder="Search collectibles..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 h-12 bg-zinc-900/80 border-zinc-800 text-white placeholder:text-zinc-500 focus:border-zinc-700 focus:ring-zinc-700"
+                className="pl-10 h-11 md:h-12 bg-zinc-900/80 border-zinc-800 text-white placeholder:text-zinc-500"
               />
             </div>
             <Button 
               type="submit" 
-              size="lg"
-              className="h-12 px-6 bg-white text-black hover:bg-zinc-200"
+              className="h-11 md:h-12 px-4 md:px-6 bg-white text-black hover:bg-zinc-200"
               disabled={loading}
             >
               {loading ? (
@@ -856,15 +1131,16 @@ Listed on TagnetIQ Marketplace
           {/* Category Pills */}
           <CategoryPills 
             selected={filters.category} 
-            onSelect={handleCategoryChange} 
+            onSelect={handleCategoryChange}
+            dynamicCategories={dynamicCategories}
           />
         </div>
       </div>
       
       {/* Main Content */}
-      <div className="container mx-auto px-4 py-6">
+      <div className="container mx-auto px-4 py-4 md:py-6">
         <div className="flex gap-6">
-          {/* Desktop Filters Sidebar */}
+          {/* Desktop Filters */}
           <aside className="hidden lg:block w-64 flex-shrink-0">
             <div className="sticky top-24 bg-zinc-900/50 rounded-xl border border-zinc-800/50 p-4">
               <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
@@ -884,11 +1160,11 @@ Listed on TagnetIQ Marketplace
             {/* Toolbar */}
             <div className="flex items-center justify-between mb-4">
               <p className="text-sm text-zinc-400">
-                {filteredItems.length} items found
+                {filteredItems.length} items
               </p>
               
               <div className="flex items-center gap-2">
-                {/* Mobile Filter Button */}
+                {/* Mobile Filter */}
                 <Sheet>
                   <SheetTrigger asChild>
                     <Button 
@@ -919,10 +1195,7 @@ Listed on TagnetIQ Marketplace
                   <Button
                     variant="ghost"
                     size="sm"
-                    className={cn(
-                      'h-8 w-8 p-0',
-                      layout === 'grid' && 'bg-zinc-800'
-                    )}
+                    className={cn('h-8 w-8 p-0', layout === 'grid' && 'bg-zinc-800')}
                     onClick={() => setLayout('grid')}
                   >
                     <LayoutGrid className="h-4 w-4" />
@@ -930,10 +1203,7 @@ Listed on TagnetIQ Marketplace
                   <Button
                     variant="ghost"
                     size="sm"
-                    className={cn(
-                      'h-8 w-8 p-0',
-                      layout === 'compact' && 'bg-zinc-800'
-                    )}
+                    className={cn('h-8 w-8 p-0', layout === 'compact' && 'bg-zinc-800')}
                     onClick={() => setLayout('compact')}
                   >
                     <Grid3X3 className="h-4 w-4" />
@@ -942,12 +1212,20 @@ Listed on TagnetIQ Marketplace
               </div>
             </div>
             
+            {/* Mobile swipe hint */}
+            {viewMode === 'mine' && filteredItems.length > 0 && (
+              <div className="lg:hidden mb-4 p-3 bg-zinc-900/50 rounded-lg border border-zinc-800 flex items-center gap-2 text-xs text-zinc-400">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                <span>Swipe left to mark sold, swipe right to delete</span>
+              </div>
+            )}
+            
             {/* Items */}
             {loading ? (
               <div className={cn(
                 'grid gap-4',
                 layout === 'grid' 
-                  ? 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4' 
+                  ? 'grid-cols-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4' 
                   : 'grid-cols-1'
               )}>
                 {Array.from({ length: 8 }).map((_, i) => (
@@ -964,39 +1242,53 @@ Listed on TagnetIQ Marketplace
                 ))}
               </div>
             ) : filteredItems.length === 0 ? (
-              <div className="text-center py-20">
-                <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-zinc-900 flex items-center justify-center">
-                  <Package className="h-10 w-10 text-zinc-700" />
+              <div className="text-center py-16 md:py-20">
+                <div className="w-16 h-16 md:w-20 md:h-20 mx-auto mb-4 rounded-full bg-zinc-900 flex items-center justify-center">
+                  <Package className="h-8 w-8 md:h-10 md:w-10 text-zinc-700" />
                 </div>
-                <h3 className="text-xl font-semibold text-white mb-2">No Listings Found</h3>
-                <p className="text-zinc-500 max-w-md mx-auto">
-                  Try adjusting your filters or search terms to find what you're looking for.
+                <h3 className="text-lg md:text-xl font-semibold text-white mb-2">
+                  {viewMode === 'mine' ? 'No Listings Yet' : 'No Listings Found'}
+                </h3>
+                <p className="text-zinc-500 max-w-md mx-auto text-sm">
+                  {viewMode === 'mine' 
+                    ? 'Start selling by listing items from your vault.'
+                    : 'Try adjusting your filters or search terms.'}
                 </p>
-                <Button 
-                  variant="outline" 
-                  className="mt-4 border-zinc-800"
-                  onClick={() => {
-                    setSearchTerm('');
-                    setFilters({
-                      category: 'all',
-                      priceRange: [0, 10000],
-                      verifiedOnly: false,
-                      sortBy: 'newest',
-                      condition: 'all',
-                    });
-                    fetchMarketplaceData('');
-                  }}
-                >
-                  Clear All Filters
-                </Button>
+                {viewMode === 'mine' ? (
+                  <Button 
+                    className="mt-4 bg-emerald-600 hover:bg-emerald-700"
+                    onClick={() => navigate('/vault')}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    List Your First Item
+                  </Button>
+                ) : (
+                  <Button 
+                    variant="outline" 
+                    className="mt-4 border-zinc-800"
+                    onClick={() => {
+                      setSearchTerm('');
+                      setFilters({
+                        category: 'all',
+                        priceRange: [0, 10000],
+                        verifiedOnly: false,
+                        sortBy: 'newest',
+                        condition: 'all',
+                      });
+                      fetchMarketplaceData('');
+                    }}
+                  >
+                    Clear All Filters
+                  </Button>
+                )}
               </div>
             ) : (
               <motion.div 
                 layout
                 className={cn(
-                  'grid gap-4',
+                  'grid gap-3 md:gap-4',
                   layout === 'grid' 
-                    ? 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4' 
+                    ? 'grid-cols-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4' 
                     : 'grid-cols-1 md:grid-cols-2'
                 )}
               >
@@ -1006,8 +1298,11 @@ Listed on TagnetIQ Marketplace
                       key={item.id}
                       item={item}
                       layout={layout}
+                      isOwner={item.seller_id === currentUserId}
                       onWatchlist={handleWatchlistToggle}
                       onExport={handleExport}
+                      onMarkSold={handleMarkSold}
+                      onDelete={handleDelete}
                       isWatchlisted={watchlist.has(item.id)}
                     />
                   ))}
@@ -1017,6 +1312,50 @@ Listed on TagnetIQ Marketplace
           </main>
         </div>
       </div>
+      
+      {/* Mark as Sold Dialog */}
+      <AlertDialog open={soldDialog.open} onOpenChange={(open) => !open && setSoldDialog({ open: false, item: null })}>
+        <AlertDialogContent className="bg-zinc-900 border-zinc-800">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Mark as Sold?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will mark "{soldDialog.item?.item_name}" as sold. You can still see it in your listings with "Show sold" enabled.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-zinc-700 hover:bg-zinc-800">Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmMarkSold}
+              className="bg-emerald-600 hover:bg-emerald-700"
+            >
+              <CheckCircle2 className="h-4 w-4 mr-2" />
+              Mark as Sold
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      
+      {/* Delete Dialog */}
+      <AlertDialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, item: null })}>
+        <AlertDialogContent className="bg-zinc-900 border-zinc-800">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Delete Listing?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove "{deleteDialog.item?.item_name}" from the marketplace. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-zinc-700 hover:bg-zinc-800">Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmDelete}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

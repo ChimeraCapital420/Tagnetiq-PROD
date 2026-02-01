@@ -1,6 +1,6 @@
 // FILE: api/arena/marketplace.ts
-// STATUS: QUERY PERFORMANCE OPTIMIZED - Fixed for arena_listings schema
-// PUBLIC endpoint - no auth required for browsing
+// Marketplace listings endpoint - PUBLIC for browsing
+// Supports filtering by seller_id (My Listings), status, category, price
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -19,13 +19,14 @@ interface MarketplaceFilters {
   maxPrice?: number;
   verified?: boolean;
   sort?: string;
-  sortBy?: 'created_at' | 'price' | 'title';
-  sortOrder?: 'asc' | 'desc';
+  status?: string;
+  seller_id?: string;
   page?: number;
   limit?: number;
+  include_categories?: boolean;
 }
 
-const CACHE_DURATION = 60;
+const CACHE_DURATION = 30; // Shorter cache for more real-time data
 const MAX_LIMIT = 50;
 const DEFAULT_LIMIT = 20;
 
@@ -34,28 +35,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  // Apply rate limiting
+  // Rate limiting
   if (!await rateLimit(req, res, { max: 60, windowMs: 60000 })) {
     return;
   }
 
   try {
-    // PUBLIC: No auth required for browsing marketplace
-
-    // Parse and validate query parameters
+    // Parse query parameters
     const filters: MarketplaceFilters = {
       searchQuery: typeof req.query.searchQuery === 'string' ? req.query.searchQuery.trim() : undefined,
-      category: typeof req.query.category === 'string' ? req.query.category.trim() : undefined,
+      category: typeof req.query.category === 'string' && req.query.category !== 'all' ? req.query.category.trim() : undefined,
       minPrice: req.query.minPrice ? Math.max(0, Number(req.query.minPrice)) : undefined,
       maxPrice: req.query.maxPrice ? Math.max(0, Number(req.query.maxPrice)) : undefined,
       verified: req.query.verified === 'true',
       sort: typeof req.query.sort === 'string' ? req.query.sort : 'newest',
-      sortBy: ['created_at', 'price', 'title'].includes(req.query.sortBy as string) 
-        ? req.query.sortBy as MarketplaceFilters['sortBy'] 
-        : 'created_at',
-      sortOrder: req.query.sortOrder === 'asc' ? 'asc' : 'desc',
+      status: typeof req.query.status === 'string' ? req.query.status : 'active',
+      seller_id: typeof req.query.seller_id === 'string' ? req.query.seller_id : undefined,
       page: Math.max(1, Number(req.query.page) || 1),
       limit: Math.min(MAX_LIMIT, Math.max(1, Number(req.query.limit) || DEFAULT_LIMIT)),
+      include_categories: req.query.include_categories === 'true',
     };
 
     // Validate price range
@@ -63,26 +61,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Minimum price cannot be greater than maximum price.' });
     }
 
-    // Check cache
-    const cacheKeyStr = cacheKey(
+    // Build cache key (exclude seller_id for privacy, they get fresh data)
+    const cacheKeyStr = filters.seller_id ? null : cacheKey(
       'marketplace',
       filters.searchQuery,
+      filters.category,
       filters.minPrice,
       filters.maxPrice,
       filters.verified,
       filters.sort,
-      filters.sortBy,
-      filters.sortOrder,
+      filters.status,
       filters.page,
       filters.limit
     );
     
-    const cached = cache.get(cacheKeyStr);
-    if (cached) {
-      return res.status(200).json(cached);
+    // Check cache (skip for personal listings)
+    if (cacheKeyStr) {
+      const cached = cache.get(cacheKeyStr);
+      if (cached) {
+        return res.status(200).json(cached);
+      }
     }
 
-    // Query arena_listings with CORRECT column names
+    // Build query
     let query = supaAdmin
       .from('arena_listings')
       .select(`
@@ -93,21 +94,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         description,
         price,
         condition,
+        category,
         images,
         shipping_included,
         accepts_trades,
         status,
         created_at,
-        expires_at
-      `, { count: 'exact' })
-      .eq('status', 'active');
+        updated_at,
+        expires_at,
+        sold_at,
+        sold_price
+      `, { count: 'exact' });
 
-    // Apply search filter on title
+    // Filter by status
+    if (filters.status === 'active') {
+      query = query.eq('status', 'active');
+    } else if (filters.status === 'sold') {
+      query = query.eq('status', 'sold');
+    } else if (filters.status === 'all' && filters.seller_id) {
+      // For "My Listings", show active and sold, not deleted
+      query = query.in('status', ['active', 'sold']);
+    } else {
+      query = query.eq('status', 'active');
+    }
+
+    // Filter by seller (My Listings)
+    if (filters.seller_id) {
+      query = query.eq('seller_id', filters.seller_id);
+    }
+
+    // Search filter
     if (filters.searchQuery) {
       query = query.ilike('title', `%${filters.searchQuery}%`);
     }
 
-    // Apply price filters
+    // Category filter
+    if (filters.category) {
+      query = query.eq('category', filters.category);
+    }
+
+    // Price filters
     if (filters.minPrice !== undefined) {
       query = query.gte('price', filters.minPrice);
     }
@@ -115,11 +141,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       query = query.lte('price', filters.maxPrice);
     }
 
-    // NOTE: Category filter disabled - arena_listings doesn't have category column
-    // Categories in frontend are decorative only until we add category to DB schema
-    // Frontend sends category param but we ignore it for now
-
-    // Apply sorting
+    // Sorting
     switch (filters.sort) {
       case 'price_low':
         query = query.order('price', { ascending: true });
@@ -136,10 +158,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         break;
     }
 
-    // Apply pagination
+    // Pagination
     const offset = (filters.page! - 1) * filters.limit!;
     query = query.range(offset, offset + filters.limit! - 1);
 
+    // Execute query
     const { data: listings, error, count } = await query;
 
     if (error) {
@@ -147,7 +170,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Failed to fetch marketplace listings.');
     }
 
-    // Transform to match frontend expectations
+    // Get seller names for listings
+    const sellerIds = [...new Set((listings || []).map(l => l.seller_id).filter(Boolean))];
+    let sellerMap: Record<string, string> = {};
+    
+    if (sellerIds.length > 0) {
+      const { data: profiles } = await supaAdmin
+        .from('profiles')
+        .select('id, screen_name')
+        .in('id', sellerIds);
+      
+      if (profiles) {
+        sellerMap = profiles.reduce((acc, p) => {
+          acc[p.id] = p.screen_name || 'Anonymous';
+          return acc;
+        }, {} as Record<string, string>);
+      }
+    }
+
+    // Transform listings
     const transformedListings = (listings || []).map(listing => ({
       id: listing.id,
       challenge_id: listing.id,
@@ -155,23 +196,69 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       asking_price: listing.price,
       estimated_value: listing.price,
       primary_photo_url: listing.images?.[0] || '/placeholder.svg',
+      additional_photos: listing.images?.slice(1) || [],
       is_verified: false,
       confidence_score: null,
-      category: listing.condition,
+      category: listing.category || 'general',
       condition: listing.condition,
       description: listing.description,
       created_at: listing.created_at,
+      updated_at: listing.updated_at,
       seller_id: listing.seller_id,
-      seller_name: 'Seller',
+      seller_name: sellerMap[listing.seller_id] || 'Anonymous',
+      status: listing.status,
       views: 0,
       watchlist_count: 0,
       shipping_included: listing.shipping_included,
       accepts_trades: listing.accepts_trades,
-      additional_photos: listing.images?.slice(1) || [],
+      sold_at: listing.sold_at,
+      sold_price: listing.sold_price,
     }));
 
-    // Cache and return
-    cache.set(cacheKeyStr, transformedListings, CACHE_DURATION);
+    // Build response
+    const response: any = {
+      listings: transformedListings,
+      pagination: {
+        page: filters.page,
+        limit: filters.limit,
+        total: count || 0,
+        totalPages: Math.ceil((count || 0) / filters.limit!)
+      }
+    };
+
+    // Optionally include dynamic categories
+    if (filters.include_categories) {
+      const { data: categoryData } = await supaAdmin
+        .from('arena_listings')
+        .select('category')
+        .eq('status', 'active')
+        .not('category', 'is', null);
+      
+      if (categoryData) {
+        const categoryCounts = categoryData.reduce((acc, item) => {
+          const cat = item.category || 'general';
+          acc[cat] = (acc[cat] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+        
+        response.categories = Object.entries(categoryCounts)
+          .map(([id, count]) => ({ id, count }))
+          .sort((a, b) => b.count - a.count);
+      }
+    }
+
+    // Cache the response (only for non-personal queries)
+    if (cacheKeyStr) {
+      cache.set(cacheKeyStr, response, CACHE_DURATION);
+    }
+
+    // Return legacy format for backward compatibility OR new format
+    // Check if caller wants new format
+    if (req.query.format === 'v2') {
+      return res.status(200).json(response);
+    }
+    
+    // Legacy format - just return array
     return res.status(200).json(transformedListings);
 
   } catch (error: any) {
