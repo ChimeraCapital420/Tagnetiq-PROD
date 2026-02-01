@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Send, DollarSign, Ban, Paperclip, X } from 'lucide-react';
+import { Send, DollarSign, Ban, Paperclip, X, MoreVertical } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { MessageActions } from '@/components/messaging/MessageActions';
@@ -32,6 +32,7 @@ export const MessageThread: React.FC<MessageThreadProps> = ({ conversationId }) 
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [attachment, setAttachment] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -56,7 +57,7 @@ export const MessageThread: React.FC<MessageThreadProps> = ({ conversationId }) 
     };
     fetchMessages();
 
-    // Real-time subscription for new messages and updates
+    // Real-time subscription
     const channel = supabase
       .channel(`messages:${conversationId}`)
       .on(
@@ -69,14 +70,10 @@ export const MessageThread: React.FC<MessageThreadProps> = ({ conversationId }) 
         },
         (payload) => {
           if (payload.eventType === 'INSERT') {
-            // Fetch the full message with sender info
             fetchMessages();
           } else if (payload.eventType === 'UPDATE') {
-            // Update the message in state (for deletions)
             setMessages(prev => prev.map(m => 
-              m.id === payload.new.id 
-                ? { ...m, ...payload.new }
-                : m
+              m.id === payload.new.id ? { ...m, ...payload.new } : m
             ));
           }
         }
@@ -109,20 +106,12 @@ export const MessageThread: React.FC<MessageThreadProps> = ({ conversationId }) 
     }
   }, []);
 
-  // Context menu for desktop
-  const handleContextMenu = useCallback((e: React.MouseEvent, messageId: string) => {
-    e.preventDefault();
-    setSelectedMessageId(messageId);
-  }, []);
-
   // Delete message handler
   const handleDeleteMessage = async (messageId: string, deleteForEveryone: boolean) => {
     setIsDeleting(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        throw new Error('Authentication required');
-      }
+      if (!session) throw new Error('Authentication required');
 
       const response = await fetch(`/api/arena/messages/${messageId}`, {
         method: 'DELETE',
@@ -138,7 +127,6 @@ export const MessageThread: React.FC<MessageThreadProps> = ({ conversationId }) 
         throw new Error(data.error || 'Failed to delete message');
       }
 
-      // Update local state immediately
       setMessages(prev => prev.map(m => 
         m.id === messageId 
           ? { ...m, is_deleted: true, encrypted_content: '', attachment_url: null }
@@ -171,12 +159,10 @@ export const MessageThread: React.FC<MessageThreadProps> = ({ conversationId }) 
 
   const removeAttachment = () => {
     setAttachment(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // Send message with optional attachment
+  // Send message
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() && !attachment) return;
@@ -199,7 +185,6 @@ export const MessageThread: React.FC<MessageThreadProps> = ({ conversationId }) 
     try {
       let attachmentUrl: string | null = null;
 
-      // Upload attachment if exists
       if (messageAttachment) {
         setIsUploading(true);
         const timestamp = Date.now();
@@ -211,15 +196,11 @@ export const MessageThread: React.FC<MessageThreadProps> = ({ conversationId }) 
           .from('message-attachments')
           .upload(filePath, messageAttachment);
 
-        if (uploadError) {
-          throw new Error('Failed to upload attachment');
-        }
-
+        if (uploadError) throw new Error('Failed to upload attachment');
         attachmentUrl = filePath;
         setIsUploading(false);
       }
 
-      // Insert message via API
       const { data: { session } } = await supabase.auth.getSession();
       const response = await fetch('/api/arena/messages', {
         method: 'POST',
@@ -234,11 +215,7 @@ export const MessageThread: React.FC<MessageThreadProps> = ({ conversationId }) 
         }),
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to send message');
-      }
-
-      // Remove optimistic message (real one will come via subscription)
+      if (!response.ok) throw new Error('Failed to send message');
       setMessages(prev => prev.filter(m => m.id !== tempMessageId));
 
     } catch (error) {
@@ -248,32 +225,27 @@ export const MessageThread: React.FC<MessageThreadProps> = ({ conversationId }) 
     }
   };
 
-  // Get selected message for actions sheet
   const selectedMessage = messages.find(m => m.id === selectedMessageId);
 
   return (
     <div className="flex flex-col h-full">
       <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
-        <div className="space-y-4">
+        <div className="space-y-3">
           {messages.map(msg => {
             const isSender = msg.sender_id === user?.id;
+            const isHovered = hoveredMessageId === msg.id;
 
-            // Render deleted message indicator
+            // Deleted message indicator
             if (msg.is_deleted) {
               return (
-                <div 
-                  key={msg.id} 
-                  className={cn("flex mb-2", isSender ? "justify-end" : "justify-start")}
-                >
-                  <div 
-                    className={cn(
-                      "flex items-center gap-2 px-4 py-2.5 rounded-2xl max-w-[80%]",
-                      "bg-gray-100 dark:bg-gray-800",
-                      isSender ? "rounded-br-md" : "rounded-bl-md"
-                    )}
-                  >
-                    <Ban className="w-4 h-4 text-gray-400 dark:text-gray-500" />
-                    <span className="text-sm italic text-gray-500 dark:text-gray-400">
+                <div key={msg.id} className={cn("flex", isSender ? "justify-end" : "justify-start")}>
+                  <div className={cn(
+                    "flex items-center gap-2 px-4 py-2.5 rounded-2xl",
+                    "bg-gray-100 dark:bg-gray-800",
+                    isSender ? "rounded-br-sm" : "rounded-bl-sm"
+                  )}>
+                    <Ban className="w-4 h-4 text-gray-400" />
+                    <span className="text-sm italic text-gray-500">
                       {isSender ? 'You deleted this message' : 'This message was deleted'}
                     </span>
                   </div>
@@ -281,73 +253,94 @@ export const MessageThread: React.FC<MessageThreadProps> = ({ conversationId }) 
               );
             }
 
-            // Render normal message
+            // Normal message with action button
             return (
               <div 
                 key={msg.id} 
-                className={cn(
-                  "flex items-end gap-2", 
-                  isSender ? "justify-end" : "justify-start"
-                )}
+                className={cn("flex items-end gap-2 group", isSender ? "justify-end" : "justify-start")}
+                onMouseEnter={() => setHoveredMessageId(msg.id)}
+                onMouseLeave={() => setHoveredMessageId(null)}
                 onTouchStart={() => handleTouchStart(msg.id)}
                 onTouchEnd={handleTouchEnd}
                 onTouchCancel={handleTouchEnd}
-                onContextMenu={(e) => handleContextMenu(e, msg.id)}
               >
+                {/* Avatar for other user */}
                 {!isSender && (
-                  <Avatar className="h-8 w-8">
+                  <Avatar className="h-8 w-8 flex-shrink-0">
                     <AvatarImage src={`https://api.dicebear.com/8.x/initials/svg?seed=${msg.sender.screen_name}`} />
                     <AvatarFallback>{msg.sender.screen_name?.substring(0, 2)}</AvatarFallback>
                   </Avatar>
                 )}
-                <div 
-                  className={cn(
-                    "max-w-xs rounded-lg overflow-hidden",
-                    isSender 
-                      ? "bg-primary text-primary-foreground rounded-br-sm" 
-                      : "bg-muted rounded-bl-sm"
-                  )}
-                >
-                  {/* Attachment */}
+
+                {/* Action button - LEFT side for sender's messages */}
+                {isSender && (
+                  <button
+                    onClick={() => setSelectedMessageId(msg.id)}
+                    className={cn(
+                      "p-1.5 rounded-full transition-all flex-shrink-0",
+                      "text-gray-400 hover:text-gray-600 hover:bg-gray-100",
+                      "dark:hover:text-gray-300 dark:hover:bg-gray-800",
+                      "opacity-0 group-hover:opacity-100",
+                      "md:opacity-0 opacity-100" // Always visible on mobile
+                    )}
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </button>
+                )}
+
+                {/* Message bubble */}
+                <div className={cn(
+                  "max-w-[70%] rounded-2xl overflow-hidden",
+                  isSender 
+                    ? "bg-primary text-primary-foreground rounded-br-sm" 
+                    : "bg-muted rounded-bl-sm"
+                )}>
                   {msg.attachment_url && (
-                    <MessageAttachment 
-                      url={msg.attachment_url} 
-                      conversationId={conversationId}
-                    />
+                    <MessageAttachment url={msg.attachment_url} conversationId={conversationId} />
                   )}
-                  {/* Text content */}
                   {msg.encrypted_content && (
-                    <p className="px-4 py-2">
-                      {msg.encrypted_content}
-                    </p>
+                    <p className="px-4 py-2 break-words">{msg.encrypted_content}</p>
                   )}
                 </div>
+
+                {/* Action button - RIGHT side for received messages */}
+                {!isSender && (
+                  <button
+                    onClick={() => setSelectedMessageId(msg.id)}
+                    className={cn(
+                      "p-1.5 rounded-full transition-all flex-shrink-0",
+                      "text-gray-400 hover:text-gray-600 hover:bg-gray-100",
+                      "dark:hover:text-gray-300 dark:hover:bg-gray-800",
+                      "opacity-0 group-hover:opacity-100",
+                      "md:opacity-0 opacity-100" // Always visible on mobile
+                    )}
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             );
           })}
         </div>
       </ScrollArea>
 
-      {/* Message input area */}
-      <div className="p-4 border-t">
-        <div className="p-2 mb-2 border rounded-lg">
+      {/* Input area */}
+      <div className="p-4 border-t bg-background">
+        <div className="p-2 mb-2 border rounded-lg bg-muted/30">
           <p className="text-xs font-semibold text-muted-foreground flex items-center gap-2">
-            <DollarSign size={14}/> Payment Shortcuts & Disclaimer
+            <DollarSign size={14}/> Payment Disclaimer
           </p>
           <p className="text-xs text-muted-foreground mt-1">
-            Tagnetiq facilitates discovery, not transactions. All payments must be handled externally.
+            All payments handled externally. Be cautious with transactions.
           </p>
         </div>
 
         {/* Attachment preview */}
         {attachment && (
           <div className="flex items-center gap-2 p-2 mb-2 bg-muted rounded-lg">
-            <Paperclip className="w-4 h-4 text-muted-foreground" />
+            <Paperclip className="w-4 h-4 text-muted-foreground flex-shrink-0" />
             <span className="text-sm truncate flex-1">{attachment.name}</span>
-            <button 
-              onClick={removeAttachment}
-              className="p-1 hover:bg-background rounded"
-            >
+            <button onClick={removeAttachment} className="p-1 hover:bg-background rounded">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -367,17 +360,24 @@ export const MessageThread: React.FC<MessageThreadProps> = ({ conversationId }) 
             variant="ghost"
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
+            className="flex-shrink-0"
           >
             <Paperclip className="h-4 w-4" />
           </Button>
           <Input 
             value={newMessage} 
             onChange={(e) => setNewMessage(e.target.value)} 
-            placeholder="Type your message..." 
+            placeholder="Type a message..." 
             autoComplete="off"
             disabled={isUploading}
+            className="flex-1"
           />
-          <Button type="submit" size="icon" disabled={isUploading || (!newMessage.trim() && !attachment)}>
+          <Button 
+            type="submit" 
+            size="icon" 
+            disabled={isUploading || (!newMessage.trim() && !attachment)}
+            className="flex-shrink-0"
+          >
             <Send className="h-4 w-4" />
           </Button>
         </form>
