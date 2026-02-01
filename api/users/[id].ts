@@ -1,5 +1,6 @@
 // FILE: api/users/[id].ts
 // Get public user profile - respects privacy settings, blocking, and messaging permissions
+// PRIVACY: Personal data (location, full_name, tier) only visible to profile owner
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -40,7 +41,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Get target user profile (only columns that exist)
+    // Get target user profile
     const { data: profile, error: profileError } = await supaAdmin
       .from('profiles')
       .select(`
@@ -81,7 +82,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const isPendingFromMe = friendship?.status === 'pending' && friendship?.requester_id === user.id;
     const isPendingToMe = friendship?.status === 'pending' && friendship?.addressee_id === user.id;
 
-    // Build base friendship response
+    // Build friendship response
     const friendshipResponse = isOwnProfile ? null : {
       status: friendship?.status || null,
       friendship_id: friendship?.id || null,
@@ -157,16 +158,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .eq('status', 'sold'),
     ]);
 
-    return res.status(200).json({
+    // === BUILD RESPONSE ===
+    // PUBLIC DATA: Always visible to anyone who can view the profile
+    const publicData = {
       id: profile.id,
       username: profile.username,
       screen_name: profile.screen_name,
-      full_name: profile.full_name,
       avatar_url: profile.avatar_url,
-      location_text: profile.location_text,
-      interests: profile.interests,
-      subscription_tier: profile.subscription_tier,
-      member_since: profile.updated_at, // Using updated_at since created_at doesn't exist
+      member_since: profile.updated_at,
       is_own_profile: isOwnProfile,
       can_view_details: true,
       stats: {
@@ -181,11 +180,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         can_message: canMessage,
         reason: messageReason,
       },
-      privacy: isOwnProfile ? {
-        profile_visibility: visibility,
-        allow_messages_from: allowMessages,
-      } : null,
-    });
+    };
+
+    // PRIVATE DATA: Only visible to the profile owner
+    if (isOwnProfile) {
+      return res.status(200).json({
+        ...publicData,
+        // Personal info - ONLY for yourself
+        full_name: profile.full_name,
+        location_text: profile.location_text,
+        interests: profile.interests,
+        subscription_tier: profile.subscription_tier,
+        privacy: {
+          profile_visibility: visibility,
+          allow_messages_from: allowMessages,
+        },
+      });
+    }
+
+    // FRIENDS DATA: Shared interests visible to friends
+    if (isFriend) {
+      return res.status(200).json({
+        ...publicData,
+        // Friends can see interests (for connecting over shared hobbies)
+        interests: profile.interests,
+      });
+    }
+
+    // Everyone else gets public data only
+    return res.status(200).json(publicData);
 
   } catch (error: any) {
     const message = error.message || 'An unexpected error occurred';
