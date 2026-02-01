@@ -2,7 +2,7 @@
 // Marketplace Page - Slim Orchestrator
 // All components modularized in ./marketplace/
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -37,10 +37,13 @@ import {
   useListingActions,
   DEFAULT_FILTERS,
   MAX_PRICE,
-  type MarketplaceItem,
-  type FilterState,
-  type ViewMode,
-  type LayoutMode,
+} from './marketplace';
+
+import type {
+  MarketplaceItem,
+  FilterState,
+  ViewMode,
+  LayoutMode,
 } from './marketplace';
 
 const Marketplace: React.FC = () => {
@@ -83,15 +86,15 @@ const Marketplace: React.FC = () => {
     closeDeleteDialog,
   } = useListingActions({
     currentUserId,
-    onItemUpdated: (item) => {
-      setItems(prev => prev.map(i => 
+    onItemUpdated: (item: MarketplaceItem) => {
+      setItems((prev: MarketplaceItem[]) => prev.map((i: MarketplaceItem) => 
         i.id === item.id 
           ? { ...i, status: 'sold' as const, sold_at: new Date().toISOString() } 
           : i
       ));
     },
-    onItemDeleted: (itemId) => {
-      setItems(prev => prev.filter(i => i.id !== itemId));
+    onItemDeleted: (itemId: string) => {
+      setItems((prev: MarketplaceItem[]) => prev.filter((i: MarketplaceItem) => i.id !== itemId));
     },
   });
 
@@ -129,8 +132,8 @@ const Marketplace: React.FC = () => {
   };
 
   const handleCategoryChange = (category: string) => {
-    setFilters(prev => ({ ...prev, category }));
-    setSearchParams(params => {
+    setFilters((prev: FilterState) => ({ ...prev, category }));
+    setSearchParams((params) => {
       if (category === 'all') {
         params.delete('category');
       } else {
@@ -141,7 +144,7 @@ const Marketplace: React.FC = () => {
   };
 
   const handleWatchlistToggle = (itemId: string) => {
-    setWatchlist(prev => {
+    setWatchlist((prev) => {
       const next = new Set(prev);
       if (next.has(itemId)) {
         next.delete(itemId);
@@ -156,7 +159,7 @@ const Marketplace: React.FC = () => {
 
   // Computed values
   const filteredItems = useMemo(() => {
-    return items.filter(item => {
+    return items.filter((item: MarketplaceItem) => {
       if (filters.priceRange[0] > 0 && item.asking_price < filters.priceRange[0]) return false;
       if (filters.priceRange[1] < MAX_PRICE && item.asking_price > filters.priceRange[1]) return false;
       if (filters.verifiedOnly && !item.is_verified) return false;
@@ -167,16 +170,15 @@ const Marketplace: React.FC = () => {
 
   const stats = useMemo(() => ({
     total: filteredItems.length,
-    verified: filteredItems.filter(i => i.is_verified).length,
+    verified: filteredItems.filter((i: MarketplaceItem) => i.is_verified).length,
     avgPrice: filteredItems.length 
-      ? Math.round(filteredItems.reduce((sum, i) => sum + i.asking_price, 0) / filteredItems.length)
+      ? Math.round(filteredItems.reduce((sum: number, i: MarketplaceItem) => sum + i.asking_price, 0) / filteredItems.length)
       : 0,
-    sold: filteredItems.filter(i => i.status === 'sold').length,
+    sold: filteredItems.filter((i: MarketplaceItem) => i.status === 'sold').length,
   }), [filteredItems]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-950 to-black">
-      {/* Header */}
       <MarketplaceHeader
         searchTerm={searchTerm}
         onSearchChange={setSearchTerm}
@@ -193,10 +195,8 @@ const Marketplace: React.FC = () => {
         stats={stats}
       />
       
-      {/* Main Content */}
       <div className="container mx-auto px-4 py-4 md:py-6">
         <div className="flex gap-6">
-          {/* Desktop Filters */}
           <aside className="hidden lg:block w-64 flex-shrink-0">
             <div className="sticky top-24 bg-zinc-900/50 rounded-xl border border-zinc-800/50 p-4">
               <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
@@ -207,14 +207,11 @@ const Marketplace: React.FC = () => {
             </div>
           </aside>
           
-          {/* Items Grid */}
           <main className="flex-1 min-w-0">
-            {/* Toolbar */}
             <div className="flex items-center justify-between mb-4">
               <p className="text-sm text-zinc-400">{filteredItems.length} items</p>
               
               <div className="flex items-center gap-2">
-                {/* Mobile Filter */}
                 <Sheet>
                   <SheetTrigger asChild>
                     <Button variant="outline" size="sm" className="lg:hidden border-zinc-800 hover:bg-zinc-800">
@@ -232,7 +229,6 @@ const Marketplace: React.FC = () => {
                   </SheetContent>
                 </Sheet>
                 
-                {/* Layout Toggle */}
                 <div className="flex border border-zinc-800 rounded-lg p-0.5">
                   <Button
                     variant="ghost"
@@ -254,7 +250,6 @@ const Marketplace: React.FC = () => {
               </div>
             </div>
             
-            {/* Mobile swipe hint */}
             {viewMode === 'mine' && filteredItems.length > 0 && (
               <div className="lg:hidden mb-4 p-3 bg-zinc-900/50 rounded-lg border border-zinc-800 flex items-center gap-2 text-xs text-zinc-400">
                 <AlertCircle className="h-4 w-4 flex-shrink-0" />
@@ -262,7 +257,6 @@ const Marketplace: React.FC = () => {
               </div>
             )}
             
-            {/* Items */}
             {loading ? (
               <div className={cn(
                 'grid gap-4',
@@ -323,9 +317,30 @@ const Marketplace: React.FC = () => {
                 )}
               >
                 <AnimatePresence mode="popLayout">
-                  {filteredItems.map((item) => (
+                  {filteredItems.map((item: MarketplaceItem) => (
                     <MarketplaceCard
                       key={item.id}
                       item={item}
                       layout={layout}
-                      isOwner={item.seller_id === c
+                      isOwner={item.seller_id === currentUserId}
+                      isWatchlisted={watchlist.has(item.id)}
+                      onWatchlist={handleWatchlistToggle}
+                      onExport={handleExport}
+                      onMarkSold={handleMarkSold}
+                      onDelete={handleDelete}
+                    />
+                  ))}
+                </AnimatePresence>
+              </motion.div>
+            )}
+          </main>
+        </div>
+      </div>
+      
+      <MarkSoldDialog dialog={soldDialog} onClose={closeSoldDialog} onConfirm={confirmMarkSold} />
+      <DeleteDialog dialog={deleteDialog} onClose={closeDeleteDialog} onConfirm={confirmDelete} />
+    </div>
+  );
+};
+
+export default Marketplace;
