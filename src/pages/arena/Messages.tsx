@@ -19,6 +19,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { UserSearchModal } from '@/components/social/UserSearchModal';
+import { MessageAttachment } from '@/components/messaging/MessageAttachment';
 
 // Notification sound
 const NOTIFICATION_SOUND = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2Onp+di4J5c29scG55hI2WnJ2ZkYZ9dXBub3N6gYqRlpmZlpCJgXpzcG9xdXuDi5GVlpSQioN8dnJvcHN4foWLj5GSj4uGgHp1cXBxdHmAhouPkJCNiYR/eXVycHJ1eX+Ei4+QkI2JhH95dXJwcnV5f4SLj5CQjYmEf3l1cnBydXl/hIuPkJCNiYR/eXVycHJ1eX+EiY2PkI6Khn95dHFwcnV5f4SJjY+QjYqGf3l0cXBydXl/hImNj5CNioZ/eXRxcHJ1eX+Eh4uNjouIhH95dHFwcXR4fYKGi42Oi4eFf3l0cHBxdHh9goaLjY6Lh4V/eXRwcHF0eH2ChYqMjYuHhX55dHBwcXR4fYKFioyNi4eFf3l0cHBxdHh9goWKjI2Lh4V+eHNvcHF0eH2ChYqMjYuHhX54c29wcXR4fYKFioyNi4eFfnhzb3BxdHh8gYSJi4yKhoR+eHNvcHF0eHyBhImLjIqGhH54c29wcXR4fIGEiYuMioaEfnhzb3BxdHh8gYSIiouJhoR+eHNvb3F0eHyBhIiKi4mGhH54c29vcXR3e4CDh4mKiIWDfXdzb29xdHd7gIOHiYqIhYN9d3Nvb3F0d3uAg4eJioiFg313c29vcXR3e4CDh4mKiIWDfXdzb29wcnV4e4CDh4mKiIWDfXdzb29wcnV4e4CDh4mJh4WCfXdzbm9wcnV4e4CDh4mJh4WCfXdzbm9wcnV4e4CChouIhoSBfHZybW5vcnV4e4CChouIhoSBfHZybW5vcnV4e4CChouIhoSBfHZybW5vcnV3eoGChomHhYOAfHZybW5vcnV3eoGChomHhYOAfHZybW5vcnV3eoGChYiGhIKAfHZybW5vcnV3eoGChYiGhIKAfHZybW1ucnV3eoGChYiGhIKAfHZybW1ucnV3en+BhIeGhIJ/e3VxbW1ucnV3en+BhIeGhIJ/e3VxbW1ucnV3en+BhIaFg4F/e3VxbG1ucnV3en+BhIaFg4F/e3VxbG1ucnV2eX6Ag4WEgoB+enRwbG1ucnV2eX6Ag4WEgoB+enRwbG1ucnV2eX6Ag4WEgoB+enRwbG1tcXR2eX6Ag4SEgn9+enRwbGxtcXR2eX6Ag4SEgn9+enRwbGxtcXR2eX5/goODgX9+enRwbGxtcXR2eX5/goODgX9+enRwbGxtcXR2eX5/goODgX9+eXNva2xtcXR2eX5/goODgX9+eXNva2xtcXR1eH1/gYKCgH5+eXNva2xtcXR1eH1/gYKCgH5+eXNva2xtcXR1eH1/gYKCgH5+eXNva2xscHN1eH1/gYKCgH59eHJuamxscHN1eH1/gYKBf359eHJuamxscHN1d3x+gIGBf359eHJuamxscHN1d3x+gIGBf359eHJuamxscHN1d3x+gIGBf359eHJuamtrcHN1d3x+gIGBf359eHJuamtrcHN1d3x+f4CAgH59d3FtaWtrcHN0dnp9f4CAgH59d3FtaWtrcHN0dnp9f4CAgH59d3FtaWtrcHN0dnp8foB/f359d3FtaWtrcHN0dnp8foB/f359d3FtaWpqb3J0dnp8foB/f359d3FtaWpqb3J0dXl7fX5/f359dnBsaGpqb3J0dXl7fX5/f359dnBsaGpqb3J0dXl7fX5+fn58dW9rZ2lqb3J0dXl7fX5+fn58dW9rZ2lqb3J0dXh6fH1+fn58dW9rZ2lqb3F0dXh6fH1+fn58dW9rZ2lpbnF0dXh6fH1+fn58dG5qZmhpbnF0dXh6fH19fX17c21pZmhpbnF0dXh5e3x9fX17c21pZmhpbnFzdXh5e3x9fX17c21pZmdobXBzdXh5e3x8fHx6cm1oZWdobXBzdXh5e3x8fHx6cm1oZWdnbXBzdXd5enx8fHx6cWxnZWdnbXBydXd5enx7e3t5cGtnZGZnbXByc3Z4eXp7e3t5cGtnZGZnbXByc3Z4eXp7e3t5cGtnZGZnbG9xc3Z3eHl6ent5b2pmY2VmbG9xc3Z3eHl6ent5b2pmY2VmbG9xcnV3eHl6enp4bmllYmRlbG9xcnV2d3h5enp4bmllYmRlbG5wcnV2d3h5eXl3bWhjYWRlbG5wcnR1dnd4eXl3bWhjYWNka25wcnR1dnd4eHh2bGdiYGNka25vcXN0dXZ3d3d1a2ZhYGJja25vcXN0dXZ3d3d1a2ZhYGJja25vcXN0dXZ2dnRqZWBfYWJka25vcXN0dXZ2dnRqZWBfYWJka25vcXN0dXV1c2lkX15fYWJka25ucXJ0dHV1c2lkX15fYWJka25ucXJ0dHV1c2lkX15fYWJka25ucXJ0dHV1c2lkX15fYWJka25ucHFyc3R0cmhjXl1eYGFjam1ub3Fycw==';
@@ -96,7 +97,7 @@ const MessagesPage: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const isPollingRef = useRef(false); // Prevent concurrent polls
+  const isPollingRef = useRef(false);
 
   // Initialize audio element
   useEffect(() => {
@@ -116,7 +117,6 @@ const MessagesPage: React.FC = () => {
   // FETCH CONVERSATIONS - with concurrency protection
   // ============================================================================
   const fetchConversations = useCallback(async (showLoader = false) => {
-    // Prevent concurrent fetches
     if (isPollingRef.current) return;
     isPollingRef.current = true;
 
@@ -134,12 +134,10 @@ const MessagesPage: React.FC = () => {
 
       const data = await response.json();
       
-      // Check for new messages (compare unread counts)
       const newConvos = data.conversations || data;
       const oldUnread = totalUnread;
       const newUnread = newConvos.reduce((sum: number, c: Conversation) => sum + (c.unread_count || 0), 0);
       
-      // Play sound if new unread messages appeared (and we're not in initial load)
       if (!showLoader && newUnread > oldUnread) {
         playNotificationSound();
       }
@@ -148,7 +146,6 @@ const MessagesPage: React.FC = () => {
       setTotalUnread(newUnread);
     } catch (error) {
       console.error('Error fetching conversations:', error);
-      // Don't show toast on background poll failures
       if (showLoader) {
         toast.error('Failed to load conversations');
       }
@@ -162,10 +159,8 @@ const MessagesPage: React.FC = () => {
   // POLLING SETUP - 60 second interval, respects visibility
   // ============================================================================
   useEffect(() => {
-    // Initial fetch with loader
     fetchConversations(true);
 
-    // Set up polling interval
     const startPolling = () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
@@ -173,31 +168,28 @@ const MessagesPage: React.FC = () => {
       
       const interval = document.hidden ? POLL_INTERVAL_BACKGROUND_MS : POLL_INTERVAL_MS;
       pollIntervalRef.current = setInterval(() => {
-        fetchConversations(false); // Silent refresh
+        fetchConversations(false);
       }, interval);
     };
 
     startPolling();
 
-    // Adjust polling when tab visibility changes
     const handleVisibilityChange = () => {
-      startPolling(); // Restart with appropriate interval
+      startPolling();
       if (!document.hidden) {
-        // Refresh immediately when tab becomes visible
         fetchConversations(false);
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Cleanup
     return () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
       }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, []); // Empty deps - only run on mount
+  }, []);
 
   // Handle URL params for deep linking
   useEffect(() => {
@@ -288,7 +280,6 @@ const MessagesPage: React.FC = () => {
       const data = await response.json();
       setMessages(data.messages || data);
       
-      // Update conversation list to reflect read status (silent)
       fetchConversations(false);
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -419,7 +410,6 @@ const MessagesPage: React.FC = () => {
       setNewMessage('');
       removeAttachment();
       
-      // Silent refresh of conversation list
       fetchConversations(false);
     } catch (error) {
       console.error('Error sending message:', error);
@@ -449,28 +439,13 @@ const MessagesPage: React.FC = () => {
   const renderAttachment = (msg: Message) => {
     if (!msg.attachment_url) return null;
 
-    if (msg.attachment_type === 'image') {
-      return (
-        <a href={msg.attachment_url} target="_blank" rel="noopener noreferrer" className="block mt-2">
-          <img
-            src={msg.attachment_url}
-            alt={msg.attachment_name || 'Attachment'}
-            className="max-w-[200px] rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-          />
-        </a>
-      );
-    }
-
     return (
-      <a
-        href={msg.attachment_url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex items-center gap-2 mt-2 p-2 bg-background/50 rounded-lg hover:bg-background/70 transition-colors"
-      >
-        <FileText className="h-4 w-4" />
-        <span className="text-sm truncate">{msg.attachment_name || 'Document'}</span>
-      </a>
+      <MessageAttachment
+        url={msg.attachment_url}
+        type={msg.attachment_type as 'image' | 'document' | undefined}
+        name={msg.attachment_name}
+        conversationId={msg.conversation_id}
+      />
     );
   };
 
