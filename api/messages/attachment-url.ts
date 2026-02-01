@@ -1,91 +1,105 @@
 // FILE: api/messages/attachment-url.ts
-// DIAGNOSTIC VERSION - logs everything to find the real problem
+// Generates signed URLs for private message attachments
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUser } from '../_lib/security.js';
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  console.log('=== ATTACHMENT URL REQUEST ===');
-  console.log('Method:', req.method);
-  console.log('Body:', JSON.stringify(req.body));
+const BUCKET_NAME = 'message-attachments';
+
+// Extract storage path from full URL or return path as-is
+function extractStoragePath(input: string): string {
+  if (!input) return '';
   
+  // If it's a full Supabase URL, extract just the path
+  // Format: https://xxx.supabase.co/storage/v1/object/public/bucket-name/path/to/file.jpg
+  // Or: https://xxx.supabase.co/storage/v1/object/sign/bucket-name/path/to/file.jpg
+  
+  const patterns = [
+    /storage\/v1\/object\/public\/message-attachments\/(.+)$/,
+    /storage\/v1\/object\/sign\/message-attachments\/(.+)$/,
+    /storage\/v1\/object\/message-attachments\/(.+)$/,
+    /message-attachments\/(.+)$/,
+  ];
+  
+  for (const pattern of patterns) {
+    const match = input.match(pattern);
+    if (match && match[1]) {
+      // Remove any query params
+      return match[1].split('?')[0];
+    }
+  }
+  
+  // If no pattern matched, assume it's already just the path
+  // But clean it up - remove leading slashes and bucket name if present
+  let cleaned = input;
+  if (cleaned.startsWith('/')) cleaned = cleaned.slice(1);
+  if (cleaned.startsWith('message-attachments/')) {
+    cleaned = cleaned.replace('message-attachments/', '');
+  }
+  
+  return cleaned;
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
   try {
-    // Step 1: Verify user
-    let user;
-    try {
-      user = await verifyUser(req);
-      console.log('User verified:', user.id);
-    } catch (authError: any) {
-      console.error('AUTH FAILED:', authError.message);
-      return res.status(401).json({ error: 'Authentication failed', details: authError.message });
-    }
+    // Verify user
+    const user = await verifyUser(req);
+    
+    const { path: rawPath } = req.body;
 
-    const { path } = req.body;
-    console.log('Requested path:', path);
-
-    if (!path || typeof path !== 'string') {
-      console.log('Missing path');
+    if (!rawPath || typeof rawPath !== 'string') {
       return res.status(400).json({ error: 'Attachment path is required' });
     }
 
-    // Step 2: Find the message with this attachment
-    const { data: message, error: msgError } = await supaAdmin
-      .from('messages')
-      .select('id, sender_id, conversation_id, attachment_url')
-      .ilike('attachment_url', `%${path}%`)
-      .limit(1)
-      .single();
-
-    console.log('Message lookup result:', { message, error: msgError?.message });
-
-    if (!message) {
-      console.log('No message found, checking if path starts with user ID...');
-      // Fallback: Check if path starts with user's ID
-      if (path.startsWith(user.id)) {
-        console.log('Path belongs to user, authorizing...');
-      } else {
-        console.log('Path does not belong to user');
-        // For debugging, let's still try to generate the URL
-        console.log('BYPASSING AUTH FOR DEBUG');
-      }
-    } else {
-      console.log('Message found, conversation_id:', message.conversation_id);
-      
-      // Step 3: Check conversation participants
-      const { data: conv, error: convError } = await supaAdmin
-        .from('conversations')
-        .select('*')  // Select ALL to see the schema
-        .eq('id', message.conversation_id)
-        .single();
-
-      console.log('Conversation lookup:', { conv, error: convError?.message });
-      
-      if (conv) {
-        console.log('Conversation columns:', Object.keys(conv));
-      }
+    // Extract the actual storage path
+    const storagePath = extractStoragePath(rawPath);
+    
+    if (!storagePath) {
+      return res.status(400).json({ error: 'Invalid attachment path' });
     }
 
-    // Step 4: Generate signed URL (always try for debugging)
-    console.log('Generating signed URL for path:', path);
-    
+    // Extract conversation ID from path (format: {conversation_id}/{filename})
+    const pathParts = storagePath.split('/');
+    const conversationId = pathParts[0];
+
+    if (!conversationId) {
+      return res.status(400).json({ error: 'Invalid attachment path format' });
+    }
+
+    // Verify user is a participant in this conversation
+    const { data: conversation, error: convError } = await supaAdmin
+      .from('conversations')
+      .select('id, participant1_id, participant2_id')
+      .eq('id', conversationId)
+      .single();
+
+    if (convError || !conversation) {
+      console.error('Conversation lookup failed:', convError?.message);
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    // Check if user is a participant
+    const isParticipant = 
+      conversation.participant1_id === user.id || 
+      conversation.participant2_id === user.id;
+
+    if (!isParticipant) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Generate signed URL (valid for 1 hour)
     const { data, error } = await supaAdmin.storage
-      .from('message-attachments')
-      .createSignedUrl(path, 3600);
+      .from(BUCKET_NAME)
+      .createSignedUrl(storagePath, 3600);
 
-    console.log('Signed URL result:', { 
-      success: !!data, 
-      url: data?.signedUrl?.substring(0, 50) + '...', 
-      error: error?.message 
-    });
-
-    if (error || !data) {
-      console.error('Signed URL generation failed:', error);
+    if (error || !data?.signedUrl) {
+      console.error('Signed URL generation failed:', error?.message);
       return res.status(500).json({ 
         error: 'Failed to generate attachment URL',
         details: error?.message 
@@ -95,7 +109,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ url: data.signedUrl });
 
   } catch (error: any) {
-    console.error('UNEXPECTED ERROR:', error);
-    return res.status(500).json({ error: error.message });
+    console.error('Attachment URL error:', error.message);
+    
+    if (error.message?.includes('Authentication') || error.message?.includes('token')) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }

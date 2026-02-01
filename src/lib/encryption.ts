@@ -1,5 +1,6 @@
 // FILE: src/lib/encryption.ts
 // End-to-end encryption for private messaging using Web Crypto API
+// Supports both text messages and file attachments
 
 const ALGORITHM = 'RSA-OAEP';
 const HASH = 'SHA-256';
@@ -127,7 +128,7 @@ export async function hasEncryptionKeys(userId: string): Promise<boolean> {
 }
 
 // ============================================
-// Encryption / Decryption
+// Encryption / Decryption (Small messages)
 // ============================================
 
 export async function encryptMessage(
@@ -183,7 +184,7 @@ export async function decryptMessage(
 }
 
 // ============================================
-// For hybrid encryption (large messages/files)
+// Hybrid encryption (large messages/files)
 // RSA can only encrypt small data, so we use AES for content
 // and RSA to encrypt the AES key
 // ============================================
@@ -278,6 +279,207 @@ export async function decryptLargeMessage(
 }
 
 // ============================================
+// FILE ENCRYPTION (for attachments)
+// Uses AES-256-GCM with RSA key exchange
+// ============================================
+
+export interface EncryptedFileData {
+  encryptedBlob: Blob;
+  encryptedKey: string; // RSA-encrypted AES key (base64)
+  iv: string;           // AES IV (base64)
+  originalName: string;
+  originalType: string;
+  originalSize: number;
+}
+
+export interface FileEncryptionMetadata {
+  encryptedKey: string;
+  iv: string;
+  originalName: string;
+  originalType: string;
+  originalSize: number;
+}
+
+/**
+ * Encrypt a file for secure transmission
+ * Call this BEFORE uploading to Supabase storage
+ */
+export async function encryptFile(
+  file: File,
+  recipientPublicKeyBase64: string
+): Promise<EncryptedFileData> {
+  // Generate a random AES-256 key for this file
+  const aesKey = await crypto.subtle.generateKey(
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt', 'decrypt']
+  );
+
+  // Generate random IV (12 bytes for AES-GCM)
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+
+  // Read file as ArrayBuffer
+  const fileBuffer = await file.arrayBuffer();
+
+  // Encrypt file content with AES-GCM
+  const encryptedContent = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    aesKey,
+    fileBuffer
+  );
+
+  // Export AES key and encrypt it with recipient's RSA public key
+  const aesKeyBuffer = await crypto.subtle.exportKey('raw', aesKey);
+  
+  const publicKeyBuffer = Uint8Array.from(atob(recipientPublicKeyBase64), c => c.charCodeAt(0));
+  const publicKey = await crypto.subtle.importKey(
+    'spki',
+    publicKeyBuffer,
+    { name: ALGORITHM, hash: HASH },
+    false,
+    ['encrypt']
+  );
+
+  const encryptedKey = await crypto.subtle.encrypt(
+    { name: ALGORITHM },
+    publicKey,
+    aesKeyBuffer
+  );
+
+  // Create encrypted blob with .enc extension indicator
+  const encryptedBlob = new Blob([encryptedContent], { type: 'application/octet-stream' });
+
+  return {
+    encryptedBlob,
+    encryptedKey: btoa(String.fromCharCode(...new Uint8Array(encryptedKey))),
+    iv: btoa(String.fromCharCode(...iv)),
+    originalName: file.name,
+    originalType: file.type || 'application/octet-stream',
+    originalSize: file.size,
+  };
+}
+
+/**
+ * Decrypt a file after downloading from storage
+ * Call this AFTER fetching from signed URL
+ */
+export async function decryptFile(
+  encryptedData: ArrayBuffer | Blob,
+  metadata: FileEncryptionMetadata,
+  userId: string
+): Promise<File> {
+  const privateKey = await getPrivateKey(userId);
+  if (!privateKey) {
+    throw new Error('No private key found. Cannot decrypt file.');
+  }
+
+  // Get ArrayBuffer from Blob if needed
+  const encryptedBuffer = encryptedData instanceof Blob 
+    ? await encryptedData.arrayBuffer() 
+    : encryptedData;
+
+  // Decrypt the AES key with our RSA private key
+  const encryptedKeyBuffer = Uint8Array.from(atob(metadata.encryptedKey), c => c.charCodeAt(0));
+  const aesKeyBuffer = await crypto.subtle.decrypt(
+    { name: ALGORITHM },
+    privateKey,
+    encryptedKeyBuffer
+  );
+
+  // Import the AES key
+  const aesKey = await crypto.subtle.importKey(
+    'raw',
+    aesKeyBuffer,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt']
+  );
+
+  // Decrypt the file content
+  const ivBuffer = Uint8Array.from(atob(metadata.iv), c => c.charCodeAt(0));
+  
+  const decryptedBuffer = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: ivBuffer },
+    aesKey,
+    encryptedBuffer
+  );
+
+  // Create File object with original metadata
+  return new File(
+    [decryptedBuffer], 
+    metadata.originalName, 
+    { type: metadata.originalType }
+  );
+}
+
+/**
+ * Create a decrypted blob URL for displaying encrypted files
+ * Remember to revoke the URL when done: URL.revokeObjectURL(url)
+ */
+export async function decryptFileToUrl(
+  encryptedData: ArrayBuffer | Blob,
+  metadata: FileEncryptionMetadata,
+  userId: string
+): Promise<string> {
+  const decryptedFile = await decryptFile(encryptedData, metadata, userId);
+  return URL.createObjectURL(decryptedFile);
+}
+
+/**
+ * Fetch and decrypt a file from a signed URL
+ * Convenience function that handles the full flow
+ */
+export async function fetchAndDecryptFile(
+  signedUrl: string,
+  metadata: FileEncryptionMetadata,
+  userId: string,
+  onProgress?: (loaded: number, total: number) => void
+): Promise<{ file: File; objectUrl: string }> {
+  // Fetch encrypted file with progress tracking
+  const response = await fetch(signedUrl);
+  
+  if (!response.ok) {
+    throw new Error(`Failed to fetch file: ${response.status}`);
+  }
+
+  const contentLength = response.headers.get('content-length');
+  const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+  let loaded = 0;
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+
+  if (reader) {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      chunks.push(value);
+      loaded += value.length;
+      
+      if (onProgress && total > 0) {
+        onProgress(loaded, total);
+      }
+    }
+  }
+
+  // Combine chunks into single ArrayBuffer
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const encryptedBuffer = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    encryptedBuffer.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  // Decrypt the file
+  const decryptedFile = await decryptFile(encryptedBuffer.buffer, metadata, userId);
+  const objectUrl = URL.createObjectURL(decryptedFile);
+
+  return { file: decryptedFile, objectUrl };
+}
+
+// ============================================
 // Utility to clear keys (logout/account delete)
 // ============================================
 
@@ -296,4 +498,16 @@ export async function clearEncryptionKeys(userId: string): Promise<void> {
   } catch {
     // Ignore errors during cleanup
   }
+}
+
+// ============================================
+// Utility: Check if encryption is supported
+// ============================================
+
+export function isEncryptionSupported(): boolean {
+  return !!(
+    typeof crypto !== 'undefined' &&
+    crypto.subtle &&
+    typeof indexedDB !== 'undefined'
+  );
 }
