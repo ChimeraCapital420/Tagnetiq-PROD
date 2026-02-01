@@ -19,7 +19,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Attachment path is required' });
     }
 
-    // Verify user is part of the conversation
+    let authorized = false;
+
+    // Method 1: Check via provided conversationId
     if (conversationId) {
       const { data: conversation } = await supaAdmin
         .from('conversations')
@@ -27,23 +29,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .eq('id', conversationId)
         .single();
 
-      if (!conversation) {
-        return res.status(404).json({ error: 'Conversation not found' });
+      if (conversation) {
+        authorized = 
+          conversation.participant1_id === user.id || 
+          conversation.participant2_id === user.id;
       }
+    }
 
-      const isParticipant = 
-        conversation.participant1_id === user.id || 
-        conversation.participant2_id === user.id;
+    // Method 2: Look up message containing this attachment
+    if (!authorized) {
+      const fullPath = `message-attachments/${path}`;
+      
+      // Find message with this attachment URL
+      const { data: messages } = await supaAdmin
+        .from('messages')
+        .select('conversation_id, sender_id, receiver_id')
+        .or(`attachment_url.eq.${fullPath},attachment_url.ilike.%${path}%`)
+        .limit(1);
 
-      if (!isParticipant) {
-        return res.status(403).json({ error: 'Not authorized to view this attachment' });
+      if (messages && messages.length > 0) {
+        const msg = messages[0];
+        authorized = msg.sender_id === user.id || msg.receiver_id === user.id;
       }
-    } else {
-      // If no conversation ID, verify the path belongs to the user
+    }
+
+    // Method 3: Path belongs to current user (their own uploads)
+    if (!authorized) {
       const pathUserId = path.split('/')[0];
-      if (pathUserId !== user.id) {
-        return res.status(403).json({ error: 'Not authorized to view this attachment' });
-      }
+      authorized = pathUserId === user.id;
+    }
+
+    if (!authorized) {
+      return res.status(403).json({ error: 'Not authorized to view this attachment' });
     }
 
     // Generate signed URL (valid for 1 hour)
