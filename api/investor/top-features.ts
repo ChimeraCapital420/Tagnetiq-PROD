@@ -12,7 +12,7 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 // Cache to reduce computation
 interface CacheEntry {
-  data: TopFeaturesResponse;
+  data: FeatureRequest[];
   timestamp: number;
 }
 
@@ -23,13 +23,6 @@ interface FeatureRequest {
   feature: string;
   count: number;
   category?: string;
-}
-
-interface TopFeaturesResponse {
-  features: FeatureRequest[];
-  total: number;
-  source: 'database' | 'no_data';
-  note?: string;
 }
 
 // Feature keywords to look for in feedback
@@ -102,16 +95,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // If no feedback, return honest empty state
     if (!feedback || feedback.length === 0) {
-      const noData: TopFeaturesResponse = {
-        features: [],
-        total: 0,
-        source: 'no_data',
-        note: 'No feedback has been submitted yet - feature requests will appear here'
-      };
-
-      featuresCache = { data: noData, timestamp: Date.now() };
+      featuresCache = { data: [], timestamp: Date.now() };
       res.setHeader('X-Cache', 'MISS');
-      return res.status(200).json(noData);
+      // Return empty array (frontend expects array for .map())
+      return res.status(200).json([]);
     }
 
     // Extract text content from feedback
@@ -120,45 +107,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .filter(t => t.length > 0);
 
     if (texts.length === 0) {
-      const noData: TopFeaturesResponse = {
-        features: [],
-        total: feedback.length,
-        source: 'database',
-        note: `${feedback.length} feedback entries found but no text content to analyze`
-      };
-
-      featuresCache = { data: noData, timestamp: Date.now() };
-      return res.status(200).json(noData);
+      featuresCache = { data: [], timestamp: Date.now() };
+      // Return empty array
+      return res.status(200).json([]);
     }
 
     // Extract features from feedback text
     const features = extractFeaturesFromText(texts);
 
-    const response: TopFeaturesResponse = {
-      features,
-      total: feedback.length,
-      source: 'database',
-      note: features.length > 0 
-        ? `Top ${features.length} feature requests from ${feedback.length} feedback entries`
-        : `${feedback.length} feedback entries analyzed - no specific feature requests identified`
-    };
-
-    // Cache the results
-    featuresCache = { data: response, timestamp: Date.now() };
+    // Cache the results (store array directly)
+    featuresCache = { data: features, timestamp: Date.now() };
 
     res.setHeader('X-Cache', 'MISS');
     res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=1200');
 
-    return res.status(200).json(response);
+    // Return array directly (frontend expects array for .map())
+    return res.status(200).json(features);
 
   } catch (error) {
     console.error('Error in top features handler:', error);
-
-    return res.status(200).json({
-      features: [],
-      total: 0,
-      source: 'no_data',
-      note: 'Error fetching feedback data'
-    });
+    // Return empty array on error
+    return res.status(200).json([]);
   }
 }

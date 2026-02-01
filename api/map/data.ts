@@ -133,8 +133,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     let geoData: GeoData[] = [];
-    let totalUsers = 0;
-    let usersWithLocation = 0;
 
     // Fetch REAL data from profiles.location_text
     const { data: profiles, error } = await supabase
@@ -143,13 +141,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error) {
       console.error('Error fetching profiles:', error);
-      return res.status(200).json({
-        data: [],
-        meta: { totalUsers: 0, usersWithLocation: 0, note: 'Database query failed' }
-      });
+      return res.status(200).json([]);
     }
-
-    totalUsers = profiles?.length || 0;
 
     if (profiles && profiles.length > 0) {
       // Group by state and count
@@ -159,7 +152,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const state = extractStateFromLocation(profile.location_text);
         if (state && US_STATE_COORDS[state]) {
           stateCounts[state] = (stateCounts[state] || 0) + 1;
-          usersWithLocation++;
         }
       });
 
@@ -178,24 +170,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Cache for 5 minutes
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
     
-    // Return data with metadata
-    return res.status(200).json({
-      data: geoData,
-      meta: {
-        totalUsers,
-        usersWithLocation,
-        source: 'database',
-        note: geoData.length === 0 
-          ? 'No users have set their location yet' 
-          : `Showing ${usersWithLocation} users with location data`
-      }
-    });
+    // Return array directly (frontend expects array for .map())
+    return res.status(200).json(geoData);
 
   } catch (error) {
     console.error('Error fetching map data:', error);
-    return res.status(200).json({
-      data: [],
-      meta: { totalUsers: 0, usersWithLocation: 0, error: 'Failed to fetch data' }
-    });
+    // Return empty array on error
+    return res.status(200).json([]);
   }
 }
