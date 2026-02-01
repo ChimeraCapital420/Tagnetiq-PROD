@@ -145,29 +145,4 @@ export function MessageAttachment({
           <p className="text-sm text-gray-200 truncate">{name}</p>
           <p className="text-xs text-gray-500">PDF Document</p>
         </div>
-        <Download className="w-4 h-4 text-gray-400" />
-      </a>
-    );
-  }
-
-  // Generic file attachment
-  return (
-    
-      href={signedUrl}
-      download={name}
-      className={cn(
-        "flex items-center gap-3 p-3 bg-gray-800/50 hover:bg-gray-800 rounded-lg transition-colors",
-        className
-      )}
-    >
-      <div className="p-2 bg-gray-700 rounded-lg">
-        <File className="w-5 h-5 text-gray-400" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-gray-200 truncate">{name}</p>
-        <p className="text-xs text-gray-500">{type || 'File'}</p>
-      </div>
-      <Download className="w-4 h-4 text-gray-400" />
-    </a>
-  );
-}
+        <Download className="w-4 h-4 text-gray
