@@ -50,7 +50,7 @@ export function MessageAttachment({ url, type, name }: MessageAttachmentProps) {
 
   if (type === 'image' && !imageError) {
     return (
-      <React.Fragment>
+      <>
         <div
           className="relative cursor-pointer group max-w-xs rounded-lg overflow-hidden border border-white/10"
           onClick={() => setShowPreview(true)}
@@ -68,7 +68,7 @@ export function MessageAttachment({ url, type, name }: MessageAttachmentProps) {
             </div>
           </div>
           <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-            
+            <a
               href={signedUrl}
               download={fileName}
               onClick={(e) => e.stopPropagation()}
@@ -105,7 +105,7 @@ export function MessageAttachment({ url, type, name }: MessageAttachmentProps) {
             />
 
             <div className="absolute bottom-4 right-4 flex items-center gap-2">
-              
+              <a
                 href={signedUrl}
                 download={fileName}
                 onClick={(e) => e.stopPropagation()}
@@ -114,7 +114,7 @@ export function MessageAttachment({ url, type, name }: MessageAttachmentProps) {
                 <Download className="w-4 h-4" />
                 <span>Download</span>
               </a>
-              
+              <a
                 href={signedUrl}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -127,7 +127,7 @@ export function MessageAttachment({ url, type, name }: MessageAttachmentProps) {
             </div>
           </div>
         )}
-      </React.Fragment>
+      </>
     );
   }
 
@@ -141,7 +141,7 @@ export function MessageAttachment({ url, type, name }: MessageAttachmentProps) {
         <p className="text-xs text-gray-400">{fileExtension.toUpperCase()} file</p>
       </div>
       <div className="flex items-center gap-1">
-        
+        <a
           href={signedUrl}
           target="_blank"
           rel="noopener noreferrer"
@@ -150,7 +150,7 @@ export function MessageAttachment({ url, type, name }: MessageAttachmentProps) {
         >
           <ExternalLink className="w-4 h-4" />
         </a>
-        
+        <a
           href={signedUrl}
           download={fileName}
           className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
