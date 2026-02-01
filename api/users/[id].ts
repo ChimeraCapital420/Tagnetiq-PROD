@@ -1,10 +1,33 @@
 // FILE: api/users/[id].ts
-// Get public user profile - respects privacy settings, blocking, and messaging permissions
-// PRIVACY: Personal data (location, full_name, tier) only visible to profile owner
+// Get user profile with granular privacy controls
+// Each user controls visibility of their own fields: 'self' | 'friends' | 'everyone'
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUser } from '../_lib/security.js';
+
+// Default privacy settings - conservative defaults protect users
+const DEFAULT_FIELD_PRIVACY: Record<string, string> = {
+  full_name: 'self',        // Only you see your real name by default
+  location_text: 'friends', // Friends can see location (useful for trading/meetups)
+  interests: 'everyone',    // Interests help people connect
+  subscription_tier: 'self',// Financial info is private
+  total_scans: 'everyone',  // Activity stats are public (gamification)
+  successful_finds: 'everyone',
+};
+
+type VisibilityLevel = 'self' | 'friends' | 'everyone';
+
+function canView(
+  fieldPrivacy: VisibilityLevel,
+  isOwnProfile: boolean,
+  isFriend: boolean
+): boolean {
+  if (isOwnProfile) return true;
+  if (fieldPrivacy === 'everyone') return true;
+  if (fieldPrivacy === 'friends' && isFriend) return true;
+  return false;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
@@ -57,6 +80,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         successful_finds,
         profile_visibility,
         allow_messages_from,
+        field_privacy,
         updated_at
       `)
       .eq('id', targetUserId)
@@ -92,7 +116,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       can_send_request: !friendship,
     };
 
-    // Check profile visibility
+    // Check profile visibility (overall profile access)
     const visibility = profile.profile_visibility || 'public';
     
     // Private profile - non-friends see limited info
@@ -139,7 +163,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       messageReason = 'User has disabled messages';
     }
 
-    // Get user stats (parallel queries for speed)
+    // Get user stats (parallel queries)
     const [listingsResult, friendsResult, salesResult] = await Promise.all([
       supaAdmin
         .from('arena_listings')
@@ -158,9 +182,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .eq('status', 'sold'),
     ]);
 
-    // === BUILD RESPONSE ===
-    // PUBLIC DATA: Always visible to anyone who can view the profile
-    const publicData = {
+    // === GRANULAR FIELD PRIVACY ===
+    // Merge user's settings with defaults
+    const fieldPrivacy = {
+      ...DEFAULT_FIELD_PRIVACY,
+      ...(profile.field_privacy || {}),
+    };
+
+    // Helper to conditionally include a field
+    const includeField = (fieldName: string, value: any) => {
+      const privacy = fieldPrivacy[fieldName] || 'self';
+      return canView(privacy as VisibilityLevel, isOwnProfile, isFriend) ? value : undefined;
+    };
+
+    // Build response with privacy-controlled fields
+    const response: any = {
+      // ALWAYS PUBLIC - basic identity
       id: profile.id,
       username: profile.username,
       screen_name: profile.screen_name,
@@ -168,13 +205,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       member_since: profile.updated_at,
       is_own_profile: isOwnProfile,
       can_view_details: true,
+
+      // PRIVACY-CONTROLLED FIELDS
+      full_name: includeField('full_name', profile.full_name),
+      location_text: includeField('location_text', profile.location_text),
+      interests: includeField('interests', profile.interests),
+      subscription_tier: includeField('subscription_tier', profile.subscription_tier),
+
+      // STATS - individually controlled
       stats: {
         active_listings: listingsResult.count || 0,
         friends: friendsResult.count || 0,
         completed_sales: salesResult.count || 0,
-        total_scans: profile.total_scans || 0,
-        successful_finds: profile.successful_finds || 0,
+        total_scans: includeField('total_scans', profile.total_scans || 0),
+        successful_finds: includeField('successful_finds', profile.successful_finds || 0),
       },
+
+      // RELATIONSHIP INFO
       friendship: friendshipResponse,
       messaging: {
         can_message: canMessage,
@@ -182,33 +229,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     };
 
-    // PRIVATE DATA: Only visible to the profile owner
+    // Tell viewer what's hidden (helps them understand why fields are missing)
+    if (!isOwnProfile) {
+      const hiddenFields: string[] = [];
+      Object.entries(fieldPrivacy).forEach(([field, privacy]) => {
+        if (!canView(privacy as VisibilityLevel, isOwnProfile, isFriend)) {
+          hiddenFields.push(field);
+        }
+      });
+      if (hiddenFields.length > 0) {
+        response.hidden_fields = hiddenFields;
+        response.hidden_reason = isFriend ? 'Owner only' : 'Friends or owner only';
+      }
+    }
+
+    // OWNER-ONLY: Full privacy settings for management
     if (isOwnProfile) {
-      return res.status(200).json({
-        ...publicData,
-        // Personal info - ONLY for yourself
-        full_name: profile.full_name,
-        location_text: profile.location_text,
-        interests: profile.interests,
-        subscription_tier: profile.subscription_tier,
-        privacy: {
-          profile_visibility: visibility,
-          allow_messages_from: allowMessages,
-        },
-      });
+      response.privacy = {
+        profile_visibility: visibility,
+        allow_messages_from: allowMessages,
+        field_privacy: fieldPrivacy,
+      };
     }
 
-    // FRIENDS DATA: Shared interests visible to friends
-    if (isFriend) {
-      return res.status(200).json({
-        ...publicData,
-        // Friends can see interests (for connecting over shared hobbies)
-        interests: profile.interests,
-      });
-    }
+    // Clean up undefined values
+    Object.keys(response).forEach(key => {
+      if (response[key] === undefined) delete response[key];
+    });
 
-    // Everyone else gets public data only
-    return res.status(200).json(publicData);
+    return res.status(200).json(response);
 
   } catch (error: any) {
     const message = error.message || 'An unexpected error occurred';
