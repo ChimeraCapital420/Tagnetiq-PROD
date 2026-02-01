@@ -1,5 +1,5 @@
 // FILE: src/pages/arena/Marketplace.tsx
-// Marketplace Page - Slim Orchestrator (~200 lines)
+// Marketplace Page - Slim Orchestrator
 // All components modularized in ./marketplace/
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
@@ -42,10 +42,6 @@ import {
   type ViewMode,
   type LayoutMode,
 } from './marketplace';
-
-// =============================================================================
-// MAIN COMPONENT
-// =============================================================================
 
 const Marketplace: React.FC = () => {
   const { searchArenaQuery, setSearchArenaQuery } = useAppContext();
@@ -177,10 +173,6 @@ const Marketplace: React.FC = () => {
       : 0,
     sold: filteredItems.filter(i => i.status === 'sold').length,
   }), [filteredItems]);
-
-  // =============================================================================
-  // RENDER
-  // =============================================================================
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-950 to-black">
@@ -336,55 +328,4 @@ const Marketplace: React.FC = () => {
                       key={item.id}
                       item={item}
                       layout={layout}
-                      isOwner={item.seller_id === currentUserId}
-                      isWatchlisted={watchlist.has(item.id)}
-                      onWatchlist={handleWatchlistToggle}
-                      onExport={handleExport}
-                      onMarkSold={handleMarkSold}
-                      onDelete={handleDelete}
-                    />
-                  ))}
-                </AnimatePresence>
-              </motion.div>
-            )}
-          </main>
-        </div>
-      </div>
-      
-      {/* Dialogs */}
-      <MarkSoldDialog dialog={soldDialog} onClose={closeSoldDialog} onConfirm={confirmMarkSold} />
-      <DeleteDialog dialog={deleteDialog} onClose={closeDeleteDialog} onConfirm={confirmDelete} />
-    </div>
-  );
-};
-
-export default Marketplace;
-```
-
----
-
-## Summary
-
-**Refactored Structure:**
-```
-src/pages/arena/
-├── Marketplace.tsx                    (~200 lines - orchestrator)
-└── marketplace/
-    ├── index.ts                       (barrel exports)
-    ├── types.ts                       (TypeScript interfaces)
-    ├── constants.ts                   (categories, options)
-    ├── utils/
-    │   └── helpers.ts                 (utility functions)
-    ├── hooks/
-    │   ├── useMarketplaceData.ts      (data fetching)
-    │   └── useListingActions.ts       (CRUD actions)
-    └── components/
-        ├── MarketplaceHeader.tsx      (header + search + tabs)
-        ├── MarketplaceCard.tsx        (listing card)
-        ├── CategoryPills.tsx          (category filter)
-        ├── FilterPanel.tsx            (sidebar filters)
-        ├── ListingActionsMenu.tsx     (owner actions + QuickActions)
-        ├── ConfirmationDialogs.tsx    (mark sold + delete dialogs)
-        ├── PriceFairnessIndicator.tsx (price indicator)
-        ├── StatusBadge.tsx            (sold/active badge)
-        └── ExportDropdown.tsx         (export to platforms)
+                      isOwner={item.seller_id === c
