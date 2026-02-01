@@ -36,20 +36,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Method 2: Look up message containing this attachment
+    // Method 2: Look up message containing this attachment, then check conversation
     if (!authorized) {
-      const fullPath = `message-attachments/${path}`;
-      
-      // Find message with this attachment URL
-      const { data: messages } = await supaAdmin
+      const { data: message } = await supaAdmin
         .from('messages')
-        .select('conversation_id, sender_id, receiver_id')
-        .or(`attachment_url.eq.${fullPath},attachment_url.ilike.%${path}%`)
-        .limit(1);
+        .select('conversation_id, sender_id')
+        .ilike('attachment_url', `%${path}%`)
+        .limit(1)
+        .single();
 
-      if (messages && messages.length > 0) {
-        const msg = messages[0];
-        authorized = msg.sender_id === user.id || msg.receiver_id === user.id;
+      if (message) {
+        // User is the sender
+        if (message.sender_id === user.id) {
+          authorized = true;
+        } else {
+          // Check if user is participant in the conversation
+          const { data: conversation } = await supaAdmin
+            .from('conversations')
+            .select('participant1_id, participant2_id')
+            .eq('id', message.conversation_id)
+            .single();
+
+          if (conversation) {
+            authorized = 
+              conversation.participant1_id === user.id || 
+              conversation.participant2_id === user.id;
+          }
+        }
       }
     }
 
@@ -60,6 +73,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (!authorized) {
+      console.log('Attachment auth failed:', { userId: user.id, path });
       return res.status(403).json({ error: 'Not authorized to view this attachment' });
     }
 
@@ -69,7 +83,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .createSignedUrl(path, 3600);
 
     if (error || !data) {
-      console.error('Signed URL error:', error);
+      console.error('Signed URL generation error:', error);
       return res.status(500).json({ error: 'Failed to generate attachment URL' });
     }
 
