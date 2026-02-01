@@ -1,7 +1,7 @@
 // FILE: src/components/social/UserSearchModal.tsx
 // Search for users to message or add as friends
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
@@ -12,6 +12,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -23,12 +24,14 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface SearchResult {
   id: string;
+  username: string;
   screen_name: string;
+  full_name: string | null;
   avatar_url: string | null;
-  is_friend: boolean;
-  has_pending_request: boolean;
-  is_incoming_request: boolean;
-  friendship_status: string | null;
+  is_friend?: boolean;
+  has_pending_request?: boolean;
+  is_incoming_request?: boolean;
+  friendship_status?: string | null;
 }
 
 interface UserSearchModalProps {
@@ -49,6 +52,14 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // Reset state when modal closes
+  useEffect(() => {
+    if (!open) {
+      setQuery('');
+      setResults([]);
+    }
+  }, [open]);
 
   // Debounced search
   useEffect(() => {
@@ -74,13 +85,19 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
         headers: { 'Authorization': `Bearer ${session.access_token}` },
       });
 
-      if (!response.ok) throw new Error('Search failed');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Search failed');
+      }
 
       const data = await response.json();
       setResults(data.users || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Search error:', error);
-      toast.error('Search failed');
+      // Only show toast for non-empty queries
+      if (query.length >= 2) {
+        toast.error(error.message || 'Search failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -104,8 +121,9 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
 
+      const displayName = user.screen_name || user.username;
       if (data.auto_accepted) {
-        toast.success(`You and ${user.screen_name} are now friends!`);
+        toast.success(`You and ${displayName} are now friends!`);
       } else {
         toast.success('Friend request sent!');
       }
@@ -157,6 +175,15 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
     }
   };
 
+  const getDisplayName = (user: SearchResult) => {
+    return user.screen_name || user.username || 'Unknown';
+  };
+
+  const getInitials = (user: SearchResult) => {
+    const name = user.screen_name || user.username || 'U';
+    return name.slice(0, 2).toUpperCase();
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md bg-zinc-950 border-zinc-800">
@@ -165,6 +192,9 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
             <Search className="h-5 w-5 text-primary" />
             Find Users
           </DialogTitle>
+          <DialogDescription className="text-zinc-500">
+            Search by username or email address
+          </DialogDescription>
         </DialogHeader>
 
         {/* Search Input */}
@@ -173,7 +203,7 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by username..."
+            placeholder="Enter username or email..."
             className="pl-10 bg-zinc-900 border-zinc-800"
             autoFocus
           />
@@ -210,7 +240,7 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
                   >
                     <AvatarImage src={user.avatar_url || undefined} />
                     <AvatarFallback className="bg-zinc-800 text-zinc-400">
-                      {user.screen_name?.slice(0, 2).toUpperCase()}
+                      {getInitials(user)}
                     </AvatarFallback>
                   </Avatar>
 
@@ -224,7 +254,7 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
                   >
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-white truncate">
-                        {user.screen_name}
+                        {getDisplayName(user)}
                       </span>
                       {user.is_friend && (
                         <Badge className="bg-green-500/20 text-green-400 border-0 text-[10px]">
@@ -233,6 +263,11 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
                         </Badge>
                       )}
                     </div>
+                    {user.full_name && (
+                      <span className="text-xs text-zinc-500 truncate block">
+                        {user.full_name}
+                      </span>
+                    )}
                   </div>
 
                   {/* Actions */}
@@ -245,6 +280,7 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
                         className="h-8 w-8 p-0"
                         onClick={() => onSelectUser ? handleSelectUser(user) : handleStartConversation(user)}
                         disabled={actionLoading === `message-${user.id}`}
+                        title="Send message"
                       >
                         {actionLoading === `message-${user.id}` ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -269,6 +305,7 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
                             className="h-8 w-8 p-0"
                             onClick={() => handleSendFriendRequest(user)}
                             disabled={actionLoading === `friend-${user.id}`}
+                            title="Send friend request"
                           >
                             {actionLoading === `friend-${user.id}` ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -281,7 +318,7 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
                     )}
 
                     {(mode === 'friend' || mode === 'both') && user.is_friend && (
-                      <CheckCircle className="h-4 w-4 text-green-400" />
+                      <CheckCircle className="h-4 w-4 text-green-400" title="Already friends" />
                     )}
                   </div>
                 </div>
@@ -289,11 +326,14 @@ export const UserSearchModal: React.FC<UserSearchModalProps> = ({
             </div>
           ) : query.length >= 2 ? (
             <div className="text-center py-8 text-zinc-500">
-              No users found for "{query}"
+              <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p>No users found for "{query}"</p>
+              <p className="text-xs mt-1">Try a different username or email</p>
             </div>
           ) : (
             <div className="text-center py-8 text-zinc-500">
-              Type at least 2 characters to search
+              <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p>Type at least 2 characters to search</p>
             </div>
           )}
         </ScrollArea>
