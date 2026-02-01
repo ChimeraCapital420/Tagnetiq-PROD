@@ -1,6 +1,6 @@
 // FILE: api/investor/kpis.ts
-// Core KPIs endpoint for Investor Suite
-// Mobile-first: Minimal payload, efficient queries
+// Core KPIs endpoint - REAL DATA ONLY
+// Queries: profiles (20), vault_items (17), consensus_results (77)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -27,60 +27,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    let totalUsers = 0;
-    let dau = 0;
-    let totalScans = 0;
-
-    // Fetch user counts (try profiles first, then users)
-    try {
-      const { count, error } = await supabase
-        .from('profiles')
-        .select('*', { count: 'exact', head: true });
-
-      if (!error && count !== null) {
-        totalUsers = count;
-      }
-    } catch (e) {
-      console.warn('Could not fetch from profiles table');
-    }
-
-    // Fetch DAU
-    try {
-      const { count, error } = await supabase
-        .from('profiles')
-        .select('*', { count: 'exact', head: true })
-        .gte('last_sign_in_at', twentyFourHoursAgo);
-
-      if (!error && count !== null) {
-        dau = count;
-      }
-    } catch (e) {
-      console.warn('Could not fetch DAU');
-    }
-
-    // Fetch scans (try both table names)
-    try {
-      const { count, error } = await supabase
-        .from('scan_history')
-        .select('*', { count: 'exact', head: true });
-
-      if (error?.code === '42P01') {
-        // Table doesn't exist, try 'scans'
-        const { count: scansCount } = await supabase
-          .from('scans')
-          .select('*', { count: 'exact', head: true });
-        totalScans = scansCount || 0;
-      } else if (!error && count !== null) {
-        totalScans = count;
-      }
-    } catch (e) {
-      console.warn('Could not fetch scans');
-    }
+    // Fetch REAL data from actual tables
+    const [
+      profilesResult,
+      dauResult,
+      vaultItemsResult,
+      consensusResult,
+    ] = await Promise.all([
+      // Total users from profiles
+      supabase.from('profiles').select('*', { count: 'exact', head: true }),
+      
+      // DAU - users active in last 24h (use last_login column)
+      supabase.from('profiles').select('*', { count: 'exact', head: true })
+        .gte('last_login', twentyFourHoursAgo),
+      
+      // Total scans = vault_items (this is where scanned items are stored)
+      supabase.from('vault_items').select('*', { count: 'exact', head: true }),
+      
+      // AI analyses completed (consensus_results)
+      supabase.from('consensus_results').select('*', { count: 'exact', head: true }),
+    ]);
 
     const kpiData = {
-      totalUsers,
-      dau,
-      totalScans,
+      totalUsers: profilesResult.count || 0,
+      dau: dauResult.count || 0,
+      totalScans: vaultItemsResult.count || 0,
+      totalAnalyses: consensusResult.count || 0,
       generatedAt: new Date().toISOString(),
     };
 
@@ -90,16 +62,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json(kpiData);
 
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'An unexpected error occurred.';
-    console.error('Error fetching core KPIs:', message);
-
-    // Return demo data instead of error
-    return res.status(200).json({
-      totalUsers: 1247,
-      dau: 89,
-      totalScans: 15634,
-      generatedAt: new Date().toISOString(),
-      isDemo: true,
+    console.error('Error fetching core KPIs:', error);
+    return res.status(500).json({ 
+      error: 'Failed to fetch KPIs',
+      details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 }

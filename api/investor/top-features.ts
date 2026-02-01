@@ -1,6 +1,6 @@
 // FILE: api/investor/top-features.ts
-// Top Feature Requests API - Analyzes feedback to identify popular requests
-// Mobile-first: Cached responses, graceful fallbacks
+// Top Feature Requests API - REAL DATA ONLY
+// Table: feedback (2 rows)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -10,9 +10,9 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-// In-memory cache to reduce API costs
+// Cache to reduce computation
 interface CacheEntry {
-  data: FeatureRequest[];
+  data: TopFeaturesResponse;
   timestamp: number;
 }
 
@@ -25,99 +25,46 @@ interface FeatureRequest {
   category?: string;
 }
 
-interface FeedbackItem {
-  id: number;
-  content: string;
+interface TopFeaturesResponse {
+  features: FeatureRequest[];
+  total: number;
+  source: 'database' | 'no_data';
+  note?: string;
 }
 
-// Demo feature requests for when no real data exists
-const DEMO_FEATURES: FeatureRequest[] = [
-  { feature: 'Dark Mode', count: 24, category: 'UI/UX' },
-  { feature: 'Bulk Scanning', count: 18, category: 'Core Feature' },
-  { feature: 'Price Alerts', count: 15, category: 'Notifications' },
-  { feature: 'Collection Export', count: 12, category: 'Data' },
-  { feature: 'Social Sharing', count: 9, category: 'Social' },
-];
+// Feature keywords to look for in feedback
+const FEATURE_KEYWORDS: Record<string, { keywords: string[]; category: string }> = {
+  'Dark Mode': { keywords: ['dark mode', 'dark theme', 'night mode', 'theme'], category: 'UI/UX' },
+  'Bulk Operations': { keywords: ['bulk', 'batch', 'multiple', 'mass scan'], category: 'Core Feature' },
+  'Price Alerts': { keywords: ['alert', 'notification', 'price change', 'notify'], category: 'Notifications' },
+  'Better Search': { keywords: ['search', 'find', 'filter', 'sort'], category: 'Core Feature' },
+  'Mobile App': { keywords: ['mobile', 'app', 'ios', 'android', 'phone'], category: 'Platform' },
+  'Export Data': { keywords: ['export', 'download', 'csv', 'backup', 'report'], category: 'Data' },
+  'Social Features': { keywords: ['share', 'social', 'friend', 'community', 'follow'], category: 'Social' },
+  'Performance': { keywords: ['slow', 'fast', 'speed', 'loading', 'performance'], category: 'Technical' },
+  'More Categories': { keywords: ['category', 'type', 'coin', 'card', 'sneaker'], category: 'Content' },
+  'Better AI': { keywords: ['ai', 'accuracy', 'identification', 'recognize'], category: 'Core Feature' },
+  'Price History': { keywords: ['history', 'trend', 'chart', 'graph', 'historical'], category: 'Data' },
+  'Wishlist': { keywords: ['wishlist', 'want', 'wish', 'save', 'later'], category: 'Feature' },
+};
 
-async function analyzeTopFeaturesWithAI(feedbackItems: FeedbackItem[]): Promise<FeatureRequest[]> {
-  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+function extractFeaturesFromText(texts: string[]): FeatureRequest[] {
+  const counts: Record<string, { count: number; category: string }> = {};
 
-  if (!ANTHROPIC_API_KEY) {
-    console.warn('ANTHROPIC_API_KEY not set, using keyword extraction fallback');
-    return extractFeaturesFromKeywords(feedbackItems);
-  }
-
-  const batchContent = feedbackItems.map(f => `[${f.id}] ${f.content}`).join('\n');
-
-  const systemPrompt = `You are a product manager AI. Analyze the following user feedback. Identify the top 3-5 most frequently requested features or improvements. Group similar requests under a single category. Return ONLY a valid JSON array of objects, each with a "feature" name and a "count" number. Example: [{"feature":"Dark Mode","count":5},{"feature":"More Integrations","count":3}]`;
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-3-haiku-20240307',
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: batchContent }],
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      console.error('Anthropic API Error:', errorBody);
-      throw new Error('AI analysis failed');
-    }
-
-    const result = await response.json();
-    const jsonText = result.content[0].text;
-
-    // Parse JSON, handling potential markdown formatting
-    const cleanJson = jsonText.replace(/```json\n?|\n?```/g, '').trim();
-    return JSON.parse(cleanJson);
-
-  } catch (error) {
-    console.error('AI feature analysis failed:', error);
-    return extractFeaturesFromKeywords(feedbackItems);
-  }
-}
-
-function extractFeaturesFromKeywords(feedbackItems: FeedbackItem[]): FeatureRequest[] {
-  // Simple keyword-based feature extraction
-  const featureKeywords: Record<string, string[]> = {
-    'Dark Mode': ['dark mode', 'dark theme', 'night mode', 'theme'],
-    'Bulk Operations': ['bulk', 'batch', 'multiple', 'mass'],
-    'Price Alerts': ['alert', 'notification', 'notify', 'price change'],
-    'Better Search': ['search', 'find', 'filter', 'sort'],
-    'Mobile App': ['mobile', 'app', 'ios', 'android', 'phone'],
-    'Export Data': ['export', 'download', 'csv', 'backup'],
-    'Social Features': ['share', 'social', 'friend', 'community'],
-    'Faster Performance': ['slow', 'fast', 'speed', 'performance', 'loading'],
-  };
-
-  const counts: Record<string, number> = {};
-
-  feedbackItems.forEach(item => {
-    const lower = item.content.toLowerCase();
-    Object.entries(featureKeywords).forEach(([feature, keywords]) => {
+  texts.forEach(text => {
+    const lower = text.toLowerCase();
+    Object.entries(FEATURE_KEYWORDS).forEach(([feature, { keywords, category }]) => {
       if (keywords.some(kw => lower.includes(kw))) {
-        counts[feature] = (counts[feature] || 0) + 1;
+        if (!counts[feature]) {
+          counts[feature] = { count: 0, category };
+        }
+        counts[feature].count++;
       }
     });
   });
 
   return Object.entries(counts)
-    .map(([feature, count]) => ({ feature, count }))
+    .map(([feature, { count, category }]) => ({ feature, count, category }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 5);
 }
@@ -143,58 +90,75 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    let feedbackItems: FeedbackItem[] = [];
+    // Fetch feedback from database
+    const { data: feedback, error } = await supabase
+      .from('feedback')
+      .select('*')
+      .limit(200);
 
-    // Try to fetch feedback from database
-    if (supabaseUrl && supabaseServiceKey) {
-      // Try 'feedback' table first
-      const { data: feedback, error: feedbackError } = await supabase
-        .from('feedback')
-        .select('id, content')
-        .not('content', 'is', null)
-        .limit(200);
-
-      if (!feedbackError && feedback && feedback.length > 0) {
-        feedbackItems = feedback;
-      } else {
-        // Try 'user_feedback' table as fallback
-        const { data: userFeedback } = await supabase
-          .from('user_feedback')
-          .select('id, content, message')
-          .limit(200);
-
-        if (userFeedback && userFeedback.length > 0) {
-          feedbackItems = userFeedback.map(f => ({
-            id: f.id,
-            content: f.content || f.message || '',
-          })).filter(f => f.content.length > 0);
-        }
-      }
+    if (error) {
+      console.error('Error fetching feedback:', error);
     }
 
-    // If not enough feedback, return demo data
-    if (feedbackItems.length < 3) {
-      featuresCache = { data: DEMO_FEATURES, timestamp: Date.now() };
-      res.setHeader('X-Cache', 'DEMO');
-      return res.status(200).json(DEMO_FEATURES);
+    // If no feedback, return honest empty state
+    if (!feedback || feedback.length === 0) {
+      const noData: TopFeaturesResponse = {
+        features: [],
+        total: 0,
+        source: 'no_data',
+        note: 'No feedback has been submitted yet - feature requests will appear here'
+      };
+
+      featuresCache = { data: noData, timestamp: Date.now() };
+      res.setHeader('X-Cache', 'MISS');
+      return res.status(200).json(noData);
     }
 
-    // Analyze features
-    const topFeatures = await analyzeTopFeaturesWithAI(feedbackItems);
+    // Extract text content from feedback
+    const texts = feedback
+      .map(f => f.content || f.message || f.text || f.feedback || '')
+      .filter(t => t.length > 0);
+
+    if (texts.length === 0) {
+      const noData: TopFeaturesResponse = {
+        features: [],
+        total: feedback.length,
+        source: 'database',
+        note: `${feedback.length} feedback entries found but no text content to analyze`
+      };
+
+      featuresCache = { data: noData, timestamp: Date.now() };
+      return res.status(200).json(noData);
+    }
+
+    // Extract features from feedback text
+    const features = extractFeaturesFromText(texts);
+
+    const response: TopFeaturesResponse = {
+      features,
+      total: feedback.length,
+      source: 'database',
+      note: features.length > 0 
+        ? `Top ${features.length} feature requests from ${feedback.length} feedback entries`
+        : `${feedback.length} feedback entries analyzed - no specific feature requests identified`
+    };
 
     // Cache the results
-    const features = topFeatures.length > 0 ? topFeatures : DEMO_FEATURES;
-    featuresCache = { data: features, timestamp: Date.now() };
+    featuresCache = { data: response, timestamp: Date.now() };
 
     res.setHeader('X-Cache', 'MISS');
     res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=1200');
 
-    return res.status(200).json(features);
+    return res.status(200).json(response);
 
   } catch (error) {
     console.error('Error in top features handler:', error);
 
-    // Return demo data on error instead of failing
-    return res.status(200).json(DEMO_FEATURES);
+    return res.status(200).json({
+      features: [],
+      total: 0,
+      source: 'no_data',
+      note: 'Error fetching feedback data'
+    });
   }
 }

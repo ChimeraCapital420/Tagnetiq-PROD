@@ -1,6 +1,6 @@
 // FILE: api/investor/highlight-quote.ts
-// Highlight Quote API - Returns featured quote for investor dashboard
-// Mobile-first: Cached, graceful fallbacks
+// Returns highlight quotes for investor dashboard
+// Table: highlight_quotes (1 row exists!)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -9,41 +9,6 @@ const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL ||
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-// Rotating demo quotes for when database is empty or unavailable
-const DEMO_QUOTES = [
-  {
-    quote: "TagnetIQ has completely transformed how I manage my collection. The AI identification is incredibly accurate.",
-    author: "Michael R.",
-    source: "Beta Tester, Coin Collector"
-  },
-  {
-    quote: "Finally, a platform that understands collectors. The valuation tools alone have saved me thousands.",
-    author: "Sarah K.",
-    source: "Sports Card Enthusiast"
-  },
-  {
-    quote: "The authentication features give me confidence when making purchases. Game changer for the hobby.",
-    author: "David L.",
-    source: "Vintage Watch Collector"
-  },
-  {
-    quote: "I've tried every collection app out there. TagnetIQ is the first one that actually delivers on its promises.",
-    author: "Jennifer M.",
-    source: "Comic Book Dealer"
-  },
-  {
-    quote: "The market insights have helped me identify trends before they go mainstream. Invaluable for serious collectors.",
-    author: "Robert T.",
-    source: "Trading Card Investor"
-  },
-];
-
-// Get a consistent quote for the day (so it doesn't change on every request)
-function getDemoQuote(): typeof DEMO_QUOTES[0] {
-  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
-  return DEMO_QUOTES[dayOfYear % DEMO_QUOTES.length];
-}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
@@ -60,40 +25,55 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // Try to fetch from database if available
-    if (supabaseUrl && supabaseServiceKey) {
-      try {
-        const { data: quote, error } = await supabase
-          .from('highlight_quotes')
-          .select('quote, author, source')
-          .eq('is_active', true)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single();
+    // Query highlight_quotes table - you have 1 real row!
+    const { data: quotes, error } = await supabase
+      .from('highlight_quotes')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(10);
 
-        if (!error && quote) {
-          // Cache for 1 hour - quotes don't change often
-          res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=7200');
-          return res.status(200).json(quote);
-        }
-      } catch (dbError) {
-        // Table doesn't exist or other DB error - use demo quote
-        console.warn('highlight_quotes table not available, using demo quote');
-      }
+    if (error) {
+      console.error('Error fetching quotes:', error);
+      // Return a placeholder if table query fails
+      return res.status(200).json({
+        quote: "Building the future of collectibles valuation.",
+        author: "TagnetIQ Team",
+        role: "Founders",
+        source: "placeholder"
+      });
     }
 
-    // Return demo quote
-    const demoQuote = getDemoQuote();
-    
-    // Cache for 1 hour
-    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=7200');
-    
-    return res.status(200).json(demoQuote);
+    // If we have real quotes, return one
+    if (quotes && quotes.length > 0) {
+      // Rotate through quotes based on day of year
+      const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
+      const selectedQuote = quotes[dayOfYear % quotes.length];
+      
+      return res.status(200).json({
+        quote: selectedQuote.quote || selectedQuote.text || selectedQuote.content,
+        author: selectedQuote.author || selectedQuote.name || 'Anonymous',
+        role: selectedQuote.role || selectedQuote.title || 'Collector',
+        avatar: selectedQuote.avatar_url || selectedQuote.avatar,
+        source: 'database',
+        id: selectedQuote.id,
+      });
+    }
+
+    // No quotes in database - return a simple placeholder
+    return res.status(200).json({
+      quote: "Building the future of collectibles valuation.",
+      author: "TagnetIQ Team", 
+      role: "Founders",
+      source: "placeholder"
+    });
 
   } catch (error) {
-    console.error('Error fetching highlight quote:', error);
-    
-    // Always return a quote, never fail
-    return res.status(200).json(getDemoQuote());
+    console.error('Error in highlight-quote:', error);
+    return res.status(200).json({
+      quote: "Building the future of collectibles valuation.",
+      author: "TagnetIQ Team",
+      role: "Founders", 
+      source: "error_fallback"
+    });
   }
 }

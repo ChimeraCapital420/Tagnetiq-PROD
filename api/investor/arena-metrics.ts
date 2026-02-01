@@ -1,6 +1,6 @@
 // FILE: api/investor/arena-metrics.ts
-// Arena Metrics API - Returns engagement metrics for investor dashboard
-// Mobile-first: Cached, graceful fallbacks for missing tables
+// Arena Metrics API - REAL DATA ONLY
+// Queries: profiles, arena_listings, secure_messages, secure_conversations
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -9,75 +9,6 @@ const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL ||
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-// Demo metrics for when database is unavailable
-const DEMO_METRICS = {
-  userEngagement: {
-    dau: 127,
-    mau: 1892,
-    dauGrowth: 12.5,
-    mauGrowth: 23.8,
-  },
-  contentVelocity: {
-    newChallengesToday: 34,
-    newListingsToday: 89,
-    challengeGrowth: 18.2,
-    listingGrowth: 15.7,
-  },
-  socialInteraction: {
-    newConversationsToday: 156,
-    alertsTriggeredToday: 423,
-    conversationGrowth: 22.1,
-    alertGrowth: 31.4,
-  },
-  ecosystemHealth: {
-    totalActiveChallenges: 847,
-    totalActiveListings: 2341,
-    averageResponseTime: 2.3,
-    userSatisfaction: 94.2,
-  },
-  generatedAt: new Date().toISOString(),
-  isDemo: true,
-};
-
-// Safe query helper - returns count or 0 on error
-async function safeCount(
-  table: string,
-  filter?: { column: string; operator: string; value: any }
-): Promise<number> {
-  try {
-    let query = supabase.from(table).select('*', { count: 'exact', head: true });
-    
-    if (filter) {
-      switch (filter.operator) {
-        case 'gte':
-          query = query.gte(filter.column, filter.value);
-          break;
-        case 'eq':
-          query = query.eq(filter.column, filter.value);
-          break;
-        case 'gt':
-          query = query.gt(filter.column, filter.value);
-          break;
-      }
-    }
-
-    const { count, error } = await query;
-    
-    if (error) {
-      // Table doesn't exist or other error
-      if (error.code === '42P01') {
-        console.warn(`Table '${table}' does not exist`);
-      }
-      return 0;
-    }
-    
-    return count || 0;
-  } catch (e) {
-    console.warn(`Error querying ${table}:`, e);
-    return 0;
-  }
-}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
@@ -94,89 +25,122 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // If no database configured, return demo data
-    if (!supabaseUrl || !supabaseServiceKey) {
-      return res.status(200).json(DEMO_METRICS);
-    }
-
     const now = new Date();
     const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Fetch all metrics in parallel with safe queries
-    // Use 'profiles' instead of 'users' for user data
+    // Fetch REAL data from actual tables
     const [
-      dau,
-      mau,
-      newChallenges,
-      newListings,
-      newConversations,
-      alertsTriggered,
-      totalActiveChallenges,
-      totalActiveListings,
+      // User engagement - from profiles
+      profilesWithLastSignIn,
+      
+      // Arena listings (NOT marketplace_listings!)
+      totalListingsResult,
+      newListingsResult,
+      
+      // Messages - secure_messages has 35 rows
+      totalMessagesResult,
+      newMessagesResult,
+      
+      // Conversations - secure_conversations has 24 rows
+      totalConversationsResult,
+      newConversationsResult,
+      
+      // Challenges - arena_challenges is empty (0 rows)
+      totalChallengesResult,
+      
+      // Vault items (user content)
+      totalVaultItemsResult,
+      newVaultItemsResult,
     ] = await Promise.all([
-      // DAU - users active in last 24h (from profiles)
-      safeCount('profiles', { column: 'last_sign_in_at', operator: 'gte', value: twentyFourHoursAgo }),
+      // Get profiles with last_login for DAU/MAU calculation
+      supabase.from('profiles').select('id, last_login'),
       
-      // MAU - users active in last 30 days
-      safeCount('profiles', { column: 'last_sign_in_at', operator: 'gte', value: thirtyDaysAgo }),
-      
-      // New challenges today
-      safeCount('arena_challenges', { column: 'created_at', operator: 'gte', value: twentyFourHoursAgo }),
+      // Total arena listings
+      supabase.from('arena_listings').select('*', { count: 'exact', head: true }),
       
       // New listings today
-      safeCount('marketplace_listings', { column: 'created_at', operator: 'gte', value: twentyFourHoursAgo }),
+      supabase.from('arena_listings').select('*', { count: 'exact', head: true })
+        .gte('created_at', twentyFourHoursAgo),
       
-      // New conversations today (try multiple table names)
-      safeCount('secure_messages', { column: 'created_at', operator: 'gte', value: twentyFourHoursAgo })
-        .then(count => count || safeCount('messages', { column: 'created_at', operator: 'gte', value: twentyFourHoursAgo })),
+      // Total messages
+      supabase.from('secure_messages').select('*', { count: 'exact', head: true }),
       
-      // Alerts triggered today
-      safeCount('watchlist_alerts', { column: 'triggered_at', operator: 'gte', value: twentyFourHoursAgo }),
+      // New messages today
+      supabase.from('secure_messages').select('*', { count: 'exact', head: true })
+        .gte('created_at', twentyFourHoursAgo),
       
-      // Total active challenges
-      safeCount('arena_challenges', { column: 'is_active', operator: 'eq', value: true }),
+      // Total conversations
+      supabase.from('secure_conversations').select('*', { count: 'exact', head: true }),
       
-      // Total active listings
-      safeCount('marketplace_listings', { column: 'status', operator: 'eq', value: 'active' }),
+      // New conversations today
+      supabase.from('secure_conversations').select('*', { count: 'exact', head: true })
+        .gte('created_at', twentyFourHoursAgo),
+      
+      // Total challenges (will be 0 - table is empty)
+      supabase.from('arena_challenges').select('*', { count: 'exact', head: true }),
+      
+      // Total vault items
+      supabase.from('vault_items').select('*', { count: 'exact', head: true }),
+      
+      // New vault items today
+      supabase.from('vault_items').select('*', { count: 'exact', head: true })
+        .gte('created_at', twentyFourHoursAgo),
     ]);
 
-    // Check if we got any real data
-    const hasRealData = dau > 0 || mau > 0 || newChallenges > 0 || newListings > 0;
-
-    if (!hasRealData) {
-      // No real data, return demo metrics
-      res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
-      return res.status(200).json(DEMO_METRICS);
-    }
+    // Calculate DAU and MAU from profiles
+    const profiles = profilesWithLastSignIn.data || [];
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const thirtyDaysAgoDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    
+    const dau = profiles.filter(p => 
+      p.last_login && new Date(p.last_login) > oneDayAgo
+    ).length;
+    
+    const mau = profiles.filter(p => 
+      p.last_login && new Date(p.last_login) > thirtyDaysAgoDate
+    ).length;
 
     const arenaMetrics = {
       userEngagement: {
-        dau,
-        mau,
-        dauGrowth: dau > 0 ? parseFloat((Math.random() * 20 + 5).toFixed(1)) : 0, // Placeholder growth
-        mauGrowth: mau > 0 ? parseFloat((Math.random() * 30 + 10).toFixed(1)) : 0,
+        dau,                              // Real DAU
+        mau,                              // Real MAU
+        totalUsers: profiles.length,      // Total users (20)
       },
       contentVelocity: {
-        newChallengesToday: newChallenges,
-        newListingsToday: newListings,
-        challengeGrowth: newChallenges > 0 ? parseFloat((Math.random() * 25 + 5).toFixed(1)) : 0,
-        listingGrowth: newListings > 0 ? parseFloat((Math.random() * 20 + 8).toFixed(1)) : 0,
+        // Challenges are 0 - be honest about it
+        newChallengesToday: 0,            // arena_challenges is empty
+        totalChallenges: totalChallengesResult.count || 0,
+        
+        // Listings - arena_listings has 11
+        newListingsToday: newListingsResult.count || 0,
+        totalListings: totalListingsResult.count || 0,
+        
+        // Vault items (scans)
+        newItemsToday: newVaultItemsResult.count || 0,
+        totalItems: totalVaultItemsResult.count || 0,
       },
       socialInteraction: {
-        newConversationsToday: newConversations,
-        alertsTriggeredToday: alertsTriggered,
-        conversationGrowth: newConversations > 0 ? parseFloat((Math.random() * 30 + 10).toFixed(1)) : 0,
-        alertGrowth: alertsTriggered > 0 ? parseFloat((Math.random() * 40 + 15).toFixed(1)) : 0,
+        // Messages - secure_messages has 35
+        newConversationsToday: newConversationsResult.count || 0,
+        totalConversations: totalConversationsResult.count || 0,
+        
+        // We don't have alerts triggered (watchlist_alerts is empty)
+        alertsTriggeredToday: 0,
+        
+        // Total messages
+        totalMessages: totalMessagesResult.count || 0,
+        newMessagesToday: newMessagesResult.count || 0,
       },
       ecosystemHealth: {
-        totalActiveChallenges,
-        totalActiveListings,
-        averageResponseTime: parseFloat((Math.random() * 3 + 1).toFixed(1)), // hours
-        userSatisfaction: parseFloat((Math.random() * 10 + 88).toFixed(1)), // percentage
+        // Be honest - challenges feature not yet adopted
+        totalActiveChallenges: totalChallengesResult.count || 0,
+        totalActiveListings: totalListingsResult.count || 0,
       },
+      
+      // Metadata
       generatedAt: new Date().toISOString(),
-      isDemo: false,
+      dataSource: 'live_database',
     };
 
     // Cache for 2 minutes
@@ -186,8 +150,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   } catch (error) {
     console.error('Error fetching Arena metrics:', error);
-    
-    // Return demo data on error
-    return res.status(200).json(DEMO_METRICS);
+    return res.status(500).json({ 
+      error: 'Failed to fetch Arena metrics',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 }

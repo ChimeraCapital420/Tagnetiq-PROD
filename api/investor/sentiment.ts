@@ -1,6 +1,6 @@
 // FILE: api/investor/sentiment.ts
-// Sentiment Analysis API - Analyzes feedback sentiment using AI
-// Mobile-first: Cached responses, graceful fallbacks
+// Sentiment Analysis API - REAL DATA ONLY
+// Table: feedback (2 rows)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -10,7 +10,7 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-// In-memory cache to reduce API costs
+// Cache to reduce API costs
 interface CacheEntry {
   data: SentimentData;
   timestamp: number;
@@ -25,90 +25,31 @@ interface SentimentData {
   Negative: number;
   total: number;
   lastUpdated: string;
+  source: 'database' | 'no_data';
+  note?: string;
 }
 
-interface FeedbackItem {
-  id: number;
-  content: string;
-}
-
-async function analyzeSentimentWithAI(feedbackItems: FeedbackItem[]): Promise<Record<string, string>> {
-  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+// Simple keyword-based sentiment (no AI dependency)
+function analyzeSentiment(text: string): 'Positive' | 'Neutral' | 'Negative' {
+  const lower = text.toLowerCase();
   
-  if (!ANTHROPIC_API_KEY) {
-    console.warn('ANTHROPIC_API_KEY not set, using fallback sentiment analysis');
-    // Simple keyword-based fallback
-    const results: Record<string, string> = {};
-    const positiveWords = ['love', 'great', 'awesome', 'excellent', 'amazing', 'helpful', 'good', 'best', 'fantastic'];
-    const negativeWords = ['hate', 'bad', 'terrible', 'awful', 'worst', 'broken', 'bug', 'issue', 'problem', 'slow'];
+  const positiveWords = [
+    'love', 'great', 'awesome', 'excellent', 'amazing', 'helpful', 
+    'good', 'best', 'fantastic', 'perfect', 'nice', 'thanks', 
+    'wonderful', 'impressed', 'easy', 'useful', 'recommend'
+  ];
+  const negativeWords = [
+    'hate', 'bad', 'terrible', 'awful', 'worst', 'broken', 
+    'bug', 'issue', 'problem', 'slow', 'crash', 'error',
+    'frustrating', 'annoying', 'difficult', 'confusing', 'wrong'
+  ];
 
-    feedbackItems.forEach(item => {
-      const lower = item.content.toLowerCase();
-      const hasPositive = positiveWords.some(word => lower.includes(word));
-      const hasNegative = negativeWords.some(word => lower.includes(word));
+  const positiveCount = positiveWords.filter(word => lower.includes(word)).length;
+  const negativeCount = negativeWords.filter(word => lower.includes(word)).length;
 
-      if (hasPositive && !hasNegative) {
-        results[item.id.toString()] = 'Positive';
-      } else if (hasNegative && !hasPositive) {
-        results[item.id.toString()] = 'Negative';
-      } else {
-        results[item.id.toString()] = 'Neutral';
-      }
-    });
-
-    return results;
-  }
-
-  const batchContent = feedbackItems
-    .map(f => `Feedback ID ${f.id}: "${f.content}"`)
-    .join('\n---\n');
-
-  const systemPrompt = `You are an expert sentiment analysis AI. Analyze the following batch of user feedback. For each feedback item, classify it as 'Positive', 'Neutral', or 'Negative'. Return ONLY a valid JSON object where keys are the Feedback IDs (as strings) and values are the sentiment classifications. Example: {"1":"Positive","2":"Negative","3":"Neutral"}`;
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-3-haiku-20240307',
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: batchContent }],
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      console.error('Anthropic API Error:', errorBody);
-      throw new Error('AI analysis failed');
-    }
-
-    const result = await response.json();
-    const jsonText = result.content[0].text;
-
-    // Parse JSON, handling potential markdown formatting
-    const cleanJson = jsonText.replace(/```json\n?|\n?```/g, '').trim();
-    return JSON.parse(cleanJson);
-
-  } catch (error) {
-    console.error('AI sentiment analysis failed:', error);
-    // Fallback to simple analysis
-    const results: Record<string, string> = {};
-    feedbackItems.forEach(item => {
-      results[item.id.toString()] = 'Neutral';
-    });
-    return results;
-  }
+  if (positiveCount > negativeCount) return 'Positive';
+  if (negativeCount > positiveCount) return 'Negative';
+  return 'Neutral';
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -132,66 +73,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    let feedbackItems: FeedbackItem[] = [];
+    // Fetch feedback from database
+    const { data: feedback, error } = await supabase
+      .from('feedback')
+      .select('*')
+      .limit(100);
 
-    // Try to fetch feedback from database
-    if (supabaseUrl && supabaseServiceKey) {
-      // Try 'feedback' table first
-      const { data: feedback, error: feedbackError } = await supabase
-        .from('feedback')
-        .select('id, content')
-        .not('content', 'is', null)
-        .limit(100);
-
-      if (!feedbackError && feedback && feedback.length > 0) {
-        feedbackItems = feedback;
-      } else {
-        // Try 'user_feedback' table as fallback
-        const { data: userFeedback } = await supabase
-          .from('user_feedback')
-          .select('id, content, message')
-          .limit(100);
-
-        if (userFeedback && userFeedback.length > 0) {
-          feedbackItems = userFeedback.map(f => ({
-            id: f.id,
-            content: f.content || f.message || '',
-          })).filter(f => f.content.length > 0);
-        }
-      }
+    if (error) {
+      console.error('Error fetching feedback:', error);
     }
 
-    // If no feedback data, return demo sentiment distribution
-    if (feedbackItems.length === 0) {
-      const demoData: SentimentData = {
-        Positive: 42,
-        Neutral: 28,
-        Negative: 12,
-        total: 82,
+    // If no feedback data, return honest zero state
+    if (!feedback || feedback.length === 0) {
+      const noData: SentimentData = {
+        Positive: 0,
+        Neutral: 0,
+        Negative: 0,
+        total: 0,
         lastUpdated: new Date().toISOString(),
+        source: 'no_data',
+        note: 'No feedback has been submitted yet'
       };
 
-      sentimentCache = { data: demoData, timestamp: Date.now() };
-      res.setHeader('X-Cache', 'DEMO');
-      return res.status(200).json(demoData);
+      sentimentCache = { data: noData, timestamp: Date.now() };
+      res.setHeader('X-Cache', 'MISS');
+      return res.status(200).json(noData);
     }
 
-    // Analyze sentiment
-    const sentimentResults = await analyzeSentimentWithAI(feedbackItems);
-
-    // Count sentiments
+    // Analyze real feedback
     const sentimentCounts: SentimentData = {
       Positive: 0,
       Neutral: 0,
       Negative: 0,
-      total: feedbackItems.length,
+      total: feedback.length,
       lastUpdated: new Date().toISOString(),
+      source: 'database',
+      note: `Based on ${feedback.length} feedback submission${feedback.length !== 1 ? 's' : ''}`
     };
 
-    Object.values(sentimentResults).forEach((sentiment) => {
-      const key = sentiment as 'Positive' | 'Neutral' | 'Negative';
-      if (key in sentimentCounts) {
-        sentimentCounts[key]++;
+    feedback.forEach(item => {
+      // Try different possible field names for feedback content
+      const content = item.content || item.message || item.text || item.feedback || '';
+      if (content) {
+        const sentiment = analyzeSentiment(content);
+        sentimentCounts[sentiment]++;
+      } else {
+        sentimentCounts.Neutral++;
       }
     });
 
@@ -204,17 +131,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json(sentimentCounts);
 
   } catch (error) {
-    console.error('Error in sentiment analysis handler:', error);
+    console.error('Error in sentiment analysis:', error);
 
-    // Return demo data on error instead of failing
-    const fallbackData: SentimentData = {
-      Positive: 35,
-      Neutral: 45,
-      Negative: 20,
-      total: 100,
+    // Return honest error state
+    return res.status(200).json({
+      Positive: 0,
+      Neutral: 0,
+      Negative: 0,
+      total: 0,
       lastUpdated: new Date().toISOString(),
-    };
-
-    return res.status(200).json(fallbackData);
+      source: 'no_data',
+      note: 'Error fetching feedback data'
+    });
   }
 }
