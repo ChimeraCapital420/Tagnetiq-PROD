@@ -84,13 +84,11 @@ function savePrefs(prefs: SpotlightPrefs): void {
 function trackClick(itemId: string, category?: string, price?: number): void {
   const prefs = getPrefs();
   
-  // Track clicked item
   prefs.clicked_item_ids = [
     itemId,
     ...prefs.clicked_item_ids.filter(id => id !== itemId)
   ].slice(0, 100);
   
-  // Track category
   if (category && category !== 'all') {
     prefs.viewed_categories = [
       category,
@@ -98,7 +96,6 @@ function trackClick(itemId: string, category?: string, price?: number): void {
     ].slice(0, 15);
   }
   
-  // Track price
   if (price && price > 0) {
     prefs.price_history = [price, ...prefs.price_history].slice(0, 100);
   }
@@ -310,7 +307,6 @@ const SpotlightItemCard: React.FC<{
     ? Math.round(((item.estimated_value! - item.asking_price) / item.estimated_value!) * 100)
     : 0;
 
-  // Use listing_id for the link - this is the correct ID for the marketplace detail page
   const detailUrl = `/arena/listing/${item.listing_id}`;
 
   return (
@@ -328,7 +324,6 @@ const SpotlightItemCard: React.FC<{
           'hover:-translate-y-1'
         )}
       >
-        {/* Image */}
         <div className="relative overflow-hidden h-32 sm:h-36">
           <LazyImage
             src={item.primary_photo_url || '/placeholder.svg'}
@@ -336,7 +331,6 @@ const SpotlightItemCard: React.FC<{
             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
           />
 
-          {/* Badges */}
           <div className="absolute top-2 left-2 flex flex-col gap-1">
             {item.is_verified && (
               <Badge className="bg-emerald-500/90 text-white text-[10px] px-1.5 py-0.5 gap-1">
@@ -352,7 +346,6 @@ const SpotlightItemCard: React.FC<{
             )}
           </div>
 
-          {/* Shipping badge */}
           {item.shipping_available && (
             <div className="absolute top-2 right-2">
               <Badge variant="secondary" className="bg-blue-500/90 text-white text-[10px] px-1.5 py-0.5 gap-1">
@@ -361,10 +354,8 @@ const SpotlightItemCard: React.FC<{
             </div>
           )}
 
-          {/* Gradient */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
 
-          {/* Price */}
           <div className="absolute bottom-2 left-2 right-2">
             <div className="flex items-baseline gap-1.5">
               <span className="text-lg sm:text-xl font-bold text-white drop-shadow-lg">
@@ -379,7 +370,6 @@ const SpotlightItemCard: React.FC<{
           </div>
         </div>
 
-        {/* Content */}
         <div className="p-2 sm:p-3">
           <h4 className="text-xs sm:text-sm font-medium text-zinc-200 truncate group-hover:text-white">
             {item.item_name}
@@ -426,7 +416,6 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
   const itemWidth = 200;
   const totalWidth = items.length * itemWidth;
 
-  // Fetch items
   const fetchItems = useCallback(async () => {
     try {
       setError(null);
@@ -465,7 +454,6 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
     }
   }, []);
 
-  // Initial fetch + location
   useEffect(() => {
     if (!locationRequestedRef.current) {
       locationRequestedRef.current = true;
@@ -475,7 +463,6 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
     }
   }, [fetchItems]);
 
-  // Refresh interval
   useEffect(() => {
     if (refreshInterval > 0) {
       refreshTimerRef.current = setInterval(fetchItems, refreshInterval);
@@ -485,7 +472,6 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
     };
   }, [fetchItems, refreshInterval]);
 
-  // Animation loop
   const animate = useCallback(
     (timestamp: number) => {
       if (!lastTimeRef.current) lastTimeRef.current = timestamp;
@@ -511,7 +497,6 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
     };
   }, [animate]);
 
-  // Manual scroll
   const scrollBy = (direction: 'left' | 'right') => {
     const amount = itemWidth * 2;
     setScrollPosition((prev) => {
@@ -521,7 +506,6 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
     });
   };
 
-  // Handle click
   const handleItemClick = (item: SpotlightItem) => {
     trackClick(item.listing_id, item.category, item.asking_price);
     onItemClick?.(item);
@@ -529,7 +513,6 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
 
   if (isDismissed) return null;
 
-  // Loading
   if (loading) {
     return (
       <div className={cn('bg-zinc-900/50 border-b border-zinc-800/50', className)}>
@@ -551,7 +534,6 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
     );
   }
 
-  // No items
   if (items.length === 0) return null;
 
   const displayItems = [...items, ...items];
@@ -569,7 +551,6 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
       onTouchStart={() => setIsPaused(true)}
       onTouchEnd={() => setTimeout(() => setIsPaused(false), 2000)}
     >
-      {/* Header */}
       <div className="px-4 pt-3 pb-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -656,7 +637,6 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
         </div>
       </div>
 
-      {/* Scrolling items */}
       <div ref={containerRef} className="relative overflow-hidden pb-4">
         <div className="absolute left-0 top-0 bottom-0 w-8 sm:w-16 bg-gradient-to-r from-zinc-900 to-transparent z-10 pointer-events-none" />
         <div className="absolute right-0 top-0 bottom-0 w-8 sm:w-16 bg-gradient-to-l from-zinc-900 to-transparent z-10 pointer-events-none" />
@@ -676,4 +656,12 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
       </div>
 
       {error && (
-        <div cla
+        <div className="px-4 pb-3">
+          <p className="text-xs text-red-400">{error}</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default SpotlightCarousel;
