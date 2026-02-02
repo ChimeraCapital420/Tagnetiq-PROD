@@ -1,5 +1,6 @@
 // FILE: api/dashboard/spotlight-items.ts
 // Personalized Spotlight Items API - Pulls from live arena_listings
+// Location is a BOOST, not a filter - shipping items always show
 // Considers: user preferences, search history, viewed items, location, purchases
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -15,21 +16,21 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supaAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-// Auth verification
+// Auth verification (optional - allows anonymous browsing)
 async function verifyUser(req: VercelRequest) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
-    return null; // Allow anonymous access with less personalization
-  }
-
-  const token = authHeader.split(' ')[1];
-  const { data: { user }, error } = await supaAdmin.auth.getUser(token);
-  
-  if (error || !user) {
     return null;
   }
 
-  return user;
+  const token = authHeader.split(' ')[1];
+  try {
+    const { data: { user }, error } = await supaAdmin.auth.getUser(token);
+    if (error || !user) return null;
+    return user;
+  } catch {
+    return null;
+  }
 }
 
 interface SpotlightPreferences {
@@ -60,6 +61,7 @@ interface SpotlightItem {
   seller_id: string;
   seller_name?: string;
   seller_location?: string;
+  shipping_available?: boolean;
   created_at: string;
   relevance_score?: number;
 }
@@ -81,7 +83,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'POST' && req.body) {
       preferences = req.body;
     } else {
-      // Parse from query params
       if (req.query.categories) {
         preferences.viewed_categories = (req.query.categories as string).split(',');
       }
@@ -106,14 +107,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         const { data: purchases } = await supaAdmin
           .from('arena_listings')
-          .select('category, vault_items(category)')
+          .select('category')
           .eq('buyer_id', userId)
           .eq('status', 'sold')
           .limit(20);
         
         if (purchases && purchases.length > 0) {
           const purchasedCategories = purchases
-            .map((p: any) => p.category || p.vault_items?.category)
+            .map((p: any) => p.category)
             .filter(Boolean);
           preferences.purchased_categories = [...new Set(purchasedCategories)] as string[];
         }
@@ -122,7 +123,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Fetch ACTIVE marketplace listings only
+    // Fetch ACTIVE marketplace listings
+    // Using simpler query without problematic joins first
     const { data: listings, error } = await supaAdmin
       .from('arena_listings')
       .select(`
@@ -136,33 +138,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         category,
         images,
         status,
+        shipping_available,
+        location,
         created_at,
-        expires_at,
-        profiles!arena_listings_seller_id_fkey (
-          display_name,
-          location
-        ),
-        vault_items!arena_listings_vault_item_id_fkey (
-          id,
-          item_name,
-          primary_image_url,
-          estimated_value,
-          is_verified,
-          confidence_score,
-          category
-        )
+        expires_at
       `)
       .eq('status', 'active')
       .gt('expires_at', new Date().toISOString())
       .order('created_at', { ascending: false })
-      .limit(Math.min(limit * 4, 60)); // Fetch more for better scoring
+      .limit(Math.min(limit * 4, 60));
 
     if (error) {
       console.error('Spotlight fetch error:', error);
       throw error;
     }
 
-    // If no active listings, return empty array (no placeholders)
+    // If no active listings, return empty array
     if (!listings || listings.length === 0) {
       return res.status(200).json({
         items: [],
@@ -172,15 +163,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    // Fetch vault items for these listings
+    const vaultItemIds = listings
+      .map((l: any) => l.vault_item_id)
+      .filter(Boolean);
+
+    let vaultItemsMap: Record<string, any> = {};
+    
+    if (vaultItemIds.length > 0) {
+      const { data: vaultItems } = await supaAdmin
+        .from('vault_items')
+        .select('id, item_name, primary_image_url, estimated_value, is_verified, confidence_score, category')
+        .in('id', vaultItemIds);
+      
+      if (vaultItems) {
+        vaultItemsMap = vaultItems.reduce((acc: any, item: any) => {
+          acc[item.id] = item;
+          return acc;
+        }, {});
+      }
+    }
+
+    // Fetch seller profiles
+    const sellerIds = [...new Set(listings.map((l: any) => l.seller_id))];
+    let profilesMap: Record<string, any> = {};
+    
+    if (sellerIds.length > 0) {
+      // Try different column names for profiles
+      const { data: profiles, error: profileError } = await supaAdmin
+        .from('profiles')
+        .select('id, username, full_name, location, avatar_url')
+        .in('id', sellerIds);
+      
+      if (!profileError && profiles) {
+        profilesMap = profiles.reduce((acc: any, p: any) => {
+          acc[p.id] = p;
+          return acc;
+        }, {});
+      }
+    }
+
     // Transform and score items
     const scoredItems: SpotlightItem[] = listings.map((listing: any) => {
-      const vaultItem = listing.vault_items;
-      const profile = listing.profiles;
+      const vaultItem = vaultItemsMap[listing.vault_item_id];
+      const profile = profilesMap[listing.seller_id];
       
       // Base random score for variety (0-20)
       let relevanceScore = Math.random() * 20;
       
       const itemCategory = vaultItem?.category || listing.category;
+      const hasShipping = listing.shipping_available === true;
       
       // CATEGORY AFFINITY: User has viewed this category (+25 points)
       if (preferences.viewed_categories?.length && itemCategory) {
@@ -214,13 +246,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         relevanceScore += 8;
       }
       
-      // LOCATION PROXIMITY: Same state/region (+15 points)
-      if (preferences.location?.state && profile?.location) {
-        const sellerLocation = profile.location.toLowerCase();
+      // LOCATION BOOST (not filter!): Same state/region (+15 points)
+      // Items with shipping available also get a boost (+10 points)
+      const sellerLocation = profile?.location || listing.location || '';
+      
+      if (preferences.location?.state && sellerLocation) {
         const userState = preferences.location.state.toLowerCase();
-        if (sellerLocation.includes(userState)) {
-          relevanceScore += 15;
+        if (sellerLocation.toLowerCase().includes(userState)) {
+          relevanceScore += 15; // Local item boost
         }
+      }
+      
+      // SHIPPING AVAILABLE: Boost items that ship (+10 points)
+      // This ensures non-local items still appear if they ship
+      if (hasShipping) {
+        relevanceScore += 10;
       }
       
       // RECENCY: Newer listings get boosted (0-10 points)
@@ -234,7 +274,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       
       // EXCLUDE ALREADY VIEWED: Lower priority for items user has seen
       if (preferences.viewed_item_ids?.includes(listing.id)) {
-        relevanceScore -= 20;
+        relevanceScore -= 15;
       }
       
       // EXCLUDE OWN LISTINGS: Don't show user their own items
@@ -247,8 +287,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         || (listing.images && listing.images[0]) 
         || '/placeholder.svg';
 
+      // Get seller display name (try different column names)
+      const sellerName = profile?.full_name || profile?.username || null;
+
       return {
-        id: vaultItem?.id || listing.vault_item_id,
+        id: vaultItem?.id || listing.vault_item_id || listing.id,
         listing_id: listing.id,
         item_name: vaultItem?.item_name || listing.title || 'Untitled Item',
         asking_price: listing.price,
@@ -258,8 +301,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         condition: listing.condition,
         is_verified: vaultItem?.is_verified || false,
         seller_id: listing.seller_id,
-        seller_name: profile?.display_name,
-        seller_location: profile?.location,
+        seller_name: sellerName,
+        seller_location: sellerLocation,
+        shipping_available: hasShipping,
         created_at: listing.created_at,
         relevance_score: relevanceScore,
       };
@@ -287,7 +331,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       preferences.location
     );
 
-    // Cache for 2 minutes (personalized content changes frequently)
+    // Cache for 2 minutes
     res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=180');
 
     return res.status(200).json({
