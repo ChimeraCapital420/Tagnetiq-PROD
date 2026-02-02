@@ -1,10 +1,11 @@
 // FILE: src/components/dashboard/SpotlightCarousel.tsx
 // Personalized Spotlight Carousel - Live marketplace items with auto-scroll
 // Mobile-first, personalized, auto-refreshing
+// Self-contained - no external tracking dependency
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
   Sparkles,
   ShieldCheck,
@@ -29,14 +30,177 @@ import {
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
-import {
-  getSpotlightPreferences,
-  trackItemClick,
-  requestUserLocation,
-  buildSpotlightQueryParams,
-} from '@/lib/spotlightTracking';
 
-// Types
+// ============================================================================
+// INLINE TRACKING UTILITIES (to avoid import issues)
+// ============================================================================
+
+const STORAGE_KEY = 'tagnetiq_spotlight_prefs';
+
+interface SpotlightPrefs {
+  viewed_item_ids: string[];
+  viewed_categories: string[];
+  price_history: number[];
+  clicked_item_ids: string[];
+  location?: {
+    lat: number;
+    lng: number;
+    city?: string;
+    state?: string;
+    country?: string;
+  };
+  last_updated: string;
+}
+
+const defaultPrefs: SpotlightPrefs = {
+  viewed_item_ids: [],
+  viewed_categories: [],
+  price_history: [],
+  clicked_item_ids: [],
+  last_updated: new Date().toISOString(),
+};
+
+function getPrefs(): SpotlightPrefs {
+  try {
+    if (typeof window === 'undefined') return { ...defaultPrefs };
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) return { ...defaultPrefs, ...JSON.parse(stored) };
+  } catch (e) {
+    console.warn('Failed to load prefs:', e);
+  }
+  return { ...defaultPrefs };
+}
+
+function savePrefs(prefs: SpotlightPrefs): void {
+  try {
+    if (typeof window === 'undefined') return;
+    prefs.last_updated = new Date().toISOString();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
+  } catch (e) {
+    console.warn('Failed to save prefs:', e);
+  }
+}
+
+function trackClick(itemId: string): void {
+  const prefs = getPrefs();
+  prefs.clicked_item_ids = [
+    itemId,
+    ...prefs.clicked_item_ids.filter(id => id !== itemId)
+  ].slice(0, 100);
+  savePrefs(prefs);
+}
+
+function getTopCategories(count: number = 5): string[] {
+  const prefs = getPrefs();
+  const frequency: Record<string, number> = {};
+  prefs.viewed_categories.forEach((cat, index) => {
+    const weight = 1 + (prefs.viewed_categories.length - index) / prefs.viewed_categories.length;
+    frequency[cat] = (frequency[cat] || 0) + weight;
+  });
+  return Object.entries(frequency)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, count)
+    .map(([cat]) => cat);
+}
+
+function getPreferredPriceRange(): { min: number; max: number } | null {
+  const prefs = getPrefs();
+  if (prefs.price_history.length < 5) return null;
+  const sorted = [...prefs.price_history].sort((a, b) => a - b);
+  const q1Index = Math.floor(sorted.length * 0.25);
+  const q3Index = Math.floor(sorted.length * 0.75);
+  return {
+    min: Math.max(0, Math.round(sorted[q1Index] * 0.5)),
+    max: Math.round(sorted[q3Index] * 2),
+  };
+}
+
+function buildQueryParams(): URLSearchParams {
+  const params = new URLSearchParams();
+  const prefs = getPrefs();
+  
+  const topCategories = getTopCategories(5);
+  if (topCategories.length > 0) {
+    params.set('categories', topCategories.join(','));
+  }
+  
+  const priceRange = getPreferredPriceRange();
+  if (priceRange) {
+    params.set('min_price', priceRange.min.toString());
+    params.set('max_price', priceRange.max.toString());
+  }
+  
+  if (prefs.location) {
+    params.set('lat', prefs.location.lat.toString());
+    params.set('lng', prefs.location.lng.toString());
+    if (prefs.location.state) params.set('state', prefs.location.state);
+    if (prefs.location.city) params.set('city', prefs.location.city);
+  }
+  
+  return params;
+}
+
+async function requestLocation(): Promise<SpotlightPrefs['location'] | null> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || !navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+    
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude: lat, longitude: lng } = position.coords;
+        
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 5000);
+          
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+            { 
+              headers: { 'User-Agent': 'TagnetIQ/1.0' },
+              signal: controller.signal
+            }
+          );
+          
+          clearTimeout(timeoutId);
+          
+          if (response.ok) {
+            const data = await response.json();
+            const location: SpotlightPrefs['location'] = {
+              lat,
+              lng,
+              city: data.address?.city || data.address?.town || data.address?.village,
+              state: data.address?.state,
+              country: data.address?.country,
+            };
+            
+            const prefs = getPrefs();
+            prefs.location = location;
+            savePrefs(prefs);
+            resolve(location);
+            return;
+          }
+        } catch (e) {
+          console.warn('Geocoding failed:', e);
+        }
+        
+        const location = { lat, lng };
+        const prefs = getPrefs();
+        prefs.location = location;
+        savePrefs(prefs);
+        resolve(location);
+      },
+      () => resolve(null),
+      { timeout: 8000, maximumAge: 600000, enableHighAccuracy: false }
+    );
+  });
+}
+
+// ============================================================================
+// TYPES
+// ============================================================================
+
 interface SpotlightItem {
   id: string;
   listing_id: string;
@@ -55,15 +219,17 @@ interface SpotlightItem {
 
 interface SpotlightCarouselProps {
   className?: string;
-  speed?: number; // pixels per second for auto-scroll
+  speed?: number;
   showControls?: boolean;
   dismissible?: boolean;
-  refreshInterval?: number; // ms, default 3 minutes
+  refreshInterval?: number;
   onItemClick?: (item: SpotlightItem) => void;
-  variant?: 'marquee' | 'carousel'; // marquee = continuous scroll, carousel = snap
 }
 
-// Lazy loading image component
+// ============================================================================
+// LAZY IMAGE COMPONENT
+// ============================================================================
+
 const LazyImage: React.FC<{
   src: string;
   alt: string;
@@ -114,12 +280,14 @@ const LazyImage: React.FC<{
   );
 };
 
-// Individual item card
+// ============================================================================
+// ITEM CARD COMPONENT
+// ============================================================================
+
 const SpotlightItemCard: React.FC<{
   item: SpotlightItem;
   onClick: () => void;
-  compact?: boolean;
-}> = ({ item, onClick, compact = false }) => {
+}> = ({ item, onClick }) => {
   const isGoodDeal = item.estimated_value && item.asking_price < item.estimated_value * 0.85;
   const savings = isGoodDeal
     ? Math.round(((item.estimated_value! - item.asking_price) / item.estimated_value!) * 100)
@@ -133,26 +301,22 @@ const SpotlightItemCard: React.FC<{
     >
       <Card
         className={cn(
-          'overflow-hidden transition-all duration-200',
+          'overflow-hidden transition-all duration-200 w-40 sm:w-48',
           'bg-zinc-900/80 hover:bg-zinc-800/90',
           'border-zinc-800/50 hover:border-zinc-700',
           'hover:shadow-xl hover:shadow-black/30',
-          'hover:-translate-y-1',
-          compact ? 'w-40 sm:w-48' : 'w-56 sm:w-64'
+          'hover:-translate-y-1'
         )}
       >
         {/* Image */}
-        <div className={cn(
-          'relative overflow-hidden',
-          compact ? 'h-32 sm:h-36' : 'h-40 sm:h-48'
-        )}>
+        <div className="relative overflow-hidden h-32 sm:h-36">
           <LazyImage
             src={item.primary_photo_url || '/placeholder.svg'}
             alt={item.item_name}
             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
           />
 
-          {/* Overlay badges */}
+          {/* Badges */}
           <div className="absolute top-2 left-2 flex flex-col gap-1">
             {item.is_verified && (
               <Badge className="bg-emerald-500/90 text-white text-[10px] px-1.5 py-0.5 gap-1">
@@ -168,10 +332,10 @@ const SpotlightItemCard: React.FC<{
             )}
           </div>
 
-          {/* Gradient overlay */}
+          {/* Gradient */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
 
-          {/* Price overlay */}
+          {/* Price */}
           <div className="absolute bottom-2 left-2 right-2">
             <div className="flex items-baseline gap-1.5">
               <span className="text-lg sm:text-xl font-bold text-white drop-shadow-lg">
@@ -204,15 +368,17 @@ const SpotlightItemCard: React.FC<{
   );
 };
 
-// Main component
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
+
 const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
   className,
   speed = 25,
   showControls = true,
   dismissible = true,
-  refreshInterval = 180000, // 3 minutes
+  refreshInterval = 180000,
   onItemClick,
-  variant = 'marquee',
 }) => {
   const [items, setItems] = useState<SpotlightItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -228,24 +394,21 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
   const locationRequestedRef = useRef(false);
   const refreshTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Calculate total width for seamless loop
-  const itemWidth = 240; // Approximate width including gap
+  const itemWidth = 200;
   const totalWidth = items.length * itemWidth;
 
-  // Fetch spotlight items
+  // Fetch items
   const fetchItems = useCallback(async () => {
     try {
       setError(null);
 
-      // Get auth token if available
       const { data: { session } } = await supabase.auth.getSession();
       const headers: Record<string, string> = {};
       if (session?.access_token) {
         headers['Authorization'] = `Bearer ${session.access_token}`;
       }
 
-      // Build query with preferences
-      const params = buildSpotlightQueryParams();
+      const params = buildQueryParams();
       params.set('limit', '15');
 
       const response = await fetch(
@@ -273,39 +436,34 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
     }
   }, []);
 
-  // Request location on first load
+  // Initial fetch + location
   useEffect(() => {
     if (!locationRequestedRef.current) {
       locationRequestedRef.current = true;
-      requestUserLocation().then(() => {
-        fetchItems();
-      });
+      requestLocation().then(() => fetchItems());
     } else {
       fetchItems();
     }
   }, [fetchItems]);
 
-  // Set up refresh interval
+  // Refresh interval
   useEffect(() => {
     if (refreshInterval > 0) {
       refreshTimerRef.current = setInterval(fetchItems, refreshInterval);
     }
-
     return () => {
-      if (refreshTimerRef.current) {
-        clearInterval(refreshTimerRef.current);
-      }
+      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
     };
   }, [fetchItems, refreshInterval]);
 
-  // Animation loop for marquee
+  // Animation loop
   const animate = useCallback(
     (timestamp: number) => {
       if (!lastTimeRef.current) lastTimeRef.current = timestamp;
       const delta = timestamp - lastTimeRef.current;
       lastTimeRef.current = timestamp;
 
-      if (!isPaused && items.length > 0 && variant === 'marquee') {
+      if (!isPaused && items.length > 0) {
         setScrollPosition((prev) => {
           const newPos = prev + (speed * delta) / 1000;
           return newPos >= totalWidth ? 0 : newPos;
@@ -314,44 +472,35 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
 
       animationRef.current = requestAnimationFrame(animate);
     },
-    [isPaused, speed, totalWidth, items.length, variant]
+    [isPaused, speed, totalWidth, items.length]
   );
 
   useEffect(() => {
-    if (variant === 'marquee') {
-      animationRef.current = requestAnimationFrame(animate);
-    }
-
+    animationRef.current = requestAnimationFrame(animate);
     return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [animate, variant]);
+  }, [animate]);
 
   // Manual scroll
   const scrollBy = (direction: 'left' | 'right') => {
     const amount = itemWidth * 2;
     setScrollPosition((prev) => {
-      if (direction === 'left') {
-        return Math.max(0, prev - amount);
-      } else {
-        const newPos = prev + amount;
-        return newPos >= totalWidth ? 0 : newPos;
-      }
+      if (direction === 'left') return Math.max(0, prev - amount);
+      const newPos = prev + amount;
+      return newPos >= totalWidth ? 0 : newPos;
     });
   };
 
-  // Handle item click
+  // Handle click
   const handleItemClick = (item: SpotlightItem) => {
-    trackItemClick(item.id);
+    trackClick(item.id);
     onItemClick?.(item);
   };
 
-  // Don't render if dismissed
   if (isDismissed) return null;
 
-  // Loading state
+  // Loading
   if (loading) {
     return (
       <div className={cn('bg-zinc-900/50 border-b border-zinc-800/50', className)}>
@@ -364,7 +513,7 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
             {Array.from({ length: 4 }).map((_, i) => (
               <Skeleton
                 key={i}
-                className="h-48 w-48 sm:h-56 sm:w-56 rounded-xl bg-zinc-800 flex-shrink-0"
+                className="h-48 w-40 sm:w-48 rounded-xl bg-zinc-800 flex-shrink-0"
               />
             ))}
           </div>
@@ -373,18 +522,16 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
     );
   }
 
-  // No items - don't show the component
+  // No items
   if (items.length === 0) return null;
 
-  // Duplicate items for seamless loop
-  const displayItems = variant === 'marquee' ? [...items, ...items] : items;
+  const displayItems = [...items, ...items];
 
   return (
     <div
       className={cn(
         'bg-gradient-to-b from-zinc-900/80 to-zinc-950/50',
-        'border-b border-zinc-800/30',
-        'backdrop-blur-sm',
+        'border-b border-zinc-800/30 backdrop-blur-sm',
         'relative overflow-hidden',
         className
       )}
@@ -421,16 +568,10 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
                         className="h-7 w-7 p-0 text-zinc-500 hover:text-zinc-300"
                         onClick={() => setIsPaused(!isPaused)}
                       >
-                        {isPaused ? (
-                          <Play className="h-3.5 w-3.5" />
-                        ) : (
-                          <Pause className="h-3.5 w-3.5" />
-                        )}
+                        {isPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      {isPaused ? 'Play' : 'Pause'}
-                    </TooltipContent>
+                    <TooltipContent side="bottom">{isPaused ? 'Play' : 'Pause'}</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
 
@@ -488,33 +629,23 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
 
       {/* Scrolling items */}
       <div ref={containerRef} className="relative overflow-hidden pb-4">
-        {/* Fade edges */}
         <div className="absolute left-0 top-0 bottom-0 w-8 sm:w-16 bg-gradient-to-r from-zinc-900 to-transparent z-10 pointer-events-none" />
         <div className="absolute right-0 top-0 bottom-0 w-8 sm:w-16 bg-gradient-to-l from-zinc-900 to-transparent z-10 pointer-events-none" />
 
         <motion.div
           className="flex gap-3 px-4"
-          style={{
-            transform:
-              variant === 'marquee'
-                ? `translateX(-${scrollPosition}px)`
-                : undefined,
-          }}
-          drag={variant === 'carousel' ? 'x' : false}
-          dragConstraints={containerRef}
+          style={{ transform: `translateX(-${scrollPosition}px)` }}
         >
           {displayItems.map((item, index) => (
             <SpotlightItemCard
               key={`${item.id}-${index}`}
               item={item}
               onClick={() => handleItemClick(item)}
-              compact
             />
           ))}
         </motion.div>
       </div>
 
-      {/* Error state */}
       {error && (
         <div className="px-4 pb-3">
           <p className="text-xs text-red-400">{error}</p>
