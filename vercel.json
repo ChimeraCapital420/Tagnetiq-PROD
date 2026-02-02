@@ -4,8 +4,29 @@
   "installCommand": "npm install",
   "rewrites": [
     {
+      "source": "/sitemap.xml",
+      "destination": "/api/seo/sitemap"
+    },
+    {
+      "source": "/product-feed.xml",
+      "destination": "/api/seo/product-feed"
+    },
+    {
+      "source": "/price-alerts.xml",
+      "destination": "/api/seo/price-alerts"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/api/seo/(.*)",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "index, follow" },
+        { "key": "Cache-Control", "value": "public, s-maxage=3600, stale-while-revalidate=7200" }
+      ]
     }
   ]
 }
