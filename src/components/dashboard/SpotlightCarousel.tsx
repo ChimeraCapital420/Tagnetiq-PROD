@@ -307,7 +307,8 @@ const SpotlightItemCard: React.FC<{
     ? Math.round(((item.estimated_value! - item.asking_price) / item.estimated_value!) * 100)
     : 0;
 
-  const detailUrl = `/arena/listing/${item.listing_id}`;
+  // FIXED: Use correct route - /arena/challenge/:id
+  const detailUrl = `/arena/challenge/${item.listing_id}`;
 
   return (
     <Link
