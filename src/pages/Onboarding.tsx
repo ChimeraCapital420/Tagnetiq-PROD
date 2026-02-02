@@ -6,12 +6,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Sparkles, User, MapPin, Globe, Heart } from 'lucide-react';
+import { setOnboardingInterests } from '@/lib/spotlightTracking';
 
 const INTERESTS_OPTIONS = [
   { id: 'real-estate', label: 'Real Estate', icon: '🏠' },
@@ -82,6 +82,9 @@ const Onboarding: React.FC = () => {
         .eq('id', user.id);
 
       if (error) throw error;
+
+      // Sync interests to spotlight tracking for personalized recommendations
+      setOnboardingInterests(interests);
 
       // Update local profile state
       if (setProfile && profile) {
