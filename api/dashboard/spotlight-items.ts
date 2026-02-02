@@ -123,8 +123,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Fetch ACTIVE marketplace listings
-    // Using simpler query without problematic joins first
+    // Fetch ACTIVE marketplace listings - simple query first
     const { data: listings, error } = await supaAdmin
       .from('arena_listings')
       .select(`
@@ -138,7 +137,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         category,
         images,
         status,
-        shipping_available,
+        shipping_included,
         location,
         created_at,
         expires_at
@@ -184,18 +183,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Fetch seller profiles
+    // Fetch seller profiles - USE CORRECT COLUMN NAMES: screen_name, email
     const sellerIds = [...new Set(listings.map((l: any) => l.seller_id))];
     let profilesMap: Record<string, any> = {};
     
     if (sellerIds.length > 0) {
-      // Try different column names for profiles
       const { data: profiles, error: profileError } = await supaAdmin
         .from('profiles')
-        .select('id, username, full_name, location, avatar_url')
+        .select('id, screen_name, email, location')
         .in('id', sellerIds);
       
-      if (!profileError && profiles) {
+      if (profileError) {
+        console.warn('Profile fetch error (non-critical):', profileError.message);
+      } else if (profiles) {
         profilesMap = profiles.reduce((acc: any, p: any) => {
           acc[p.id] = p;
           return acc;
@@ -212,7 +212,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       let relevanceScore = Math.random() * 20;
       
       const itemCategory = vaultItem?.category || listing.category;
-      const hasShipping = listing.shipping_available === true;
+      const hasShipping = listing.shipping_included === true;
       
       // CATEGORY AFFINITY: User has viewed this category (+25 points)
       if (preferences.viewed_categories?.length && itemCategory) {
@@ -247,7 +247,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       
       // LOCATION BOOST (not filter!): Same state/region (+15 points)
-      // Items with shipping available also get a boost (+10 points)
       const sellerLocation = profile?.location || listing.location || '';
       
       if (preferences.location?.state && sellerLocation) {
@@ -258,7 +257,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       
       // SHIPPING AVAILABLE: Boost items that ship (+10 points)
-      // This ensures non-local items still appear if they ship
       if (hasShipping) {
         relevanceScore += 10;
       }
@@ -287,8 +285,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         || (listing.images && listing.images[0]) 
         || '/placeholder.svg';
 
-      // Get seller display name (try different column names)
-      const sellerName = profile?.full_name || profile?.username || null;
+      // Get seller display name - USE screen_name (correct column)
+      const sellerName = profile?.screen_name || null;
 
       return {
         id: vaultItem?.id || listing.vault_item_id || listing.id,

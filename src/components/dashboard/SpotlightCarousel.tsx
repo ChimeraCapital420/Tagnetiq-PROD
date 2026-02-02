@@ -1,7 +1,6 @@
 // FILE: src/components/dashboard/SpotlightCarousel.tsx
 // Personalized Spotlight Carousel - Live marketplace items with auto-scroll
 // Mobile-first, personalized, auto-refreshing
-// Self-contained - no external tracking dependency
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
@@ -17,6 +16,7 @@ import {
   Play,
   X,
   RefreshCw,
+  Truck,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,7 +32,7 @@ import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 
 // ============================================================================
-// INLINE TRACKING UTILITIES (to avoid import issues)
+// INLINE TRACKING UTILITIES
 // ============================================================================
 
 const STORAGE_KEY = 'tagnetiq_spotlight_prefs';
@@ -81,12 +81,28 @@ function savePrefs(prefs: SpotlightPrefs): void {
   }
 }
 
-function trackClick(itemId: string): void {
+function trackClick(itemId: string, category?: string, price?: number): void {
   const prefs = getPrefs();
+  
+  // Track clicked item
   prefs.clicked_item_ids = [
     itemId,
     ...prefs.clicked_item_ids.filter(id => id !== itemId)
   ].slice(0, 100);
+  
+  // Track category
+  if (category && category !== 'all') {
+    prefs.viewed_categories = [
+      category,
+      ...prefs.viewed_categories.filter(c => c !== category)
+    ].slice(0, 15);
+  }
+  
+  // Track price
+  if (price && price > 0) {
+    prefs.price_history = [price, ...prefs.price_history].slice(0, 100);
+  }
+  
   savePrefs(prefs);
 }
 
@@ -214,6 +230,7 @@ interface SpotlightItem {
   seller_id: string;
   seller_name?: string;
   seller_location?: string;
+  shipping_available?: boolean;
   created_at: string;
 }
 
@@ -293,9 +310,12 @@ const SpotlightItemCard: React.FC<{
     ? Math.round(((item.estimated_value! - item.asking_price) / item.estimated_value!) * 100)
     : 0;
 
+  // Use listing_id for the link - this is the correct ID for the marketplace detail page
+  const detailUrl = `/arena/listing/${item.listing_id}`;
+
   return (
     <Link
-      to={`/arena/challenge/${item.id}`}
+      to={detailUrl}
       onClick={onClick}
       className="block flex-shrink-0 group"
     >
@@ -331,6 +351,15 @@ const SpotlightItemCard: React.FC<{
               </Badge>
             )}
           </div>
+
+          {/* Shipping badge */}
+          {item.shipping_available && (
+            <div className="absolute top-2 right-2">
+              <Badge variant="secondary" className="bg-blue-500/90 text-white text-[10px] px-1.5 py-0.5 gap-1">
+                <Truck className="h-3 w-3" />
+              </Badge>
+            </div>
+          )}
 
           {/* Gradient */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
@@ -494,7 +523,7 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
 
   // Handle click
   const handleItemClick = (item: SpotlightItem) => {
-    trackClick(item.id);
+    trackClick(item.listing_id, item.category, item.asking_price);
     onItemClick?.(item);
   };
 
@@ -638,7 +667,7 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
         >
           {displayItems.map((item, index) => (
             <SpotlightItemCard
-              key={`${item.id}-${index}`}
+              key={`${item.listing_id}-${index}`}
               item={item}
               onClick={() => handleItemClick(item)}
             />
@@ -647,12 +676,4 @@ const SpotlightCarousel: React.FC<SpotlightCarouselProps> = ({
       </div>
 
       {error && (
-        <div className="px-4 pb-3">
-          <p className="text-xs text-red-400">{error}</p>
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default SpotlightCarousel;
+        <div cla
