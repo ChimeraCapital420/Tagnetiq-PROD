@@ -42,3 +42,16 @@ export type {
   AudioLevelData,
   UseAudioLevelReturn
 } from './useAudioLevel';
+
+// =============================================================================
+// GHOST PROTOCOL HOOKS (Phase 5)
+// =============================================================================
+
+export { useGhostMode, STORE_TYPES } from './useGhostMode';
+export type { 
+  GhostLocation, 
+  StoreInfo, 
+  StoreType, 
+  GhostData, 
+  GhostModeState 
+} from './useGhostMode';

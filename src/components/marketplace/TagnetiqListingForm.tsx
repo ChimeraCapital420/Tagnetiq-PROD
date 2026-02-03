@@ -1,11 +1,11 @@
 // FILE: src/components/marketplace/TagnetiqListingForm.tsx
-// TagnetIQ listing form with AI description distinction
-// FIXED: Added Zippopotam.us ZIP code auto-fill for mobile-first UX
+// TagnetIQ listing form with AI description distinction + Ghost Protocol support
+// UPDATED: Ghost mode handling time, disclaimer, and KPI capture
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   DollarSign, Sparkles, Store, Loader2, CheckCircle2,
-  MapPin, Truck, Package, ExternalLink
+  MapPin, Truck, Package, ExternalLink, Ghost, Clock, AlertTriangle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,8 +13,10 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { MarketplaceItem } from './platforms/types';
+import type { GhostData } from '@/hooks/useGhostMode';
 
 // Zippopotam.us API response type
 interface ZipLookupResult {
@@ -32,21 +34,23 @@ interface ZipLookupResult {
 
 interface TagnetiqListingFormProps {
   item: MarketplaceItem;
-  onSubmit: (item: MarketplaceItem, price: number, description: string) => Promise<void>;
+  onSubmit: (item: MarketplaceItem, price: number, description: string, ghostData?: GhostData) => Promise<void>;
   disabled?: boolean;
+  ghostData?: GhostData | null;  // NEW: Ghost data from analysis
 }
 
 export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
   item,
   onSubmit,
   disabled = false,
+  ghostData = null,
 }) => {
   // Form state
   const [price, setPrice] = useState(item.asking_price.toString());
   const [includeAiDescription, setIncludeAiDescription] = useState(true);
   const [sellerNotes, setSellerNotes] = useState('');
   
-  // FIXED: Split location into components for ZIP auto-fill
+  // Location - use ghost data if available
   const [zipCode, setZipCode] = useState('');
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
@@ -54,11 +58,25 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
   const [zipError, setZipError] = useState<string | null>(null);
   
   const [offersShipping, setOffersShipping] = useState(true);
-  const [offersLocalPickup, setOffersLocalPickup] = useState(true);
+  const [offersLocalPickup, setOffersLocalPickup] = useState(!ghostData); // Default off for ghost
   
   // UI state
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isListed, setIsListed] = useState(false);
+
+  // Ghost-specific state
+  const isGhostListing = !!ghostData?.is_ghost;
+
+  // Initialize from ghost data if available
+  useEffect(() => {
+    if (ghostData?.store?.name) {
+      // Pre-fill store name as location hint
+      setSellerNotes(prev => {
+        if (prev) return prev;
+        return `Found at: ${ghostData.store.name}${ghostData.store.aisle ? ` (${ghostData.store.aisle})` : ''}`;
+      });
+    }
+  }, [ghostData]);
 
   // Computed full location string
   const itemLocation = useMemo(() => {
@@ -68,13 +86,9 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
     return zipCode;
   }, [city, state, zipCode]);
 
-  // FIXED: Zippopotam.us API integration for ZIP code auto-fill
-  // Mobile-first: user just types 5-digit ZIP, we fill city/state automatically
+  // Zippopotam.us API integration for ZIP code auto-fill
   const lookupZipCode = useCallback(async (zip: string) => {
-    // Only lookup valid 5-digit US ZIP codes
-    if (!/^\d{5}$/.test(zip)) {
-      return;
-    }
+    if (!/^\d{5}$/.test(zip)) return;
 
     setIsLookingUpZip(true);
     setZipError(null);
@@ -96,34 +110,27 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
         setCity(place['place name']);
         setState(place['state abbreviation']);
         
-        // Haptic feedback on mobile for successful auto-fill
         if (navigator.vibrate) {
           navigator.vibrate(50);
         }
       }
     } catch (error) {
       console.warn('[ZipLookup] Error:', error);
-      // Don't show error to user - they can still manually enter location
     } finally {
       setIsLookingUpZip(false);
     }
   }, []);
 
-  // Auto-lookup when ZIP code reaches 5 digits
   useEffect(() => {
     if (zipCode.length === 5) {
       lookupZipCode(zipCode);
-    } else {
-      // Clear city/state if ZIP is changed/incomplete
-      if (zipCode.length < 5) {
-        setCity('');
-        setState('');
-        setZipError(null);
-      }
+    } else if (zipCode.length < 5) {
+      setCity('');
+      setState('');
+      setZipError(null);
     }
   }, [zipCode, lookupZipCode]);
 
-  // Handle ZIP input - mobile-first: numeric keyboard
   const handleZipChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.replace(/\D/g, '').slice(0, 5);
     setZipCode(value);
@@ -148,16 +155,21 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
       if (offersLocalPickup) options.push('Local pickup');
       if (options.length) description += ` • ${options.join(' • ')}`;
     }
+
+    // Add ghost disclaimer
+    if (isGhostListing && ghostData) {
+      description += `\n\n⏱️ Handling Time: ${ghostData.timer.handling_hours} hours`;
+    }
     
     return description.trim();
-  }, [includeAiDescription, item.description, sellerNotes, itemLocation, offersShipping, offersLocalPickup]);
+  }, [includeAiDescription, item.description, sellerNotes, itemLocation, offersShipping, offersLocalPickup, isGhostListing, ghostData]);
 
   const handleSubmit = async () => {
     if (!finalDescription || finalDescription.length < 20) {
       const paddedDescription = finalDescription || `${item.item_name}. Listed on TagnetIQ Marketplace.`;
       setIsSubmitting(true);
       try {
-        await onSubmit(item, parseFloat(price) || item.asking_price, paddedDescription);
+        await onSubmit(item, parseFloat(price) || item.asking_price, paddedDescription, ghostData || undefined);
         setIsListed(true);
       } finally {
         setIsSubmitting(false);
@@ -167,7 +179,7 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
 
     setIsSubmitting(true);
     try {
-      await onSubmit(item, parseFloat(price) || item.asking_price, finalDescription);
+      await onSubmit(item, parseFloat(price) || item.asking_price, finalDescription, ghostData || undefined);
       setIsListed(true);
     } finally {
       setIsSubmitting(false);
@@ -176,6 +188,45 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
 
   return (
     <div className="space-y-5 max-w-lg">
+      {/* Ghost Mode Banner */}
+      {isGhostListing && ghostData && (
+        <div className="rounded-lg border border-purple-500/30 bg-purple-500/10 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Ghost className="h-5 w-5 text-purple-400" />
+            <span className="font-medium text-purple-300">Ghost Protocol Active</span>
+            <Badge variant="outline" className="border-purple-500/50 text-purple-400 text-[10px]">
+              {ghostData.kpis.velocity_score.toUpperCase()} VELOCITY
+            </Badge>
+          </div>
+          
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded bg-zinc-900/50 p-2">
+              <p className="text-xs text-zinc-500">Shelf Price</p>
+              <p className="text-sm font-mono text-white">${ghostData.store.shelf_price.toFixed(2)}</p>
+            </div>
+            <div className="rounded bg-zinc-900/50 p-2">
+              <p className="text-xs text-zinc-500">Est. Profit</p>
+              <p className="text-sm font-mono text-emerald-400">
+                ${ghostData.kpis.estimated_margin.toFixed(2)}
+              </p>
+            </div>
+            <div className="rounded bg-zinc-900/50 p-2">
+              <p className="text-xs text-zinc-500">Handling</p>
+              <p className="text-sm font-mono text-yellow-400">{ghostData.timer.handling_hours}hr</p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2 px-2 py-1.5 rounded bg-yellow-500/10 border border-yellow-500/20">
+            <AlertTriangle className="h-3.5 w-3.5 text-yellow-500 flex-shrink-0 mt-0.5" />
+            <p className="text-[10px] text-yellow-400">
+              You don't own this item yet. When it sells, you'll receive a fulfillment alert to retrieve it from{' '}
+              <strong>{ghostData.store.name}</strong>
+              {ghostData.store.aisle && ` (${ghostData.store.aisle})`}.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Asking Price */}
       <div className="space-y-2">
         <Label className="text-sm font-medium">Asking Price</Label>
@@ -191,12 +242,19 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
             disabled={disabled || isListed}
           />
         </div>
-        {item.estimated_value && (
-          <p className="text-xs text-zinc-500 flex items-center gap-1">
-            <Sparkles className="h-3 w-3 text-primary" />
-            HYDRA Estimate: ${item.estimated_value.toLocaleString()}
-          </p>
-        )}
+        <div className="flex items-center justify-between text-xs">
+          {item.estimated_value && (
+            <p className="text-zinc-500 flex items-center gap-1">
+              <Sparkles className="h-3 w-3 text-primary" />
+              HYDRA Estimate: ${item.estimated_value.toLocaleString()}
+            </p>
+          )}
+          {isGhostListing && ghostData && (
+            <p className="text-emerald-500">
+              Margin: ${(parseFloat(price) - ghostData.store.shelf_price).toFixed(2)}
+            </p>
+          )}
+        </div>
       </div>
 
       <Separator className="bg-zinc-800" />
@@ -237,7 +295,6 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
               <Sparkles className="h-3 w-3 text-primary flex-shrink-0" />
               <span className="text-[10px] text-zinc-500">Generated by HYDRA AI</span>
               
-              {/* FIXED: Display authority source with link if available */}
               {item.authoritySource && (
                 <>
                   <span className="text-zinc-700">•</span>
@@ -247,7 +304,6 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
                 </>
               )}
               
-              {/* FIXED: Show authority links if present */}
               {item.numista_url && (
                 <a 
                   href={item.numista_url} 
@@ -310,114 +366,119 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
         </p>
       </div>
 
-      {/* FIXED: Location & Shipping with ZIP Auto-fill */}
-      <div className="space-y-3">
-        <Label className="text-sm font-medium flex items-center gap-2">
-          <MapPin className="h-4 w-4 text-zinc-400" />
-          Item Location
-        </Label>
-        
-        {/* ZIP Code Input - Mobile-first with numeric keyboard */}
-        <div className="grid grid-cols-3 gap-2">
-          <div className="col-span-1">
-            <div className="relative">
-              <Input
-                value={zipCode}
-                onChange={handleZipChange}
-                className={cn(
-                  "bg-zinc-900 border-zinc-800 text-center font-mono",
-                  zipError && "border-red-500/50",
-                  city && state && "border-emerald-500/50"
+      {/* Location & Shipping - Hide for ghost since location is captured */}
+      {!isGhostListing && (
+        <div className="space-y-3">
+          <Label className="text-sm font-medium flex items-center gap-2">
+            <MapPin className="h-4 w-4 text-zinc-400" />
+            Item Location
+          </Label>
+          
+          <div className="grid grid-cols-3 gap-2">
+            <div className="col-span-1">
+              <div className="relative">
+                <Input
+                  value={zipCode}
+                  onChange={handleZipChange}
+                  className={cn(
+                    "bg-zinc-900 border-zinc-800 text-center font-mono",
+                    zipError && "border-red-500/50",
+                    city && state && "border-emerald-500/50"
+                  )}
+                  placeholder="ZIP"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={5}
+                  disabled={disabled || isListed}
+                  aria-label="ZIP code"
+                />
+                {isLookingUpZip && (
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
+                  </div>
                 )}
-                placeholder="ZIP"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                maxLength={5}
+              </div>
+            </div>
+            
+            <div className="col-span-1">
+              <Input
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                className={cn(
+                  "bg-zinc-900 border-zinc-800",
+                  city && "bg-emerald-950/20"
+                )}
+                placeholder="City"
                 disabled={disabled || isListed}
-                aria-label="ZIP code"
+                aria-label="City"
               />
-              {isLookingUpZip && (
-                <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                  <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
-                </div>
-              )}
+            </div>
+            
+            <div className="col-span-1">
+              <Input
+                value={state}
+                onChange={(e) => setState(e.target.value.toUpperCase().slice(0, 2))}
+                className={cn(
+                  "bg-zinc-900 border-zinc-800 text-center uppercase",
+                  state && "bg-emerald-950/20"
+                )}
+                placeholder="ST"
+                maxLength={2}
+                disabled={disabled || isListed}
+                aria-label="State"
+              />
             </div>
           </div>
           
-          {/* City - Auto-filled from ZIP */}
-          <div className="col-span-1">
-            <Input
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
-              className={cn(
-                "bg-zinc-900 border-zinc-800",
-                city && "bg-emerald-950/20"
-              )}
-              placeholder="City"
-              disabled={disabled || isListed}
-              aria-label="City"
-            />
-          </div>
-          
-          {/* State - Auto-filled from ZIP */}
-          <div className="col-span-1">
-            <Input
-              value={state}
-              onChange={(e) => setState(e.target.value.toUpperCase().slice(0, 2))}
-              className={cn(
-                "bg-zinc-900 border-zinc-800 text-center uppercase",
-                state && "bg-emerald-950/20"
-              )}
-              placeholder="ST"
-              maxLength={2}
-              disabled={disabled || isListed}
-              aria-label="State"
-            />
-          </div>
+          {zipError && (
+            <p className="text-[10px] text-red-400">{zipError}</p>
+          )}
+          {city && state && (
+            <p className="text-[10px] text-emerald-400 flex items-center gap-1">
+              <CheckCircle2 className="h-3 w-3" />
+              Location auto-filled from ZIP code
+            </p>
+          )}
+          {!city && !state && zipCode.length < 5 && (
+            <p className="text-[10px] text-zinc-500">
+              Enter 5-digit ZIP to auto-fill city & state
+            </p>
+          )}
         </div>
-        
-        {/* ZIP lookup feedback */}
-        {zipError && (
-          <p className="text-[10px] text-red-400">{zipError}</p>
-        )}
-        {city && state && (
-          <p className="text-[10px] text-emerald-400 flex items-center gap-1">
-            <CheckCircle2 className="h-3 w-3" />
-            Location auto-filled from ZIP code
-          </p>
-        )}
-        {!city && !state && zipCode.length < 5 && (
-          <p className="text-[10px] text-zinc-500">
-            Enter 5-digit ZIP to auto-fill city & state
-          </p>
-        )}
-        
-        {/* Shipping options */}
-        <div className="flex flex-wrap gap-4 sm:gap-6">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="shipping"
-              checked={offersShipping}
-              onCheckedChange={(checked) => setOffersShipping(checked as boolean)}
-              disabled={disabled || isListed}
-            />
-            <Label htmlFor="shipping" className="text-xs text-zinc-400 cursor-pointer flex items-center gap-1 touch-manipulation">
-              <Truck className="h-3 w-3" />
-              <span className="hidden xs:inline">Offers</span> shipping
-            </Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="localPickup"
-              checked={offersLocalPickup}
-              onCheckedChange={(checked) => setOffersLocalPickup(checked as boolean)}
-              disabled={disabled || isListed}
-            />
-            <Label htmlFor="localPickup" className="text-xs text-zinc-400 cursor-pointer flex items-center gap-1 touch-manipulation">
-              <Package className="h-3 w-3" />
-              Local pickup
-            </Label>
-          </div>
+      )}
+
+      {/* Shipping options */}
+      <div className="flex flex-wrap gap-4 sm:gap-6">
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="shipping"
+            checked={offersShipping}
+            onCheckedChange={(checked) => setOffersShipping(checked as boolean)}
+            disabled={disabled || isListed}
+          />
+          <Label htmlFor="shipping" className="text-xs text-zinc-400 cursor-pointer flex items-center gap-1 touch-manipulation">
+            <Truck className="h-3 w-3" />
+            <span className="hidden xs:inline">Offers</span> shipping
+          </Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="localPickup"
+            checked={offersLocalPickup}
+            onCheckedChange={(checked) => setOffersLocalPickup(checked as boolean)}
+            disabled={disabled || isListed || isGhostListing}
+          />
+          <Label 
+            htmlFor="localPickup" 
+            className={cn(
+              "text-xs cursor-pointer flex items-center gap-1 touch-manipulation",
+              isGhostListing ? "text-zinc-600" : "text-zinc-400"
+            )}
+          >
+            <Package className="h-3 w-3" />
+            Local pickup
+            {isGhostListing && <span className="text-[9px]">(N/A for ghost)</span>}
+          </Label>
         </div>
       </div>
 
@@ -440,6 +501,11 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
               {offersLocalPickup && ' • Local pickup'}
             </p>
           )}
+          {isGhostListing && ghostData && (
+            <p className="text-yellow-500 text-xs mt-2">
+              ⏱️ Handling Time: {ghostData.timer.handling_hours} hours
+            </p>
+          )}
           {!finalDescription && (
             <p className="text-zinc-500 italic">Add a description above...</p>
           )}
@@ -454,7 +520,10 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
 
       {/* Submit Button */}
       <Button
-        className="w-full h-12 touch-manipulation text-base"
+        className={cn(
+          "w-full h-12 touch-manipulation text-base",
+          isGhostListing && "bg-purple-600 hover:bg-purple-700"
+        )}
         disabled={disabled || isSubmitting || isListed}
         onClick={handleSubmit}
       >
@@ -465,6 +534,10 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
         ) : isListed ? (
           <>
             <CheckCircle2 className="h-4 w-4 mr-2 text-green-500" /> Listed!
+          </>
+        ) : isGhostListing ? (
+          <>
+            <Ghost className="h-4 w-4 mr-2" /> Create Ghost Listing
           </>
         ) : (
           <>

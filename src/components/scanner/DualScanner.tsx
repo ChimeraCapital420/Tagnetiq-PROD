@@ -1,6 +1,6 @@
 // FILE: src/components/scanner/DualScanner.tsx
-// Refactored multi-modal scanner - thin orchestrator using modular hooks
-// UPDATED: Now sends original URLs to API for marketplace persistence
+// Refactored multi-modal scanner with Ghost Protocol integration
+// UPDATED: Ghost Mode toggle, GPS capture, and ghost data passthrough
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useZxing } from 'react-zxing';
@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   X, FlipHorizontal, Upload, Circle, Zap, Loader2, ScanLine,
   ImageIcon, Video, Settings as SettingsIcon, Focus, FileText, Bluetooth,
+  Ghost,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAppContext } from '@/contexts/AppContext';
@@ -22,6 +23,18 @@ import CameraSettingsModal from '../CameraSettingsModal';
 import DevicePairingModal from '../DevicePairingModal';
 import type { AnalysisResult } from '@/types';
 import '../DualScanner.css';
+
+// Ghost Protocol imports
+import { useGhostMode } from '@/hooks/useGhostMode';
+import { GhostModeToggle } from './GhostModeToggle';
+import { GhostLocationCapture } from './GhostLocationCapture';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 
 // =============================================================================
 // TYPES
@@ -51,10 +64,30 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDevicePairingOpen, setIsDevicePairingOpen] = useState(false);
+  const [isGhostSheetOpen, setIsGhostSheetOpen] = useState(false);
 
   // File inputs
   const imageInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
+
+  // ========================================
+  // GHOST MODE HOOK
+  // ========================================
+
+  const {
+    isGhostMode,
+    location: ghostLocation,
+    storeInfo,
+    isCapturingLocation,
+    locationError,
+    handlingHours,
+    toggleGhostMode,
+    refreshLocation,
+    updateStoreInfo,
+    setHandlingHours,
+    buildGhostData,
+    isGhostReady,
+  } = useGhostMode();
 
   // ========================================
   // MODULAR HOOKS
@@ -250,7 +283,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   };
 
   // ========================================
-  // ANALYSIS - UPDATED to include original URLs
+  // ANALYSIS - WITH GHOST DATA
   // ========================================
 
   const handleAnalyze = async () => {
@@ -264,10 +297,23 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       return;
     }
 
+    // Validate ghost mode if enabled
+    if (isGhostMode && !isGhostReady) {
+      toast.error('Complete ghost listing details', {
+        description: 'Enter store name and shelf price',
+      });
+      setIsGhostSheetOpen(true);
+      return;
+    }
+
     setIsProcessing(true);
     setIsAnalyzing(true);
     onClose();
-    toast.info(`Analyzing ${selectedCount} items...`);
+    
+    const toastMessage = isGhostMode 
+      ? `👻 Ghost analyzing ${selectedCount} items...`
+      : `Analyzing ${selectedCount} items...`;
+    toast.info(toastMessage);
 
     try {
       // Get compressed data for AI
@@ -276,19 +322,33 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       // Get original URLs for marketplace (filter out blob: URLs)
       const originalUrls = getOriginalUrls().filter(url => !url.startsWith('blob:'));
       
-      // UPDATED: Build payload with originalUrls included
-      const requestPayload = {
+      // Build request payload with ghost data if enabled
+      const requestPayload: any = {
         scanType: 'multi-modal',
         items: analysisPayload.map((item, index) => ({
           ...item,
-          originalUrl: originalUrls[index] || null,  // Include original URL with each item
+          originalUrl: originalUrls[index] || null,
         })),
         category_id: selectedCategory?.split('-')[0] || 'general',
         subcategory_id: selectedCategory || 'general',
-        originalImageUrls: originalUrls,  // Also send as top-level array
+        originalImageUrls: originalUrls,
       };
 
-      console.log('📤 Sending analysis request with', originalUrls.length, 'original URLs');
+      // Add ghost data if enabled
+      if (isGhostMode && ghostLocation && storeInfo) {
+        requestPayload.ghostMode = {
+          enabled: true,
+          shelfPrice: storeInfo.shelf_price,
+          handlingHours,
+          storeType: storeInfo.type,
+          storeName: storeInfo.name,
+        };
+      }
+
+      console.log('📤 Sending analysis request', {
+        images: originalUrls.length,
+        ghostMode: isGhostMode,
+      });
 
       const response = await fetch('/api/analyze', {
         method: 'POST',
@@ -309,6 +369,9 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
       const result: AnalysisResult = await response.json();
       
+      // Build ghost data with estimated value from analysis
+      const ghostData = isGhostMode ? buildGhostData(result.estimatedValue || 0) : null;
+      
       // The API now returns imageUrls - use them, or fallback to local URLs
       const finalImageUrls = result.imageUrls?.length > 0 
         ? result.imageUrls 
@@ -320,10 +383,25 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         imageUrls: finalImageUrls,
         imageUrl: finalImageUrls[0] || '',
         thumbnailUrl: result.thumbnailUrl || finalImageUrls[0] || '',
+        // Attach ghost data to result
+        ghostData: ghostData || undefined,
       });
       
-      console.log('✅ Analysis complete with', finalImageUrls.length, 'images');
-      toast.success('Analysis complete!');
+      console.log('✅ Analysis complete', {
+        images: finalImageUrls.length,
+        ghostMode: isGhostMode,
+        ghostReady: !!ghostData,
+      });
+
+      if (isGhostMode && ghostData) {
+        const margin = ghostData.kpis.estimated_margin;
+        toast.success('👻 Ghost Analysis Complete!', {
+          description: `Potential profit: $${margin.toFixed(2)} (${ghostData.kpis.velocity_score} velocity)`,
+        });
+      } else {
+        toast.success('Analysis complete!');
+      }
+
     } catch (error) {
       console.error('Analysis error:', error);
       setLastAnalysisResult(null);
@@ -343,6 +421,10 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       startCamera();
     } else {
       stopCamera();
+      // Reset ghost mode when scanner closes
+      if (isGhostMode) {
+        toggleGhostMode(false);
+      }
     }
     return () => stopCamera();
   }, [isOpen, startCamera, stopCamera]);
@@ -374,9 +456,62 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               <Button variant="ghost" size="icon" onClick={() => setIsDevicePairingOpen(true)}>
                 <Bluetooth />
               </Button>
+              
+              {/* Ghost Mode Button */}
+              <Sheet open={isGhostSheetOpen} onOpenChange={setIsGhostSheetOpen}>
+                <SheetTrigger asChild>
+                  <Button
+                    variant={isGhostMode ? 'default' : 'ghost'}
+                    size="icon"
+                    className={isGhostMode ? 'bg-purple-500 hover:bg-purple-600' : ''}
+                  >
+                    <Ghost className={isGhostMode ? 'animate-pulse' : ''} />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="bottom" className="h-[80vh] bg-zinc-950 border-zinc-800">
+                  <SheetHeader className="pb-4">
+                    <SheetTitle className="flex items-center gap-2">
+                      <Ghost className="h-5 w-5 text-purple-400" />
+                      Ghost Protocol
+                    </SheetTitle>
+                  </SheetHeader>
+                  
+                  <div className="space-y-4 overflow-y-auto max-h-[calc(80vh-100px)]">
+                    {/* Ghost Toggle */}
+                    <GhostModeToggle
+                      isEnabled={isGhostMode}
+                      onToggle={toggleGhostMode}
+                      location={ghostLocation}
+                      isCapturing={isCapturingLocation}
+                      error={locationError}
+                    />
+                    
+                    {/* Location Capture Form */}
+                    {isGhostMode && (
+                      <GhostLocationCapture
+                        location={ghostLocation}
+                        storeInfo={storeInfo}
+                        onUpdateStore={updateStoreInfo}
+                        onRefreshLocation={refreshLocation}
+                        handlingHours={handlingHours}
+                        onHandlingHoursChange={setHandlingHours}
+                        isCapturing={isCapturingLocation}
+                      />
+                    )}
+                  </div>
+                </SheetContent>
+              </Sheet>
             </div>
             
             <div className="flex items-center gap-2">
+              {/* Ghost Mode Indicator */}
+              {isGhostMode && (
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-purple-500/20 border border-purple-500/30">
+                  <Ghost className="h-3 w-3 text-purple-400 animate-pulse" />
+                  <span className="text-[10px] text-purple-300 font-medium">GHOST</span>
+                </div>
+              )}
+              
               <span className="text-sm text-muted-foreground">
                 {selectedCount}/{totalCount} selected
               </span>
@@ -413,6 +548,17 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               />
               
               {scanMode === 'barcode' && <div className="barcode-reticle" />}
+              
+              {/* Ghost Mode Overlay */}
+              {isGhostMode && (
+                <div className="absolute inset-0 pointer-events-none">
+                  <div className="absolute inset-0 border-4 border-purple-500/30 rounded-lg" />
+                  <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-500/80 text-white text-xs font-medium">
+                    <Ghost className="h-3 w-3" />
+                    Ghost Mode Active
+                  </div>
+                </div>
+              )}
               
               {isRecording && (
                 <div className="absolute top-5 left-1/2 -translate-x-1/2 bg-red-500/90 text-white px-4 py-2 rounded-full text-sm font-bold">
@@ -469,7 +615,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               <div className="flex justify-center">
                 <Button
                   onClick={handleCaptureImage}
-                  className="capture-button"
+                  className={`capture-button ${isGhostMode ? 'ring-4 ring-purple-500/50' : ''}`}
                   size="icon"
                   disabled={isProcessing || isCapturing || totalCount >= 15}
                 >
@@ -497,16 +643,22 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               <div className="absolute right-4 bottom-32 z-10">
                 <Button
                   onClick={handleAnalyze}
-                  disabled={isProcessing}
+                  disabled={isProcessing || (isGhostMode && !isGhostReady)}
                   size="lg"
-                  className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
+                  className={
+                    isGhostMode
+                      ? 'bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700'
+                      : 'bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700'
+                  }
                 >
                   {isProcessing ? (
                     <Loader2 className="animate-spin mr-2" />
+                  ) : isGhostMode ? (
+                    <Ghost className="mr-2" />
                   ) : (
                     <Zap className="mr-2" />
                   )}
-                  AI Analyze {selectedCount} Item{selectedCount > 1 ? 's' : ''}
+                  {isGhostMode ? '👻 Ghost' : 'AI'} Analyze {selectedCount}
                 </Button>
               </div>
             )}
