@@ -1,4 +1,8 @@
 // FILE: src/pages/Vault.tsx
+// FIXED: MFA is now OPTIONAL - users can access vault without MFA
+// Enhanced security is opt-in via security settings
+// Mobile-first design improvements
+
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMfa } from '../contexts/MfaContext';
@@ -15,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -46,7 +51,9 @@ import {
   Unlock,
   Settings,
   ShieldOff,
-  LogOut
+  LogOut,
+  Shield,
+  Info
 } from 'lucide-react';
 import { ItemDetailModal } from '@/components/vault/ItemDetailModal';
 import ChallengeConfirmationModal from '@/components/arena/ChallengeConfirmationModal';
@@ -86,11 +93,14 @@ interface VaultType {
   total_value?: number;
 }
 
+// Security level type
+type SecurityLevel = 'basic' | 'enhanced';
+
 const VaultSkeletonLoader = () => (
-  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
     {Array.from({ length: 8 }).map((_, i) => (
       <div key={i} className="bg-gray-800/20 backdrop-blur-sm p-4 rounded-lg animate-pulse">
-        <div className="w-full h-48 bg-gray-700/50 rounded-md mb-4"></div>
+        <div className="w-full h-40 md:h-48 bg-gray-700/50 rounded-md mb-4"></div>
         <div className="h-6 w-3/4 bg-gray-700/50 rounded"></div>
         <div className="h-4 w-1/2 bg-gray-700/50 rounded mt-2"></div>
       </div>
@@ -107,19 +117,19 @@ const VaultCard: React.FC<{
     whileTap={{ scale: 0.98 }}
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
-    className="bg-gray-800/50 backdrop-blur-sm p-6 rounded-lg cursor-pointer hover:bg-gray-800/70 transition-all"
+    className="bg-gray-800/50 backdrop-blur-sm p-4 md:p-6 rounded-lg cursor-pointer hover:bg-gray-800/70 transition-all touch-manipulation"
     onClick={onSelect}
   >
     <div className="flex items-start justify-between mb-4">
-      <Vault className="h-8 w-8 text-purple-400" />
+      <Vault className="h-6 w-6 md:h-8 md:w-8 text-purple-400" />
       <div className="text-right">
-        <p className="text-2xl font-bold">{vault.item_count || 0}</p>
-        <p className="text-sm text-gray-400">items</p>
+        <p className="text-xl md:text-2xl font-bold">{vault.item_count || 0}</p>
+        <p className="text-xs md:text-sm text-gray-400">items</p>
       </div>
     </div>
-    <h3 className="text-xl font-semibold mb-2">{vault.name}</h3>
+    <h3 className="text-lg md:text-xl font-semibold mb-2 line-clamp-1">{vault.name}</h3>
     {vault.description && (
-      <p className="text-sm text-gray-400 mb-3">{vault.description}</p>
+      <p className="text-xs md:text-sm text-gray-400 mb-3 line-clamp-2">{vault.description}</p>
     )}
     {vault.total_value !== undefined && vault.total_value > 0 && (
       <div className="flex items-center text-green-400">
@@ -134,7 +144,18 @@ const VaultCard: React.FC<{
 
 const VaultPage: React.FC = () => {
   const { profile, loading: authLoading, session, refreshProfile } = useAuth();
-  const { isUnlocked, unlockVault, lockVault, forgetThisDevice, isTrustedDevice, trustedUntil, isLoading: mfaLoading } = useMfa();
+  const { 
+    isUnlocked, 
+    unlockVault, 
+    lockVault, 
+    forgetThisDevice, 
+    isTrustedDevice, 
+    trustedUntil, 
+    isLoading: mfaLoading,
+    securityLevel,
+    setSecurityLevel,
+    bypassMfa
+  } = useMfa();
   const queryClient = useQueryClient();
 
   const [selectedVault, setSelectedVault] = useState<VaultType | null>(null);
@@ -144,30 +165,34 @@ const VaultPage: React.FC = () => {
   const [newVaultName, setNewVaultName] = useState('');
   const [newVaultDescription, setNewVaultDescription] = useState('');
   
-  // Lock confirmation dialogs
+  // Security dialogs
   const [showLockDialog, setShowLockDialog] = useState(false);
   const [showForgetDeviceDialog, setShowForgetDeviceDialog] = useState(false);
   const [showLockAndForgetDialog, setShowLockAndForgetDialog] = useState(false);
+  const [showSecuritySettingsDialog, setShowSecuritySettingsDialog] = useState(false);
+  const [showEnableMfaDialog, setShowEnableMfaDialog] = useState(false);
+
+  // FIXED: Determine if vault should be accessible
+  // Now: Vault is accessible if security is 'basic' OR if security is 'enhanced' and MFA is unlocked
+  const isVaultAccessible = securityLevel === 'basic' || (securityLevel === 'enhanced' && isUnlocked);
 
   // Handler for successful MFA setup
   const handleMfaSetupSuccess = async () => {
     console.log('[Vault] MFA setup success callback triggered');
     
-    // Invalidate profile query to refetch
     await queryClient.invalidateQueries({ queryKey: ['profile'] });
     
-    // If refreshProfile exists in AuthContext, call it
     if (typeof refreshProfile === 'function') {
       await refreshProfile();
     }
     
-    // Force a small delay then reload to ensure clean state
-    toast.success("Redirecting to your vault...");
+    toast.success("MFA enabled! Your vault now has enhanced security.");
+    setShowEnableMfaDialog(false);
   };
 
   // Lock handlers
   const handleLockVault = () => {
-    lockVault(false); // Lock but keep device trusted
+    lockVault(false);
     setSelectedVault(null);
     toast.success("Vault locked", { 
       description: "Your device is still trusted. You'll need to enter your code to unlock again." 
@@ -184,12 +209,39 @@ const VaultPage: React.FC = () => {
   };
 
   const handleLockAndForget = () => {
-    lockVault(true); // Lock AND forget device
+    lockVault(true);
     setSelectedVault(null);
     toast.success("Vault locked & device forgotten", { 
       description: "You'll need to enter your authenticator code to access your vault again." 
     });
     setShowLockAndForgetDialog(false);
+  };
+
+  // Security level toggle handler
+  const handleSecurityLevelChange = async (enableEnhanced: boolean) => {
+    if (enableEnhanced) {
+      // Check if MFA is enrolled
+      if (!profile?.mfa_enrolled) {
+        // Need to set up MFA first
+        setShowSecuritySettingsDialog(false);
+        setShowEnableMfaDialog(true);
+        return;
+      }
+      // MFA is enrolled, enable enhanced security
+      setSecurityLevel('enhanced');
+      toast.success("Enhanced security enabled", {
+        description: "MFA will now be required to access your vault."
+      });
+    } else {
+      // Downgrade to basic security
+      setSecurityLevel('basic');
+      // Auto-unlock when switching to basic
+      bypassMfa();
+      toast.info("Basic security enabled", {
+        description: "You can access your vault without MFA verification."
+      });
+    }
+    setShowSecuritySettingsDialog(false);
   };
 
   // Fetch all vaults
@@ -212,10 +264,11 @@ const VaultPage: React.FC = () => {
     return response.json();
   };
 
+  // FIXED: Enable query when vault is accessible (not just when MFA is unlocked)
   const { data: vaults, isLoading: isVaultsLoading, error: vaultsError } = useQuery<VaultType[], Error>({
     queryKey: ['vaults'],
     queryFn: fetchVaults,
-    enabled: !!session?.access_token && isUnlocked,
+    enabled: !!session?.access_token && isVaultAccessible,
   });
 
   // Fetch items for selected vault
@@ -241,7 +294,7 @@ const VaultPage: React.FC = () => {
   const { data: vaultItems, isLoading: isItemsLoading } = useQuery<VaultItem[], Error>({
     queryKey: ['vaultItems', selectedVault?.id],
     queryFn: () => fetchVaultItems(selectedVault!.id),
-    enabled: !!session?.access_token && isUnlocked && !!selectedVault,
+    enabled: !!session?.access_token && isVaultAccessible && !!selectedVault,
   });
 
   // Create vault mutation
@@ -332,112 +385,144 @@ const VaultPage: React.FC = () => {
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
           <Loader2 className="mx-auto h-12 w-12 animate-spin" />
-          <h1 className="mt-4 text-2xl font-semibold">Loading Security Profile...</h1>
+          <h1 className="mt-4 text-xl md:text-2xl font-semibold">Loading...</h1>
         </div>
       </div>
     );
   }
 
-  // MFA Setup required
-  if (!profile.mfa_enrolled) {
+  // FIXED: Only show MFA unlock screen if enhanced security is enabled AND user has MFA enrolled
+  if (securityLevel === 'enhanced' && profile.mfa_enrolled && !isUnlocked) {
     return (
       <div className="container mx-auto p-4 md:p-8 max-w-lg">
         <div className="text-center mb-6">
-          <Vault className="mx-auto h-12 w-12 text-primary mb-2" />
-          <h1 className="text-2xl font-bold">Secure Your Vault</h1>
-          <p className="text-muted-foreground">Set up two-factor authentication to access your vault.</p>
+          <Shield className="mx-auto h-12 w-12 text-primary mb-2" />
+          <h1 className="text-xl md:text-2xl font-bold">Enhanced Security Active</h1>
+          <p className="text-muted-foreground text-sm md:text-base">Enter your authentication code to access your vault.</p>
         </div>
-        <div className="bg-card rounded-lg border p-6">
-          <MfaSetup onSuccess={handleMfaSetupSuccess} />
-        </div>
-      </div>
-    );
-  }
-
-  // MFA Unlock required
-  if (profile.mfa_enrolled && !isUnlocked) {
-    return (
-      <div className="container mx-auto p-4 md:p-8 max-w-lg">
-        <div className="text-center mb-6">
-          <Vault className="mx-auto h-12 w-12 text-primary mb-2" />
-          <h1 className="text-2xl font-bold">Unlock Your Vault</h1>
-          <p className="text-muted-foreground">Enter your authentication code to continue.</p>
-        </div>
-        <div className="bg-card rounded-lg border p-6">
+        <div className="bg-card rounded-lg border p-4 md:p-6">
           <MfaUnlock onSuccess={unlockVault} />
         </div>
+        
+        {/* Option to disable enhanced security */}
+        <div className="mt-6 text-center">
+          <Button 
+            variant="ghost" 
+            size="sm"
+            onClick={() => handleSecurityLevelChange(false)}
+            className="text-muted-foreground"
+          >
+            <ShieldOff className="h-4 w-4 mr-2" />
+            Switch to basic security
+          </Button>
+        </div>
       </div>
     );
   }
 
-  // Vault Security Controls Component
+  // Vault Security Controls Component - UPDATED with security level toggle
   const VaultSecurityControls = () => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2">
+        <Button variant="outline" size="sm" className="gap-2 touch-manipulation">
           <Settings className="h-4 w-4" />
-          Security
+          <span className="hidden sm:inline">Security</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
+      <DropdownMenuContent align="end" className="w-64">
         <DropdownMenuLabel className="flex items-center gap-2">
-          <ShieldCheck className="h-4 w-4 text-green-500" />
+          {securityLevel === 'enhanced' ? (
+            <ShieldCheck className="h-4 w-4 text-green-500" />
+          ) : (
+            <Shield className="h-4 w-4 text-blue-500" />
+          )}
           Vault Security
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         
-        {/* Lock Vault (Keep Trust) */}
-        <DropdownMenuItem 
-          onClick={() => setShowLockDialog(true)}
-          className="cursor-pointer"
-        >
-          <Lock className="h-4 w-4 mr-2" />
-          <div>
-            <div>Lock Vault</div>
-            <div className="text-xs text-muted-foreground">Keep device trusted</div>
-          </div>
-        </DropdownMenuItem>
-
-        {/* Forget Device (Stay Unlocked) */}
-        {isTrustedDevice && (
-          <DropdownMenuItem 
-            onClick={() => setShowForgetDeviceDialog(true)}
-            className="cursor-pointer"
-          >
-            <ShieldOff className="h-4 w-4 mr-2" />
-            <div>
-              <div>Forget This Device</div>
-              <div className="text-xs text-muted-foreground">Remove 30-day trust</div>
+        {/* Security Level Toggle */}
+        <div className="px-2 py-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4" />
+              <span className="text-sm">Enhanced Security</span>
             </div>
-          </DropdownMenuItem>
+            <Switch
+              checked={securityLevel === 'enhanced'}
+              onCheckedChange={(checked) => {
+                setShowSecuritySettingsDialog(true);
+              }}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground mt-1 ml-6">
+            {securityLevel === 'enhanced' 
+              ? 'MFA required to access vault' 
+              : 'Basic password protection'}
+          </p>
+        </div>
+        
+        <DropdownMenuSeparator />
+        
+        {/* Only show lock options if enhanced security is enabled */}
+        {securityLevel === 'enhanced' && profile.mfa_enrolled && (
+          <>
+            <DropdownMenuItem 
+              onClick={() => setShowLockDialog(true)}
+              className="cursor-pointer"
+            >
+              <Lock className="h-4 w-4 mr-2" />
+              <div>
+                <div>Lock Vault</div>
+                <div className="text-xs text-muted-foreground">Keep device trusted</div>
+              </div>
+            </DropdownMenuItem>
+
+            {isTrustedDevice && (
+              <DropdownMenuItem 
+                onClick={() => setShowForgetDeviceDialog(true)}
+                className="cursor-pointer"
+              >
+                <ShieldOff className="h-4 w-4 mr-2" />
+                <div>
+                  <div>Forget This Device</div>
+                  <div className="text-xs text-muted-foreground">Remove 30-day trust</div>
+                </div>
+              </DropdownMenuItem>
+            )}
+
+            <DropdownMenuSeparator />
+
+            <DropdownMenuItem 
+              onClick={() => setShowLockAndForgetDialog(true)}
+              className="cursor-pointer text-orange-500 focus:text-orange-500"
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              <div>
+                <div>Lock & Forget Device</div>
+                <div className="text-xs text-muted-foreground">Maximum security</div>
+              </div>
+            </DropdownMenuItem>
+
+            <DropdownMenuSeparator />
+          </>
         )}
 
-        <DropdownMenuSeparator />
-
-        {/* Lock & Forget (Full Security) */}
-        <DropdownMenuItem 
-          onClick={() => setShowLockAndForgetDialog(true)}
-          className="cursor-pointer text-orange-500 focus:text-orange-500"
-        >
-          <LogOut className="h-4 w-4 mr-2" />
-          <div>
-            <div>Lock & Forget Device</div>
-            <div className="text-xs text-muted-foreground">Maximum security</div>
-          </div>
-        </DropdownMenuItem>
-
         {/* Status Info */}
-        <DropdownMenuSeparator />
         <div className="px-2 py-1.5 text-xs text-muted-foreground">
-          {isTrustedDevice ? (
+          {securityLevel === 'enhanced' && isTrustedDevice ? (
             <div className="flex items-center gap-1">
               <Smartphone className="h-3 w-3" />
               Trusted until {trustedUntil?.toLocaleDateString()}
             </div>
-          ) : (
+          ) : securityLevel === 'enhanced' ? (
             <div className="flex items-center gap-1">
               <Lock className="h-3 w-3" />
               Session-only access
+            </div>
+          ) : (
+            <div className="flex items-center gap-1">
+              <Info className="h-3 w-3" />
+              Standard protection active
             </div>
           )}
         </div>
@@ -454,17 +539,34 @@ const VaultPage: React.FC = () => {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-        <div className="flex justify-between items-center mb-8">
+        {/* Header - Mobile Responsive */}
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-6 md:mb-8">
           <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-4xl font-bold tracking-wider">My Vaults</h1>
-              <Badge variant="outline" className="text-green-400 border-green-400/50 bg-green-400/10">
-                <Unlock className="h-3 w-3 mr-1" />
-                Unlocked
+            <div className="flex flex-wrap items-center gap-2 md:gap-3">
+              <h1 className="text-2xl md:text-4xl font-bold tracking-wider">My Vaults</h1>
+              <Badge 
+                variant="outline" 
+                className={`${
+                  securityLevel === 'enhanced' 
+                    ? 'text-green-400 border-green-400/50 bg-green-400/10' 
+                    : 'text-blue-400 border-blue-400/50 bg-blue-400/10'
+                }`}
+              >
+                {securityLevel === 'enhanced' ? (
+                  <>
+                    <ShieldCheck className="h-3 w-3 mr-1" />
+                    Enhanced
+                  </>
+                ) : (
+                  <>
+                    <Unlock className="h-3 w-3 mr-1" />
+                    Basic
+                  </>
+                )}
               </Badge>
             </div>
             {/* Trusted Device Indicator */}
-            {isTrustedDevice && trustedUntil && (
+            {securityLevel === 'enhanced' && isTrustedDevice && trustedUntil && (
               <div className="flex items-center gap-2 mt-2">
                 <Badge variant="secondary" className="text-xs">
                   <Smartphone className="h-3 w-3 mr-1" />
@@ -476,11 +578,12 @@ const VaultPage: React.FC = () => {
               </div>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 md:gap-3">
             <VaultSecurityControls />
-            <Button onClick={() => setIsCreateVaultOpen(true)} size="lg">
-              <Plus className="mr-2 h-5 w-5" />
-              Create New Vault
+            <Button onClick={() => setIsCreateVaultOpen(true)} size="default" className="touch-manipulation">
+              <Plus className="mr-1 md:mr-2 h-4 md:h-5 w-4 md:w-5" />
+              <span className="hidden sm:inline">Create New Vault</span>
+              <span className="sm:hidden">New</span>
             </Button>
           </div>
         </div>
@@ -499,7 +602,7 @@ const VaultPage: React.FC = () => {
         )}
 
         {!isVaultsLoading && !vaultsError && vaults && vaults.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
             {vaults.map((vault) => (
               <VaultCard
                 key={vault.id}
@@ -511,11 +614,11 @@ const VaultPage: React.FC = () => {
         )}
 
         {!isVaultsLoading && !vaultsError && (!vaults || vaults.length === 0) && (
-          <div className="text-center py-16 border-2 border-dashed rounded-lg">
-            <Vault className="mx-auto h-16 w-16 text-gray-400 mb-4" />
-            <h2 className="text-2xl font-semibold">No Vaults Yet</h2>
-            <p className="text-muted-foreground mt-2">Create your first vault to start organizing your collection.</p>
-            <Button onClick={() => setIsCreateVaultOpen(true)} size="lg" className="mt-4">
+          <div className="text-center py-12 md:py-16 border-2 border-dashed rounded-lg">
+            <Vault className="mx-auto h-12 md:h-16 w-12 md:w-16 text-gray-400 mb-4" />
+            <h2 className="text-xl md:text-2xl font-semibold">No Vaults Yet</h2>
+            <p className="text-muted-foreground mt-2 text-sm md:text-base px-4">Create your first vault to start organizing your collection.</p>
+            <Button onClick={() => setIsCreateVaultOpen(true)} size="lg" className="mt-4 touch-manipulation">
               <Plus className="mr-2 h-5 w-5" />
               Create Your First Vault
             </Button>
@@ -524,7 +627,7 @@ const VaultPage: React.FC = () => {
 
         {/* Create Vault Dialog */}
         <Dialog open={isCreateVaultOpen} onOpenChange={setIsCreateVaultOpen}>
-          <DialogContent>
+          <DialogContent className="max-w-[95vw] sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>Create New Vault</DialogTitle>
               <DialogDescription>
@@ -554,11 +657,11 @@ const VaultPage: React.FC = () => {
                 />
               </div>
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsCreateVaultOpen(false)}>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button variant="outline" onClick={() => setIsCreateVaultOpen(false)} className="w-full sm:w-auto">
                 Cancel
               </Button>
-              <Button onClick={handleCreateVault} disabled={createVaultMutation.isPending}>
+              <Button onClick={handleCreateVault} disabled={createVaultMutation.isPending} className="w-full sm:w-auto">
                 {createVaultMutation.isPending ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -569,6 +672,72 @@ const VaultPage: React.FC = () => {
                 )}
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Security Settings Confirmation Dialog */}
+        <AlertDialog open={showSecuritySettingsDialog} onOpenChange={setShowSecuritySettingsDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                {securityLevel === 'basic' ? (
+                  <>
+                    <ShieldCheck className="h-5 w-5 text-green-500" />
+                    Enable Enhanced Security?
+                  </>
+                ) : (
+                  <>
+                    <ShieldOff className="h-5 w-5 text-orange-500" />
+                    Disable Enhanced Security?
+                  </>
+                )}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {securityLevel === 'basic' ? (
+                  <>
+                    Enhanced security requires MFA (two-factor authentication) to access your vault.
+                    This provides additional protection for your valuable items.
+                    {!profile.mfa_enrolled && (
+                      <span className="block mt-2 text-amber-600">
+                        You'll need to set up an authenticator app first.
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    Switching to basic security will allow vault access with just your password.
+                    <span className="block mt-2 text-orange-500">
+                      Your items will be less protected against unauthorized access.
+                    </span>
+                  </>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction 
+                onClick={() => handleSecurityLevelChange(securityLevel === 'basic')}
+                className={securityLevel === 'basic' ? 'bg-green-600 hover:bg-green-700' : 'bg-orange-500 hover:bg-orange-600'}
+              >
+                {securityLevel === 'basic' ? 'Enable Enhanced Security' : 'Switch to Basic'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Enable MFA Dialog */}
+        <Dialog open={showEnableMfaDialog} onOpenChange={setShowEnableMfaDialog}>
+          <DialogContent className="max-w-[95vw] sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5 text-primary" />
+                Set Up Two-Factor Authentication
+              </DialogTitle>
+              <DialogDescription>
+                Enhanced security requires MFA. Set up your authenticator app to continue.
+              </DialogDescription>
+            </DialogHeader>
+            <MfaSetup onSuccess={handleMfaSetupSuccess} />
           </DialogContent>
         </Dialog>
 
@@ -666,29 +835,30 @@ const VaultPage: React.FC = () => {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-        <div className="flex justify-between items-center mb-8">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-6 md:mb-8">
+          <div className="flex items-start gap-2 md:gap-4">
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setSelectedVault(null)}
+              className="touch-manipulation shrink-0"
             >
-              <ChevronLeft className="h-6 w-6" />
+              <ChevronLeft className="h-5 md:h-6 w-5 md:w-6" />
             </Button>
             <div>
-              <div className="flex items-center gap-3">
-                <h1 className="text-4xl font-bold tracking-wider">{selectedVault.name}</h1>
+              <div className="flex flex-wrap items-center gap-2 md:gap-3">
+                <h1 className="text-2xl md:text-4xl font-bold tracking-wider line-clamp-1">{selectedVault.name}</h1>
                 <Badge variant="outline" className="text-green-400 border-green-400/50 bg-green-400/10">
                   <ShieldCheck className="h-3 w-3 mr-1" />
                   Secured
                 </Badge>
               </div>
               {selectedVault.description && (
-                <p className="text-gray-400 mt-1">{selectedVault.description}</p>
+                <p className="text-gray-400 mt-1 text-sm md:text-base line-clamp-2">{selectedVault.description}</p>
               )}
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 md:gap-3 ml-8 sm:ml-0">
             <VaultSecurityControls />
             {vaultItems && vaultItems.length > 0 && (
               <PdfDownloadButton items={vaultItems} />
@@ -700,7 +870,7 @@ const VaultPage: React.FC = () => {
 
         {!isItemsLoading && vaultItems && vaultItems.length > 0 && (
           <motion.div
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6"
             variants={{
               hidden: { opacity: 0 },
               show: {
@@ -725,9 +895,9 @@ const VaultPage: React.FC = () => {
         )}
 
         {!isItemsLoading && (!vaultItems || vaultItems.length === 0) && (
-          <div className="text-center py-16 border-2 border-dashed rounded-lg">
-            <h2 className="text-2xl font-semibold">This Vault is Empty</h2>
-            <p className="text-muted-foreground mt-2">Add items from the analysis page to secure them in this vault.</p>
+          <div className="text-center py-12 md:py-16 border-2 border-dashed rounded-lg">
+            <h2 className="text-xl md:text-2xl font-semibold">This Vault is Empty</h2>
+            <p className="text-muted-foreground mt-2 text-sm md:text-base px-4">Add items from the analysis page to secure them in this vault.</p>
           </div>
         )}
       </motion.div>

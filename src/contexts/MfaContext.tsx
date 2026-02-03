@@ -1,15 +1,25 @@
 // FILE: src/contexts/MfaContext.tsx
+// FIXED: Added security level support (basic/enhanced) for optional MFA
+// Users can now access vault without MFA when security is set to 'basic'
+// Enhanced security requires MFA verification
+
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth } from './AuthContext';
+
+// Security level type - basic allows vault access without MFA
+type SecurityLevel = 'basic' | 'enhanced';
 
 interface MfaContextType {
   isUnlocked: boolean;
   isLoading: boolean;
   isTrustedDevice: boolean;
   trustedUntil: Date | null;
+  securityLevel: SecurityLevel;
   unlockVault: (rememberDevice?: boolean) => void;
   lockVault: (forgetDevice?: boolean) => void;
   forgetThisDevice: () => void;
+  setSecurityLevel: (level: SecurityLevel) => void;
+  bypassMfa: () => void; // For when switching to basic security
 }
 
 const MfaContext = createContext<MfaContextType | undefined>(undefined);
@@ -41,6 +51,7 @@ const generateDeviceFingerprint = (): string => {
 
 const TRUST_DURATION_DAYS = 30;
 const STORAGE_KEY = 'mfa_trusted_device';
+const SECURITY_LEVEL_KEY = 'vault_security_level';
 
 export const MfaProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { session } = useAuth();
@@ -48,6 +59,23 @@ export const MfaProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isLoading, setIsLoading] = useState(true);
   const [isTrustedDevice, setIsTrustedDevice] = useState(false);
   const [trustedUntil, setTrustedUntil] = useState<Date | null>(null);
+  const [securityLevel, setSecurityLevelState] = useState<SecurityLevel>('basic');
+
+  // Load security level preference from localStorage
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(SECURITY_LEVEL_KEY);
+      if (stored === 'enhanced' || stored === 'basic') {
+        setSecurityLevelState(stored);
+      } else {
+        // Default to basic for new users
+        setSecurityLevelState('basic');
+      }
+    } catch (e) {
+      console.warn('[MFA] Error loading security level:', e);
+      setSecurityLevelState('basic');
+    }
+  }, []);
 
   // Check for trusted device on mount
   useEffect(() => {
@@ -98,6 +126,14 @@ export const MfaProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [session?.user?.id]);
 
+  // FIXED: Auto-unlock when security level is 'basic'
+  useEffect(() => {
+    if (securityLevel === 'basic' && session?.user?.id) {
+      console.log('[MFA] Basic security - auto-unlocking vault');
+      setIsUnlocked(true);
+    }
+  }, [securityLevel, session?.user?.id]);
+
   // Unlock vault (called after successful TOTP verification)
   const unlockVault = useCallback((rememberDevice: boolean = false) => {
     console.log('[MFA] Unlocking vault, remember device:', rememberDevice);
@@ -124,6 +160,12 @@ export const MfaProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Lock vault - optionally forget the device too
   const lockVault = useCallback((forgetDevice: boolean = false) => {
+    // Don't lock if security level is basic
+    if (securityLevel === 'basic') {
+      console.log('[MFA] Cannot lock vault in basic security mode');
+      return;
+    }
+
     console.log('[MFA] Locking vault, forget device:', forgetDevice);
     setIsUnlocked(false);
 
@@ -133,7 +175,7 @@ export const MfaProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setTrustedUntil(null);
       console.log('[MFA] Device trust removed');
     }
-  }, []);
+  }, [securityLevel]);
 
   // Forget this device (remove trust but don't lock if currently unlocked)
   const forgetThisDevice = useCallback(() => {
@@ -141,6 +183,29 @@ export const MfaProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem(STORAGE_KEY);
     setIsTrustedDevice(false);
     setTrustedUntil(null);
+  }, []);
+
+  // Set security level preference
+  const setSecurityLevel = useCallback((level: SecurityLevel) => {
+    console.log('[MFA] Setting security level to:', level);
+    setSecurityLevelState(level);
+    
+    try {
+      localStorage.setItem(SECURITY_LEVEL_KEY, level);
+    } catch (e) {
+      console.warn('[MFA] Error saving security level:', e);
+    }
+
+    // If switching to basic, auto-unlock
+    if (level === 'basic') {
+      setIsUnlocked(true);
+    }
+  }, []);
+
+  // Bypass MFA (for when switching to basic security)
+  const bypassMfa = useCallback(() => {
+    console.log('[MFA] Bypassing MFA - setting unlocked');
+    setIsUnlocked(true);
   }, []);
 
   // Lock vault when user logs out
@@ -159,9 +224,12 @@ export const MfaProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isLoading,
         isTrustedDevice,
         trustedUntil,
+        securityLevel,
         unlockVault,
         lockVault,
         forgetThisDevice,
+        setSecurityLevel,
+        bypassMfa,
       }}
     >
       {children}

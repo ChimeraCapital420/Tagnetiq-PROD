@@ -1,5 +1,6 @@
 // FILE: src/pages/arena/Marketplace.tsx
 // Marketplace Page - Slim Orchestrator
+// FIXED: Added onOpenScanner wiring for MarketplaceHeader
 // All components modularized in ./marketplace/
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -7,7 +8,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   SlidersHorizontal, Grid3X3, LayoutGrid, Package, 
-  Filter, AlertCircle, Plus
+  Filter, AlertCircle, Plus, Camera
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -47,7 +48,8 @@ import type {
 } from './marketplace';
 
 const Marketplace: React.FC = () => {
-  const { searchArenaQuery, setSearchArenaQuery } = useAppContext();
+  // FIXED: Get setIsScannerOpen from AppContext for scanner button
+  const { searchArenaQuery, setSearchArenaQuery, setIsScannerOpen } = useAppContext();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   
@@ -124,6 +126,15 @@ const Marketplace: React.FC = () => {
     }
   }, [searchArenaQuery, fetchData, setSearchArenaQuery, viewMode, showSold]);
 
+  // FIXED: Handler for opening scanner from MarketplaceHeader
+  const handleOpenScanner = () => {
+    setIsScannerOpen(true);
+    // Haptic feedback on mobile
+    if (navigator.vibrate) {
+      navigator.vibrate(50);
+    }
+  };
+
   // Event handlers
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -179,6 +190,7 @@ const Marketplace: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-950 to-black">
+      {/* FIXED: Added onOpenScanner prop */}
       <MarketplaceHeader
         searchTerm={searchTerm}
         onSearchChange={setSearchTerm}
@@ -193,6 +205,7 @@ const Marketplace: React.FC = () => {
         dynamicCategories={dynamicCategories}
         currentUserId={currentUserId}
         stats={stats}
+        onOpenScanner={handleOpenScanner}
       />
       
       <div className="container mx-auto px-4 py-4 md:py-6">
@@ -212,6 +225,17 @@ const Marketplace: React.FC = () => {
               <p className="text-sm text-zinc-400">{filteredItems.length} items</p>
               
               <div className="flex items-center gap-2">
+                {/* Mobile: Quick scan button */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="lg:hidden border-emerald-600 text-emerald-400 hover:bg-emerald-600/20 touch-manipulation"
+                  onClick={handleOpenScanner}
+                >
+                  <Camera className="h-4 w-4 mr-1" />
+                  Scan
+                </Button>
+                
                 <Sheet>
                   <SheetTrigger asChild>
                     <Button variant="outline" size="sm" className="lg:hidden border-zinc-800 hover:bg-zinc-800">
@@ -284,13 +308,16 @@ const Marketplace: React.FC = () => {
                 </h3>
                 <p className="text-zinc-500 max-w-md mx-auto text-sm">
                   {viewMode === 'mine' 
-                    ? 'Start selling by listing items from your vault.'
+                    ? 'Start selling by scanning an item with HYDRA.'
                     : 'Try adjusting your filters or search terms.'}
                 </p>
                 {viewMode === 'mine' ? (
-                  <Button className="mt-4 bg-emerald-600 hover:bg-emerald-700" onClick={() => navigate('/vault')}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    List Your First Item
+                  <Button 
+                    className="mt-4 bg-emerald-600 hover:bg-emerald-700 touch-manipulation" 
+                    onClick={handleOpenScanner}
+                  >
+                    <Camera className="h-4 w-4 mr-2" />
+                    Scan Your First Item
                   </Button>
                 ) : (
                   <Button 

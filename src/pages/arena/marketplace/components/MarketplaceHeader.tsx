@@ -1,16 +1,17 @@
 // FILE: src/pages/arena/marketplace/components/MarketplaceHeader.tsx
 // Marketplace header with search, tabs, and stats
+// FIXED: List Item button now opens scanner instead of navigating to vault
 
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Package, User, Plus } from 'lucide-react';
+import { Search, Package, User, Plus, Camera } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CategoryPills } from './CategoryPills';
-import type { ViewMode, FilterState, DynamicCategory, MarketplaceStats } from '../types';
+import type { ViewMode, DynamicCategory, MarketplaceStats } from '../types';
 
 interface MarketplaceHeaderProps {
   // Search
@@ -35,6 +36,9 @@ interface MarketplaceHeaderProps {
   
   // Stats
   stats: MarketplaceStats;
+  
+  // NEW: Scanner trigger - passed from parent component
+  onOpenScanner?: () => void;
 }
 
 export const MarketplaceHeader: React.FC<MarketplaceHeaderProps> = ({
@@ -51,8 +55,20 @@ export const MarketplaceHeader: React.FC<MarketplaceHeaderProps> = ({
   dynamicCategories,
   currentUserId,
   stats,
+  onOpenScanner,
 }) => {
   const navigate = useNavigate();
+
+  // Handle List Item button click
+  // Priority: 1) Use scanner callback if provided, 2) Fallback to vault
+  const handleListItemClick = () => {
+    if (onOpenScanner) {
+      onOpenScanner();
+    } else {
+      // Fallback: navigate to vault if scanner callback not provided
+      navigate('/vault');
+    }
+  };
 
   return (
     <div className="relative overflow-hidden">
@@ -91,12 +107,13 @@ export const MarketplaceHeader: React.FC<MarketplaceHeaderProps> = ({
         </div>
         
         {/* View Mode Tabs */}
-        <div className="flex items-center gap-4 mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 mb-4">
           <Tabs value={viewMode} onValueChange={(v) => onViewModeChange(v as ViewMode)}>
             <TabsList className="bg-zinc-900/50 border border-zinc-800">
               <TabsTrigger value="all" className="data-[state=active]:bg-white data-[state=active]:text-black">
                 <Package className="h-4 w-4 mr-2" />
-                All Listings
+                <span className="hidden xs:inline">All Listings</span>
+                <span className="xs:hidden">All</span>
               </TabsTrigger>
               <TabsTrigger 
                 value="mine" 
@@ -104,7 +121,8 @@ export const MarketplaceHeader: React.FC<MarketplaceHeaderProps> = ({
                 disabled={!currentUserId}
               >
                 <User className="h-4 w-4 mr-2" />
-                My Listings
+                <span className="hidden xs:inline">My Listings</span>
+                <span className="xs:hidden">Mine</span>
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -122,14 +140,16 @@ export const MarketplaceHeader: React.FC<MarketplaceHeaderProps> = ({
             </div>
           )}
           
+          {/* FIXED: List Item button now opens scanner/camera */}
           {currentUserId && (
             <Button 
-              onClick={() => navigate('/vault')}
-              className="ml-auto bg-emerald-600 hover:bg-emerald-700"
+              onClick={handleListItemClick}
+              className="sm:ml-auto bg-emerald-600 hover:bg-emerald-700 touch-manipulation"
               size="sm"
             >
-              <Plus className="h-4 w-4 mr-1" />
+              <Camera className="h-4 w-4 mr-1 sm:mr-2" />
               <span className="hidden sm:inline">List Item</span>
+              <span className="sm:hidden">List</span>
             </Button>
           )}
         </div>
@@ -147,7 +167,7 @@ export const MarketplaceHeader: React.FC<MarketplaceHeaderProps> = ({
           </div>
           <Button 
             type="submit" 
-            className="h-11 md:h-12 px-4 md:px-6 bg-white text-black hover:bg-zinc-200"
+            className="h-11 md:h-12 px-4 md:px-6 bg-white text-black hover:bg-zinc-200 touch-manipulation"
             disabled={loading}
           >
             {loading ? (
@@ -158,7 +178,7 @@ export const MarketplaceHeader: React.FC<MarketplaceHeaderProps> = ({
           </Button>
         </form>
         
-        {/* Category Pills */}
+        {/* Category Pills - These are the category bubbles */}
         <CategoryPills 
           selected={selectedCategory} 
           onSelect={onCategoryChange}
