@@ -1,6 +1,6 @@
 // FILE: src/components/scanner/DualScanner.tsx
 // Refactored multi-modal scanner with Ghost Protocol integration
-// UPDATED: Ghost Mode toggle, GPS capture, and ghost data passthrough
+// FIXED: Header layout - X button separate, Ghost button visible, grid/torch positioned correctly
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useZxing } from 'react-zxing';
@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   X, FlipHorizontal, Upload, Circle, Zap, Loader2, ScanLine,
   ImageIcon, Video, Settings as SettingsIcon, Focus, FileText, Bluetooth,
-  Ghost,
+  Ghost, Grid3X3, Flashlight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAppContext } from '@/contexts/AppContext';
@@ -18,7 +18,7 @@ import { toast } from 'sonner';
 // Modular imports
 import { useCapturedItems, useCameraCapture, useVideoRecording } from './hooks';
 import { CapturePreviewGrid } from './components/CapturePreviewGrid';
-import { getImageStorage, formatFileSize, type StoredImage } from '@/lib/image-storage';
+import { getImageStorage, formatFileSize } from '@/lib/image-storage';
 import CameraSettingsModal from '../CameraSettingsModal';
 import DevicePairingModal from '../DevicePairingModal';
 import type { AnalysisResult } from '@/types';
@@ -28,13 +28,20 @@ import '../DualScanner.css';
 import { useGhostMode } from '@/hooks/useGhostMode';
 import { GhostModeToggle } from './GhostModeToggle';
 import { GhostLocationCapture } from './GhostLocationCapture';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet';
+
+// Sheet component - with fallback if not installed
+let Sheet: any, SheetContent: any, SheetHeader: any, SheetTitle: any, SheetTrigger: any;
+try {
+  const sheetModule = require('@/components/ui/sheet');
+  Sheet = sheetModule.Sheet;
+  SheetContent = sheetModule.SheetContent;
+  SheetHeader = sheetModule.SheetHeader;
+  SheetTitle = sheetModule.SheetTitle;
+  SheetTrigger = sheetModule.SheetTrigger;
+} catch (e) {
+  // Sheet not installed - will use dialog fallback
+  console.warn('Sheet component not found, using fallback');
+}
 
 // =============================================================================
 // TYPES
@@ -65,6 +72,8 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDevicePairingOpen, setIsDevicePairingOpen] = useState(false);
   const [isGhostSheetOpen, setIsGhostSheetOpen] = useState(false);
+  const [showGrid, setShowGrid] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
 
   // File inputs
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -95,7 +104,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
   const {
     items,
-    selectedItems,
     selectedCount,
     totalCount,
     addItem,
@@ -110,7 +118,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
   const {
     videoRef,
-    isReady: isCameraReady,
     isCapturing,
     devices,
     currentDeviceId,
@@ -127,6 +134,35 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     startRecording,
     stopRecording,
   } = useVideoRecording();
+
+  // ========================================
+  // TORCH CONTROL
+  // ========================================
+
+  const toggleTorch = useCallback(async () => {
+    try {
+      const stream = videoRef.current?.srcObject as MediaStream;
+      if (!stream) return;
+      
+      const track = stream.getVideoTracks()[0];
+      if (!track) return;
+      
+      const capabilities = track.getCapabilities?.() as any;
+      if (!capabilities?.torch) {
+        toast.error('Torch not available on this device');
+        return;
+      }
+      
+      const newTorchState = !torchOn;
+      await track.applyConstraints({
+        advanced: [{ torch: newTorchState } as any]
+      });
+      setTorchOn(newTorchState);
+    } catch (error) {
+      console.error('Torch error:', error);
+      toast.error('Failed to toggle torch');
+    }
+  }, [torchOn, videoRef]);
 
   // ========================================
   // BARCODE SCANNING
@@ -177,7 +213,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     setIsProcessing(true);
     try {
       const storage = getImageStorage(userId);
-      // Store original, get compressed for analysis
       const storedImage = await storage.processAndStore(dataUrl, 'captures');
       
       addItem({
@@ -263,7 +298,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       const result = await stopRecording();
       if (result) {
         const storage = getImageStorage(userId);
-        // Use first frame as the stored image
         const storedImage = await storage.processAndStore(result.frames[0] || result.thumbnail, 'videos');
         
         addItem({
@@ -297,7 +331,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       return;
     }
 
-    // Validate ghost mode if enabled
     if (isGhostMode && !isGhostReady) {
       toast.error('Complete ghost listing details', {
         description: 'Enter store name and shelf price',
@@ -316,13 +349,9 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     toast.info(toastMessage);
 
     try {
-      // Get compressed data for AI
       const analysisPayload = getAnalysisPayload();
-      
-      // Get original URLs for marketplace (filter out blob: URLs)
       const originalUrls = getOriginalUrls().filter(url => !url.startsWith('blob:'));
       
-      // Build request payload with ghost data if enabled
       const requestPayload: any = {
         scanType: 'multi-modal',
         items: analysisPayload.map((item, index) => ({
@@ -334,7 +363,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         originalImageUrls: originalUrls,
       };
 
-      // Add ghost data if enabled
       if (isGhostMode && ghostLocation && storeInfo) {
         requestPayload.ghostMode = {
           enabled: true,
@@ -344,11 +372,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
           storeName: storeInfo.name,
         };
       }
-
-      console.log('📤 Sending analysis request', {
-        images: originalUrls.length,
-        ghostMode: isGhostMode,
-      });
 
       const response = await fetch('/api/analyze', {
         method: 'POST',
@@ -368,11 +391,8 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       }
 
       const result: AnalysisResult = await response.json();
-      
-      // Build ghost data with estimated value from analysis
       const ghostData = isGhostMode ? buildGhostData(result.estimatedValue || 0) : null;
       
-      // The API now returns imageUrls - use them, or fallback to local URLs
       const finalImageUrls = result.imageUrls?.length > 0 
         ? result.imageUrls 
         : originalUrls;
@@ -383,14 +403,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         imageUrls: finalImageUrls,
         imageUrl: finalImageUrls[0] || '',
         thumbnailUrl: result.thumbnailUrl || finalImageUrls[0] || '',
-        // Attach ghost data to result
         ghostData: ghostData || undefined,
-      });
-      
-      console.log('✅ Analysis complete', {
-        images: finalImageUrls.length,
-        ghostMode: isGhostMode,
-        ghostReady: !!ghostData,
       });
 
       if (isGhostMode && ghostData) {
@@ -421,15 +434,14 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       startCamera();
     } else {
       stopCamera();
-      // Reset ghost mode when scanner closes
       if (isGhostMode) {
         toggleGhostMode(false);
       }
+      setTorchOn(false);
     }
     return () => stopCamera();
   }, [isOpen, startCamera, stopCamera]);
 
-  // Connect zxing to our video ref
   useEffect(() => {
     if (zxingRef && videoRef.current) {
       (zxingRef as any).current = videoRef.current;
@@ -437,6 +449,39 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   }, [zxingRef, videoRef]);
 
   if (!isOpen) return null;
+
+  // ========================================
+  // GHOST SHEET CONTENT (reusable)
+  // ========================================
+
+  const ghostSheetContent = (
+    <div className="space-y-4 p-4">
+      <div className="flex items-center gap-2 mb-4">
+        <Ghost className="h-5 w-5 text-purple-400" />
+        <h3 className="text-lg font-semibold">Ghost Protocol</h3>
+      </div>
+      
+      <GhostModeToggle
+        isEnabled={isGhostMode}
+        onToggle={toggleGhostMode}
+        location={ghostLocation}
+        isCapturing={isCapturingLocation}
+        error={locationError}
+      />
+      
+      {isGhostMode && (
+        <GhostLocationCapture
+          location={ghostLocation}
+          storeInfo={storeInfo}
+          onUpdateStore={updateStoreInfo}
+          onRefreshLocation={refreshLocation}
+          handlingHours={handlingHours}
+          onHandlingHoursChange={setHandlingHours}
+          isCapturing={isCapturingLocation}
+        />
+      )}
+    </div>
+  );
 
   // ========================================
   // RENDER
@@ -447,96 +492,115 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       <div className="dual-scanner-overlay" onClick={onClose}>
         <div className="dual-scanner-content" onClick={e => e.stopPropagation()}>
           
-          {/* HEADER */}
+          {/* ============================================ */}
+          {/* HEADER - Fixed Layout                        */}
+          {/* ============================================ */}
           <header className="dual-scanner-header">
-            <div className="flex gap-2">
-              <Button variant="ghost" size="icon" onClick={() => setIsSettingsOpen(true)}>
-                <SettingsIcon />
-              </Button>
-              <Button variant="ghost" size="icon" onClick={() => setIsDevicePairingOpen(true)}>
-                <Bluetooth />
+            {/* LEFT GROUP: Settings, Bluetooth, Ghost */}
+            <div className="flex items-center gap-1">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={() => setIsSettingsOpen(true)}
+                className="h-9 w-9"
+              >
+                <SettingsIcon className="h-5 w-5" />
               </Button>
               
-              {/* Ghost Mode Button */}
-              <Sheet open={isGhostSheetOpen} onOpenChange={setIsGhostSheetOpen}>
-                <SheetTrigger asChild>
-                  <Button
-                    variant={isGhostMode ? 'default' : 'ghost'}
-                    size="icon"
-                    className={isGhostMode ? 'bg-purple-500 hover:bg-purple-600' : ''}
-                  >
-                    <Ghost className={isGhostMode ? 'animate-pulse' : ''} />
-                  </Button>
-                </SheetTrigger>
-                <SheetContent side="bottom" className="h-[80vh] bg-zinc-950 border-zinc-800">
-                  <SheetHeader className="pb-4">
-                    <SheetTitle className="flex items-center gap-2">
-                      <Ghost className="h-5 w-5 text-purple-400" />
-                      Ghost Protocol
-                    </SheetTitle>
-                  </SheetHeader>
-                  
-                  <div className="space-y-4 overflow-y-auto max-h-[calc(80vh-100px)]">
-                    {/* Ghost Toggle */}
-                    <GhostModeToggle
-                      isEnabled={isGhostMode}
-                      onToggle={toggleGhostMode}
-                      location={ghostLocation}
-                      isCapturing={isCapturingLocation}
-                      error={locationError}
-                    />
-                    
-                    {/* Location Capture Form */}
-                    {isGhostMode && (
-                      <GhostLocationCapture
-                        location={ghostLocation}
-                        storeInfo={storeInfo}
-                        onUpdateStore={updateStoreInfo}
-                        onRefreshLocation={refreshLocation}
-                        handlingHours={handlingHours}
-                        onHandlingHoursChange={setHandlingHours}
-                        isCapturing={isCapturingLocation}
-                      />
-                    )}
-                  </div>
-                </SheetContent>
-              </Sheet>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={() => setIsDevicePairingOpen(true)}
+                className="h-9 w-9"
+              >
+                <Bluetooth className="h-5 w-5" />
+              </Button>
+              
+              {/* Ghost Button - Always visible */}
+              <Button
+                variant={isGhostMode ? 'default' : 'ghost'}
+                size="icon"
+                onClick={() => setIsGhostSheetOpen(true)}
+                className={`h-9 w-9 ${isGhostMode ? 'bg-purple-500 hover:bg-purple-600' : ''}`}
+                title="Ghost Protocol"
+              >
+                <Ghost className={`h-5 w-5 ${isGhostMode ? 'animate-pulse' : ''}`} />
+              </Button>
             </div>
-            
+
+            {/* CENTER: Counter and Select buttons */}
             <div className="flex items-center gap-2">
-              {/* Ghost Mode Indicator */}
               {isGhostMode && (
-                <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-purple-500/20 border border-purple-500/30">
+                <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-full bg-purple-500/20 border border-purple-500/30">
                   <Ghost className="h-3 w-3 text-purple-400 animate-pulse" />
                   <span className="text-[10px] text-purple-300 font-medium">GHOST</span>
                 </div>
               )}
               
-              <span className="text-sm text-muted-foreground">
-                {selectedCount}/{totalCount} selected
+              <span className="text-sm text-muted-foreground font-mono">
+                {selectedCount}/{totalCount}
               </span>
+              
               {totalCount > 0 && (
-                <>
+                <div className="hidden sm:flex gap-1">
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={selectedCount === totalCount ? deselectAll : selectAll}
+                    className="h-7 text-xs"
                   >
-                    {selectedCount === totalCount ? 'Deselect All' : 'Select All'}
+                    {selectedCount === totalCount ? 'Deselect' : 'Select All'}
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={clearAll}>
-                    Clear All
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={clearAll}
+                    className="h-7 text-xs"
+                  >
+                    Clear
                   </Button>
-                </>
+                </div>
               )}
             </div>
-            
-            <Button variant="ghost" size="icon" onClick={onClose}>
-              <X />
-            </Button>
+
+            {/* RIGHT GROUP: Grid, Torch, Close */}
+            <div className="flex items-center gap-1">
+              <Button
+                variant={showGrid ? 'secondary' : 'ghost'}
+                size="icon"
+                onClick={() => setShowGrid(!showGrid)}
+                className="h-9 w-9"
+                title="Toggle Grid"
+              >
+                <Grid3X3 className="h-5 w-5" />
+              </Button>
+              
+              <Button
+                variant={torchOn ? 'secondary' : 'ghost'}
+                size="icon"
+                onClick={toggleTorch}
+                className={`h-9 w-9 ${torchOn ? 'text-yellow-400' : ''}`}
+                title="Toggle Torch"
+              >
+                <Flashlight className="h-5 w-5" />
+              </Button>
+              
+              {/* Close button - separate with margin */}
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={onClose}
+                className="h-9 w-9 ml-2 hover:bg-red-500/20 hover:text-red-400"
+                title="Close Scanner"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
           </header>
 
-          {/* MAIN VIDEO AREA */}
+          {/* ============================================ */}
+          {/* MAIN VIDEO AREA                             */}
+          {/* ============================================ */}
           <main className="dual-scanner-main">
             <div className="relative w-full h-full bg-black">
               <video
@@ -547,12 +611,31 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                 className="w-full h-full object-contain"
               />
               
+              {/* Grid Overlay */}
+              {showGrid && (
+                <div className="absolute inset-0 pointer-events-none">
+                  {/* Rule of thirds grid */}
+                  <div className="absolute inset-0 grid grid-cols-3 grid-rows-3">
+                    <div className="border-r border-b border-white/30" />
+                    <div className="border-r border-b border-white/30" />
+                    <div className="border-b border-white/30" />
+                    <div className="border-r border-b border-white/30" />
+                    <div className="border-r border-b border-white/30" />
+                    <div className="border-b border-white/30" />
+                    <div className="border-r border-white/30" />
+                    <div className="border-r border-white/30" />
+                    <div />
+                  </div>
+                </div>
+              )}
+              
+              {/* Barcode reticle */}
               {scanMode === 'barcode' && <div className="barcode-reticle" />}
               
               {/* Ghost Mode Overlay */}
               {isGhostMode && (
                 <div className="absolute inset-0 pointer-events-none">
-                  <div className="absolute inset-0 border-4 border-purple-500/30 rounded-lg" />
+                  <div className="absolute inset-2 border-2 border-purple-500/40 rounded-lg" />
                   <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-500/80 text-white text-xs font-medium">
                     <Ghost className="h-3 w-3" />
                     Ghost Mode Active
@@ -560,29 +643,33 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                 </div>
               )}
               
+              {/* Recording indicator */}
               {isRecording && (
-                <div className="absolute top-5 left-1/2 -translate-x-1/2 bg-red-500/90 text-white px-4 py-2 rounded-full text-sm font-bold">
+                <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-red-500/90 text-white px-4 py-2 rounded-full text-sm font-bold">
                   ● REC {recordingDuration}s
                 </div>
               )}
               
+              {/* Processing indicator */}
               {isProcessing && (
-                <div className="absolute top-5 left-1/2 -translate-x-1/2 bg-blue-500/90 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2">
+                <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-blue-500/90 text-white px-4 py-2 rounded-full text-sm flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin" /> Processing...
                 </div>
               )}
             </div>
           </main>
 
-          {/* FOOTER */}
+          {/* ============================================ */}
+          {/* FOOTER                                       */}
+          {/* ============================================ */}
           <footer className="dual-scanner-footer">
-            {/* Controls */}
+            {/* Controls Row */}
             <div className="scanner-controls">
               <Button variant="ghost" size="icon" onClick={switchCamera}>
-                <FlipHorizontal />
+                <FlipHorizontal className="h-5 w-5" />
               </Button>
               <Button variant="ghost" size="icon" onClick={triggerFocus}>
-                <Focus />
+                <Focus className="h-5 w-5" />
               </Button>
               
               <input
@@ -594,7 +681,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                 onChange={handleImageUpload}
               />
               <Button variant="ghost" size="icon" onClick={() => imageInputRef.current?.click()}>
-                <Upload />
+                <Upload className="h-5 w-5" />
               </Button>
               
               <input
@@ -606,7 +693,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                 onChange={handleDocumentUpload}
               />
               <Button variant="ghost" size="icon" onClick={() => documentInputRef.current?.click()}>
-                <FileText />
+                <FileText className="h-5 w-5" />
               </Button>
             </div>
 
@@ -676,26 +763,66 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                 onClick={() => setScanMode('image')}
                 variant={scanMode === 'image' ? 'secondary' : 'ghost'}
               >
-                <ImageIcon className="mr-2" />Photo
+                <ImageIcon className="mr-2 h-4 w-4" />Photo
               </Button>
               <Button
                 onClick={() => setScanMode('barcode')}
                 variant={scanMode === 'barcode' ? 'secondary' : 'ghost'}
               >
-                <ScanLine className="mr-2" />Barcode
+                <ScanLine className="mr-2 h-4 w-4" />Barcode
               </Button>
               <Button
                 onClick={() => setScanMode('video')}
                 variant={scanMode === 'video' ? 'secondary' : 'ghost'}
               >
-                <Video className="mr-2" />Video
+                <Video className="mr-2 h-4 w-4" />Video
               </Button>
             </div>
           </footer>
         </div>
       </div>
 
-      {/* Modals */}
+      {/* ============================================ */}
+      {/* GHOST PROTOCOL SHEET/MODAL                  */}
+      {/* ============================================ */}
+      {Sheet ? (
+        <Sheet open={isGhostSheetOpen} onOpenChange={setIsGhostSheetOpen}>
+          <SheetContent side="bottom" className="h-[80vh] bg-zinc-950 border-zinc-800 overflow-y-auto">
+            <SheetHeader className="pb-4">
+              <SheetTitle className="flex items-center gap-2">
+                <Ghost className="h-5 w-5 text-purple-400" />
+                Ghost Protocol
+              </SheetTitle>
+            </SheetHeader>
+            {ghostSheetContent}
+          </SheetContent>
+        </Sheet>
+      ) : (
+        // Fallback modal if Sheet not installed
+        isGhostSheetOpen && (
+          <div className="fixed inset-0 z-50 bg-black/80 flex items-end justify-center" onClick={() => setIsGhostSheetOpen(false)}>
+            <div 
+              className="w-full max-w-lg bg-zinc-950 border-t border-zinc-800 rounded-t-2xl max-h-[80vh] overflow-y-auto"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Ghost className="h-5 w-5 text-purple-400" />
+                  <h3 className="text-lg font-semibold">Ghost Protocol</h3>
+                </div>
+                <Button variant="ghost" size="icon" onClick={() => setIsGhostSheetOpen(false)}>
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+              {ghostSheetContent}
+            </div>
+          </div>
+        )
+      )}
+
+      {/* ============================================ */}
+      {/* OTHER MODALS                                */}
+      {/* ============================================ */}
       <CameraSettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
