@@ -6,7 +6,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import ResponsiveNavigation from './ResponsiveNavigation.js';
 import NewMarketingNavigation from './NewMarketingNavigation.js';
-import DualScanner from './DualScanner.js';
+// UPDATED: Import from refactored scanner module
+import DualScanner from './scanner';
 // REMOVED OLD: import GlobalVoiceControl from './GlobalVoiceControl.js';
 import { useOracleCommandHandler } from '@/lib/command-handler';
 import OracleVisualizer from './OracleVisualizer.js';
