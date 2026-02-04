@@ -68,6 +68,11 @@ export interface UseCameraControlsReturn {
 }
 
 // =============================================================================
+// MODULE-LEVEL LOGGING CONTROL (persists across component remounts)
+// =============================================================================
+const loggedTrackIds = new Set<string>();
+
+// =============================================================================
 // DEFAULT VALUES
 // =============================================================================
 
@@ -140,8 +145,7 @@ export function useCameraControls(
   // Ref to track component mount status
   const isMounted = useRef(true);
   
-  // FIXED: Track if we've logged capabilities to prevent console spam
-  const hasLoggedRef = useRef(false);
+  // Track ID ref for detecting camera changes (still need this for other logic)
   const lastTrackIdRef = useRef<string | null>(null);
 
   // ---------------------------------------------------------------------------
@@ -153,40 +157,31 @@ export function useCameraControls(
     if (!videoTrack) {
       setCapabilities(EMPTY_CAPABILITIES);
       setIsReady(false);
-      hasLoggedRef.current = false; // Reset logging when track is removed
       lastTrackIdRef.current = null;
       return;
     }
 
     try {
-      // FIXED: Check if track changed - reset logging flag
+      // Get current track ID
       const currentTrackId = videoTrack.id || 'unknown';
-      if (lastTrackIdRef.current !== currentTrackId) {
-        hasLoggedRef.current = false;
-        lastTrackIdRef.current = currentTrackId;
-      }
+      lastTrackIdRef.current = currentTrackId;
 
       // Get the track capabilities
       const caps = videoTrack.getCapabilities?.();
       const trackSettings = videoTrack.getSettings?.();
       
       if (!caps) {
-        // FIXED: Only log once
-        if (!hasLoggedRef.current) {
+        // Log once per track ID (module-level persistence)
+        if (!loggedTrackIds.has(currentTrackId)) {
+          loggedTrackIds.add(currentTrackId);
           console.log('📷 [CONTROLS] getCapabilities() not supported');
-          hasLoggedRef.current = true;
         }
         setCapabilities(EMPTY_CAPABILITIES);
         setIsReady(false);
         return;
       }
 
-      // FIXED: Only log raw capabilities once per track
-      if (!hasLoggedRef.current) {
-        console.log('📷 [CONTROLS] Raw capabilities:', caps);
-      }
-
-      // Build our capabilities object
+      // Build our capabilities object FIRST (before any logging)
       const detected: CameraCapabilities = {
         // Torch (flashlight)
         torch: 'torch' in caps && caps.torch === true,
@@ -284,21 +279,23 @@ export function useCameraControls(
         }));
       }
 
-      // FIXED: Only log summary once per track
-      if (!hasLoggedRef.current) {
-        console.log('📷 [CONTROLS] Detected capabilities:', {
+      // FIXED: Log ONCE per camera track ID (module-level, survives remounts)
+      if (!loggedTrackIds.has(currentTrackId)) {
+        loggedTrackIds.add(currentTrackId); // Add to Set FIRST
+        console.log('📷 [CONTROLS] Raw capabilities:', caps);
+        console.log('📷 [CONTROLS] Detected:', {
           torch: detected.torch,
           zoom: detected.zoom ? `${detected.zoom.min}-${detected.zoom.max}x` : 'No',
           focusModes: detected.focusMode.join(', ') || 'None',
         });
-        hasLoggedRef.current = true;
       }
 
     } catch (err) {
-      // FIXED: Only log error once
-      if (!hasLoggedRef.current) {
+      // Log error once per track ID
+      const errorKey = `error_${videoTrack?.id || 'unknown'}`;
+      if (!loggedTrackIds.has(errorKey)) {
+        loggedTrackIds.add(errorKey);
         console.error('📷 [CONTROLS] Failed to detect capabilities:', err);
-        hasLoggedRef.current = true;
       }
       setCapabilities(EMPTY_CAPABILITIES);
       setIsReady(false);
