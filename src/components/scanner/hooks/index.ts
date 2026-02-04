@@ -1,6 +1,17 @@
 // FILE: src/components/scanner/hooks/index.ts
-// Barrel export for scanner hooks
+// Export all scanner hooks
 
-export { useCapturedItems, type CapturedItem, type UseCapturedItemsReturn } from './useCapturedItems';
-export { useCameraCapture, type CameraDevice, type UseCameraCaptureReturn } from './useCameraCapture';
-export { useVideoRecording, type VideoRecordingResult, type UseVideoRecordingReturn } from './useVideoRecording';
+export { useGhostMode } from './useGhostMode';
+export type { UseGhostModeReturn } from './useGhostMode';
+
+export { useCameraStream } from './useCameraStream';
+export type { UseCameraStreamReturn } from './useCameraStream';
+
+export { useCapturedItems } from './useCapturedItems';
+export type { UseCapturedItemsReturn, UseCapturedItemsOptions } from './useCapturedItems';
+
+export { useGridOverlay } from './useGridOverlay';
+export type { UseGridOverlayReturn } from './useGridOverlay';
+
+export { useVideoRecording } from './useVideoRecording';
+export type { UseVideoRecordingReturn, VideoRecordingResult } from './useVideoRecording';

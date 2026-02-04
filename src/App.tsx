@@ -40,7 +40,9 @@ import Onboarding from '@/pages/Onboarding';
 import BoardroomPage from '@/pages/Boardroom';
 import { FeedbackModal } from '@/components/beta/FeedbackModal';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
-import DualScanner from '@/components/DualScanner';
+
+// UPDATED: Import from refactored scanner module
+import DualScanner from '@/components/scanner';
 
 // NEW: Component to handle onboarding redirect logic
 const OnboardingGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {

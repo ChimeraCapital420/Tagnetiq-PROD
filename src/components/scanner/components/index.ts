@@ -1,4 +1,6 @@
 // FILE: src/components/scanner/components/index.ts
-// Barrel export for scanner components
+// Export all scanner UI components
 
+export { GridOverlay } from './GridOverlay';
+export { GhostProtocolSheet } from './GhostProtocolSheet';
 export { CapturePreviewGrid } from './CapturePreviewGrid';

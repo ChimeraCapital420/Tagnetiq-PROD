@@ -1,45 +1,27 @@
 // FILE: src/components/scanner/hooks/useVideoRecording.ts
-// Video recording and frame extraction
+// Video recording hook with frame extraction for analysis
+// Mobile-first: Extracts key frames instead of uploading full video
 
 import { useState, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
-
-// =============================================================================
-// TYPES
-// =============================================================================
+import { compressImage } from '../utils/compression';
 
 export interface VideoRecordingResult {
-  blob: Blob;
+  videoBlob: Blob;
+  videoUrl: string;
   thumbnail: string;
   frames: string[];
   duration: number;
 }
 
-export interface UseVideoRecordingOptions {
-  mimeType?: string;
-  frameCount?: number;
-}
-
 export interface UseVideoRecordingReturn {
   isRecording: boolean;
   duration: number;
-  
   startRecording: (stream: MediaStream) => void;
   stopRecording: () => Promise<VideoRecordingResult | null>;
-  
-  extractFrames: (videoBlob: Blob, count?: number) => Promise<string[]>;
-  generateThumbnail: (videoBlob: Blob) => Promise<string>;
 }
 
-// =============================================================================
-// HOOK
-// =============================================================================
-
-export function useVideoRecording(
-  options: UseVideoRecordingOptions = {}
-): UseVideoRecordingReturn {
-  const { mimeType = 'video/webm;codecs=vp9', frameCount = 5 } = options;
-
+export function useVideoRecording(): UseVideoRecordingReturn {
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
   
@@ -48,23 +30,26 @@ export function useVideoRecording(
   const startTimeRef = useRef<number>(0);
   const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // ========================================
-  // RECORDING CONTROL
-  // ========================================
-
+  // ==========================================================================
+  // START RECORDING
+  // ==========================================================================
   const startRecording = useCallback((stream: MediaStream) => {
     if (!stream) {
-      toast.error('No stream available for recording');
+      toast.error('No camera stream available');
       return;
     }
 
     try {
+      // Determine best supported codec
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
+        : MediaRecorder.isTypeSupported('video/webm')
+        ? 'video/webm'
+        : 'video/mp4';
+
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
-      
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
-      startTimeRef.current = Date.now();
-      setDuration(0);
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -72,163 +57,190 @@ export function useVideoRecording(
         }
       };
 
-      mediaRecorder.start(100); // Collect data every 100ms
+      mediaRecorder.start(1000); // Collect data every second
+      startTimeRef.current = Date.now();
       setIsRecording(true);
+      setDuration(0);
 
-      // Update duration display
+      // Update duration counter
       durationIntervalRef.current = setInterval(() => {
         setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
       }, 1000);
 
-      toast.info('Recording started');
+      toast.info('Recording...');
+      
+      // Haptic feedback
+      if ('vibrate' in navigator) {
+        navigator.vibrate(100);
+      }
+
     } catch (error) {
-      console.error('Recording start error:', error);
+      console.error('[VIDEO] Recording error:', error);
       toast.error('Failed to start recording');
     }
-  }, [mimeType]);
+  }, []);
 
-  const stopRecording = useCallback(async (): Promise<VideoRecordingResult | null> => {
-    if (!mediaRecorderRef.current || !isRecording) return null;
-
+  // ==========================================================================
+  // STOP RECORDING
+  // ==========================================================================
+  const stopRecording = useCallback((): Promise<VideoRecordingResult | null> => {
     return new Promise((resolve) => {
-      const mediaRecorder = mediaRecorderRef.current!;
-      
-      mediaRecorder.onstop = async () => {
-        // Clear duration interval
-        if (durationIntervalRef.current) {
-          clearInterval(durationIntervalRef.current);
-          durationIntervalRef.current = null;
-        }
+      if (!mediaRecorderRef.current || !isRecording) {
+        resolve(null);
+        return;
+      }
 
-        const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-        const finalDuration = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      // Clear duration interval
+      if (durationIntervalRef.current) {
+        clearInterval(durationIntervalRef.current);
+        durationIntervalRef.current = null;
+      }
+
+      const mediaRecorder = mediaRecorderRef.current;
+
+      mediaRecorder.onstop = async () => {
+        const videoBlob = new Blob(chunksRef.current, { type: 'video/webm' });
+        const videoUrl = URL.createObjectURL(videoBlob);
+        const recordedDuration = Math.floor((Date.now() - startTimeRef.current) / 1000);
 
         try {
-          const thumbnail = await generateThumbnail(blob);
-          const frames = await extractFrames(blob, frameCount);
+          // Extract frames for AI analysis
+          const frames = await extractVideoFrames(videoBlob, 5);
+          const thumbnail = frames[0] || await generateThumbnail(videoBlob);
 
-          setIsRecording(false);
-          setDuration(0);
+          // Compress frames for upload
+          const compressedFrames = await Promise.all(
+            frames.map(async (frame) => {
+              const result = await compressImage(frame, { maxWidth: 1280, quality: 0.8 });
+              return result.compressed;
+            })
+          );
+
+          toast.success('Video recorded!');
+          
+          // Haptic feedback
+          if ('vibrate' in navigator) {
+            navigator.vibrate([50, 30, 50]);
+          }
 
           resolve({
-            blob,
+            videoBlob,
+            videoUrl,
             thumbnail,
-            frames,
-            duration: finalDuration,
+            frames: compressedFrames,
+            duration: recordedDuration,
           });
+
         } catch (error) {
-          console.error('Video processing error:', error);
-          setIsRecording(false);
+          console.error('[VIDEO] Processing error:', error);
           resolve(null);
         }
+
+        setIsRecording(false);
+        setDuration(0);
       };
 
       mediaRecorder.stop();
     });
-  }, [isRecording, frameCount]);
-
-  // ========================================
-  // FRAME EXTRACTION
-  // ========================================
-
-  const extractFrames = useCallback(async (
-    videoBlob: Blob,
-    count: number = frameCount
-  ): Promise<string[]> => {
-    return new Promise((resolve) => {
-      const videoUrl = URL.createObjectURL(videoBlob);
-      const video = document.createElement('video');
-      video.src = videoUrl;
-      video.muted = true;
-      video.preload = 'metadata';
-
-      const frames: string[] = [];
-      let currentFrame = 0;
-
-      video.onloadedmetadata = () => {
-        const interval = video.duration / count;
-
-        const extractNext = () => {
-          if (currentFrame >= count) {
-            URL.revokeObjectURL(videoUrl);
-            resolve(frames);
-            return;
-          }
-
-          video.currentTime = Math.max(0.1, interval * currentFrame);
-        };
-
-        video.onseeked = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.min(video.videoWidth, 1280);
-          canvas.height = Math.min(video.videoHeight, 720);
-          
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            frames.push(canvas.toDataURL('image/jpeg', 0.8));
-          }
-
-          currentFrame++;
-          extractNext();
-        };
-
-        extractNext();
-      };
-
-      video.onerror = () => {
-        URL.revokeObjectURL(videoUrl);
-        resolve([]);
-      };
-
-      video.load();
-    });
-  }, [frameCount]);
-
-  const generateThumbnail = useCallback(async (videoBlob: Blob): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const videoUrl = URL.createObjectURL(videoBlob);
-      const video = document.createElement('video');
-      video.src = videoUrl;
-      video.muted = true;
-      video.preload = 'metadata';
-
-      video.onloadedmetadata = () => {
-        video.currentTime = Math.max(0.1, video.duration / 2);
-      };
-
-      video.onseeked = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.min(video.videoWidth, 400);
-        canvas.height = Math.min(video.videoHeight, 300);
-        
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          URL.revokeObjectURL(videoUrl);
-          resolve(canvas.toDataURL('image/jpeg', 0.7));
-        } else {
-          reject(new Error('Could not get canvas context'));
-        }
-      };
-
-      video.onerror = () => {
-        URL.revokeObjectURL(videoUrl);
-        reject(new Error('Video loading failed'));
-      };
-
-      video.load();
-    });
-  }, []);
+  }, [isRecording]);
 
   return {
     isRecording,
     duration,
     startRecording,
     stopRecording,
-    extractFrames,
-    generateThumbnail,
   };
+}
+
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+async function extractVideoFrames(videoBlob: Blob, frameCount: number = 5): Promise<string[]> {
+  return new Promise((resolve) => {
+    const videoUrl = URL.createObjectURL(videoBlob);
+    const tempVideo = document.createElement('video');
+    tempVideo.src = videoUrl;
+    tempVideo.muted = true;
+    tempVideo.preload = 'metadata';
+
+    const frames: string[] = [];
+    let currentFrame = 0;
+
+    tempVideo.onloadedmetadata = () => {
+      const interval = tempVideo.duration / frameCount;
+      
+      const extractFrame = () => {
+        if (currentFrame >= frameCount) {
+          URL.revokeObjectURL(videoUrl);
+          resolve(frames);
+          return;
+        }
+        tempVideo.currentTime = Math.max(0.1, interval * currentFrame);
+      };
+
+      tempVideo.onseeked = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = tempVideo.videoWidth || 640;
+        canvas.height = tempVideo.videoHeight || 480;
+        const context = canvas.getContext('2d');
+        
+        if (context) {
+          context.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+          frames.push(canvas.toDataURL('image/jpeg', 0.85));
+        }
+        
+        currentFrame++;
+        extractFrame();
+      };
+
+      extractFrame();
+    };
+
+    tempVideo.onerror = () => {
+      URL.revokeObjectURL(videoUrl);
+      resolve([]);
+    };
+
+    tempVideo.load();
+  });
+}
+
+async function generateThumbnail(videoBlob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const videoUrl = URL.createObjectURL(videoBlob);
+    const tempVideo = document.createElement('video');
+    tempVideo.src = videoUrl;
+    tempVideo.muted = true;
+    tempVideo.preload = 'metadata';
+
+    tempVideo.onloadedmetadata = () => {
+      tempVideo.currentTime = Math.max(0.1, tempVideo.duration / 2);
+    };
+
+    tempVideo.onseeked = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = tempVideo.videoWidth || 320;
+      canvas.height = tempVideo.videoHeight || 240;
+      const context = canvas.getContext('2d');
+      
+      if (context) {
+        context.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+        const thumbnail = canvas.toDataURL('image/jpeg', 0.7);
+        URL.revokeObjectURL(videoUrl);
+        resolve(thumbnail);
+      } else {
+        reject(new Error('Could not generate thumbnail'));
+      }
+    };
+
+    tempVideo.onerror = () => {
+      URL.revokeObjectURL(videoUrl);
+      reject(new Error('Video loading failed'));
+    };
+
+    tempVideo.load();
+  });
 }
 
 export default useVideoRecording;

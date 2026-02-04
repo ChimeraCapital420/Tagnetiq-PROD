@@ -1,99 +1,115 @@
 // FILE: src/components/scanner/hooks/useCapturedItems.ts
-// State management for captured photos, videos, and documents
+// Manages captured items state with selection, compression, and removal
+// Mobile-first: Device-side compression before upload
 
 import { useState, useCallback } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import { toast } from 'sonner';
-import type { StoredImage } from '@/lib/image-storage';
+import type { CapturedItem, CapturedItemMetadata, AnalysisPayloadItem } from '../types';
+import { compressImage, formatBytes } from '../utils/compression';
 
 // =============================================================================
 // TYPES
 // =============================================================================
-
-export interface CapturedItem {
-  id: string;
-  type: 'photo' | 'video' | 'document';
-  storedImage: StoredImage;
-  name: string;
-  selected: boolean;
-  metadata?: {
-    documentType?: 'certificate' | 'grading' | 'appraisal' | 'receipt' | 'authenticity' | 'other';
-    barcodes?: string[];
-    videoFrames?: string[];
-  };
-}
-
 export interface UseCapturedItemsOptions {
   maxItems?: number;
 }
 
 export interface UseCapturedItemsReturn {
   items: CapturedItem[];
-  selectedItems: CapturedItem[];
   selectedCount: number;
   totalCount: number;
+  isCompressing: boolean;
   
-  addItem: (item: Omit<CapturedItem, 'selected'>) => void;
+  // Actions
+  addItem: (item: Omit<CapturedItem, 'id' | 'selected'>) => Promise<void>;
   removeItem: (id: string) => void;
-  clearAll: () => void;
-  
   toggleSelection: (id: string) => void;
   selectAll: () => void;
   deselectAll: () => void;
+  clearAll: () => void;
   
-  updateItemMetadata: (id: string, metadata: Partial<CapturedItem['metadata']>) => void;
-  
-  // For analysis - get compressed data
-  getAnalysisPayload: () => Array<{
-    type: string;
-    name: string;
-    data: string;
-    metadata: CapturedItem['metadata'];
-  }>;
-  
-  // For marketplace - get original URLs
+  // Helpers
+  getSelectedItems: () => CapturedItem[];
+  getAnalysisPayload: () => AnalysisPayloadItem[];
   getOriginalUrls: () => string[];
 }
 
 // =============================================================================
 // HOOK
 // =============================================================================
-
-export function useCapturedItems(
-  options: UseCapturedItemsOptions = {}
-): UseCapturedItemsReturn {
+export function useCapturedItems(options: UseCapturedItemsOptions = {}): UseCapturedItemsReturn {
   const { maxItems = 15 } = options;
   
   const [items, setItems] = useState<CapturedItem[]>([]);
+  const [isCompressing, setIsCompressing] = useState(false);
 
-  // ========================================
-  // ADD/REMOVE
-  // ========================================
+  // ==========================================================================
+  // ADD ITEM (with compression)
+  // ==========================================================================
+  const addItem = useCallback(async (item: Omit<CapturedItem, 'id' | 'selected'>) => {
+    if (items.length >= maxItems) {
+      toast.error(`Maximum ${maxItems} items reached`);
+      return;
+    }
 
-  const addItem = useCallback((item: Omit<CapturedItem, 'selected'>) => {
-    setItems(prev => {
-      if (prev.length >= maxItems) {
-        toast.warning(`Maximum ${maxItems} items reached`);
-        return prev;
+    setIsCompressing(true);
+
+    try {
+      let processedData = item.data;
+      let originalData = item.data;
+      let metadata: CapturedItemMetadata = { ...item.metadata };
+
+      // Compress images on device (mobile-first approach)
+      if (item.type === 'photo' || item.type === 'document') {
+        const result = await compressImage(item.data);
+        processedData = result.compressed;
+        metadata.originalSize = result.originalSize;
+        metadata.compressedSize = result.compressedSize;
+
+        // Show compression toast if significant savings
+        if (result.originalSize > 1024 * 1024 && result.compressedSize < result.originalSize * 0.7) {
+          toast.info(`Compressed: ${formatBytes(result.originalSize)} → ${formatBytes(result.compressedSize)}`);
+        }
       }
-      return [...prev, { ...item, selected: true }];
-    });
-  }, [maxItems]);
 
+      const newItem: CapturedItem = {
+        ...item,
+        id: uuidv4(),
+        selected: true,
+        data: processedData,
+        originalData,
+        thumbnail: item.type === 'document' ? item.thumbnail : processedData,
+        metadata,
+      };
+
+      setItems(prev => [...prev, newItem].slice(-maxItems));
+
+      // Haptic feedback
+      if ('vibrate' in navigator) {
+        navigator.vibrate(50);
+      }
+
+    } catch (error) {
+      console.error('[CAPTURE] Error processing item:', error);
+      toast.error('Failed to process image');
+    } finally {
+      setIsCompressing(false);
+    }
+  }, [items.length, maxItems]);
+
+  // ==========================================================================
+  // REMOVE ITEM
+  // ==========================================================================
   const removeItem = useCallback((id: string) => {
     setItems(prev => prev.filter(item => item.id !== id));
   }, []);
 
-  const clearAll = useCallback(() => {
-    setItems([]);
-    toast.info('All items cleared');
-  }, []);
-
-  // ========================================
-  // SELECTION
-  // ========================================
-
+  // ==========================================================================
+  // SELECTION MANAGEMENT
+  // ==========================================================================
   const toggleSelection = useCallback((id: string) => {
-    setItems(prev => prev.map(item =>
+    setItems(prev => prev.map(item => 
       item.id === id ? { ...item, selected: !item.selected } : item
     ));
   }, []);
@@ -106,65 +122,59 @@ export function useCapturedItems(
     setItems(prev => prev.map(item => ({ ...item, selected: false })));
   }, []);
 
-  // ========================================
-  // METADATA
-  // ========================================
-
-  const updateItemMetadata = useCallback((
-    id: string,
-    metadata: Partial<CapturedItem['metadata']>
-  ) => {
-    setItems(prev => prev.map(item =>
-      item.id === id
-        ? { ...item, metadata: { ...item.metadata, ...metadata } }
-        : item
-    ));
+  const clearAll = useCallback(() => {
+    setItems([]);
+    toast.info('All items cleared');
   }, []);
 
-  // ========================================
-  // DATA EXTRACTION
-  // ========================================
+  // ==========================================================================
+  // HELPERS
+  // ==========================================================================
+  const getSelectedItems = useCallback(() => {
+    return items.filter(item => item.selected);
+  }, [items]);
 
-  const selectedItems = items.filter(item => item.selected);
-  const selectedCount = selectedItems.length;
-  const totalCount = items.length;
-
-  const getAnalysisPayload = useCallback(() => {
-    return selectedItems.map(item => {
-      // Use compressed analysis data (NOT original)
-      let data = item.storedImage.analysisData;
-      
-      // Strip data URL prefix if present
-      if (data.includes(',')) {
-        data = data.split(',')[1];
-      }
-      
-      return {
+  const getAnalysisPayload = useCallback((): AnalysisPayloadItem[] => {
+    return items
+      .filter(item => item.selected)
+      .map(item => ({
         type: item.type,
         name: item.name,
-        data,
-        metadata: item.metadata || {},
-      };
-    });
-  }, [selectedItems]);
+        data: item.data,
+        additionalFrames: item.metadata?.videoFrames,
+        metadata: {
+          documentType: item.metadata?.documentType,
+          extractedText: item.metadata?.extractedText || '',
+          barcodes: item.metadata?.barcodes || [],
+        },
+      }));
+  }, [items]);
 
   const getOriginalUrls = useCallback(() => {
-    // Return full-quality URLs for marketplace
-    return selectedItems.map(item => item.storedImage.originalUrl);
-  }, [selectedItems]);
+    return items
+      .filter(item => item.selected)
+      .map(item => item.originalData || item.data)
+      .filter(url => !url.startsWith('blob:'));
+  }, [items]);
+
+  // ==========================================================================
+  // COMPUTED VALUES
+  // ==========================================================================
+  const selectedCount = items.filter(item => item.selected).length;
+  const totalCount = items.length;
 
   return {
     items,
-    selectedItems,
     selectedCount,
     totalCount,
+    isCompressing,
     addItem,
     removeItem,
-    clearAll,
     toggleSelection,
     selectAll,
     deselectAll,
-    updateItemMetadata,
+    clearAll,
+    getSelectedItems,
     getAnalysisPayload,
     getOriginalUrls,
   };

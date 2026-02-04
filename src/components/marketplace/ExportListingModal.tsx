@@ -1,6 +1,6 @@
 // FILE: src/components/marketplace/ExportListingModal.tsx
 // Main modal - thin orchestrator that composes the form and export tabs
-// Refactored from 1129-line monolith to clean modular architecture
+// FIXED: Safe toLocaleString calls with null checks
 
 import React, { useState } from 'react';
 import { ExternalLink, Sparkles, Image as ImageIcon } from 'lucide-react';
@@ -22,6 +22,17 @@ import type { MarketplaceItem } from './platforms/types';
 // Re-export types for backwards compatibility
 export type { MarketplaceItem, FormattedListing, PlatformConfig } from './platforms/types';
 
+// =============================================================================
+// SAFE NUMBER FORMATTER - Prevents toLocaleString crashes
+// =============================================================================
+function safePrice(value: number | string | null | undefined, fallback = 0): string {
+  const num = typeof value === 'string' ? parseFloat(value) : value;
+  if (num == null || isNaN(num)) {
+    return fallback.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 interface ExportListingModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -36,7 +47,12 @@ export const ExportListingModal: React.FC<ExportListingModalProps> = ({
   onListOnTagnetiq,
 }) => {
   const [activeTab, setActiveTab] = useState('tagnetiq');
-  const [customDescription, setCustomDescription] = useState(item.description || '');
+  const [customDescription, setCustomDescription] = useState(item?.description || '');
+
+  // Early return if no item
+  if (!item) {
+    return null;
+  }
 
   const handleListOnTagnetiq = async (
     itemToList: MarketplaceItem,
@@ -47,6 +63,11 @@ export const ExportListingModal: React.FC<ExportListingModalProps> = ({
       await onListOnTagnetiq(itemToList, price, description);
     }
   };
+
+  // Safe item values
+  const itemName = item.item_name || item.title || item.name || 'Unknown Item';
+  const askingPrice = item.asking_price ?? item.price ?? item.estimatedValue ?? 0;
+  const imageUrl = item.primary_photo_url || item.imageUrl || item.image_url || '';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -65,10 +86,10 @@ export const ExportListingModal: React.FC<ExportListingModalProps> = ({
         <div className="px-6 py-3 border-y border-zinc-800/50 bg-zinc-900/30">
           <div className="flex gap-4">
             <div className="w-16 h-16 rounded-lg overflow-hidden bg-zinc-800 flex-shrink-0">
-              {item.primary_photo_url ? (
+              {imageUrl ? (
                 <img
-                  src={item.primary_photo_url}
-                  alt={item.item_name}
+                  src={imageUrl}
+                  alt={itemName}
                   className="w-full h-full object-cover"
                 />
               ) : (
@@ -78,10 +99,10 @@ export const ExportListingModal: React.FC<ExportListingModalProps> = ({
               )}
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-white truncate text-sm">{item.item_name}</h3>
+              <h3 className="font-semibold text-white truncate text-sm">{itemName}</h3>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-primary font-bold">
-                  ${item.asking_price.toLocaleString()}
+                  ${safePrice(askingPrice)}
                 </span>
                 {item.is_verified && (
                   <Badge
@@ -91,12 +112,12 @@ export const ExportListingModal: React.FC<ExportListingModalProps> = ({
                     Verified
                   </Badge>
                 )}
-                {item.confidence_score && item.confidence_score > 0.8 && (
+                {item.confidence_score != null && item.confidence_score > 0.8 && (
                   <Badge
                     variant="secondary"
                     className="bg-blue-500/20 text-blue-400 border-0 text-[10px]"
                   >
-                    {Math.round(item.confidence_score * 100)}% confident
+                    {Math.round((item.confidence_score || 0) * 100)}% confident
                   </Badge>
                 )}
               </div>
