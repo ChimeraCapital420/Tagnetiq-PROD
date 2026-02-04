@@ -1,6 +1,7 @@
 // FILE: src/hooks/useCameraControls.ts
 // Real camera track controls using MediaStream capabilities
 // Mobile-first: battery-conscious, graceful degradation
+// FIXED: Added hasLoggedRef to prevent console spam on every render
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
@@ -138,6 +139,10 @@ export function useCameraControls(
 
   // Ref to track component mount status
   const isMounted = useRef(true);
+  
+  // FIXED: Track if we've logged capabilities to prevent console spam
+  const hasLoggedRef = useRef(false);
+  const lastTrackIdRef = useRef<string | null>(null);
 
   // ---------------------------------------------------------------------------
   // DETECT CAPABILITIES
@@ -148,22 +153,38 @@ export function useCameraControls(
     if (!videoTrack) {
       setCapabilities(EMPTY_CAPABILITIES);
       setIsReady(false);
+      hasLoggedRef.current = false; // Reset logging when track is removed
+      lastTrackIdRef.current = null;
       return;
     }
 
     try {
+      // FIXED: Check if track changed - reset logging flag
+      const currentTrackId = videoTrack.id || 'unknown';
+      if (lastTrackIdRef.current !== currentTrackId) {
+        hasLoggedRef.current = false;
+        lastTrackIdRef.current = currentTrackId;
+      }
+
       // Get the track capabilities
       const caps = videoTrack.getCapabilities?.();
       const trackSettings = videoTrack.getSettings?.();
       
       if (!caps) {
-        console.log('📷 [CONTROLS] getCapabilities() not supported');
+        // FIXED: Only log once
+        if (!hasLoggedRef.current) {
+          console.log('📷 [CONTROLS] getCapabilities() not supported');
+          hasLoggedRef.current = true;
+        }
         setCapabilities(EMPTY_CAPABILITIES);
         setIsReady(false);
         return;
       }
 
-      console.log('📷 [CONTROLS] Raw capabilities:', caps);
+      // FIXED: Only log raw capabilities once per track
+      if (!hasLoggedRef.current) {
+        console.log('📷 [CONTROLS] Raw capabilities:', caps);
+      }
 
       // Build our capabilities object
       const detected: CameraCapabilities = {
@@ -263,15 +284,22 @@ export function useCameraControls(
         }));
       }
 
-      // Log summary
-      console.log('📷 [CONTROLS] Detected capabilities:', {
-        torch: detected.torch,
-        zoom: detected.zoom ? `${detected.zoom.min}-${detected.zoom.max}x` : 'No',
-        focusModes: detected.focusMode.join(', ') || 'None',
-      });
+      // FIXED: Only log summary once per track
+      if (!hasLoggedRef.current) {
+        console.log('📷 [CONTROLS] Detected capabilities:', {
+          torch: detected.torch,
+          zoom: detected.zoom ? `${detected.zoom.min}-${detected.zoom.max}x` : 'No',
+          focusModes: detected.focusMode.join(', ') || 'None',
+        });
+        hasLoggedRef.current = true;
+      }
 
     } catch (err) {
-      console.error('📷 [CONTROLS] Failed to detect capabilities:', err);
+      // FIXED: Only log error once
+      if (!hasLoggedRef.current) {
+        console.error('📷 [CONTROLS] Failed to detect capabilities:', err);
+        hasLoggedRef.current = true;
+      }
       setCapabilities(EMPTY_CAPABILITIES);
       setIsReady(false);
     }
@@ -305,6 +333,7 @@ export function useCameraControls(
     setError(null);
 
     try {
+      // Only log constraint applications (these are user-initiated, so OK to log)
       console.log('📷 [CONTROLS] Applying constraints:', constraints);
       await videoTrack.applyConstraints(constraints);
       

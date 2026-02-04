@@ -1,8 +1,9 @@
 // FILE: src/components/AnalysisResult.tsx
 // STATUS: HYDRA v6.2 - With Error Boundary
 // ULTRA-DEFENSIVE: Cannot crash on any malformed data
+// FIXED: ListOnMarketplaceButton props (item + ghostData)
 
-import React, { useState, Component, ErrorInfo, ReactNode } from 'react';
+import React, { useState, useMemo, Component, ErrorInfo, ReactNode } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -140,6 +141,31 @@ const AnalysisResultContent: React.FC = () => {
   const historyItem = isViewingHistory && currentAnalysisIndex !== null && analysisHistory
     ? analysisHistory[currentAnalysisIndex] 
     : null;
+
+  // ==========================================================================
+  // FIXED: Convert AnalysisResult to MarketplaceItem format
+  // ListOnMarketplaceButton expects "item" prop, not "analysisResult"
+  // ==========================================================================
+  const safeImageUrlsForItem = imageUrls.length > 0 ? imageUrls : (imageUrl ? [imageUrl] : []);
+  
+  const marketplaceItem = {
+    id: id || '',
+    title: itemName,
+    name: itemName,
+    description: summary_reasoning || `${itemName} - AI analyzed item`,
+    price: estimatedValue,
+    estimatedValue: estimatedValue,
+    category: category,
+    imageUrl: safeImageUrlsForItem[0] || '',
+    imageUrls: safeImageUrlsForItem,
+    images: safeImageUrlsForItem,
+    thumbnailUrl: safeImageUrlsForItem[0] || '',
+    confidenceScore: confidenceScore,
+    valuation_factors: valuation_factors,
+    tags: lastAnalysisResult.tags || [],
+    condition: 'good',
+    created_at: new Date().toISOString(),
+  };
 
   const handleClear = () => {
     setLastAnalysisResult(null);
@@ -397,10 +423,10 @@ const AnalysisResultContent: React.FC = () => {
               {!isViewingHistory ? (
                 <>
                   <AddToVaultButton analysisResult={lastAnalysisResult} onSuccess={handleClear} />
+                  {/* FIXED: Pass "item" prop (MarketplaceItem) + "ghostData" prop */}
                   <ListOnMarketplaceButton 
-                    analysisResult={lastAnalysisResult} 
-                    onSuccess={handleClear}
-                    isGhostListing={!!ghostData}
+                    item={marketplaceItem}
+                    ghostData={ghostData || null}
                   />
                   <Button variant="secondary" className="w-full" onClick={() => toast.info('Social sharing coming soon!')}>
                     Share to Social
