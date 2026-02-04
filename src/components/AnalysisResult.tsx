@@ -145,26 +145,77 @@ const AnalysisResultContent: React.FC = () => {
   // ==========================================================================
   // FIXED: Convert AnalysisResult to MarketplaceItem format
   // ListOnMarketplaceButton expects "item" prop, not "analysisResult"
+  // ULTRA-DEFENSIVE: All numeric fields default to 0, all strings have fallbacks
   // ==========================================================================
   const safeImageUrlsForItem = imageUrls.length > 0 ? imageUrls : (imageUrl ? [imageUrl] : []);
+  const nowISO = new Date().toISOString();
   
   const marketplaceItem = {
-    id: id || '',
-    title: itemName,
-    name: itemName,
-    description: summary_reasoning || `${itemName} - AI analyzed item`,
-    price: estimatedValue,
-    estimatedValue: estimatedValue,
-    category: category,
+    // IDs
+    id: id || `temp_${Date.now()}`,
+    listing_id: id || `temp_${Date.now()}`,
+    
+    // Names/Titles
+    title: itemName || 'Unknown Item',
+    name: itemName || 'Unknown Item',
+    itemName: itemName || 'Unknown Item',
+    
+    // Description
+    description: summary_reasoning || `${itemName || 'Item'} - AI analyzed collectible`,
+    summary_reasoning: summary_reasoning || '',
+    
+    // PRICES - All must be numbers for .toLocaleString()
+    price: safeNumber(estimatedValue, 0),
+    estimatedValue: safeNumber(estimatedValue, 0),
+    estimated_value: safeNumber(estimatedValue, 0),
+    listPrice: safeNumber(estimatedValue, 0),
+    list_price: safeNumber(estimatedValue, 0),
+    marketPrice: safeNumber(estimatedValue, 0),
+    market_price: safeNumber(estimatedValue, 0),
+    suggestedPrice: safeNumber(estimatedValue, 0),
+    suggested_price: safeNumber(estimatedValue, 0),
+    
+    // Category
+    category: category || 'general',
+    
+    // Images
     imageUrl: safeImageUrlsForItem[0] || '',
+    image_url: safeImageUrlsForItem[0] || '',
     imageUrls: safeImageUrlsForItem,
+    image_urls: safeImageUrlsForItem,
     images: safeImageUrlsForItem,
     thumbnailUrl: safeImageUrlsForItem[0] || '',
-    confidenceScore: confidenceScore,
-    valuation_factors: valuation_factors,
+    thumbnail_url: safeImageUrlsForItem[0] || '',
+    
+    // Confidence
+    confidenceScore: safeNumber(confidenceScore, 0),
+    confidence_score: safeNumber(confidenceScore, 0),
+    confidence: safeNumber(confidenceScore, 0),
+    
+    // Arrays
+    valuation_factors: valuation_factors || [],
     tags: lastAnalysisResult.tags || [],
-    condition: 'good',
-    created_at: new Date().toISOString(),
+    
+    // Status/Condition
+    condition: lastAnalysisResult.condition || 'good',
+    status: 'draft',
+    
+    // DATES - All must be valid ISO strings for Date parsing
+    created_at: nowISO,
+    createdAt: nowISO,
+    updated_at: nowISO,
+    updatedAt: nowISO,
+    listed_at: nowISO,
+    listedAt: nowISO,
+    
+    // Seller info (may be needed)
+    seller_id: lastAnalysisResult.seller_id || '',
+    sellerId: lastAnalysisResult.seller_id || '',
+    
+    // Ghost data passthrough
+    ghostData: ghostData || null,
+    ghost_data: ghostData || null,
+    is_ghost: !!ghostData,
   };
 
   const handleClear = () => {
