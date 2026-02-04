@@ -1,6 +1,6 @@
 // FILE: src/components/marketplace/TagnetiqListingForm.tsx
 // TagnetIQ listing form with AI description distinction + Ghost Protocol support
-// UPDATED: Ghost mode handling time, disclaimer, and KPI capture
+// FIXED: Safe property access, correct GhostData structure
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
@@ -17,6 +17,19 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { MarketplaceItem } from './platforms/types';
 import type { GhostData } from '@/hooks/useGhostMode';
+
+// =============================================================================
+// SAFE VALUE HELPERS - Prevent crashes on undefined
+// =============================================================================
+function safeNumber(value: number | string | null | undefined, fallback = 0): number {
+  if (value == null) return fallback;
+  const num = typeof value === 'string' ? parseFloat(value) : value;
+  return isNaN(num) ? fallback : num;
+}
+
+function safeString(value: string | null | undefined, fallback = ''): string {
+  return value ?? fallback;
+}
 
 // Zippopotam.us API response type
 interface ZipLookupResult {
@@ -36,7 +49,7 @@ interface TagnetiqListingFormProps {
   item: MarketplaceItem;
   onSubmit: (item: MarketplaceItem, price: number, description: string, ghostData?: GhostData) => Promise<void>;
   disabled?: boolean;
-  ghostData?: GhostData | null;  // NEW: Ghost data from analysis
+  ghostData?: GhostData | null;
 }
 
 export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
@@ -45,8 +58,11 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
   disabled = false,
   ghostData = null,
 }) => {
+  // FIXED: Safe access to asking_price with fallback
+  const initialPrice = safeNumber(item?.asking_price ?? item?.price ?? item?.estimatedValue, 0);
+  
   // Form state
-  const [price, setPrice] = useState(item.asking_price.toString());
+  const [price, setPrice] = useState(initialPrice.toString());
   const [includeAiDescription, setIncludeAiDescription] = useState(true);
   const [sellerNotes, setSellerNotes] = useState('');
   
@@ -64,19 +80,33 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isListed, setIsListed] = useState(false);
 
-  // Ghost-specific state
+  // Ghost-specific state - FIXED: Safe access
   const isGhostListing = !!ghostData?.is_ghost;
+  
+  // FIXED: Safe ghost data accessors with fallbacks
+  // Support both old structure (timer.handling_hours, store.shelf_price) and new (handling_time_hours, pricing.shelf_price)
+  const ghostShelfPrice = safeNumber(
+    ghostData?.pricing?.shelf_price ?? ghostData?.store?.shelf_price, 
+    0
+  );
+  const ghostEstimatedMargin = safeNumber(ghostData?.kpis?.estimated_margin, 0);
+  const ghostVelocityScore = safeString(ghostData?.kpis?.velocity_score, 'medium');
+  const ghostHandlingHours = safeNumber(
+    ghostData?.handling_time_hours ?? (ghostData as any)?.timer?.handling_hours, 
+    24
+  );
+  const ghostStoreName = safeString(ghostData?.store?.name, 'Store');
+  const ghostStoreAisle = ghostData?.store?.aisle;
 
   // Initialize from ghost data if available
   useEffect(() => {
-    if (ghostData?.store?.name) {
-      // Pre-fill store name as location hint
+    if (ghostStoreName && ghostStoreName !== 'Store') {
       setSellerNotes(prev => {
         if (prev) return prev;
-        return `Found at: ${ghostData.store.name}${ghostData.store.aisle ? ` (${ghostData.store.aisle})` : ''}`;
+        return `Found at: ${ghostStoreName}${ghostStoreAisle ? ` (${ghostStoreAisle})` : ''}`;
       });
     }
-  }, [ghostData]);
+  }, [ghostStoreName, ghostStoreAisle]);
 
   // Computed full location string
   const itemLocation = useMemo(() => {
@@ -140,7 +170,7 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
   const finalDescription = useMemo(() => {
     let description = '';
     
-    if (includeAiDescription && item.description) {
+    if (includeAiDescription && item?.description) {
       description += item.description;
     }
     
@@ -157,34 +187,30 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
     }
 
     // Add ghost disclaimer
-    if (isGhostListing && ghostData) {
-      description += `\n\n⏱️ Handling Time: ${ghostData.timer.handling_hours} hours`;
+    if (isGhostListing) {
+      description += `\n\n⏱️ Handling Time: ${ghostHandlingHours} hours`;
     }
     
     return description.trim();
-  }, [includeAiDescription, item.description, sellerNotes, itemLocation, offersShipping, offersLocalPickup, isGhostListing, ghostData]);
+  }, [includeAiDescription, item?.description, sellerNotes, itemLocation, offersShipping, offersLocalPickup, isGhostListing, ghostHandlingHours]);
 
   const handleSubmit = async () => {
-    if (!finalDescription || finalDescription.length < 20) {
-      const paddedDescription = finalDescription || `${item.item_name}. Listed on TagnetIQ Marketplace.`;
-      setIsSubmitting(true);
-      try {
-        await onSubmit(item, parseFloat(price) || item.asking_price, paddedDescription, ghostData || undefined);
-        setIsListed(true);
-      } finally {
-        setIsSubmitting(false);
-      }
-      return;
-    }
-
+    const submitPrice = parseFloat(price) || initialPrice;
+    const submitDescription = finalDescription || `${item?.item_name || 'Item'}. Listed on TagnetIQ Marketplace.`;
+    
     setIsSubmitting(true);
     try {
-      await onSubmit(item, parseFloat(price) || item.asking_price, finalDescription, ghostData || undefined);
+      await onSubmit(item, submitPrice, submitDescription, ghostData || undefined);
       setIsListed(true);
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  // Safe item values
+  const itemName = safeString(item?.item_name ?? item?.title ?? item?.name, 'Unknown Item');
+  const itemDescription = item?.description;
+  const itemEstimatedValue = safeNumber(item?.estimated_value ?? item?.estimatedValue, 0);
 
   return (
     <div className="space-y-5 max-w-lg">
@@ -195,24 +221,24 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
             <Ghost className="h-5 w-5 text-purple-400" />
             <span className="font-medium text-purple-300">Ghost Protocol Active</span>
             <Badge variant="outline" className="border-purple-500/50 text-purple-400 text-[10px]">
-              {ghostData.kpis.velocity_score.toUpperCase()} VELOCITY
+              {ghostVelocityScore.toUpperCase()} VELOCITY
             </Badge>
           </div>
           
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="rounded bg-zinc-900/50 p-2">
               <p className="text-xs text-zinc-500">Shelf Price</p>
-              <p className="text-sm font-mono text-white">${ghostData.store.shelf_price.toFixed(2)}</p>
+              <p className="text-sm font-mono text-white">${ghostShelfPrice.toFixed(2)}</p>
             </div>
             <div className="rounded bg-zinc-900/50 p-2">
               <p className="text-xs text-zinc-500">Est. Profit</p>
               <p className="text-sm font-mono text-emerald-400">
-                ${ghostData.kpis.estimated_margin.toFixed(2)}
+                ${ghostEstimatedMargin.toFixed(2)}
               </p>
             </div>
             <div className="rounded bg-zinc-900/50 p-2">
               <p className="text-xs text-zinc-500">Handling</p>
-              <p className="text-sm font-mono text-yellow-400">{ghostData.timer.handling_hours}hr</p>
+              <p className="text-sm font-mono text-yellow-400">{ghostHandlingHours}hr</p>
             </div>
           </div>
 
@@ -220,8 +246,8 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
             <AlertTriangle className="h-3.5 w-3.5 text-yellow-500 flex-shrink-0 mt-0.5" />
             <p className="text-[10px] text-yellow-400">
               You don't own this item yet. When it sells, you'll receive a fulfillment alert to retrieve it from{' '}
-              <strong>{ghostData.store.name}</strong>
-              {ghostData.store.aisle && ` (${ghostData.store.aisle})`}.
+              <strong>{ghostStoreName}</strong>
+              {ghostStoreAisle && ` (${ghostStoreAisle})`}.
             </p>
           </div>
         </div>
@@ -243,15 +269,15 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
           />
         </div>
         <div className="flex items-center justify-between text-xs">
-          {item.estimated_value && (
+          {itemEstimatedValue > 0 && (
             <p className="text-zinc-500 flex items-center gap-1">
               <Sparkles className="h-3 w-3 text-primary" />
-              HYDRA Estimate: ${item.estimated_value.toLocaleString()}
+              HYDRA Estimate: ${itemEstimatedValue.toLocaleString()}
             </p>
           )}
-          {isGhostListing && ghostData && (
+          {isGhostListing && ghostShelfPrice > 0 && (
             <p className="text-emerald-500">
-              Margin: ${(parseFloat(price) - ghostData.store.shelf_price).toFixed(2)}
+              Margin: ${(parseFloat(price) - ghostShelfPrice).toFixed(2)}
             </p>
           )}
         </div>
@@ -271,7 +297,7 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
               id="includeAI"
               checked={includeAiDescription}
               onCheckedChange={(checked) => setIncludeAiDescription(checked as boolean)}
-              disabled={disabled || isListed || !item.description}
+              disabled={disabled || isListed || !itemDescription}
             />
             <Label htmlFor="includeAI" className="text-xs text-zinc-400 cursor-pointer">
               Include in listing
@@ -279,7 +305,7 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
           </div>
         </div>
 
-        {item.description ? (
+        {itemDescription ? (
           <div
             className={cn(
               'rounded-lg border p-3 transition-all',
@@ -289,13 +315,13 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
             )}
           >
             <p className="text-sm text-zinc-300 italic leading-relaxed">
-              {item.description}
+              {itemDescription}
             </p>
             <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-zinc-800/50">
               <Sparkles className="h-3 w-3 text-primary flex-shrink-0" />
               <span className="text-[10px] text-zinc-500">Generated by HYDRA AI</span>
               
-              {item.authoritySource && (
+              {item?.authoritySource && (
                 <>
                   <span className="text-zinc-700">•</span>
                   <span className="text-[10px] text-zinc-500">
@@ -304,7 +330,7 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
                 </>
               )}
               
-              {item.numista_url && (
+              {item?.numista_url && (
                 <a 
                   href={item.numista_url} 
                   target="_blank" 
@@ -316,7 +342,7 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
                   Numista
                 </a>
               )}
-              {item.googlebooks_url && (
+              {item?.googlebooks_url && (
                 <a 
                   href={item.googlebooks_url} 
                   target="_blank" 
@@ -328,7 +354,7 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
                   Google Books
                 </a>
               )}
-              {item.colnect_url && (
+              {item?.colnect_url && (
                 <a 
                   href={item.colnect_url} 
                   target="_blank" 
@@ -488,8 +514,8 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
       <div className="space-y-2">
         <Label className="text-xs text-zinc-500">Final Listing Preview</Label>
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/30 p-3 text-sm max-h-40 overflow-y-auto">
-          {includeAiDescription && item.description && (
-            <p className="text-zinc-300 italic mb-2">{item.description}</p>
+          {includeAiDescription && itemDescription && (
+            <p className="text-zinc-300 italic mb-2">{itemDescription}</p>
           )}
           {sellerNotes && (
             <p className="text-zinc-100">{sellerNotes}</p>
@@ -501,9 +527,9 @@ export const TagnetiqListingForm: React.FC<TagnetiqListingFormProps> = ({
               {offersLocalPickup && ' • Local pickup'}
             </p>
           )}
-          {isGhostListing && ghostData && (
+          {isGhostListing && (
             <p className="text-yellow-500 text-xs mt-2">
-              ⏱️ Handling Time: {ghostData.timer.handling_hours} hours
+              ⏱️ Handling Time: {ghostHandlingHours} hours
             </p>
           )}
           {!finalDescription && (
