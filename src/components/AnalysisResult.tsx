@@ -1,8 +1,8 @@
 // FILE: src/components/AnalysisResult.tsx
-// STATUS: HYDRA v6.0 - Universal Authority Report Card Integration
-// FIXED: Added null checks to prevent "Cannot read properties of undefined" crashes
+// STATUS: HYDRA v6.2 - With Error Boundary
+// ULTRA-DEFENSIVE: Cannot crash on any malformed data
 
-import React, { useState } from 'react';
+import React, { useState, Component, ErrorInfo, ReactNode } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -14,13 +14,89 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { CheckCircle, Star, WandSparkles, Loader2, Trash2, Ghost } from 'lucide-react';
+import { CheckCircle, Star, WandSparkles, Loader2, Trash2, Ghost, AlertTriangle } from 'lucide-react';
 import { HydraConsensusDisplay } from './HydraConsensusDisplay.js';
 import { AnalysisHistoryNavigator } from './AnalysisHistoryNavigator.js';
 import { AuthorityReportCard } from './AuthorityReportCard.js';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
 
-const AnalysisResult: React.FC = () => {
+// =============================================================================
+// ERROR BOUNDARY - Catches ANY crash and shows fallback
+// =============================================================================
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error?: Error;
+}
+
+class AnalysisErrorBoundary extends Component<{ children: ReactNode; onClear: () => void }, ErrorBoundaryState> {
+  constructor(props: { children: ReactNode; onClear: () => void }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('AnalysisResult Error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <Card className="w-full max-w-4xl mx-auto border-red-500/50 bg-red-50/50 dark:bg-red-950/20">
+          <CardContent className="p-6 text-center">
+            <AlertTriangle className="h-12 w-12 mx-auto text-red-500 mb-4" />
+            <h3 className="text-lg font-semibold mb-2">Display Error</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              There was a problem displaying this analysis result.
+            </p>
+            <p className="text-xs text-red-500 font-mono mb-4">
+              {this.state.error?.message || 'Unknown error'}
+            </p>
+            <Button onClick={this.props.onClear} variant="outline">
+              Clear & Try Again
+            </Button>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+// =============================================================================
+// SAFE HELPERS
+// =============================================================================
+
+const safeString = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  return '';
+};
+
+const safeNumber = (value: unknown, defaultValue = 0): number => {
+  if (typeof value === 'number' && !isNaN(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = parseFloat(value);
+    if (!isNaN(parsed)) return parsed;
+  }
+  return defaultValue;
+};
+
+const safeArray = <T,>(value: unknown): T[] => {
+  if (Array.isArray(value)) return value;
+  return [];
+};
+
+// =============================================================================
+// MAIN COMPONENT
+// =============================================================================
+
+const AnalysisResultContent: React.FC = () => {
   const { 
     lastAnalysisResult, 
     setLastAnalysisResult,
@@ -43,25 +119,25 @@ const AnalysisResult: React.FC = () => {
     return null;
   }
 
-  // SAFE DESTRUCTURING with defaults to prevent crashes
-  const {
-    id = '',
-    itemName = 'Unknown Item',
-    estimatedValue = 0,
-    confidenceScore = 0,
-    summary_reasoning = '',
-    valuation_factors = [],
-    imageUrl = '',
-    imageUrls = [],
-    category = 'general',
-    hydraConsensus,
-    authorityData,
-    ghostData,
-  } = lastAnalysisResult;
+  // SAFE EXTRACTION with defaults
+  const id = safeString(lastAnalysisResult.id);
+  const itemName = safeString(lastAnalysisResult.itemName) || 'Unknown Item';
+  const estimatedValue = safeNumber(lastAnalysisResult.estimatedValue);
+  const confidenceScore = safeNumber(lastAnalysisResult.confidenceScore);
+  const summary_reasoning = safeString(lastAnalysisResult.summary_reasoning);
+  const valuation_factors = safeArray<string>(lastAnalysisResult.valuation_factors);
+  const imageUrl = safeString(lastAnalysisResult.imageUrl);
+  const imageUrls = safeArray<string>(lastAnalysisResult.imageUrls);
+  const category = safeString(lastAnalysisResult.category) || 'general';
+  
+  // Optional fields - may be undefined
+  const hydraConsensus = lastAnalysisResult.hydraConsensus;
+  const authorityData = lastAnalysisResult.authorityData;
+  const ghostData = lastAnalysisResult.ghostData;
 
   // --- PROJECT CHRONOS: Determine if viewing history ---
   const isViewingHistory = currentAnalysisIndex !== null;
-  const historyItem = isViewingHistory && currentAnalysisIndex !== null 
+  const historyItem = isViewingHistory && currentAnalysisIndex !== null && analysisHistory
     ? analysisHistory[currentAnalysisIndex] 
     : null;
 
@@ -71,7 +147,7 @@ const AnalysisResult: React.FC = () => {
 
   // --- PROJECT CHRONOS: Delete from history ---
   const handleDeleteFromHistory = async () => {
-    if (historyItem) {
+    if (historyItem && deleteFromHistory) {
       if (confirm('Remove this analysis from your history?')) {
         await deleteFromHistory(historyItem.id);
       }
@@ -96,7 +172,7 @@ const AnalysisResult: React.FC = () => {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.error || 'Failed to refine analysis.');
       }
 
@@ -106,7 +182,7 @@ const AnalysisResult: React.FC = () => {
       setIsRefineOpen(false);
       setRefinementText('');
     } catch (error: any) {
-      toast.error(error.message);
+      toast.error(error.message || 'Refinement failed');
     } finally {
       setIsSubmitting(false);
     }
@@ -133,20 +209,15 @@ const AnalysisResult: React.FC = () => {
       setFeedbackSubmitted(true);
       toast.success('Thank you! Your feedback makes our AI smarter.');
     } catch (error: any) {
-      toast.error(error.message);
-      setGivenRating(0); // Reset on error
+      toast.error(error.message || 'Feedback failed');
+      setGivenRating(0);
     }
   };
 
   const confidenceColor = confidenceScore > 85 ? 'bg-green-500' : confidenceScore > 65 ? 'bg-yellow-500' : 'bg-red-500';
 
   // Safe image URLs array
-  const safeImageUrls = Array.isArray(imageUrls) && imageUrls.length > 0 
-    ? imageUrls 
-    : (imageUrl ? [imageUrl] : []);
-
-  // Safe valuation factors array
-  const safeValuationFactors = Array.isArray(valuation_factors) ? valuation_factors : [];
+  const safeImageUrls = imageUrls.length > 0 ? imageUrls : (imageUrl ? [imageUrl] : []);
 
   return (
     <>
@@ -157,7 +228,7 @@ const AnalysisResult: React.FC = () => {
         <CardHeader>
           <div className="flex justify-between items-start">
             <div>
-              <CardTitle className="text-2xl flex items-center gap-2">
+              <CardTitle className="text-2xl flex items-center gap-2 flex-wrap">
                 {itemName}
                 {ghostData && (
                   <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30">
@@ -166,9 +237,9 @@ const AnalysisResult: React.FC = () => {
                   </Badge>
                 )}
               </CardTitle>
-              <CardDescription className="flex items-center gap-2">
+              <CardDescription className="flex items-center gap-2 flex-wrap">
                 {category}
-                {isViewingHistory && historyItem && (
+                {isViewingHistory && historyItem?.created_at && (
                   <Badge variant="secondary" className="text-xs">
                     {new Date(historyItem.created_at).toLocaleDateString()}
                   </Badge>
@@ -180,22 +251,22 @@ const AnalysisResult: React.FC = () => {
             </Badge>
           </div>
           
-          {/* HYDRA CONSENSUS DISPLAY - with null check */}
-          {hydraConsensus && (
+          {/* HYDRA CONSENSUS DISPLAY - with safety check */}
+          {hydraConsensus && typeof hydraConsensus === 'object' && (
             <div className="mt-4">
               <HydraConsensusDisplay consensus={hydraConsensus} />
             </div>
           )}
 
-          {/* UNIVERSAL AUTHORITY REPORT CARD - with null check */}
-          {authorityData && (
+          {/* AUTHORITY REPORT CARD - with safety check */}
+          {authorityData && typeof authorityData === 'object' && authorityData.source && (
             <div className="mt-4">
               <AuthorityReportCard authorityData={authorityData} />
             </div>
           )}
 
           {/* GHOST DATA DISPLAY */}
-          {ghostData && (
+          {ghostData && typeof ghostData === 'object' && (
             <div className="mt-4 p-4 rounded-lg bg-purple-500/10 border border-purple-500/30">
               <div className="flex items-center gap-2 mb-3">
                 <Ghost className="h-5 w-5 text-purple-400" />
@@ -204,16 +275,16 @@ const AnalysisResult: React.FC = () => {
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-muted-foreground">Store</p>
-                  <p className="font-medium">{ghostData.store?.name || 'Unknown'}</p>
+                  <p className="font-medium">{safeString(ghostData.store?.name) || 'Unknown'}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Shelf Price</p>
-                  <p className="font-medium">${ghostData.pricing?.shelf_price?.toFixed(2) || '0.00'}</p>
+                  <p className="font-medium">${safeNumber(ghostData.pricing?.shelf_price).toFixed(2)}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Estimated Margin</p>
-                  <p className={`font-medium ${(ghostData.kpis?.estimated_margin || 0) > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    ${ghostData.kpis?.estimated_margin?.toFixed(2) || '0.00'}
+                  <p className={`font-medium ${safeNumber(ghostData.kpis?.estimated_margin) > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    ${safeNumber(ghostData.kpis?.estimated_margin).toFixed(2)}
                   </p>
                 </div>
                 <div>
@@ -223,7 +294,7 @@ const AnalysisResult: React.FC = () => {
                     ghostData.kpis?.velocity_score === 'medium' ? 'text-yellow-400 border-yellow-400' :
                     'text-red-400 border-red-400'
                   }>
-                    {ghostData.kpis?.velocity_score || 'unknown'}
+                    {safeString(ghostData.kpis?.velocity_score) || 'unknown'}
                   </Badge>
                 </div>
               </div>
@@ -233,7 +304,7 @@ const AnalysisResult: React.FC = () => {
         
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* PROJECT CHRONOS: Enhanced Image Carousel */}
+            {/* Image Carousel */}
             <div className="relative">
               {safeImageUrls.length > 0 ? (
                 <Carousel className="w-full">
@@ -249,8 +320,7 @@ const AnalysisResult: React.FC = () => {
                                 className="w-full h-full object-cover"
                                 loading="lazy"
                                 onError={(e) => {
-                                  // Handle broken images
-                                  (e.target as HTMLImageElement).src = '/placeholder-image.png';
+                                  (e.target as HTMLImageElement).style.display = 'none';
                                 }}
                               />
                             </CardContent>
@@ -286,11 +356,11 @@ const AnalysisResult: React.FC = () => {
             <div className="space-y-6">
               <div className="text-center md:text-left">
                 <p className="text-sm text-muted-foreground">Estimated Value</p>
-                <p className="text-5xl font-bold">${(estimatedValue || 0).toFixed(2)}</p>
+                <p className="text-5xl font-bold">${estimatedValue.toFixed(2)}</p>
               </div>
 
               <div>
-                <div className="flex justify-between items-center mb-2">
+                <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
                   <h3 className="text-lg font-semibold">Key Valuation Factors</h3>
                   {!isViewingHistory && (
                     <Button variant="outline" size="sm" onClick={() => setIsRefineOpen(true)}>
@@ -299,9 +369,9 @@ const AnalysisResult: React.FC = () => {
                     </Button>
                   )}
                 </div>
-                {safeValuationFactors.length > 0 ? (
+                {valuation_factors.length > 0 ? (
                   <ul className="space-y-2 text-sm text-muted-foreground">
-                    {safeValuationFactors.map((factor, index) => (
+                    {valuation_factors.map((factor, index) => (
                       <li key={index} className="flex items-start">
                         <CheckCircle className="h-4 w-4 mr-2 mt-0.5 text-primary flex-shrink-0" />
                         <span>{factor}</span>
@@ -320,7 +390,7 @@ const AnalysisResult: React.FC = () => {
         </CardContent>
         
         <CardFooter className="flex flex-col gap-4">
-          {/* --- Core Feature: Action Hub --- */}
+          {/* Action Hub */}
           <div className="w-full p-4 border rounded-lg bg-background">
             <h3 className="text-sm font-semibold mb-3 text-center text-muted-foreground">ACTION HUB</h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -348,14 +418,14 @@ const AnalysisResult: React.FC = () => {
                     onClick={handleDeleteFromHistory}
                   >
                     <Trash2 className="h-4 w-4 mr-2" />
-                    Delete from History
+                    Delete
                   </Button>
                 </>
               )}
             </div>
           </div>
           
-          {/* --- Core Feature: Learning Feedback Loop --- */}
+          {/* Feedback Loop */}
           {!isViewingHistory && (
             <div className="w-full text-center">
               <p className="text-xs text-muted-foreground mb-2">
@@ -381,7 +451,7 @@ const AnalysisResult: React.FC = () => {
         </CardFooter>
       </Card>
 
-      {/* --- Refine Analysis Dialog --- */}
+      {/* Refine Analysis Dialog */}
       <Dialog open={isRefineOpen} onOpenChange={setIsRefineOpen}>
         <DialogContent>
           <DialogHeader>
@@ -412,6 +482,24 @@ const AnalysisResult: React.FC = () => {
         </DialogContent>
       </Dialog>
     </>
+  );
+};
+
+// =============================================================================
+// EXPORTED COMPONENT WITH ERROR BOUNDARY
+// =============================================================================
+
+const AnalysisResult: React.FC = () => {
+  const { setLastAnalysisResult } = useAppContext();
+  
+  const handleClear = () => {
+    setLastAnalysisResult(null);
+  };
+  
+  return (
+    <AnalysisErrorBoundary onClear={handleClear}>
+      <AnalysisResultContent />
+    </AnalysisErrorBoundary>
   );
 };
 
