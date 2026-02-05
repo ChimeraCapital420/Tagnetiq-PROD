@@ -1,6 +1,7 @@
 // FILE: src/lib/hydra/fetchers/brickset.ts
-// HYDRA v7.0 - Brickset API Fetcher (LEGO Sets)
+// HYDRA v7.1 - Brickset API Fetcher (LEGO Sets)
 // FIXED v7.0: Now properly authenticates with userHash before API calls
+// FIXED v7.1: Set numbers must include variant (e.g., "8011-1" not "8011")
 // The Brickset v3 API requires: 1) login to get userHash, 2) then call getSets with userHash
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
@@ -50,7 +51,11 @@ export async function fetchBricksetData(itemName: string): Promise<MarketDataSou
     };
     
     if (setNumber) {
-      searchParams.setNumber = setNumber;
+      // Brickset requires full set number with variant (e.g., "8011-1" not "8011")
+      // Most sets are variant 1, so append -1 if not present
+      const fullSetNumber = setNumber.includes('-') ? setNumber : `${setNumber}-1`;
+      searchParams.setNumber = fullSetNumber;
+      console.log(`🔍 Brickset: Using full set number "${fullSetNumber}"`);
     } else {
       searchParams.query = searchQuery;
     }
@@ -84,6 +89,31 @@ export async function fetchBricksetData(itemName: string): Promise<MarketDataSou
     }
     
     const sets = data.sets || [];
+    
+    // If no results with setNumber, try query search as fallback
+    if (sets.length === 0 && setNumber) {
+      console.log('⚠️ Brickset: No results with setNumber, trying query search...');
+      
+      const fallbackParams = {
+        pageSize: 10,
+        query: itemName.replace(/\b(lego|set)\b/gi, '').trim(),
+      };
+      
+      const fallbackUrl = `${BRICKSET_API}/getSets?apiKey=${encodeURIComponent(apiKey)}&userHash=${encodeURIComponent(userHash)}&params=${encodeURIComponent(JSON.stringify(fallbackParams))}`;
+      
+      const fallbackResponse = await fetch(fallbackUrl, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+      });
+      
+      if (fallbackResponse.ok) {
+        const fallbackData = await fallbackResponse.json();
+        if (fallbackData.status === 'success' && fallbackData.sets?.length > 0) {
+          console.log(`✅ Brickset: Fallback query found ${fallbackData.sets.length} results`);
+          sets.push(...fallbackData.sets);
+        }
+      }
+    }
     
     if (sets.length === 0) {
       console.log('⚠️ Brickset: No matching sets found');
