@@ -1,6 +1,7 @@
 // FILE: src/components/AuthorityReportCard.tsx
-// HYDRA v6.1 - Universal Authority Report Card
+// HYDRA v6.3 - Universal Authority Report Card
 // FIXED: Normalized source to lowercase for consistent matching
+// ADDED v6.3: Comic Vine section with full issue details, credits, first appearances
 
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,7 +17,9 @@ import {
   ShoppingBag,
   Award,
   Car,
-  Package
+  Package,
+  BookMarked,
+  Star
 } from 'lucide-react';
 
 // Types for the formatted authority data from HYDRA
@@ -164,7 +167,30 @@ interface AuthorityData {
   ean?: string;
   msrp?: number;
   
-  // Fallback
+  // Comic Vine (Comics)
+  comicVineId?: number;
+  issueName?: string;
+  issueNumber?: string;
+  volumeName?: string;
+  volumeId?: number;
+  coverDate?: string;
+  storeDate?: string;
+  deck?: string;
+  credits?: Record<string, string[]>;
+  writers?: string[];
+  artists?: string[];
+  coverArtists?: string[];
+  characterAppearances?: string[];
+  characterCount?: number;
+  firstAppearances?: string[];
+  hasFirstAppearances?: boolean;
+  isKeyIssue?: boolean;
+  coverImage?: string;
+  coverImageLarge?: string;
+  coverImageThumb?: string;
+  comicVineUrl?: string;
+  
+  // Fallback - nested itemDetails from fetchers
   itemDetails?: Record<string, unknown>;
 }
 
@@ -174,24 +200,38 @@ interface AuthorityReportCardProps {
 }
 
 // Source icon mapping (lowercase keys)
+// 10 Authority Sources + eBay market data
 const SOURCE_ICONS: Record<string, React.ReactNode> = {
+  // Books & Comics
   google_books: <BookOpen className="h-5 w-5" />,
+  comicvine: <BookMarked className="h-5 w-5" />,
+  'comic vine': <BookMarked className="h-5 w-5" />,
+  
+  // Collectibles
   numista: <Coins className="h-5 w-5" />,
   pokemon_tcg: <Sparkles className="h-5 w-5" />,
   brickset: <Blocks className="h-5 w-5" />,
+  psa: <Award className="h-5 w-5" />,
+  
+  // Music & Fashion
   discogs: <Music className="h-5 w-5" />,
   retailed: <ShoppingBag className="h-5 w-5" />,
-  psa: <Award className="h-5 w-5" />,
+  
+  // Vehicles & Products
   nhtsa: <Car className="h-5 w-5" />,
   upcitemdb: <Package className="h-5 w-5" />,
+  
+  // Market data
   ebay: <ShoppingBag className="h-5 w-5" />,
 };
 
 // Source display names (lowercase keys)
 const SOURCE_NAMES: Record<string, string> = {
   google_books: 'Google Books',
+  comicvine: 'Comic Vine',
+  'comic vine': 'Comic Vine',
   numista: 'Numista',
-  pokemon_tcg: 'Pokemon TCG',
+  pokemon_tcg: 'Pokémon TCG',
   brickset: 'Brickset',
   discogs: 'Discogs',
   retailed: 'Retailed',
@@ -245,13 +285,13 @@ export const AuthorityReportCard: React.FC<AuthorityReportCardProps> = ({
   className = ''
 }) => {
   // FIXED: Normalize source to lowercase for consistent matching
-  const source = authorityData.source?.toLowerCase() || '';
-  const icon = SOURCE_ICONS[source] || <Shield className="h-5 w-5" />;
-  const sourceName = SOURCE_NAMES[source] || authorityData.source || 'Unknown';
+  const source = authorityData.source?.toLowerCase().replace(/\s+/g, '') || '';
+  const icon = SOURCE_ICONS[source] || SOURCE_ICONS[authorityData.source?.toLowerCase() || ''] || <Shield className="h-5 w-5" />;
+  const sourceName = SOURCE_NAMES[source] || SOURCE_NAMES[authorityData.source?.toLowerCase() || ''] || authorityData.source || 'Authority';
   
   // Debug log to help troubleshoot
   console.log(`🎴 AuthorityReportCard rendering for source: "${source}"`);
-  console.log(`🎴 Has numistaId: ${!!authorityData.numistaId}, obverseThumb: ${!!authorityData.obverseThumb}`);
+  console.log(`🎴 Authority data keys:`, Object.keys(authorityData));
   
   return (
     <Card className={`border-green-500/20 bg-green-50/50 dark:bg-green-950/20 ${className}`}>
@@ -283,6 +323,7 @@ export const AuthorityReportCard: React.FC<AuthorityReportCardProps> = ({
         {source === 'psa' && <PsaSection data={authorityData} />}
         {source === 'nhtsa' && <NhtsaSection data={authorityData} />}
         {source === 'upcitemdb' && <UpcItemDbSection data={authorityData} />}
+        {(source === 'comicvine' || source === 'comic vine') && <ComicVineSection data={authorityData} />}
         
         {/* Market Value Display (Universal) */}
         {authorityData.marketValue && (
@@ -323,7 +364,12 @@ export const AuthorityReportCard: React.FC<AuthorityReportCardProps> = ({
         {/* External Link */}
         {authorityData.externalUrl && (
           <div className="pt-2 text-center">
-            <a href={authorityData.externalUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+            <a 
+              href={authorityData.externalUrl} 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="inline-flex items-center gap-1 text-sm text-primary hover:underline font-medium"
+            >
               View on {sourceName} <ExternalLink className="h-3 w-3" />
             </a>
           </div>
@@ -340,9 +386,12 @@ export const AuthorityReportCard: React.FC<AuthorityReportCardProps> = ({
 };
 
 // =============================================================================
-// SOURCE-SPECIFIC SECTIONS
+// SOURCE-SPECIFIC SECTIONS (10 Authority Sources)
 // =============================================================================
 
+// -----------------------------------------------------------------------------
+// 1. GOOGLE BOOKS
+// -----------------------------------------------------------------------------
 const GoogleBooksSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   <div className="space-y-3">
     {data.imageLinks?.thumbnail && (
@@ -381,6 +430,122 @@ const GoogleBooksSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   </div>
 );
 
+// -----------------------------------------------------------------------------
+// 2. COMIC VINE (NEW!)
+// -----------------------------------------------------------------------------
+const ComicVineSection: React.FC<{ data: AuthorityData }> = ({ data }) => {
+  // Handle both flat data and nested itemDetails
+  const details = (data.itemDetails || data) as AuthorityData;
+  
+  // Extract values with fallbacks
+  const coverImage = details.coverImage || (data.itemDetails?.coverImage as string);
+  const isKeyIssue = details.isKeyIssue || (data.itemDetails?.isKeyIssue as boolean);
+  const firstAppearances = details.firstAppearances || (data.itemDetails?.firstAppearances as string[]);
+  const issueNumber = details.issueNumber || (data.itemDetails?.issueNumber as string);
+  const volumeName = details.volumeName || (data.itemDetails?.volumeName as string);
+  const coverDate = details.coverDate || (data.itemDetails?.coverDate as string);
+  const storeDate = details.storeDate || (data.itemDetails?.storeDate as string);
+  const deck = details.deck || (data.itemDetails?.deck as string);
+  const description = details.description || (data.itemDetails?.description as string);
+  const writers = details.writers || (data.itemDetails?.writers as string[]);
+  const artists = details.artists || (data.itemDetails?.artists as string[]);
+  const coverArtists = details.coverArtists || (data.itemDetails?.coverArtists as string[]);
+  const characterAppearances = details.characterAppearances || (data.itemDetails?.characterAppearances as string[]);
+  const characterCount = details.characterCount || (data.itemDetails?.characterCount as number);
+  const comicVineId = details.comicVineId || (data.itemDetails?.comicVineId as number);
+  
+  return (
+    <div className="space-y-3">
+      {/* Cover Image */}
+      {coverImage && (
+        <div className="flex justify-center">
+          <ThumbnailImage 
+            src={coverImage} 
+            alt="Comic Cover" 
+            className="w-32 h-48 shadow-lg" 
+          />
+        </div>
+      )}
+      
+      {/* Key Issue Alert - IMPORTANT for collectors! */}
+      {isKeyIssue && (
+        <div className="bg-yellow-500/20 border border-yellow-500/50 rounded-md p-2 flex items-center justify-center gap-2">
+          <Star className="h-4 w-4 text-yellow-600 fill-yellow-600" />
+          <span className="text-yellow-700 dark:text-yellow-400 font-semibold text-sm">Key Issue</span>
+        </div>
+      )}
+      
+      {/* First Appearances - CRITICAL for comic value! */}
+      {firstAppearances && firstAppearances.length > 0 && (
+        <div className="bg-purple-500/10 border border-purple-500/30 rounded-md p-3">
+          <p className="text-xs text-purple-600 dark:text-purple-400 font-semibold mb-2 flex items-center gap-1">
+            <Sparkles className="h-3 w-3" /> First Appearances
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {firstAppearances.map((char, idx) => (
+              <Badge key={idx} className="bg-purple-600 hover:bg-purple-700 text-white text-xs">
+                {char}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* Basic Info Grid */}
+      <div className="grid grid-cols-2 gap-3">
+        <DataRow label="Issue" value={issueNumber ? `#${issueNumber}` : undefined} />
+        <DataRow label="Series/Volume" value={volumeName} />
+        <DataRow label="Cover Date" value={coverDate} />
+        <DataRow label="On Sale Date" value={storeDate} />
+        <DataRow label="Comic Vine ID" value={comicVineId} />
+      </div>
+      
+      {/* Story Description */}
+      {(deck || description) && (
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">Story</p>
+          <p className="text-sm line-clamp-3">{deck || description}</p>
+        </div>
+      )}
+      
+      {/* Creative Team */}
+      <div className="space-y-2">
+        {writers && writers.length > 0 && (
+          <DataRow label="Writer(s)" value={writers.join(', ')} />
+        )}
+        {artists && artists.length > 0 && (
+          <DataRow label="Artist(s)" value={artists.join(', ')} />
+        )}
+        {coverArtists && coverArtists.length > 0 && (
+          <DataRow label="Cover Artist(s)" value={coverArtists.join(', ')} />
+        )}
+      </div>
+      
+      {/* Character Appearances */}
+      {characterAppearances && characterAppearances.length > 0 && (
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">
+            Characters ({characterCount || characterAppearances.length})
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {characterAppearances.slice(0, 12).map((char, idx) => (
+              <Badge key={idx} variant="secondary" className="text-xs">{char}</Badge>
+            ))}
+            {characterAppearances.length > 12 && (
+              <Badge variant="outline" className="text-xs">
+                +{characterAppearances.length - 12} more
+              </Badge>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// -----------------------------------------------------------------------------
+// 3. NUMISTA (Coins)
+// -----------------------------------------------------------------------------
 const NumistaSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   <div className="space-y-3">
     {(data.obverseThumb || data.reverseThumb) && (
@@ -417,6 +582,9 @@ const NumistaSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   </div>
 );
 
+// -----------------------------------------------------------------------------
+// 4. POKEMON TCG
+// -----------------------------------------------------------------------------
 const PokemonTcgSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   <div className="space-y-3">
     {data.imageLinks?.thumbnail && (
@@ -449,6 +617,9 @@ const PokemonTcgSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   </div>
 );
 
+// -----------------------------------------------------------------------------
+// 5. BRICKSET (LEGO)
+// -----------------------------------------------------------------------------
 const BricksetSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   <div className="space-y-3">
     {data.imageLinks?.thumbnail && (
@@ -475,6 +646,9 @@ const BricksetSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   </div>
 );
 
+// -----------------------------------------------------------------------------
+// 6. DISCOGS (Vinyl Records)
+// -----------------------------------------------------------------------------
 const DiscogsSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   <div className="space-y-3">
     {data.imageLinks?.thumbnail && (
@@ -517,6 +691,9 @@ const DiscogsSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   </div>
 );
 
+// -----------------------------------------------------------------------------
+// 7. RETAILED (Sneakers)
+// -----------------------------------------------------------------------------
 const RetailedSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   <div className="space-y-3">
     {data.imageLinks?.thumbnail && (
@@ -565,6 +742,9 @@ const RetailedSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   </div>
 );
 
+// -----------------------------------------------------------------------------
+// 8. PSA (Graded Cards)
+// -----------------------------------------------------------------------------
 const PsaSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   <div className="space-y-3">
     <div className="flex justify-center">
@@ -603,6 +783,9 @@ const PsaSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   </div>
 );
 
+// -----------------------------------------------------------------------------
+// 9. NHTSA (Vehicles)
+// -----------------------------------------------------------------------------
 const NhtsaSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   <div className="space-y-3">
     <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white p-4 rounded-lg text-center">
@@ -628,6 +811,9 @@ const NhtsaSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   </div>
 );
 
+// -----------------------------------------------------------------------------
+// 10. UPCitemdb (Barcodes/Products)
+// -----------------------------------------------------------------------------
 const UpcItemDbSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
   <div className="space-y-3">
     {data.imageLinks?.thumbnail && (

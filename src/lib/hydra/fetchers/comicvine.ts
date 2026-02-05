@@ -2,6 +2,7 @@
 // HYDRA v7.0 - Comic Vine Fetcher for Comic Book Data
 // Comic Vine provides comprehensive comic metadata (no pricing - use eBay for that)
 // API Docs: https://comicvine.gamespot.com/api/documentation
+// ENHANCED v7.0: Now fetches full issue details after search for richer authority data
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
@@ -9,6 +10,21 @@ const COMIC_VINE_API_KEY = process.env.COMIC_VINE_API_KEY;
 const BASE_URL = 'https://comicvine.gamespot.com/api';
 
 // ==================== TYPES ====================
+
+interface ComicVineCredit {
+  id: number;
+  name: string;
+  role: string;
+  api_detail_url: string;
+  site_detail_url: string;
+}
+
+interface ComicVineCharacter {
+  id: number;
+  name: string;
+  api_detail_url: string;
+  site_detail_url: string;
+}
 
 interface ComicVineSearchResult {
   id: number;
@@ -34,6 +50,12 @@ interface ComicVineSearchResult {
   api_detail_url: string;
   deck?: string;
   description?: string;
+  // Full details (from issue endpoint)
+  person_credits?: ComicVineCredit[];
+  character_credits?: ComicVineCharacter[];
+  first_appearance_characters?: ComicVineCharacter[];
+  first_appearance_teams?: any[];
+  story_arc_credits?: any[];
 }
 
 interface ComicVineResponse {
@@ -43,7 +65,7 @@ interface ComicVineResponse {
   number_of_page_results: number;
   number_of_total_results: number;
   status_code: number;
-  results: ComicVineSearchResult[];
+  results: ComicVineSearchResult[] | ComicVineSearchResult;
 }
 
 // ==================== MAIN FETCHER ====================
@@ -62,9 +84,9 @@ export async function fetchComicVineData(itemName: string): Promise<MarketDataSo
   }
   
   try {
-    // Clean up search query - remove common words
-    const searchQuery = cleanComicSearchQuery(itemName);
-    console.log(`🔍 Comic Vine search: "${searchQuery}"`);
+    // Clean up search query - remove common words, extract issue number
+    const { searchQuery, issueNumber } = parseComicSearchQuery(itemName);
+    console.log(`🔍 Comic Vine search: "${searchQuery}"${issueNumber ? ` (issue #${issueNumber})` : ''}`);
     
     // Search for the issue
     const params = new URLSearchParams({
@@ -72,11 +94,11 @@ export async function fetchComicVineData(itemName: string): Promise<MarketDataSo
       format: 'json',
       query: searchQuery,
       resources: 'issue',
-      limit: '5',
+      limit: '10',
     });
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
     
     const response = await fetch(
       `${BASE_URL}/search/?${params}`,
@@ -99,19 +121,26 @@ export async function fetchComicVineData(itemName: string): Promise<MarketDataSo
     
     const data: ComicVineResponse = await response.json();
     
-    if (data.error !== 'OK' || !data.results || data.results.length === 0) {
+    if (data.error !== 'OK' || !data.results || (Array.isArray(data.results) && data.results.length === 0)) {
       console.log(`📭 Comic Vine: No results for "${searchQuery}"`);
       return createEmptyResult('comicvine', startTime, 'No results found');
     }
     
     // Get best matching result
-    const bestMatch = findBestMatch(data.results, itemName);
+    const results = Array.isArray(data.results) ? data.results : [data.results];
+    const bestMatch = findBestMatch(results, itemName, issueNumber);
+    
+    // Fetch full issue details for richer data
+    const fullDetails = await fetchIssueDetails(bestMatch.id);
+    const issueData = fullDetails || bestMatch;
+    
     const responseTime = Date.now() - startTime;
+    const displayName = buildDisplayName(issueData);
     
-    console.log(`✅ Comic Vine: Found "${bestMatch.volume?.name} #${bestMatch.issue_number}" in ${responseTime}ms`);
+    console.log(`✅ Comic Vine: Found "${displayName}" in ${responseTime}ms`);
     
-    // Build authority data
-    const authorityData = buildAuthorityData(bestMatch);
+    // Build authority data with full details
+    const authorityData = buildAuthorityData(issueData);
     
     return {
       source: 'comicvine',
@@ -122,7 +151,7 @@ export async function fetchComicVineData(itemName: string): Promise<MarketDataSo
       // Comic Vine doesn't provide pricing - that's what eBay is for
       priceAnalysis: undefined,
       
-      // Authority data for the report card
+      // Rich authority data for the report card
       authorityData,
     };
     
@@ -139,50 +168,135 @@ export async function fetchComicVineData(itemName: string): Promise<MarketDataSo
   }
 }
 
+// ==================== FETCH FULL ISSUE DETAILS ====================
+
+/**
+ * Fetch full issue details by ID for richer data
+ * This gets credits, characters, first appearances, etc.
+ */
+async function fetchIssueDetails(issueId: number): Promise<ComicVineSearchResult | null> {
+  if (!COMIC_VINE_API_KEY) return null;
+  
+  try {
+    const params = new URLSearchParams({
+      api_key: COMIC_VINE_API_KEY,
+      format: 'json',
+      field_list: [
+        'id', 'name', 'issue_number', 'volume', 'cover_date', 'store_date',
+        'image', 'description', 'deck', 'site_detail_url', 'api_detail_url',
+        'person_credits', 'character_credits', 'team_credits',
+        'story_arc_credits', 'first_appearance_characters',
+        'first_appearance_teams', 'first_appearance_concepts',
+        'first_appearance_locations', 'first_appearance_objects'
+      ].join(',')
+    });
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
+    const response = await fetch(
+      `${BASE_URL}/issue/4000-${issueId}/?${params}`,
+      {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'TagnetIQ/1.0 (Collectibles Platform)',
+          'Accept': 'application/json',
+        },
+        signal: controller.signal,
+      }
+    );
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) return null;
+    
+    const data: ComicVineResponse = await response.json();
+    
+    if (data.error !== 'OK' || !data.results) return null;
+    
+    return data.results as ComicVineSearchResult;
+    
+  } catch (error) {
+    // Silently fail - we still have search results
+    return null;
+  }
+}
+
 // ==================== HELPER FUNCTIONS ====================
 
 /**
- * Clean search query for better results
+ * Parse search query and extract issue number
  */
-function cleanComicSearchQuery(itemName: string): string {
-  return itemName
+function parseComicSearchQuery(itemName: string): { searchQuery: string; issueNumber: string | null } {
+  const nameLower = itemName.toLowerCase();
+  
+  // Extract issue number patterns: #18, #1, issue 18, no. 18, etc.
+  const issuePatterns = [
+    /#(\d+)/,
+    /issue\s*(\d+)/i,
+    /no\.?\s*(\d+)/i,
+    /number\s*(\d+)/i,
+  ];
+  
+  let issueNumber: string | null = null;
+  for (const pattern of issuePatterns) {
+    const match = itemName.match(pattern);
+    if (match) {
+      issueNumber = match[1];
+      break;
+    }
+  }
+  
+  // Clean up search query
+  let searchQuery = itemName
     .toLowerCase()
     .replace(/comic\s*book/gi, '')
     .replace(/comic/gi, '')
-    .replace(/issue/gi, '')
+    .replace(/issue\s*\d+/gi, '')
+    .replace(/no\.?\s*\d+/gi, '')
+    .replace(/#\d+/g, '')
     .replace(/first\s*appearance/gi, '')
     .replace(/1st\s*appearance/gi, '')
     .replace(/mint\s*condition/gi, '')
     .replace(/graded/gi, '')
-    .replace(/cgc/gi, '')
-    .replace(/cbcs/gi, '')
-    .replace(/[\#\(\)\[\]]/g, ' ')
+    .replace(/cgc\s*\d+\.?\d*/gi, '')
+    .replace(/cbcs\s*\d+\.?\d*/gi, '')
+    .replace(/[\(\)\[\]]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  
+  // If we have an issue number, append it to help search
+  if (issueNumber) {
+    searchQuery = `${searchQuery} ${issueNumber}`.trim();
+  }
+  
+  return { searchQuery, issueNumber };
 }
 
 /**
  * Find best matching result from search results
  */
-function findBestMatch(results: ComicVineSearchResult[], itemName: string): ComicVineSearchResult {
+function findBestMatch(
+  results: ComicVineSearchResult[], 
+  itemName: string, 
+  targetIssue: string | null
+): ComicVineSearchResult {
   const nameLower = itemName.toLowerCase();
   
-  // Try to find exact volume name match
+  // If we have a target issue number, prioritize exact matches
+  if (targetIssue) {
+    for (const result of results) {
+      if (result.issue_number === targetIssue) {
+        return result;
+      }
+    }
+  }
+  
+  // Try to find volume name match
   for (const result of results) {
     const volumeName = result.volume?.name?.toLowerCase() || '';
     if (nameLower.includes(volumeName) && volumeName.length > 3) {
       return result;
-    }
-  }
-  
-  // Try to find issue number match
-  const issueMatch = itemName.match(/#?\s*(\d+)/);
-  if (issueMatch) {
-    const issueNum = issueMatch[1];
-    for (const result of results) {
-      if (result.issue_number === issueNum) {
-        return result;
-      }
     }
   }
   
@@ -191,13 +305,53 @@ function findBestMatch(results: ComicVineSearchResult[], itemName: string): Comi
 }
 
 /**
- * Build authority data from Comic Vine result
+ * Build display name from issue data
+ */
+function buildDisplayName(issue: ComicVineSearchResult): string {
+  const volumeName = issue.volume?.name || 'Unknown';
+  const issueNum = issue.issue_number || '?';
+  const issueName = issue.name;
+  
+  if (issueName) {
+    return `${volumeName} #${issueNum} - ${issueName}`;
+  }
+  return `${volumeName} #${issueNum}`;
+}
+
+/**
+ * Build rich authority data from Comic Vine result
  */
 function buildAuthorityData(issue: ComicVineSearchResult): AuthorityData {
-  // Build display name
-  const issueName = issue.name
-    ? `${issue.volume?.name || 'Unknown'} #${issue.issue_number} - ${issue.name}`
-    : `${issue.volume?.name || 'Unknown'} #${issue.issue_number}`;
+  const displayName = buildDisplayName(issue);
+  
+  // Organize credits by role
+  const credits: Record<string, string[]> = {};
+  if (Array.isArray(issue.person_credits)) {
+    issue.person_credits.forEach(credit => {
+      const role = credit.role || 'Other';
+      if (!credits[role]) {
+        credits[role] = [];
+      }
+      if (!credits[role].includes(credit.name)) {
+        credits[role].push(credit.name);
+      }
+    });
+  }
+  
+  // Extract character appearances
+  const characters = Array.isArray(issue.character_credits)
+    ? issue.character_credits.map(c => c.name).slice(0, 20) // Limit to 20
+    : [];
+  
+  // Extract first appearances (KEY for comic value!)
+  const firstAppearances = Array.isArray(issue.first_appearance_characters)
+    ? issue.first_appearance_characters.map(c => c.name)
+    : [];
+  
+  // Check if this is a key issue
+  const isKeyIssue = firstAppearances.length > 0 || 
+                     issue.issue_number === '1' ||
+                     (issue.name?.toLowerCase().includes('first') ?? false);
   
   return {
     source: 'Comic Vine',
@@ -208,30 +362,42 @@ function buildAuthorityData(issue: ComicVineSearchResult): AuthorityData {
     itemDetails: {
       // Basic info
       comicVineId: issue.id,
-      name: issueName,
+      name: displayName,
       issueName: issue.name,
       issueNumber: issue.issue_number,
       
       // Volume/Series info
       volumeName: issue.volume?.name,
       volumeId: issue.volume?.id,
+      publisher: null, // Would need separate API call
       
       // Dates
       coverDate: issue.cover_date,
       storeDate: issue.store_date,
       
       // Description
-      deck: issue.deck,
+      deck: issue.deck, // Short description
+      description: issue.description ? stripHtml(issue.description).substring(0, 500) : null,
+      
+      // Credits (writers, artists, etc.)
+      credits: Object.keys(credits).length > 0 ? credits : null,
+      writers: credits['writer'] || credits['Writer'] || null,
+      artists: credits['artist'] || credits['Artist'] || credits['penciler'] || credits['Penciler'] || null,
+      coverArtists: credits['cover'] || credits['Cover'] || null,
+      
+      // Characters
+      characterAppearances: characters.length > 0 ? characters : null,
+      characterCount: characters.length,
+      
+      // First appearances (IMPORTANT for value!)
+      firstAppearances: firstAppearances.length > 0 ? firstAppearances : null,
+      hasFirstAppearances: firstAppearances.length > 0,
+      isKeyIssue,
       
       // Images
-      imageLinks: issue.image ? {
-        icon: issue.image.icon_url,
-        thumbnail: issue.image.thumb_url,
-        small: issue.image.small_url,
-        medium: issue.image.medium_url,
-        large: issue.image.super_url,
-        original: issue.image.original_url,
-      } : undefined,
+      coverImage: issue.image?.medium_url || issue.image?.small_url || null,
+      coverImageLarge: issue.image?.super_url || issue.image?.original_url || null,
+      coverImageThumb: issue.image?.thumb_url || issue.image?.icon_url || null,
       
       // Links
       comicVineUrl: issue.site_detail_url,
@@ -243,6 +409,21 @@ function buildAuthorityData(issue: ComicVineSearchResult): AuthorityData {
     
     lastUpdated: new Date().toISOString(),
   };
+}
+
+/**
+ * Strip HTML tags from description
+ */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
