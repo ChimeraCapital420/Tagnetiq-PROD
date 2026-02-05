@@ -1,9 +1,11 @@
 // FILE: api/analyze.ts
-// HYDRA v6.3 - Slim Analysis Handler
+// HYDRA v6.5 - Slim Analysis Handler
 // Orchestrates modular components for multi-AI consensus analysis
 // FIXED v6.3: AI category now properly passed as 3rd parameter to detectItemCategory
 // FIXED v6.3: Vision prompt now instructs VIN extraction from images
 // UPDATED v6.4: Now accepts and persists originalImageUrls for marketplace integration
+// FIXED v6.5: Stage 7 now uses HYDRA's pre-calculated blended price (was looking for priceData instead of priceAnalysis)
+// FIXED v6.5: eBay listing count now properly weights against AI consensus
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -295,6 +297,44 @@ function isValidVINStructure(vin: string): boolean {
 }
 
 // =============================================================================
+// MARKET WEIGHT CALCULATION (NEW v6.5)
+// =============================================================================
+
+/**
+ * Calculate how much weight to give market data vs AI consensus
+ * More eBay listings = more trust in real market data
+ * Authority data = more trust in catalog prices
+ * 
+ * @returns weight from 0.0 to 0.90 (market data percentage)
+ */
+function calculateMarketWeight(marketResult: any): number {
+  let weight = 0.50; // Base 50% market / 50% AI
+  
+  // Find eBay source and check listing count
+  const ebaySource = marketResult.sources?.find((s: any) => s.source === 'ebay');
+  if (ebaySource?.totalListings) {
+    const listings = ebaySource.totalListings;
+    if (listings >= 20) {
+      weight += 0.25; // 20+ listings: 75% market
+    } else if (listings >= 10) {
+      weight += 0.15; // 10-19 listings: 65% market
+    } else if (listings >= 5) {
+      weight += 0.10; // 5-9 listings: 60% market
+    } else if (listings >= 1) {
+      weight += 0.05; // 1-4 listings: 55% market
+    }
+  }
+  
+  // Authority data present = more trust in market/catalog data
+  if (marketResult.primaryAuthority) {
+    weight += 0.10; // +10% for authority verification
+  }
+  
+  // Cap at 90% (always give AI some say for edge cases)
+  return Math.min(weight, 0.90);
+}
+
+// =============================================================================
 // MAIN HANDLER
 // =============================================================================
 
@@ -328,7 +368,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Either an image or item name is required');
     }
     
-    console.log(`\n🔥 === HYDRA v6.4 ANALYSIS START ===`);
+    console.log(`\n🔥 === HYDRA v6.5 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
     console.log(`🖼️ Primary Image: ${hasImage ? 'Yes' : 'No'}`);
@@ -511,18 +551,81 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
     console.log(`  📊 Confidence: ${consensus.confidence}% (${consensus.analysisQuality})`);
     
     // ==========================================================================
-    // STAGE 7: Blend Prices
+    // STAGE 7: Blend Prices (FIXED v6.5)
     // ==========================================================================
-    const marketPrices = marketResult.sources
-      .filter(s => s.priceData && s.priceData.length > 0)
-      .map(s => ({ source: s.source, prices: s.priceData! }));
+    // FIXED v6.5: Use HYDRA's pre-calculated blended price from real market data
+    // The old code looked for `priceData` which doesn't exist - HYDRA returns `priceAnalysis`
+    // This was causing all market data to be ignored in favor of AI consensus!
     
-    const blendedPrice = blendPrices(
-      consensus.estimatedValue,
-      authorityData,
-      marketPrices,
-      { condition: request.condition }
-    );
+    let blendedPrice;
+    
+    // Check if HYDRA already calculated a valid market-based price
+    if (marketResult.blendedPrice && marketResult.blendedPrice.value > 0) {
+      const hydraPrice = marketResult.blendedPrice.value;
+      const aiPrice = consensus.estimatedValue;
+      const marketWeight = calculateMarketWeight(marketResult);
+      const aiWeight = 1 - marketWeight;
+      
+      // Log the weighting decision
+      const ebaySource = marketResult.sources?.find((s: any) => s.source === 'ebay');
+      const ebayListings = ebaySource?.totalListings || 0;
+      console.log(`\n  📊 === PRICE BLEND (v6.5) ===`);
+      console.log(`  💰 HYDRA market price: $${hydraPrice.toFixed(2)} (${marketResult.blendedPrice.method})`);
+      console.log(`  🛒 eBay listings: ${ebayListings}`);
+      console.log(`  🏛️ Authority: ${authorityData ? authorityData.source : 'none'}`);
+      console.log(`  🤖 AI consensus: $${aiPrice.toFixed(2)}`);
+      console.log(`  ⚖️ Weights: ${Math.round(marketWeight * 100)}% market / ${Math.round(aiWeight * 100)}% AI`);
+      
+      // Calculate weighted blend
+      const finalPrice = parseFloat(
+        (hydraPrice * marketWeight + aiPrice * aiWeight).toFixed(2)
+      );
+      
+      console.log(`  ✅ Final blended price: $${finalPrice.toFixed(2)}`);
+      
+      // Build blendedPrice object for response formatter
+      blendedPrice = {
+        finalPrice,
+        method: `market_ai_blend_${Math.round(marketWeight * 100)}pct_market`,
+        confidence: Math.min(
+          (marketResult.blendedPrice.confidence || 0.7) + (ebayListings >= 10 ? 0.1 : 0),
+          0.95
+        ) * 100,
+        range: {
+          low: Math.min(hydraPrice * 0.8, aiPrice * 0.7),
+          high: Math.max(hydraPrice * 1.2, aiPrice * 1.1),
+        },
+        sources: marketResult.sources
+          .filter((s: any) => s.available && s.priceAnalysis)
+          .map((s: any) => ({
+            source: s.source,
+            value: s.priceAnalysis?.median || 0,
+            weight: s.source === 'ebay' ? 1.2 : (s.authorityData ? 1.5 : 1.0),
+          })),
+        authorityVerified: !!authorityData,
+      };
+    } else {
+      // No market data - fall back to legacy blendPrices
+      // This handles edge cases where HYDRA couldn't get any market data
+      console.log(`\n  ⚠️ No HYDRA market data, using legacy blend`);
+      
+      // Try the legacy method (but it probably won't find anything either)
+      const marketPrices = marketResult.sources
+        .filter((s: any) => s.priceAnalysis?.median > 0)
+        .map((s: any) => ({ 
+          source: s.source, 
+          prices: [s.priceAnalysis.median] // Convert priceAnalysis to prices array
+        }));
+      
+      blendedPrice = blendPrices(
+        consensus.estimatedValue,
+        authorityData,
+        marketPrices.length > 0 ? marketPrices : null,
+        { condition: request.condition }
+      );
+      
+      console.log(`  🤖 AI consensus only: $${blendedPrice.finalPrice.toFixed(2)}`);
+    }
     
     // ==========================================================================
     // STAGE 8: Format Response
