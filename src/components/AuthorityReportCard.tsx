@@ -97,6 +97,9 @@ interface AuthorityData {
   availability?: string;
   rrp?: number;
   pricePerPiece?: number;
+  dateFirstAvailable?: string;
+  dateLastAvailable?: string;
+  isRetired?: boolean;
   
   // Discogs (Vinyl)
   discogsId?: number;
@@ -620,31 +623,86 @@ const PokemonTcgSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
 // -----------------------------------------------------------------------------
 // 5. BRICKSET (LEGO)
 // -----------------------------------------------------------------------------
-const BricksetSection: React.FC<{ data: AuthorityData }> = ({ data }) => (
-  <div className="space-y-3">
-    {data.imageLinks?.thumbnail && (
-      <div className="flex justify-center">
-        <ThumbnailImage 
-          src={data.imageLinks.thumbnail} 
-          alt={data.title || 'LEGO set'} 
-          className="w-40 h-32"
-        />
+const BricksetSection: React.FC<{ data: AuthorityData }> = ({ data }) => {
+  // Handle both flat data and nested itemDetails
+  const details = (data.itemDetails || data) as AuthorityData;
+  
+  // Extract values with fallbacks
+  const thumbnail = details.imageLinks?.thumbnail || (data.itemDetails?.imageLinks as any)?.thumbnail;
+  const setNumber = details.setNumber || (data.itemDetails?.setNumber as string);
+  const year = details.year || (data.itemDetails?.year as number);
+  const theme = details.theme || (data.itemDetails?.theme as string);
+  const subtheme = details.subtheme || (data.itemDetails?.subtheme as string);
+  const pieces = details.pieces || (data.itemDetails?.pieces as number);
+  const minifigs = details.minifigs || (data.itemDetails?.minifigs as number);
+  const ageRange = details.ageRange || (data.itemDetails?.ageRange as string);
+  const availability = details.availability || (data.itemDetails?.availability as string);
+  const rrp = details.rrp || (data.itemDetails?.rrp as number);
+  const pricePerPiece = details.pricePerPiece || (data.itemDetails?.pricePerPiece as number);
+  const bricksetId = details.bricksetId || (data.itemDetails?.bricksetId as number);
+  const dateFirstAvailable = details.dateFirstAvailable || (data.itemDetails?.dateFirstAvailable as string);
+  const dateLastAvailable = details.dateLastAvailable || (data.itemDetails?.dateLastAvailable as string);
+  const isRetired = details.isRetired || (data.itemDetails?.isRetired as boolean);
+  
+  // Format dates nicely
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return undefined;
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+    } catch {
+      return dateStr;
+    }
+  };
+  
+  return (
+    <div className="space-y-3">
+      {thumbnail && (
+        <div className="flex justify-center">
+          <ThumbnailImage 
+            src={thumbnail} 
+            alt={data.title || 'LEGO set'} 
+            className="w-40 h-32"
+          />
+        </div>
+      )}
+      
+      {/* Retired Badge */}
+      {isRetired && (
+        <div className="bg-orange-500/20 border border-orange-500/50 rounded-md p-2 flex items-center justify-center gap-2">
+          <Package className="h-4 w-4 text-orange-600" />
+          <span className="text-orange-700 dark:text-orange-400 font-semibold text-sm">
+            Retired Set
+            {dateLastAvailable && ` • ${formatDate(dateLastAvailable)}`}
+          </span>
+        </div>
+      )}
+      
+      {/* Currently Available Badge */}
+      {availability === 'Retail' && (
+        <div className="bg-green-500/20 border border-green-500/50 rounded-md p-2 flex items-center justify-center gap-2">
+          <ShoppingBag className="h-4 w-4 text-green-600" />
+          <span className="text-green-700 dark:text-green-400 font-semibold text-sm">Currently Available</span>
+        </div>
+      )}
+      
+      <div className="grid grid-cols-2 gap-3">
+        <DataRow label="Set Number" value={setNumber} />
+        <DataRow label="Year" value={year} />
+        <DataRow label="Theme" value={theme} />
+        <DataRow label="Subtheme" value={subtheme} />
+        <DataRow label="Pieces" value={pieces?.toLocaleString()} />
+        <DataRow label="Minifigures" value={minifigs} />
+        <DataRow label="Age Range" value={ageRange} />
+        {dateFirstAvailable && <DataRow label="Released" value={formatDate(dateFirstAvailable)} />}
+        {dateLastAvailable && <DataRow label="Retired" value={formatDate(dateLastAvailable)} />}
+        {rrp && <DataRow label="Original RRP" value={`$${rrp.toFixed(2)}`} />}
+        {pricePerPiece && <DataRow label="Price/Piece" value={`$${pricePerPiece.toFixed(3)}`} />}
+        <DataRow label="Brickset ID" value={bricksetId} />
       </div>
-    )}
-    <div className="grid grid-cols-2 gap-3">
-      <DataRow label="Set Number" value={data.setNumber} />
-      <DataRow label="Year" value={data.year} />
-      <DataRow label="Theme" value={data.theme} />
-      <DataRow label="Subtheme" value={data.subtheme} />
-      <DataRow label="Pieces" value={data.pieces?.toLocaleString()} />
-      <DataRow label="Minifigures" value={data.minifigs} />
-      <DataRow label="Age Range" value={data.ageRange} />
-      <DataRow label="Availability" value={data.availability} />
-      {data.rrp && <DataRow label="RRP" value={`$${data.rrp.toFixed(2)}`} />}
-      {data.pricePerPiece && <DataRow label="Price/Piece" value={`$${data.pricePerPiece.toFixed(3)}`} />}
     </div>
-  </div>
-);
+  );
+};
 
 // -----------------------------------------------------------------------------
 // 6. DISCOGS (Vinyl Records)

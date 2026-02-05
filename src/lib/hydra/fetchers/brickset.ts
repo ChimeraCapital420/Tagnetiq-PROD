@@ -157,6 +157,11 @@ export async function fetchBricksetData(itemName: string): Promise<MarketDataSou
       packagingType: bestMatch.packagingType,
       availability: bestMatch.availability,
       
+      // Release and retirement dates
+      dateFirstAvailable: bestMatch.LEGOCom?.US?.dateFirstAvailable || bestMatch.LEGOCom?.UK?.dateFirstAvailable,
+      dateLastAvailable: bestMatch.LEGOCom?.US?.dateLastAvailable || bestMatch.LEGOCom?.UK?.dateLastAvailable,
+      isRetired: bestMatch.availability === 'Retired' || !!bestMatch.LEGOCom?.US?.dateLastAvailable,
+      
       // Pricing
       rrp: priceData?.retail,
       pricePerPiece: bestMatch.pieces && priceData?.retail 
