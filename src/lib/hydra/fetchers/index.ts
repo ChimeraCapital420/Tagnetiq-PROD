@@ -1,8 +1,8 @@
 // FILE: src/lib/hydra/fetchers/index.ts
-// HYDRA v7.0 - Market Data Fetchers Index
-// Unified interface for all market data sources
+// HYDRA v7.1 - Market Data Fetchers Index
 // FIXED v6.3: Now passes additionalContext to fetchers (especially NHTSA for VIN)
 // FIXED v7.0: Default timeout bumped from 10s → 30s (Pokemon TCG needs it)
+// FIXED v7.1: Proper timeout cancellation - clearTimeout when fetch completes
 
 import type { MarketDataSource, MarketDataResult, ItemCategory } from '../types.js';
 import { getApisForCategory } from '../category-detection.js';
@@ -58,16 +58,16 @@ const CONTEXT_AWARE_FETCHERS = ['nhtsa', 'psa'];
 
 // Per-fetcher timeout overrides (some APIs are slower than others)
 const FETCHER_TIMEOUTS: Record<string, number> = {
-  'pokemon_tcg': 30000,  // 30s - slow API, especially on cold starts
-  'ebay': 15000,         // 15s - OAuth + search can take time
-  'retailed': 10000,     // 10s
-  'brickset': 10000,     // 10s
-  'numista': 10000,      // 10s
-  'google_books': 8000,  // 8s - usually fast
-  'discogs': 8000,       // 8s - usually fast
-  'psa': 10000,          // 10s
-  'nhtsa': 8000,         // 8s - free API, usually fast
-  'upcitemdb': 8000,     // 8s
+  'pokemon_tcg': 45000,  // INCREASED v7.1: 45s - API can be very slow
+  'ebay': 20000,         // INCREASED v7.1: 20s - OAuth + search
+  'retailed': 15000,     // 15s
+  'brickset': 15000,     // 15s
+  'numista': 15000,      // 15s
+  'google_books': 10000, // 10s - usually fast
+  'discogs': 10000,      // 10s - usually fast
+  'psa': 15000,          // 15s
+  'nhtsa': 10000,        // 10s - free API, usually fast
+  'upcitemdb': 10000,    // 10s
 };
 
 // ==================== UNIFIED FETCH FUNCTION ====================
@@ -92,7 +92,7 @@ export async function fetchMarketData(
 ): Promise<MarketDataResult> {
   const startTime = Date.now();
   const maxSources = options?.maxSources || 3;
-  const defaultTimeout = options?.timeout || 30000; // FIXED v7.0: 30s default (was 10s)
+  const defaultTimeout = options?.timeout || 45000; // FIXED v7.1: 45s default (was 30s)
   const includeEbay = options?.includeEbay !== false;
   
   console.log(`\n📊 === FETCHING MARKET DATA ===`);
@@ -126,9 +126,13 @@ export async function fetchMarketData(
     const timeout = FETCHER_TIMEOUTS[api] || defaultTimeout;
     
     try {
-      // Create a race between the fetcher and a timeout
+      // FIXED v7.1: Properly clear timeout when fetch completes
+      let timeoutId: NodeJS.Timeout;
+      let timedOut = false;
+      
       const timeoutPromise = new Promise<null>((resolve) => {
-        setTimeout(() => {
+        timeoutId = setTimeout(() => {
+          timedOut = true;
           console.error(`⏱️ ${api} fetch timed out (${timeout / 1000}s)`);
           resolve(null);
         }, timeout);
@@ -142,10 +146,19 @@ export async function fetchMarketData(
         fetchPromise = (fetcher as StandardFetcherFunction)(itemName, category);
       }
       
-      // Race: fetcher vs timeout
-      const result = await Promise.race([fetchPromise, timeoutPromise]);
+      // Wrap fetch to clear timeout on completion
+      const wrappedFetch = fetchPromise.then((result) => {
+        clearTimeout(timeoutId); // Clear timeout if fetch succeeds
+        return result;
+      }).catch((err) => {
+        clearTimeout(timeoutId); // Clear timeout even on error
+        throw err;
+      });
       
-      if (result === null) {
+      // Race: fetcher vs timeout
+      const result = await Promise.race([wrappedFetch, timeoutPromise]);
+      
+      if (result === null || timedOut) {
         // Timeout won the race
         return {
           source: api,
