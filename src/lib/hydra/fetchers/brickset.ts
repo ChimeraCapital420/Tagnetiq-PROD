@@ -1,51 +1,88 @@
 // FILE: src/lib/hydra/fetchers/brickset.ts
-// HYDRA v5.2 - Brickset API Fetcher (LEGO Sets)
+// HYDRA v7.0 - Brickset API Fetcher (LEGO Sets)
+// FIXED v7.0: Now properly authenticates with userHash before API calls
+// The Brickset v3 API requires: 1) login to get userHash, 2) then call getSets with userHash
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
 const BRICKSET_API = 'https://brickset.com/api/v3.asmx';
 
+// Cache userHash for 1 hour to avoid repeated logins
+let cachedUserHash: string | null = null;
+let userHashExpiry: number = 0;
+
+// ==================== MAIN FETCHER ====================
+
 export async function fetchBricksetData(itemName: string): Promise<MarketDataSource> {
   const startTime = Date.now();
   const apiKey = process.env.BRICKSET_API_KEY;
+  const username = process.env.BRICKSET_USERNAME;
+  const password = process.env.BRICKSET_PASSWORD;
   
   if (!apiKey) {
-    console.log('⚠️ Brickset API key not configured');
-    return createFallbackResult(itemName);
+    console.log('⚠️ Brickset: API key not configured');
+    return createFallbackResult(itemName, startTime, 'API key not configured');
+  }
+  
+  if (!username || !password) {
+    console.log('⚠️ Brickset: Username/password not configured');
+    return createFallbackResult(itemName, startTime, 'Login credentials not configured');
   }
   
   try {
-    // Extract set number if present
+    // Step 1: Get userHash (login if needed)
+    const userHash = await getBricksetUserHash(apiKey, username, password);
+    
+    if (!userHash) {
+      console.error('❌ Brickset: Failed to authenticate');
+      return createFallbackResult(itemName, startTime, 'Authentication failed');
+    }
+    
+    // Step 2: Extract set number if present
     const setNumber = extractSetNumber(itemName);
     const searchQuery = setNumber || cleanLegoName(itemName);
     console.log(`🔍 Brickset search: "${searchQuery}" (set#: ${setNumber || 'none'})`);
     
-    // Build API request
-    const params = new URLSearchParams({
-      apiKey,
-      query: searchQuery,
-      pageSize: '10',
-      orderBy: 'YearFrom',
-    });
+    // Step 3: Build search parameters as JSON
+    const searchParams: Record<string, any> = {
+      pageSize: 10,
+      orderBy: 'YearFromDESC',
+    };
     
-    // If we have a set number, search by that specifically
     if (setNumber) {
-      params.set('setNumber', setNumber);
+      searchParams.setNumber = setNumber;
+    } else {
+      searchParams.query = searchQuery;
     }
     
-    const response = await fetch(`${BRICKSET_API}/getSets?${params.toString()}`, {
+    // Step 4: Execute search with proper authentication
+    const searchUrl = `${BRICKSET_API}/getSets?apiKey=${encodeURIComponent(apiKey)}&userHash=${encodeURIComponent(userHash)}&params=${encodeURIComponent(JSON.stringify(searchParams))}`;
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
+    const response = await fetch(searchUrl, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
       },
+      signal: controller.signal,
     });
+    
+    clearTimeout(timeoutId);
     
     if (!response.ok) {
       console.error(`❌ Brickset API error: ${response.status}`);
-      return createFallbackResult(itemName);
+      return createFallbackResult(itemName, startTime, `API error: ${response.status}`);
     }
     
     const data = await response.json();
+    
+    if (data.status !== 'success') {
+      console.error(`❌ Brickset: ${data.message || 'Unknown error'}`);
+      return createFallbackResult(itemName, startTime, data.message || 'Search failed');
+    }
+    
     const sets = data.sets || [];
     
     if (sets.length === 0) {
@@ -53,15 +90,19 @@ export async function fetchBricksetData(itemName: string): Promise<MarketDataSou
       return {
         source: 'brickset',
         available: false,
+        responseTime: Date.now() - startTime,
         query: searchQuery,
-        totalListings: 0,
+        totalResults: 0,
         error: 'No matching LEGO sets found',
       };
     }
     
     // Get the best match
     const bestMatch = sets[0];
-    console.log(`✅ Brickset: Found "${bestMatch.name}" (${bestMatch.number}-${bestMatch.numberVariant || 1})`);
+    const responseTime = Date.now() - startTime;
+    const displayName = `${bestMatch.name} (${bestMatch.number}${bestMatch.numberVariant > 1 ? `-${bestMatch.numberVariant}` : ''})`;
+    
+    console.log(`✅ Brickset: Found "${displayName}" in ${responseTime}ms`);
     
     // Extract price data
     const priceData = extractPriceData(bestMatch);
@@ -71,90 +112,149 @@ export async function fetchBricksetData(itemName: string): Promise<MarketDataSou
       source: 'brickset',
       verified: true,
       confidence: calculateMatchConfidence(itemName, bestMatch.name, bestMatch.number),
-      itemDetails: {
-        setId: bestMatch.setID,
-        setNumber: bestMatch.number,
-        numberVariant: bestMatch.numberVariant,
-        name: bestMatch.name,
-        year: bestMatch.year,
-        theme: bestMatch.theme,
-        themeGroup: bestMatch.themeGroup,
-        subtheme: bestMatch.subtheme,
-        category: bestMatch.category,
-        pieces: bestMatch.pieces,
-        minifigs: bestMatch.minifigs,
-        packagingType: bestMatch.packagingType,
-        availability: bestMatch.availability,
-        rating: bestMatch.rating,
-        reviewCount: bestMatch.reviewCount,
-        instructionsCount: bestMatch.instructionsCount,
-        ageRange: bestMatch.ageRange,
-        dimensions: bestMatch.dimensions,
-        barcodes: bestMatch.barcode,
-        imageUrl: bestMatch.image?.imageURL,
-        thumbnailUrl: bestMatch.image?.thumbnailURL,
-        bricksetUrl: bestMatch.bricksetURL,
-      },
-      priceData: priceData || undefined,
-      externalUrl: bestMatch.bricksetURL || `https://brickset.com/sets/${bestMatch.number}`,
-      lastUpdated: bestMatch.lastUpdated || new Date().toISOString(),
+      externalUrl: bestMatch.bricksetURL,
+      
+      // Brickset-specific fields
+      bricksetId: bestMatch.setID,
+      setNumber: `${bestMatch.number}${bestMatch.numberVariant > 1 ? `-${bestMatch.numberVariant}` : ''}`,
+      year: bestMatch.year,
+      theme: bestMatch.theme,
+      themeGroup: bestMatch.themeGroup,
+      subtheme: bestMatch.subtheme,
+      pieces: bestMatch.pieces,
+      minifigs: bestMatch.minifigs,
+      ageRange: bestMatch.ageRange ? `${bestMatch.ageRange.min || '?'}-${bestMatch.ageRange.max || '?'}` : undefined,
+      packagingType: bestMatch.packagingType,
+      availability: bestMatch.availability,
+      
+      // Pricing
+      rrp: priceData?.retail,
+      pricePerPiece: bestMatch.pieces && priceData?.retail 
+        ? parseFloat((priceData.retail / bestMatch.pieces).toFixed(3)) 
+        : undefined,
+      
+      // Market value range
+      marketValue: priceData ? {
+        low: `$${priceData.used.toFixed(2)}`,
+        mid: `$${priceData.retail.toFixed(2)}`,
+        high: `$${priceData.new.toFixed(2)}`,
+      } : undefined,
+      
+      // Images
+      imageLinks: bestMatch.image ? {
+        thumbnail: bestMatch.image.thumbnailURL,
+        smallThumbnail: bestMatch.image.imageURL,
+      } : undefined,
+      
+      // Ratings
+      averageRating: bestMatch.rating,
+      ratingsCount: bestMatch.reviewCount,
+      
+      lastUpdated: new Date().toISOString(),
     };
-    
-    // Build sample listings
-    const sampleListings = sets.slice(0, 5).map((set: any) => ({
-      title: `${set.number}: ${set.name} (${set.year})`,
-      price: set.LEGOCom?.US?.retailPrice || set.LEGOCom?.UK?.retailPrice || 0,
-      condition: `${set.pieces || '?'} pieces`,
-      url: set.bricksetURL || `https://brickset.com/sets/${set.number}`,
-    }));
-    
-    console.log(`✅ Brickset: Authority data retrieved in ${Date.now() - startTime}ms`);
     
     return {
       source: 'brickset',
       available: true,
+      responseTime,
       query: searchQuery,
-      totalListings: data.matches || sets.length,
+      totalResults: data.matches || sets.length,
+      
+      // Price analysis from Brickset data
       priceAnalysis: priceData ? {
-        lowest: priceData.used || priceData.retail * 0.5,
-        highest: priceData.new || priceData.retail * 2,
+        median: priceData.retail,
         average: priceData.retail,
-        median: (priceData.new + priceData.used) / 2 || priceData.retail,
+        low: priceData.used,
+        high: priceData.new,
+        currency: 'USD',
+        sampleSize: 1,
       } : undefined,
-      suggestedPrices: priceData ? {
-        goodDeal: parseFloat(((priceData.used || priceData.retail * 0.6) * 0.9).toFixed(2)),
-        fairMarket: priceData.used || priceData.retail * 0.7,
-        sellPrice: priceData.new || priceData.retail * 1.2,
-      } : undefined,
-      sampleListings,
+      
+      // Authority data for the report card
       authorityData,
+      
+      // Additional metadata
       metadata: {
-        responseTime: Date.now() - startTime,
-        totalSets: data.matches,
-        bestMatchId: bestMatch.setID,
-        theme: bestMatch.theme,
+        setId: bestMatch.setID,
+        bricksetUrl: bestMatch.bricksetURL,
+        totalSets: data.matches || sets.length,
       },
     };
     
-  } catch (error) {
-    console.error('❌ Brickset fetch error:', error);
-    return {
-      source: 'brickset',
-      available: false,
-      query: itemName,
-      totalListings: 0,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
+  } catch (error: any) {
+    const responseTime = Date.now() - startTime;
+    
+    if (error.name === 'AbortError') {
+      console.error('⏱️ Brickset: Request timed out');
+      return createFallbackResult(itemName, startTime, 'Request timed out');
+    }
+    
+    console.error(`❌ Brickset error:`, error.message);
+    return createFallbackResult(itemName, responseTime, error.message);
   }
 }
 
+// ==================== AUTHENTICATION ====================
+
+/**
+ * Get userHash via login (cached for 1 hour)
+ */
+async function getBricksetUserHash(apiKey: string, username: string, password: string): Promise<string | null> {
+  // Check cache first
+  if (cachedUserHash && Date.now() < userHashExpiry) {
+    return cachedUserHash;
+  }
+  
+  try {
+    const loginUrl = `${BRICKSET_API}/login?apiKey=${encodeURIComponent(apiKey)}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
+    const response = await fetch(loginUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      console.error(`❌ Brickset login HTTP error: ${response.status}`);
+      return null;
+    }
+    
+    const data = await response.json();
+    
+    if (data.status === 'success' && data.hash) {
+      // Cache for 1 hour
+      cachedUserHash = data.hash;
+      userHashExpiry = Date.now() + (60 * 60 * 1000);
+      console.log('🔑 Brickset: Login successful, userHash cached');
+      return data.hash;
+    }
+    
+    console.error('❌ Brickset login failed:', data.message);
+    return null;
+    
+  } catch (error: any) {
+    console.error('❌ Brickset login error:', error.message);
+    return null;
+  }
+}
+
+// ==================== HELPER FUNCTIONS ====================
+
+/**
+ * Extract LEGO set number from item name
+ */
 function extractSetNumber(itemName: string): string | null {
   // Look for LEGO set numbers (usually 4-6 digits)
   const patterns = [
-    /\b(\d{4,6})\b/,           // Plain number
-    /set\s*#?\s*(\d{4,6})/i,   // "set #12345"
-    /\b(\d{4,6})-\d\b/,        // "12345-1" format
-    /#(\d{4,6})/,              // "#12345"
+    /\b(\d{4,6})\b/,           // Plain number like "75192"
+    /set\s*#?\s*(\d{4,6})/i,   // "set #75192"
+    /\b(\d{4,6})-\d\b/,        // "75192-1" format
+    /#(\d{4,6})/,              // "#75192"
   ];
   
   for (const pattern of patterns) {
@@ -167,6 +267,9 @@ function extractSetNumber(itemName: string): string | null {
   return null;
 }
 
+/**
+ * Clean up LEGO item name for search
+ */
 function cleanLegoName(itemName: string): string {
   return itemName
     .replace(/\b(lego|legos|set|#)\b/gi, '')
@@ -175,14 +278,32 @@ function cleanLegoName(itemName: string): string {
     .trim();
 }
 
+/**
+ * Extract price data from Brickset set
+ */
 function extractPriceData(set: any): { retail: number; new: number; used: number } | null {
+  // Get retail price (prefer US, fallback to UK with conversion)
   const usRetail = set.LEGOCom?.US?.retailPrice;
   const ukRetail = set.LEGOCom?.UK?.retailPrice;
-  const retail = usRetail || (ukRetail ? ukRetail * 1.25 : 0); // Convert UK to USD approx
+  const retail = usRetail || (ukRetail ? ukRetail * 1.25 : 0); // Approximate GBP to USD
   
-  // BrickEconomy prices if available
-  const newPrice = set.collections?.qtyOwned?.newPrice || retail * 1.5;
-  const usedPrice = set.collections?.qtyOwned?.usedPrice || retail * 0.6;
+  // Estimate new/used prices based on typical LEGO market patterns
+  // Retired sets typically sell for 1.5-2x retail when new
+  // Used sets typically sell for 0.5-0.7x retail
+  const isRetired = set.availability === 'Retired' || set.LEGOCom?.US?.dateLastAvailable;
+  const yearsOld = new Date().getFullYear() - (set.year || 2020);
+  
+  let newMultiplier = 1.0;
+  let usedMultiplier = 0.6;
+  
+  if (isRetired || yearsOld > 2) {
+    // Retired sets appreciate
+    newMultiplier = Math.min(1.0 + (yearsOld * 0.15), 3.0);
+    usedMultiplier = Math.min(0.6 + (yearsOld * 0.1), 1.5);
+  }
+  
+  const newPrice = retail * newMultiplier;
+  const usedPrice = retail * usedMultiplier;
   
   if (retail > 0 || newPrice > 0 || usedPrice > 0) {
     return {
@@ -195,21 +316,24 @@ function extractPriceData(set: any): { retail: number; new: number; used: number
   return null;
 }
 
+/**
+ * Calculate match confidence
+ */
 function calculateMatchConfidence(searchTerm: string, setName: string, setNumber: string): number {
   const searchLower = searchTerm.toLowerCase();
   
-  // Check for set number match
+  // Set number match = very high confidence
   if (setNumber && searchLower.includes(setNumber)) {
     return 0.98;
   }
   
-  // Check for exact name match
+  // Exact name match
   const nameLower = setName.toLowerCase();
   if (nameLower === searchLower || searchLower.includes(nameLower)) {
     return 0.90;
   }
   
-  // Check word overlap
+  // Word overlap scoring
   const searchWords = searchLower.split(/\s+/).filter(w => w.length > 2);
   const nameWords = nameLower.split(/\s+/).filter(w => w.length > 2);
   const overlap = searchWords.filter(w => nameWords.some(n => n.includes(w) || w.includes(n)));
@@ -217,7 +341,10 @@ function calculateMatchConfidence(searchTerm: string, setName: string, setNumber
   return Math.min(0.5 + (overlap.length / Math.max(searchWords.length, 1)) * 0.4, 0.85);
 }
 
-function createFallbackResult(itemName: string): MarketDataSource {
+/**
+ * Create fallback result for error cases
+ */
+function createFallbackResult(itemName: string, startTime: number, error: string): MarketDataSource {
   const setNumber = extractSetNumber(itemName);
   const searchUrl = setNumber 
     ? `https://brickset.com/sets/${setNumber}`
@@ -225,18 +352,68 @@ function createFallbackResult(itemName: string): MarketDataSource {
   
   return {
     source: 'brickset',
-    available: true,
+    available: false,
+    responseTime: Date.now() - startTime,
     query: itemName,
-    totalListings: 0,
-    sampleListings: [{
-      title: `Search Brickset for "${itemName}"`,
-      price: 0,
-      condition: 'N/A',
-      url: searchUrl,
-    }],
+    totalResults: 0,
+    error,
     metadata: {
       fallback: true,
       searchUrl,
     },
   };
 }
+
+// ==================== HEALTH CHECK ====================
+
+export async function healthCheck(): Promise<{
+  status: 'healthy' | 'degraded' | 'down';
+  latency?: number;
+  error?: string;
+}> {
+  const apiKey = process.env.BRICKSET_API_KEY;
+  
+  if (!apiKey) {
+    return { status: 'down', error: 'API key not configured' };
+  }
+  
+  const startTime = Date.now();
+  
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
+    // checkKey is the simplest endpoint to validate
+    const response = await fetch(
+      `${BRICKSET_API}/checkKey?apiKey=${apiKey}`,
+      {
+        headers: { 'Accept': 'application/json' },
+        signal: controller.signal,
+      }
+    );
+    
+    clearTimeout(timeoutId);
+    const latency = Date.now() - startTime;
+    
+    if (!response.ok) {
+      return { status: 'down', latency, error: `HTTP ${response.status}` };
+    }
+    
+    const data = await response.json();
+    
+    if (data.status !== 'success') {
+      return { status: 'degraded', latency, error: data.message };
+    }
+    
+    return { status: 'healthy', latency };
+    
+  } catch (error: any) {
+    return {
+      status: 'down',
+      latency: Date.now() - startTime,
+      error: error.message,
+    };
+  }
+}
+
+export default fetchBricksetData;
