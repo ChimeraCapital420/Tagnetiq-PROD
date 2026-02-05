@@ -1,7 +1,8 @@
 // FILE: src/lib/hydra/fetchers/index.ts
-// HYDRA v6.3 - Market Data Fetchers Index
+// HYDRA v7.0 - Market Data Fetchers Index
 // Unified interface for all market data sources
 // FIXED v6.3: Now passes additionalContext to fetchers (especially NHTSA for VIN)
+// FIXED v7.0: Default timeout bumped from 10s → 30s (Pokemon TCG needs it)
 
 import type { MarketDataSource, MarketDataResult, ItemCategory } from '../types.js';
 import { getApisForCategory } from '../category-detection.js';
@@ -48,12 +49,26 @@ const FETCHER_REGISTRY: Record<string, StandardFetcherFunction | ExtendedFetcher
   'discogs': fetchDiscogsData,
   'retailed': fetchRetailedData,
   'psa': fetchPsaData,
-  'nhtsa': fetchNhtsaData,  // This one accepts additionalContext as 2nd param
+  'nhtsa': fetchNhtsaData,
   'upcitemdb': fetchUpcItemDbData,
 };
 
 // Fetchers that accept additionalContext as their second parameter
 const CONTEXT_AWARE_FETCHERS = ['nhtsa', 'psa'];
+
+// Per-fetcher timeout overrides (some APIs are slower than others)
+const FETCHER_TIMEOUTS: Record<string, number> = {
+  'pokemon_tcg': 30000,  // 30s - slow API, especially on cold starts
+  'ebay': 15000,         // 15s - OAuth + search can take time
+  'retailed': 10000,     // 10s
+  'brickset': 10000,     // 10s
+  'numista': 10000,      // 10s
+  'google_books': 8000,  // 8s - usually fast
+  'discogs': 8000,       // 8s - usually fast
+  'psa': 10000,          // 10s
+  'nhtsa': 8000,         // 8s - free API, usually fast
+  'upcitemdb': 8000,     // 8s
+};
 
 // ==================== UNIFIED FETCH FUNCTION ====================
 
@@ -62,7 +77,7 @@ const CONTEXT_AWARE_FETCHERS = ['nhtsa', 'psa'];
  * 
  * @param itemName - The name/description of the item
  * @param category - The detected category
- * @param additionalContext - FIXED v6.3: Additional context like VIN numbers extracted from images
+ * @param additionalContext - Additional context like VIN numbers extracted from images
  * @param options - Fetch options
  */
 export async function fetchMarketData(
@@ -77,7 +92,7 @@ export async function fetchMarketData(
 ): Promise<MarketDataResult> {
   const startTime = Date.now();
   const maxSources = options?.maxSources || 3;
-  const timeout = options?.timeout || 10000;
+  const defaultTimeout = options?.timeout || 30000; // FIXED v7.0: 30s default (was 10s)
   const includeEbay = options?.includeEbay !== false;
   
   console.log(`\n📊 === FETCHING MARKET DATA ===`);
@@ -99,7 +114,7 @@ export async function fetchMarketData(
   // Limit to max sources
   apis = apis.slice(0, maxSources);
   
-  // Run fetchers in parallel with timeout
+  // Run fetchers in parallel with per-fetcher timeouts
   const fetchPromises = apis.map(async (api) => {
     const fetcher = FETCHER_REGISTRY[api];
     if (!fetcher) {
@@ -107,28 +122,43 @@ export async function fetchMarketData(
       return null;
     }
     
+    // Use per-fetcher timeout if available, otherwise default
+    const timeout = FETCHER_TIMEOUTS[api] || defaultTimeout;
+    
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      // Create a race between the fetcher and a timeout
+      const timeoutPromise = new Promise<null>((resolve) => {
+        setTimeout(() => {
+          console.error(`⏱️ ${api} fetch timed out (${timeout / 1000}s)`);
+          resolve(null);
+        }, timeout);
+      });
       
-      // FIXED v6.3: Pass additionalContext to context-aware fetchers
-      let result: MarketDataSource;
+      // Build the actual fetch promise
+      let fetchPromise: Promise<MarketDataSource>;
       if (CONTEXT_AWARE_FETCHERS.includes(api) && additionalContext) {
-        // These fetchers accept (itemName, additionalContext)
-        result = await (fetcher as ExtendedFetcherFunction)(itemName, additionalContext);
+        fetchPromise = (fetcher as ExtendedFetcherFunction)(itemName, additionalContext);
       } else {
-        // Standard fetchers accept (itemName, category)
-        result = await (fetcher as StandardFetcherFunction)(itemName, category);
+        fetchPromise = (fetcher as StandardFetcherFunction)(itemName, category);
       }
       
-      clearTimeout(timeoutId);
+      // Race: fetcher vs timeout
+      const result = await Promise.race([fetchPromise, timeoutPromise]);
+      
+      if (result === null) {
+        // Timeout won the race
+        return {
+          source: api,
+          available: false,
+          query: itemName,
+          totalListings: 0,
+          error: `Fetch timed out (${timeout / 1000}s)`,
+        } as MarketDataSource;
+      }
+      
       return result;
     } catch (error: any) {
-      if (error.name === 'AbortError') {
-        console.error(`⏱️ ${api} fetch timed out`);
-      } else {
-        console.error(`❌ ${api} fetch failed:`, error.message);
-      }
+      console.error(`❌ ${api} fetch failed:`, error.message);
       return {
         source: api,
         available: false,
@@ -157,25 +187,25 @@ export async function fetchMarketData(
   // Determine market influence
   const marketInfluence = determineMarketInfluence(sources, category);
   
-  console.log(`\n📊 === MARKET DATA RESULTS ===`);
-  console.log(`✅ Sources queried: ${apis.join(', ')}`);
-  console.log(`✅ Sources with data: ${sources.filter(s => s.available).map(s => s.source).join(', ') || 'none'}`);
-  console.log(`💰 Blended price: $${blendedPrice.toFixed(2)} (${blendMethod})`);
-  console.log(`🎯 Primary authority: ${primaryAuthority?.source || 'none'}`);
-  if (primaryAuthority?.itemDetails) {
-    console.log(`📋 Authority itemDetails keys: ${Object.keys(primaryAuthority.itemDetails).join(', ')}`);
-  }
-  console.log(`⏱️ Total time: ${Date.now() - startTime}ms`);
+  const fetchTime = Date.now() - startTime;
+  
+  console.log(`\n📊 === MARKET DATA COMPLETE ===`);
+  console.log(`⏱️ Total fetch time: ${fetchTime}ms`);
+  console.log(`📦 Sources: ${sources.length} (${sources.filter(s => s.available).length} available)`);
+  console.log(`💰 Blended price: $${blendedPrice} (${blendMethod})`);
+  console.log(`🏛️ Primary authority: ${primaryAuthority?.source || 'none'}`);
   
   return {
     sources,
-    primarySource,
-    blendedPrice,
-    blendMethod,
-    marketInfluence,
-    apisUsed: apis,
     primaryAuthority,
-    allAuthorities: authoritySources.map(s => s.authorityData!),
+    blendedPrice: blendedPrice > 0 ? {
+      value: blendedPrice,
+      confidence: calculatePriceConfidence(sources),
+      method: blendMethod,
+    } : undefined,
+    primarySource,
+    marketInfluence,
+    fetchTime,
   };
 }
 
@@ -188,7 +218,6 @@ function calculateBlendedPrice(sources: MarketDataSource[]): { blendedPrice: num
     return { blendedPrice: 0, blendMethod: 'no_data' };
   }
   
-  // Collect all prices with source weights
   const priceData: { price: number; weight: number; source: string }[] = [];
   
   for (const source of availableSources) {
@@ -233,6 +262,28 @@ function calculateBlendedPrice(sources: MarketDataSource[]): { blendedPrice: num
   };
 }
 
+function calculatePriceConfidence(sources: MarketDataSource[]): number {
+  const available = sources.filter(s => s.available && s.priceAnalysis);
+  
+  if (available.length === 0) return 0;
+  if (available.length === 1) return 0.6;
+  
+  // More sources = more confidence
+  let confidence = 0.5 + (available.length * 0.1);
+  
+  // Authority source boosts confidence
+  if (available.some(s => s.authorityData)) {
+    confidence += 0.15;
+  }
+  
+  // eBay data boosts confidence
+  if (available.some(s => s.source === 'ebay' && (s.totalListings || 0) > 5)) {
+    confidence += 0.1;
+  }
+  
+  return Math.min(confidence, 0.98);
+}
+
 function determineMarketInfluence(sources: MarketDataSource[], category: ItemCategory): string {
   const availableSources = sources.filter(s => s.available);
   
@@ -241,7 +292,7 @@ function determineMarketInfluence(sources: MarketDataSource[], category: ItemCat
   }
   
   const hasAuthority = availableSources.some(s => s.authorityData);
-  const hasEbay = availableSources.some(s => s.source === 'ebay' && s.totalListings > 5);
+  const hasEbay = availableSources.some(s => s.source === 'ebay' && (s.totalListings || 0) > 5);
   
   if (hasAuthority && hasEbay) {
     return 'high_confidence_multi_source';
@@ -272,7 +323,6 @@ export async function fetchMarketDataBatch(
   
   const results = new Map<string, MarketDataResult>();
   
-  // Process in batches
   for (let i = 0; i < items.length; i += maxConcurrent) {
     const batch = items.slice(i, i + maxConcurrent);
     
@@ -284,7 +334,6 @@ export async function fetchMarketDataBatch(
       results.set(item.name, batchResults[index]);
     });
     
-    // Add delay between batches to avoid rate limiting
     if (i + maxConcurrent < items.length) {
       await new Promise(resolve => setTimeout(resolve, delayBetween));
     }
@@ -293,7 +342,7 @@ export async function fetchMarketDataBatch(
   return results;
 }
 
-// ==================== AVAILABLE FETCHERS ====================
+// ==================== UTILITY EXPORTS ====================
 
 export function getAvailableFetchers(): string[] {
   return Object.keys(FETCHER_REGISTRY);
@@ -301,4 +350,8 @@ export function getAvailableFetchers(): string[] {
 
 export function isFetcherAvailable(source: string): boolean {
   return source in FETCHER_REGISTRY;
+}
+
+export function getFetcherTimeout(source: string): number {
+  return FETCHER_TIMEOUTS[source] || 30000;
 }

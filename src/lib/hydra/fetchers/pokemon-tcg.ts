@@ -1,11 +1,12 @@
 // FILE: src/lib/hydra/fetchers/pokemon-tcg.ts
-// HYDRA v6.3 - Pokemon TCG API Fetcher
+// HYDRA v7.0 - Pokemon TCG API Fetcher
 // FIXED v6.3: Retry now uses DIFFERENT query strategies, not identical query
+// FIXED v7.0: Timeout bumped from 10s → 30s (API is slow on cold starts)
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
 const POKEMON_TCG_API = 'https://api.pokemontcg.io/v2';
-const POKEMON_TCG_TIMEOUT = 10000; // 10 second timeout
+const POKEMON_TCG_TIMEOUT = 30000; // FIXED v7.0: 30 second timeout (was 10s, API is slow)
 
 export async function fetchPokemonTcgData(itemName: string): Promise<MarketDataSource> {
   const startTime = Date.now();
@@ -143,7 +144,7 @@ export async function fetchPokemonTcgData(itemName: string): Promise<MarketDataS
     
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      console.error('❌ Pokemon TCG API timeout');
+      console.error(`❌ Pokemon TCG API timeout (${POKEMON_TCG_TIMEOUT / 1000}s)`);
       return {
         source: 'pokemon_tcg',
         available: false,
@@ -174,7 +175,6 @@ async function retryWithSimpleQuery(
   startTime: number,
   retryLevel: number
 ): Promise<MarketDataSource> {
-  // Extract pokemon name for all strategies
   const pokemonName = extractPokemonName(itemName);
   
   if (!pokemonName) {
@@ -182,36 +182,31 @@ async function retryWithSimpleQuery(
     return createFallbackResult(itemName, itemName);
   }
   
-  // Different query strategies for each retry level
   let simpleQuery: string;
   
   switch (retryLevel) {
     case 1:
-      // Strategy 1: Simple name search (no wildcards, no quotes)
       simpleQuery = `name:${pokemonName}`;
       break;
     case 2:
-      // Strategy 2: Lowercase name search
       simpleQuery = `name:${pokemonName.toLowerCase()}`;
       break;
-    case 3:
-      // Strategy 3: Try with set.id if we can find it
+    case 3: {
       const setId = extractSetId(itemName);
       if (setId) {
         simpleQuery = `name:${pokemonName} set.id:${setId}`;
       } else {
-        // Try with set.name
         const setName = extractSetName(itemName);
         if (setName) {
-          // Use quotes only for multi-word set names
           simpleQuery = setName.includes(' ') 
             ? `name:${pokemonName} set.name:"${setName}"`
             : `name:${pokemonName} set.name:${setName}`;
         } else {
-          simpleQuery = pokemonName; // Full text search as last resort
+          simpleQuery = pokemonName;
         }
       }
       break;
+    }
     default:
       return createFallbackResult(itemName, itemName);
   }
@@ -233,7 +228,6 @@ async function retryWithSimpleQuery(
     clearTimeout(timeoutId);
     
     if (!response.ok) {
-      // Try next retry level
       if (retryLevel < 3) {
         return await retryWithSimpleQuery(itemName, headers, startTime, retryLevel + 1);
       }
@@ -244,7 +238,6 @@ async function retryWithSimpleQuery(
     const cards = data.data || [];
     
     if (cards.length === 0) {
-      // Try next retry level
       if (retryLevel < 3) {
         return await retryWithSimpleQuery(itemName, headers, startTime, retryLevel + 1);
       }
@@ -260,7 +253,7 @@ async function retryWithSimpleQuery(
     const authorityData: AuthorityData = {
       source: 'pokemon_tcg',
       verified: true,
-      confidence: calculateMatchConfidence(itemName, bestMatch.name, bestMatch.set?.name) * (1 - retryLevel * 0.05), // Slightly lower confidence for each retry
+      confidence: calculateMatchConfidence(itemName, bestMatch.name, bestMatch.set?.name) * (1 - retryLevel * 0.05),
       title: `${bestMatch.name} - ${bestMatch.set?.name}`,
       itemDetails: {
         cardId: bestMatch.id,
@@ -329,7 +322,6 @@ async function retryWithSimpleQuery(
     
   } catch (error) {
     console.error(`❌ Pokemon TCG retry #${retryLevel} error:`, error);
-    // Try next retry level on error
     if (retryLevel < 3) {
       return await retryWithSimpleQuery(itemName, headers, startTime, retryLevel + 1);
     }
@@ -337,14 +329,63 @@ async function retryWithSimpleQuery(
   }
 }
 
-/**
- * Extract set ID from item description (for set.id queries)
- * These are the actual Pokemon TCG API set IDs
- */
+// ==================== QUERY BUILDING ====================
+
+function buildPokemonQuery(itemName: string): string {
+  const nameLower = itemName.toLowerCase();
+  
+  // First, try to extract Pokemon name
+  const pokemonName = extractPokemonName(itemName);
+  
+  if (pokemonName) {
+    // FIXED v6.3.1: Start without wildcard - simpler queries work better
+    let query = `name:${pokemonName}`;
+    
+    // Add subtype filters if detected (but NOT in the name search)
+    if (nameLower.includes('vmax')) {
+      query += ' subtypes:VMAX';
+    } else if (nameLower.includes('vstar')) {
+      query += ' subtypes:VSTAR';
+    } else if (nameLower.includes(' v ') || nameLower.endsWith(' v') || nameLower.includes(' v-')) {
+      query += ' subtypes:V';
+    } else if (nameLower.includes(' gx')) {
+      query += ' subtypes:GX';
+    } else if (nameLower.includes(' ex') && !nameLower.includes('exec')) {
+      query += ' subtypes:ex';
+    }
+    
+    // Add set filter using extractSetId for correct IDs
+    const setId = extractSetId(itemName);
+    if (setId) {
+      query += ` set.id:${setId}`;
+    }
+    
+    return query;
+  }
+  
+  // Fallback: Clean up the name for search (remove mechanics/noise)
+  const cleanName = itemName
+    .replace(/\b(pokemon|pokémon|card|tcg|holo|holographic|reverse holo)\b/gi, '')
+    .replace(/\b(single strike|rapid strike|fusion strike)\b/gi, '')
+    .replace(/\b(vmax|vstar|gx|ex|v)\b/gi, '')
+    .replace(/\b(full art|alt art|rainbow|secret rare|promo)\b/gi, '')
+    .replace(/#?\d+\/\d+/g, '')
+    .replace(/from\s+\w+\s+set/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  
+  if (cleanName && cleanName.length > 2) {
+    return `name:${cleanName}`;
+  }
+  
+  return itemName;
+}
+
+// ==================== EXTRACTION HELPERS ====================
+
 function extractSetId(itemName: string): string | null {
   const nameLower = itemName.toLowerCase();
   
-  // Map of keywords to actual Pokemon TCG API set IDs
   const setIdPatterns: Record<string, string> = {
     'celebrations': 'cel25',
     'base set': 'base1',
@@ -395,13 +436,9 @@ function extractSetId(itemName: string): string | null {
   return null;
 }
 
-/**
- * Extract set name from item description
- */
 function extractSetName(itemName: string): string | null {
   const nameLower = itemName.toLowerCase();
   
-  // Common set name patterns
   const setPatterns: Record<string, string> = {
     'celebrations': 'Celebrations',
     'base set': 'Base',
@@ -450,13 +487,9 @@ function extractSetName(itemName: string): string | null {
   return null;
 }
 
-/**
- * Extract just the Pokemon name from item description
- */
 function extractPokemonName(itemName: string): string | null {
   const nameLower = itemName.toLowerCase();
   
-  // Comprehensive list of Pokemon names
   const pokemonNames = [
     'pikachu', 'charizard', 'blastoise', 'venusaur', 'mewtwo', 'mew',
     'ampharos', 'dragonite', 'gyarados', 'snorlax', 'gengar', 'alakazam',
@@ -498,12 +531,11 @@ function extractPokemonName(itemName: string): string | null {
     // Scarlet/Violet
     'sprigatito', 'fuecoco', 'quaxly', 'koraidon', 'miraidon',
     'armarouge', 'ceruledge', 'gholdengo', 'annihilape', 'kingambit',
-    'baxcalibur', 'palafin', 'flamigo', 'tinkaton', 'orthworm'
+    'baxcalibur', 'palafin', 'flamigo', 'tinkaton', 'orthworm',
   ];
   
   for (const pokemon of pokemonNames) {
     if (nameLower.includes(pokemon)) {
-      // Return with proper capitalization
       return pokemon.charAt(0).toUpperCase() + pokemon.slice(1);
     }
   }
@@ -520,59 +552,9 @@ function extractPokemonName(itemName: string): string | null {
   return null;
 }
 
-function buildPokemonQuery(itemName: string): string {
-  const nameLower = itemName.toLowerCase();
-  
-  // First, try to extract Pokemon name
-  const pokemonName = extractPokemonName(itemName);
-  
-  if (pokemonName) {
-    // FIXED v6.3.1: Start without wildcard - simpler queries work better
-    let query = `name:${pokemonName}`;
-    
-    // Add subtype filters if detected (but NOT in the name search)
-    if (nameLower.includes('vmax')) {
-      query += ' subtypes:VMAX';
-    } else if (nameLower.includes('vstar')) {
-      query += ' subtypes:VSTAR';
-    } else if (nameLower.includes(' v ') || nameLower.endsWith(' v') || nameLower.includes(' v-')) {
-      query += ' subtypes:V';
-    } else if (nameLower.includes(' gx')) {
-      query += ' subtypes:GX';
-    } else if (nameLower.includes(' ex') && !nameLower.includes('exec')) {
-      query += ' subtypes:ex';
-    }
-    
-    // Add set filter using extractSetId for correct IDs
-    const setId = extractSetId(itemName);
-    if (setId) {
-      query += ` set.id:${setId}`;
-    }
-    
-    return query;
-  }
-  
-  // Fallback: Clean up the name for search (remove mechanics/noise)
-  const cleanName = itemName
-    .replace(/\b(pokemon|pokémon|card|tcg|holo|holographic|reverse holo)\b/gi, '')
-    .replace(/\b(single strike|rapid strike|fusion strike)\b/gi, '') // Remove battle styles
-    .replace(/\b(vmax|vstar|gx|ex|v)\b/gi, '') // Remove card types
-    .replace(/\b(full art|alt art|rainbow|secret rare|promo)\b/gi, '') // Remove rarity indicators
-    .replace(/#?\d+\/\d+/g, '') // Remove card numbers like #010/025
-    .replace(/from\s+\w+\s+set/gi, '') // Remove "from X Set"
-    .replace(/\s+/g, ' ')
-    .trim();
-  
-  if (cleanName && cleanName.length > 2) {
-    return `name:${cleanName}`;
-  }
-  
-  // Last resort: just return the original as a simple search
-  return itemName;
-}
+// ==================== PRICE EXTRACTION ====================
 
 function extractPriceData(prices: any): { market: number; low: number; mid: number; high: number; conditions: any[] } | null {
-  // Priority order for price types
   const priceTypes = ['holofoil', '1stEditionHolofoil', 'reverseHolofoil', 'normal', '1stEditionNormal', 'unlimited'];
   
   for (const type of priceTypes) {
@@ -608,16 +590,15 @@ function formatConditionName(condition: string): string {
   return names[condition] || condition;
 }
 
+// ==================== CONFIDENCE ====================
+
 function calculateMatchConfidence(searchTerm: string, cardName: string, setName?: string): number {
   const searchLower = searchTerm.toLowerCase();
   const nameLower = cardName.toLowerCase();
   
-  // Extract Pokemon name from search term
   const searchPokemon = extractPokemonName(searchTerm);
   
-  // Check for exact Pokemon name match
   if (searchPokemon && nameLower.includes(searchPokemon.toLowerCase())) {
-    // Boost confidence if set also matches
     if (setName) {
       const setLower = setName.toLowerCase();
       if (searchLower.includes(setLower) || searchLower.includes(setLower.replace(/[^a-z]/g, ''))) {
@@ -627,23 +608,22 @@ function calculateMatchConfidence(searchTerm: string, cardName: string, setName?
     return 0.95;
   }
   
-  // Check if card name is in search term
   if (nameLower === searchLower || searchLower.includes(nameLower)) {
     return 0.95;
   }
   
-  // Check if Pokemon name is in search term
   if (searchLower.includes(nameLower.split(' ')[0])) {
     return 0.85;
   }
   
-  // Check set name match
   if (setName && searchLower.includes(setName.toLowerCase())) {
     return 0.80;
   }
   
   return 0.65;
 }
+
+// ==================== FALLBACK ====================
 
 function createFallbackResult(itemName: string, query: string): MarketDataSource {
   const pokemonName = extractPokemonName(itemName);

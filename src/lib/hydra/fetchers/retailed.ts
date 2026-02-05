@@ -1,12 +1,14 @@
 // FILE: src/lib/hydra/fetchers/retailed.ts
-// HYDRA v6.1 - Retailed API Fetcher (Sneakers & Streetwear)
-// NOTE: api.retailed.io domain appears to be offline as of Jan 2026
-// This fetcher will gracefully fall back to StockX search links
+// HYDRA v7.0 - Retailed API Fetcher (Sneakers & Streetwear)
+// FIXED v7.0: Domain changed from api.retailed.io → app.retailed.io/api/v1
+// FIXED v7.0: Timeout increased to 10s, better error handling
+// Falls back gracefully to StockX/GOAT search links
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
-// WARNING: This domain may be offline - fetch will fail gracefully
-const RETAILED_API = 'https://api.retailed.io/v1';
+// FIXED v7.0: api.retailed.io is dead — use app.retailed.io
+const RETAILED_API = 'https://app.retailed.io/api/v1';
+const RETAILED_TIMEOUT = 10000; // 10 second timeout
 
 export async function fetchRetailedData(itemName: string): Promise<MarketDataSource> {
   const startTime = Date.now();
@@ -22,7 +24,6 @@ export async function fetchRetailedData(itemName: string): Promise<MarketDataSou
   
   try {
     console.log(`🔍 Retailed search: "${searchQuery}"`);
-    console.log(`⚠️ Note: api.retailed.io may be offline - attempting fetch...`);
     
     // Extract SKU/style code if present
     const styleCode = extractStyleCode(itemName);
@@ -35,14 +36,14 @@ export async function fetchRetailedData(itemName: string): Promise<MarketDataSou
     
     // Add timeout to prevent hanging
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), RETAILED_TIMEOUT);
     
     const response = await fetch(searchUrl, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Accept': 'application/json',
-        'User-Agent': 'TagnetIQ-HYDRA/6.1',
+        'User-Agent': 'TagnetIQ-HYDRA/7.0',
       },
       signal: controller.signal,
     });
@@ -135,6 +136,7 @@ export async function fetchRetailedData(itemName: string): Promise<MarketDataSou
         totalProducts: data.total,
         bestMatchSku: bestMatch.sku || bestMatch.styleId,
         brand: bestMatch.brand,
+        apiDomain: 'app.retailed.io',
       },
     };
     
@@ -142,9 +144,9 @@ export async function fetchRetailedData(itemName: string): Promise<MarketDataSou
     // Handle specific error types
     if (error instanceof Error) {
       if (error.name === 'AbortError') {
-        console.error('❌ Retailed API timeout (5s)');
+        console.error(`❌ Retailed API timeout (${RETAILED_TIMEOUT / 1000}s)`);
       } else if (error.message.includes('ENOTFOUND') || error.message.includes('fetch failed')) {
-        console.error('❌ Retailed API domain offline (api.retailed.io not found)');
+        console.error('❌ Retailed API domain unreachable (app.retailed.io)');
       } else {
         console.error('❌ Retailed fetch error:', error.message);
       }
