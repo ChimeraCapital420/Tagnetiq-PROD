@@ -1,5 +1,6 @@
 // FILE: src/lib/hydra/fetchers/google-books.ts
-// HYDRA v5.2 - Google Books API Fetcher
+// HYDRA v7.0 - Google Books API Fetcher
+// FIXED v7.0: Convert HTTP image URLs to HTTPS to avoid mixed content warnings
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
@@ -60,6 +61,9 @@ export async function fetchGoogleBooksData(itemName: string): Promise<MarketData
     const isbn13 = volumeInfo.industryIdentifiers?.find((id: any) => id.type === 'ISBN_13')?.identifier;
     const isbn10 = volumeInfo.industryIdentifiers?.find((id: any) => id.type === 'ISBN_10')?.identifier;
     
+    // FIXED v7.0: Convert HTTP image URLs to HTTPS
+    const imageLinks = fixImageUrls(volumeInfo.imageLinks);
+    
     // Build authority data
     const authorityData: AuthorityData = {
       source: 'google_books',
@@ -81,7 +85,7 @@ export async function fetchGoogleBooksData(itemName: string): Promise<MarketData
         averageRating: volumeInfo.averageRating,
         ratingsCount: volumeInfo.ratingsCount,
         maturityRating: volumeInfo.maturityRating,
-        imageLinks: volumeInfo.imageLinks,
+        imageLinks, // FIXED: Now uses HTTPS URLs
         previewLink: volumeInfo.previewLink,
         infoLink: volumeInfo.infoLink,
         canonicalVolumeLink: volumeInfo.canonicalVolumeLink,
@@ -141,6 +145,29 @@ export async function fetchGoogleBooksData(itemName: string): Promise<MarketData
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   }
+}
+
+// ==================== HELPER FUNCTIONS ====================
+
+/**
+ * FIXED v7.0: Convert all HTTP image URLs to HTTPS
+ * Google Books API returns HTTP URLs which cause mixed content warnings
+ */
+function fixImageUrls(imageLinks: any): any {
+  if (!imageLinks) return undefined;
+  
+  const fixed: any = {};
+  
+  for (const [key, value] of Object.entries(imageLinks)) {
+    if (typeof value === 'string') {
+      // Replace http:// with https://
+      fixed[key] = value.replace(/^http:\/\//i, 'https://');
+    } else {
+      fixed[key] = value;
+    }
+  }
+  
+  return fixed;
 }
 
 function buildBookQuery(itemName: string): string {
