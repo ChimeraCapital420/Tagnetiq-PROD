@@ -1,11 +1,12 @@
 // FILE: api/analyze.ts
-// HYDRA v6.5 - Slim Analysis Handler
+// HYDRA v6.6 - Slim Analysis Handler
 // Orchestrates modular components for multi-AI consensus analysis
 // FIXED v6.3: AI category now properly passed as 3rd parameter to detectItemCategory
 // FIXED v6.3: Vision prompt now instructs VIN extraction from images
 // UPDATED v6.4: Now accepts and persists originalImageUrls for marketplace integration
 // FIXED v6.5: Stage 7 now uses HYDRA's pre-calculated blended price (was looking for priceData instead of priceAnalysis)
 // FIXED v6.5: eBay listing count now properly weights against AI consensus
+// FIXED v6.6: Much more aggressive market weighting - 2000 listings at $1 should NOT become $10!
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -305,7 +306,10 @@ function isValidVINStructure(vin: string): boolean {
  * More eBay listings = more trust in real market data
  * Authority data = more trust in catalog prices
  * 
- * @returns weight from 0.0 to 0.90 (market data percentage)
+ * FIXED v6.6: Much more aggressive weighting for high listing counts
+ * A $1 card with 2000+ listings should NOT become $10!
+ * 
+ * @returns weight from 0.0 to 0.95 (market data percentage)
  */
 function calculateMarketWeight(marketResult: any): number {
   let weight = 0.50; // Base 50% market / 50% AI
@@ -314,8 +318,18 @@ function calculateMarketWeight(marketResult: any): number {
   const ebaySource = marketResult.sources?.find((s: any) => s.source === 'ebay');
   if (ebaySource?.totalListings) {
     const listings = ebaySource.totalListings;
-    if (listings >= 20) {
-      weight += 0.25; // 20+ listings: 75% market
+    
+    // FIXED v6.6: Much more aggressive scaling for high listing counts
+    if (listings >= 1000) {
+      weight += 0.43; // 1000+ listings: 93% market (commodity item)
+    } else if (listings >= 500) {
+      weight += 0.40; // 500-999 listings: 90% market
+    } else if (listings >= 100) {
+      weight += 0.35; // 100-499 listings: 85% market
+    } else if (listings >= 50) {
+      weight += 0.30; // 50-99 listings: 80% market
+    } else if (listings >= 20) {
+      weight += 0.25; // 20-49 listings: 75% market
     } else if (listings >= 10) {
       weight += 0.15; // 10-19 listings: 65% market
     } else if (listings >= 5) {
@@ -327,11 +341,11 @@ function calculateMarketWeight(marketResult: any): number {
   
   // Authority data present = more trust in market/catalog data
   if (marketResult.primaryAuthority) {
-    weight += 0.10; // +10% for authority verification
+    weight += 0.05; // +5% for authority verification (reduced from 10%)
   }
   
-  // Cap at 90% (always give AI some say for edge cases)
-  return Math.min(weight, 0.90);
+  // Cap at 95% (minimal AI input for edge cases only)
+  return Math.min(weight, 0.95);
 }
 
 // =============================================================================
@@ -368,7 +382,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Either an image or item name is required');
     }
     
-    console.log(`\n🔥 === HYDRA v6.5 ANALYSIS START ===`);
+    console.log(`\n🔥 === HYDRA v6.6 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
     console.log(`🖼️ Primary Image: ${hasImage ? 'Yes' : 'No'}`);

@@ -1,6 +1,7 @@
 // FILE: src/lib/hydra/category-detection.ts
-// HYDRA v6.2 - Category Detection System
+// HYDRA v6.3 - Category Detection System
 // FIXED v6.2: vinyl vs vin bug - check vinyl BEFORE vehicle/vin patterns
+// FIXED v6.3: Added comicvine to comics category mapping
 
 import type { ItemCategory, CategoryDetection } from './types.js';
 
@@ -34,10 +35,10 @@ export const CATEGORY_API_MAP: Record<string, string[]> = {
   'rare_books': ['google_books', 'ebay'],
   'textbooks': ['google_books', 'ebay'],
   
-  // Comics
-  'comics': ['psa', 'ebay'],
-  'manga': ['ebay'],
-  'graphic_novels': ['ebay'],
+  // Comics - FIXED v6.3: Added comicvine as primary authority
+  'comics': ['comicvine', 'psa', 'ebay'],
+  'manga': ['comicvine', 'ebay'],
+  'graphic_novels': ['comicvine', 'ebay'],
   
   // Video Games
   'video_games': ['ebay'],

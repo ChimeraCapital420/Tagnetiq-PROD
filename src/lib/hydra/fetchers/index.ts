@@ -18,6 +18,7 @@ export { fetchRetailedData } from './retailed.js';
 export { fetchPsaData, verifyPsaCerts } from './psa.js';
 export { fetchNhtsaData, validateVIN, decodeVINBatch } from './nhtsa.js';
 export { fetchUpcItemDbData, extractBarcode, validateUPC, searchByName as searchUpcByName, getRateLimitStatus as getUpcRateLimitStatus } from './upcitemdb.js';
+export { fetchComicVineData } from './comicvine.js';
 
 // Import for internal use
 import { fetchEbayData } from './ebay.js';
@@ -30,6 +31,7 @@ import { fetchRetailedData } from './retailed.js';
 import { fetchPsaData } from './psa.js';
 import { fetchNhtsaData } from './nhtsa.js';
 import { fetchUpcItemDbData } from './upcitemdb.js';
+import { fetchComicVineData } from './comicvine.js';
 
 // ==================== FETCHER REGISTRY ====================
 
@@ -51,6 +53,7 @@ const FETCHER_REGISTRY: Record<string, StandardFetcherFunction | ExtendedFetcher
   'psa': fetchPsaData,
   'nhtsa': fetchNhtsaData,
   'upcitemdb': fetchUpcItemDbData,
+  'comicvine': fetchComicVineData,
 };
 
 // Fetchers that accept additionalContext as their second parameter
@@ -68,6 +71,7 @@ const FETCHER_TIMEOUTS: Record<string, number> = {
   'psa': 15000,          // 15s
   'nhtsa': 10000,        // 10s - free API, usually fast
   'upcitemdb': 10000,    // 10s
+  'comicvine': 10000,    // 10s - usually fast
 };
 
 // ==================== UNIFIED FETCH FUNCTION ====================
