@@ -83,6 +83,12 @@ export function extractSourceSpecificData(
       return;
     }
     
+    // Streetwear (v7.5) - uses same extractor as Retailed
+    if (source === 'streetwear') {
+      extractRetailedData(details, formatted);
+      return;
+    }
+    
     // PSA (Graded)
     if (isPsaSource(source, details)) {
       extractPsaData(details, formatted);

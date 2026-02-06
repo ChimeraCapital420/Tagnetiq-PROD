@@ -74,11 +74,17 @@ export const CATEGORY_API_MAP: Record<string, string[]> = {
   'shoes': ['retailed', 'ebay'],
   'jordans': ['retailed', 'ebay'],
   
-  // ==================== APPAREL & CLOTHING (NEW v7.4) ====================
-  // No authority API yet - eBay is best source for clothing pricing
+  // ==================== STREETWEAR / HYPE APPAREL (v7.5) ====================
+  // Retailed has StockX data for hype brands: Supreme, BAPE, Off-White, etc.
+  'streetwear': ['retailed', 'ebay'],
+  'hype_apparel': ['retailed', 'ebay'],
+  'supreme': ['retailed', 'ebay'],
+  'bape': ['retailed', 'ebay'],
+  
+  // ==================== GENERAL APPAREL & CLOTHING (v7.4) ====================
+  // Sports jerseys, regular clothing - no hype authority, use eBay
   'apparel': ['ebay'],
   'clothing': ['ebay'],
-  'streetwear': ['ebay'],  // Moved from sneakers - streetwear is clothing
   'jerseys': ['ebay'],
   'vintage_clothing': ['ebay'],
   'designer_fashion': ['ebay'],
@@ -124,7 +130,72 @@ export const CATEGORY_API_MAP: Record<string, string[]> = {
 // More specific/longer phrases should come first for better matching
 
 export const CATEGORY_KEYWORDS: Record<string, string[]> = {
-  // ==================== APPAREL & CLOTHING (NEW v7.4) ====================
+  // ==================== STREETWEAR / HYPE BRANDS (NEW v7.5) ====================
+  // These trigger Retailed API which has StockX pricing data
+  streetwear: [
+    // Supreme
+    'supreme', 'supreme box logo', 'supreme bogo', 'supreme hoodie', 'supreme tee',
+    'supreme jacket', 'supreme beanie', 'supreme cap',
+    // BAPE / A Bathing Ape
+    'bape', 'a bathing ape', 'bathing ape', 'bape hoodie', 'bape shark',
+    'baby milo', 'bape camo', 'bape sta',
+    // Off-White
+    'off-white', 'off white', 'offwhite', 'virgil abloh',
+    // Fear of God / Essentials
+    'fear of god', 'fog essentials', 'essentials hoodie', 'essentials sweatpants',
+    'jerry lorenzo',
+    // Kith
+    'kith', 'kith treats', 'ronnie fieg',
+    // Palace
+    'palace skateboards', 'palace hoodie', 'palace tee', 'tri-ferg',
+    // Travis Scott / Cactus Jack
+    'travis scott', 'cactus jack', 'astroworld', 'utopia merch',
+    // Yeezy (non-shoes)
+    'yeezy gap', 'yeezy season', 'yzy gap',
+    // Stussy
+    'stussy', 'stüssy',
+    // Anti Social Social Club
+    'anti social social club', 'assc',
+    // VLONE
+    'vlone', 'v lone',
+    // Chrome Hearts
+    'chrome hearts',
+    // Gallery Dept
+    'gallery dept', 'gallerydept',
+    // Rhude
+    'rhude',
+    // Amiri
+    'amiri',
+    // Human Made
+    'human made', 'nigo',
+    // Drew House (Justin Bieber)
+    'drew house', 'drewhouse',
+    // Represent
+    'represent clo',
+    // Corteiz
+    'corteiz', 'crtz',
+    // Sp5der
+    'sp5der', 'spider worldwide',
+    // Eric Emanuel
+    'eric emanuel', 'ee shorts',
+    // Hellstar
+    'hellstar',
+    // Broken Planet
+    'broken planet',
+    // Market/Chinatown Market
+    'chinatown market', 'market smiley',
+    // Billionaire Boys Club
+    'billionaire boys club', 'bbc icecream',
+    // The Hundreds
+    'the hundreds',
+    // Undefeated
+    'undefeated', 'undftd',
+    // Hype collab keywords
+    'collab', 'collaboration', 'limited edition drop', 'sold out', 'resale',
+    'deadstock', 'ds', 'bnwt', 'brand new with tags',
+  ],
+
+  // ==================== APPAREL & CLOTHING (General - v7.4) ====================
   apparel: [
     // Tops
     'hoodie', 'hoody', 'sweatshirt', 'sweater', 'pullover', 'crewneck', 'crew neck',
@@ -319,6 +390,79 @@ export const CATEGORY_KEYWORDS: Record<string, string[]> = {
 // These run BEFORE AI vote is accepted to catch obvious misclassifications
 
 const NAME_PATTERN_OVERRIDES: Array<{ patterns: string[]; category: string; priority: number }> = [
+  // ==========================================================================
+  // STREETWEAR / HYPE BRANDS (NEW v7.5) - Check BEFORE general apparel
+  // These trigger Retailed API for StockX pricing
+  // ==========================================================================
+  {
+    patterns: ['supreme', 'box logo', 'bogo'],
+    category: 'streetwear',
+    priority: 110,
+  },
+  {
+    patterns: ['bape', 'bathing ape', 'baby milo', 'bape shark'],
+    category: 'streetwear',
+    priority: 110,
+  },
+  {
+    patterns: ['off-white', 'off white', 'offwhite', 'virgil abloh'],
+    category: 'streetwear',
+    priority: 110,
+  },
+  {
+    patterns: ['fear of god', 'fog essentials', 'essentials hoodie', 'essentials'],
+    category: 'streetwear',
+    priority: 110,
+  },
+  {
+    patterns: ['palace', 'tri-ferg', 'palace skate'],
+    category: 'streetwear',
+    priority: 110,
+  },
+  {
+    patterns: ['travis scott', 'cactus jack', 'astroworld', 'utopia merch'],
+    category: 'streetwear',
+    priority: 110,
+  },
+  {
+    patterns: ['anti social social club', 'assc'],
+    category: 'streetwear',
+    priority: 110,
+  },
+  {
+    patterns: ['vlone', 'chrome hearts', 'gallery dept', 'rhude', 'amiri'],
+    category: 'streetwear',
+    priority: 110,
+  },
+  {
+    patterns: ['stussy', 'kith', 'undefeated', 'undftd'],
+    category: 'streetwear',
+    priority: 110,
+  },
+  {
+    patterns: ['yeezy gap', 'yzy gap', 'yeezy season'],
+    category: 'streetwear',
+    priority: 110,
+  },
+  {
+    patterns: ['sp5der', 'spider worldwide', 'hellstar', 'eric emanuel', 'ee shorts'],
+    category: 'streetwear',
+    priority: 110,
+  },
+  {
+    patterns: ['drew house', 'human made', 'billionaire boys club', 'bbc icecream'],
+    category: 'streetwear',
+    priority: 110,
+  },
+  {
+    patterns: ['corteiz', 'crtz', 'broken planet'],
+    category: 'streetwear',
+    priority: 110,
+  },
+
+  // ==========================================================================
+  // GENERAL APPAREL - Lower priority than streetwear
+  // ==========================================================================
   // Apparel overrides - catch clothing items AI might miscategorize
   {
     patterns: ['hoodie', 'hoody', 'sweatshirt', 'sweater', 'pullover', 'crewneck'],
@@ -546,7 +690,42 @@ export function detectCategoryFromName(nameLower: string): string | null {
     return 'vehicles';
   }
   
-  // Apparel detection (NEW v7.4)
+  // ==========================================================================
+  // STREETWEAR / HYPE BRANDS (v7.5) - Check BEFORE general apparel
+  // ==========================================================================
+  const streetwearBrands = [
+    // Supreme
+    'supreme', 'box logo', 'bogo',
+    // BAPE
+    'bape', 'bathing ape', 'baby milo',
+    // Off-White
+    'off-white', 'off white', 'offwhite',
+    // Fear of God / Essentials
+    'fear of god', 'fog essentials', 'essentials',
+    // Palace
+    'palace',
+    // Travis Scott
+    'travis scott', 'cactus jack', 'astroworld',
+    // ASSC
+    'anti social social club', 'assc',
+    // Others
+    'vlone', 'chrome hearts', 'gallery dept', 'rhude', 'amiri',
+    'stussy', 'kith', 'undefeated',
+    'yeezy gap', 'yzy gap',
+    'sp5der', 'hellstar', 'eric emanuel',
+    'drew house', 'human made', 'corteiz', 'broken planet',
+    'billionaire boys club',
+  ];
+  
+  for (const brand of streetwearBrands) {
+    if (nameLower.includes(brand)) {
+      return 'streetwear';
+    }
+  }
+  
+  // ==========================================================================
+  // GENERAL APPAREL (v7.4) - Sports jerseys, regular clothing
+  // ==========================================================================
   const apparelPatterns = [
     'hoodie', 'hoody', 'sweatshirt', 'sweater', 'pullover', 'crewneck',
     'jacket', 'coat', 'blazer', 'windbreaker', 'parka', 'vest', 'fleece',
@@ -681,17 +860,32 @@ export function normalizeCategory(category: string): string {
     return 'vinyl_records';
   }
   
-  // Apparel normalization (NEW v7.4)
+  // Streetwear / Hype brands (NEW v7.5) - check BEFORE general apparel
+  const HYPE_BRANDS = [
+    'supreme', 'bape', 'bathing_ape', 'off_white', 'offwhite', 'fear_of_god',
+    'fog', 'essentials', 'palace', 'travis_scott', 'cactus_jack', 'astroworld',
+    'anti_social', 'assc', 'vlone', 'chrome_hearts', 'gallery_dept', 'rhude',
+    'amiri', 'stussy', 'kith', 'undefeated', 'yeezy_gap', 'sp5der', 'hellstar',
+    'eric_emanuel', 'drew_house', 'human_made', 'corteiz', 'broken_planet'
+  ];
+  
+  for (const brand of HYPE_BRANDS) {
+    if (catLower.includes(brand)) {
+      return 'streetwear';
+    }
+  }
+  
+  // Streetwear category normalization
+  if (catLower === 'streetwear' || catLower === 'hype' || catLower === 'hype_apparel') {
+    return 'streetwear';
+  }
+  
+  // Apparel normalization (v7.4) - general clothing, NOT hype
   if (catLower.includes('apparel') || catLower.includes('clothing') ||
       catLower.includes('fashion') || catLower.includes('garment') ||
       catLower.includes('hoodie') || catLower.includes('jacket') ||
       catLower.includes('jersey') || catLower.includes('shirt') ||
       catLower.includes('pants') || catLower.includes('hat')) {
-    return 'apparel';
-  }
-  
-  // Streetwear → apparel (not sneakers)
-  if (catLower === 'streetwear' && !catLower.includes('shoe') && !catLower.includes('sneaker')) {
     return 'apparel';
   }
   

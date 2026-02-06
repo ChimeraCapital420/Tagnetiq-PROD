@@ -27,6 +27,7 @@ export const SOURCE_NAMES: Record<string, string> = {
   'Comic Vine': 'Comic Vine',
   discogs: 'Discogs',
   retailed: 'Retailed',
+  streetwear: 'StockX via Retailed',  // v7.5
   psa: 'PSA',
   nhtsa: 'NHTSA',
   upcitemdb: 'UPCitemdb',
@@ -43,6 +44,7 @@ export const SOURCE_ICONS: Record<string, LucideIcon> = {
   'Comic Vine': BookOpen,
   discogs: Disc3,
   retailed: Footprints,
+  streetwear: Footprints,  // v7.5 - same as retailed
   psa: Award,
   nhtsa: Car,
   upcitemdb: Barcode,

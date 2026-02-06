@@ -36,6 +36,7 @@ const SECTION_COMPONENTS: Record<string, React.FC<{ data: AuthorityData }>> = {
   'Comic Vine': ComicVineSection,
   discogs: DiscogsSection,
   retailed: RetailedSection,
+  streetwear: RetailedSection,  // v7.5 - uses same section as retailed
   psa: PsaSection,
   nhtsa: NhtsaSection,
   upcitemdb: UpcItemDbSection,
