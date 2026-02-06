@@ -5,13 +5,12 @@
 'use client';
 
 import React from 'react';
-import { Star, ExternalLink, BookOpen, Calendar, Building, Hash, Globe, Tag, DollarSign } from 'lucide-react';
+import { Star, ExternalLink, BookOpen, DollarSign, Hash, Tag } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import type { SectionProps } from '../types';
 import { DataRow, ThumbnailImage, formatDate, formatPrice, truncateText } from '../helpers';
 import { createFieldExtractor, getExternalUrl, getThumbnailUrl } from '../helpers';
 
-// Maturity rating display
 const MATURITY_LABELS: Record<string, string> = {
   'NOT_MATURE': 'All Ages',
   'MATURE': 'Mature Content',
@@ -20,7 +19,6 @@ const MATURITY_LABELS: Record<string, string> = {
 export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
   const get = createFieldExtractor(data);
   
-  // Extract book fields
   const thumbnail = getThumbnailUrl(data);
   const title = get<string>('title');
   const subtitle = get<string>('subtitle');
@@ -33,40 +31,32 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
   const language = get<string>('language');
   const printType = get<string>('printType');
   const maturityRating = get<string>('maturityRating');
-  const contentVersion = get<string>('contentVersion');
   
-  // Identifiers
   const isbn13 = get<string>('isbn13');
   const isbn10 = get<string>('isbn10');
   const isbn = get<string>('isbn') || isbn13 || isbn10;
   const googleBooksId = get<string>('googleBooksId') || get<string>('id');
   
-  // Industry identifiers (array format from API)
   const industryIdentifiers = get<Array<{ type: string; identifier: string }>>('industryIdentifiers');
   const isbnFromIdentifiers = industryIdentifiers?.find(i => i.type === 'ISBN_13')?.identifier 
     || industryIdentifiers?.find(i => i.type === 'ISBN_10')?.identifier;
   const finalIsbn = isbn || isbnFromIdentifiers;
   
-  // Ratings
   const averageRating = get<number>('averageRating');
   const ratingsCount = get<number>('ratingsCount');
   
-  // Pricing
   const retailPrice = get<number>('retailPrice');
   const listPrice = get<{ amount?: number; currencyCode?: string }>('listPrice');
   const saleInfo = get<{ listPrice?: { amount: number }; retailPrice?: { amount: number }; saleability?: string }>('saleInfo');
   const finalPrice = retailPrice || listPrice?.amount || saleInfo?.retailPrice?.amount || saleInfo?.listPrice?.amount;
   const isForSale = saleInfo?.saleability === 'FOR_SALE';
   
-  // Preview/Access info
   const previewLink = get<string>('previewLink');
   const infoLink = get<string>('infoLink');
   const canonicalVolumeLink = get<string>('canonicalVolumeLink');
   const accessInfo = get<{ viewability?: string; embeddable?: boolean; publicDomain?: boolean }>('accessInfo');
   const isPublicDomain = accessInfo?.publicDomain;
-  const isEmbeddable = accessInfo?.embeddable;
   
-  // Dimensions
   const dimensions = get<{ height?: string; width?: string; thickness?: string }>('dimensions');
   
   const externalUrl = getExternalUrl(data) || infoLink || previewLink || canonicalVolumeLink;
@@ -74,13 +64,10 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
 
   const hasData = authors || publisher || finalIsbn || pageCount || description;
   const hasRating = averageRating !== undefined && averageRating > 0;
-
-  // Language display
   const languageDisplay = language ? language.toUpperCase() : undefined;
 
   return (
     <div className="space-y-3">
-      {/* Book Cover */}
       {thumbnail && (
         <div className="flex justify-center">
           <ThumbnailImage
@@ -91,7 +78,6 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Title & Subtitle */}
       {(title || subtitle) && (
         <div className="text-center">
           {title && data.title !== title && (
@@ -103,14 +89,12 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Authors */}
       {authors && authors.length > 0 && (
         <p className="text-sm text-center text-muted-foreground">
           by {authors.join(', ')}
         </p>
       )}
 
-      {/* Rating */}
       {hasRating && (
         <div className="flex items-center justify-center gap-1">
           <div className="flex items-center">
@@ -134,7 +118,6 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Status Badges */}
       <div className="flex justify-center gap-2 flex-wrap">
         {printType && (
           <Badge variant="outline" className="text-xs">
@@ -160,7 +143,6 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
         )}
       </div>
 
-      {/* Categories */}
       {categories && categories.length > 0 && (
         <div className="flex justify-center gap-1 flex-wrap">
           {categories.slice(0, 3).map((category, i) => (
@@ -177,7 +159,6 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Market Value */}
       {marketValue && (
         <div className="bg-muted/50 rounded-md p-3">
           <div className="text-xs text-muted-foreground text-center mb-2">Market Value</div>
@@ -198,14 +179,12 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Description */}
       {description && (
         <p className="text-xs text-muted-foreground text-center">
           {truncateText(description.replace(/<[^>]*>/g, ''), 200)}
         </p>
       )}
 
-      {/* Data Grid */}
       {hasData && (
         <div className="grid grid-cols-2 gap-3">
           <DataRow label="Author(s)" value={authors?.slice(0, 2).join(', ')} />
@@ -224,7 +203,6 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Google Books ID */}
       {googleBooksId && (
         <p className="text-xs text-center text-muted-foreground font-mono">
           <Hash className="h-3 w-3 inline mr-1" />
@@ -232,7 +210,6 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
         </p>
       )}
 
-      {/* No Data Fallback */}
       {!hasData && !thumbnail && (
         <div className="text-center py-4">
           <BookOpen className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
@@ -242,7 +219,6 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* External Link */}
       {externalUrl && (
         
           href={externalUrl}
