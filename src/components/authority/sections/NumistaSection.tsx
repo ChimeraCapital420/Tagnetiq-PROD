@@ -5,13 +5,12 @@
 'use client';
 
 import React from 'react';
-import { ExternalLink, Coins, Calendar, Scale, Ruler, Circle, Hash, Globe, Award } from 'lucide-react';
+import { ExternalLink, Coins, Scale, Ruler, Circle, Hash, Award } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import type { SectionProps } from '../types';
 import { DataRow, ThumbnailImage, formatNumber } from '../helpers';
 import { createFieldExtractor, getExternalUrl } from '../helpers';
 
-// Coin type display names
 const COIN_TYPES: Record<string, string> = {
   'coin': 'Coin',
   'token': 'Token',
@@ -23,30 +22,21 @@ const COIN_TYPES: Record<string, string> = {
 export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
   const get = createFieldExtractor(data);
   
-  // Extract coin-specific fields
   const obverseThumb = get<string>('obverseThumb') || get<string>('obverseThumbnail');
   const reverseThumb = get<string>('reverseThumb') || get<string>('reverseThumbnail');
-  const obversePicture = get<string>('obversePicture');
-  const reversePicture = get<string>('reversePicture');
-  const edgePicture = get<string>('edgePicture');
   
   const title = get<string>('title') || get<string>('name');
   const issuer = get<string>('issuer');
-  const issuerType = get<string>('issuerType');
   const ruler = get<string>('ruler');
   const type = get<string>('type');
   
-  // Date range
   const minYear = get<number>('minYear');
   const maxYear = get<number>('maxYear');
   const yearRange = get<string>('yearRange');
   
-  // Denomination
   const denomination = get<string>('value') || get<string>('denomination');
-  const denominationValue = get<number>('denominationValue');
   const currency = get<string>('currency');
   
-  // Physical properties
   const composition = get<string>('composition');
   const weight = get<number>('weight');
   const size = get<number>('size') || get<number>('diameter');
@@ -57,19 +47,16 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
   const edge = get<string>('edge');
   const edgeLettering = get<string>('edgeLettering');
   
-  // References
   const catalogNumber = get<string>('catalogNumber') || data.catalogNumber;
   const numistaId = get<string>('numistaId') || get<number>('id');
   const kmNumber = get<string>('kmNumber') || get<string>('km');
   const references = get<Array<{ catalog: string; number: string }>>('references');
   
-  // Rarity and mintage
   const mintage = get<number>('mintage');
   const rarity = get<string>('rarity');
   const commemorative = get<boolean>('commemorative');
   const demonetized = get<boolean>('demonetized');
   
-  // Numista community
   const numOwners = get<number>('numOwners');
   const numWishlist = get<number>('numWishlist');
   const score = get<number>('score');
@@ -77,7 +64,6 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
   const externalUrl = getExternalUrl(data);
   const marketValue = data.marketValue;
   
-  // Format year display
   const yearDisplay = yearRange || (
     minYear && maxYear && minYear !== maxYear
       ? `${minYear} - ${maxYear}`
@@ -90,7 +76,6 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
 
   return (
     <div className="space-y-3">
-      {/* Coin Images - Obverse and Reverse */}
       {hasImages && (
         <div className="flex justify-center gap-3">
           {obverseThumb && (
@@ -116,12 +101,10 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Title */}
       {title && data.title !== title && (
         <p className="text-sm font-semibold text-center">{title}</p>
       )}
 
-      {/* Denomination Display */}
       {denomination && (
         <div className="text-center">
           <p className="text-lg font-bold text-primary">{denomination}</p>
@@ -131,7 +114,6 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Catalog Number */}
       {(catalogNumber || kmNumber) && (
         <p className="text-xs text-center text-muted-foreground font-mono">
           <Hash className="h-3 w-3 inline mr-1" />
@@ -139,7 +121,6 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
         </p>
       )}
 
-      {/* Status Badges */}
       <div className="flex justify-center gap-2 flex-wrap">
         {type && (
           <Badge variant="outline" className="text-xs">
@@ -165,7 +146,6 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
         )}
       </div>
 
-      {/* Physical Properties */}
       {(weight || size || thickness) && (
         <div className="bg-muted/50 rounded-md p-3">
           <div className="text-xs text-muted-foreground text-center mb-2">Physical Properties</div>
@@ -195,7 +175,6 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Market Value */}
       {marketValue && (
         <div className="bg-green-500/10 border border-green-500/20 rounded-md p-3">
           <div className="text-xs text-muted-foreground text-center mb-2">Market Value Range</div>
@@ -216,7 +195,6 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Numista Community Stats */}
       {hasCommunityStats && (
         <div className="flex justify-center gap-4 text-xs text-muted-foreground">
           {numOwners && <span>{numOwners.toLocaleString()} owners</span>}
@@ -225,7 +203,6 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Data Grid */}
       {hasData && (
         <div className="grid grid-cols-2 gap-3">
           <DataRow label="Issuer" value={issuer} />
@@ -241,14 +218,12 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Edge Lettering */}
       {edgeLettering && (
         <p className="text-xs text-center text-muted-foreground italic">
           Edge: "{edgeLettering}"
         </p>
       )}
 
-      {/* References */}
       {references && references.length > 0 && (
         <div className="text-xs text-center text-muted-foreground">
           <span className="font-medium">Refs: </span>
@@ -261,14 +236,12 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Numista ID */}
       {numistaId && (
         <p className="text-xs text-center text-muted-foreground">
           Numista ID: {numistaId}
         </p>
       )}
 
-      {/* No Data Fallback */}
       {!hasData && !hasImages && (
         <div className="text-center py-4">
           <Coins className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
@@ -278,7 +251,6 @@ export const NumistaSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* External Link */}
       {externalUrl && (
         
           href={externalUrl}
