@@ -1,5 +1,6 @@
 // FILE: src/lib/hydra/pricing/formatter.ts
-// Price and Response Formatting for HYDRA
+// Price and Response Formatting for HYDRA v7.3
+// FIXED: Brickset field name handling, added retirement dates
 // Formats final output for API responses
 
 import type {
@@ -135,7 +136,7 @@ export interface FormattedAuthorityData {
   cardNumber?: string;
   
   // =========================================================================
-  // BRICKSET SPECIFIC (LEGO)
+  // BRICKSET SPECIFIC (LEGO) - v7.3 Enhanced
   // =========================================================================
   bricksetId?: number;
   setNumber?: string;
@@ -151,6 +152,34 @@ export interface FormattedAuthorityData {
   instructionsCount?: number;
   rrp?: number; // Recommended retail price
   pricePerPiece?: number;
+  // v7.3: Retirement dates
+  isRetired?: boolean;
+  dateFirstAvailable?: string;
+  dateLastAvailable?: string;
+  
+  // =========================================================================
+  // COMIC VINE SPECIFIC (Comics) - v7.0
+  // =========================================================================
+  comicVineId?: number;
+  issueName?: string;
+  issueNumber?: string;
+  volumeName?: string;
+  volumeId?: number;
+  coverDate?: string;
+  storeDate?: string;
+  deck?: string;
+  writers?: string[];
+  artists?: string[];
+  coverArtists?: string[];
+  characterAppearances?: string[];
+  characterCount?: number;
+  firstAppearances?: string[];
+  hasFirstAppearances?: boolean;
+  isKeyIssue?: boolean;
+  coverImage?: string;
+  coverImageLarge?: string;
+  coverImageThumb?: string;
+  comicVineUrl?: string;
   
   // =========================================================================
   // DISCOGS SPECIFIC (Vinyl/Music)
@@ -405,6 +434,7 @@ export function formatAnalysisResponse(
 
 /**
  * Format authority data for response - PRESERVES ALL RICH DATA FROM ALL SOURCES
+ * v7.3: Fixed Brickset field handling, added Comic Vine support
  */
 export function formatAuthorityData(authority: AuthorityData): FormattedAuthorityData {
   const formatted: FormattedAuthorityData = {
@@ -445,6 +475,10 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
 
   // Extract itemDetails based on source type
   const details = authority.itemDetails || {};
+  
+  // DEBUG v7.3 - Log what we're working with
+  console.log(`📋 Formatter received authority.source: "${authority.source}"`);
+  console.log(`📋 Formatter itemDetails keys: ${Object.keys(details).join(', ') || 'EMPTY'}`);
 
   // =========================================================================
   // GOOGLE BOOKS DATA
@@ -526,12 +560,14 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
   }
 
   // =========================================================================
-  // BRICKSET DATA (LEGO)
+  // BRICKSET DATA (LEGO) - v7.3 FIXED field name handling
   // =========================================================================
   if (authority.source === 'brickset' || details.bricksetId || details.setID) {
+    console.log(`📦 Formatter entering BRICKSET block`);
+    
     formatted.bricksetId = details.bricksetId || details.setID;
-    formatted.setNumber = details.number || details.setNumber;
-    formatted.title = details.name || formatted.title;
+    formatted.setNumber = details.setNumber || details.number;
+    formatted.title = details.name || details.title || formatted.title;
     formatted.year = details.year;
     formatted.theme = details.theme;
     formatted.themeGroup = details.themeGroup;
@@ -542,27 +578,95 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
     formatted.packagingType = details.packagingType;
     formatted.availability = details.availability;
     formatted.instructionsCount = details.instructionsCount;
-    formatted.imageLinks = details.image ? { thumbnail: details.image } : undefined;
-    formatted.externalUrl = details.bricksetURL || formatted.externalUrl;
     
-    // LEGO pricing
-    if (details.LEGOCom?.US) {
+    // v7.3: Handle both image formats: object { thumbnail, smallThumbnail } OR string
+    if (details.imageLinks) {
+      formatted.imageLinks = details.imageLinks;
+    } else if (details.image) {
+      formatted.imageLinks = typeof details.image === 'string' 
+        ? { thumbnail: details.image }
+        : details.image;
+    }
+    
+    // v7.3: External URL - check both itemDetails and root authority
+    formatted.externalUrl = details.bricksetURL || details.externalUrl || authority.externalUrl || formatted.externalUrl;
+    
+    // v7.3: LEGO pricing - handle both nested LEGOCom and flat rrp
+    if (details.LEGOCom?.US?.retailPrice) {
       formatted.rrp = details.LEGOCom.US.retailPrice;
       formatted.retailPrice = details.LEGOCom.US.retailPrice;
+    } else if (details.rrp) {
+      formatted.rrp = details.rrp;
+      formatted.retailPrice = details.rrp;
     }
+    
     if (details.pieces && formatted.retailPrice) {
       formatted.pricePerPiece = parseFloat((formatted.retailPrice / details.pieces).toFixed(3));
+    } else if (details.pricePerPiece) {
+      formatted.pricePerPiece = details.pricePerPiece;
+    }
+    
+    // v7.3: Retirement status
+    if (details.isRetired !== undefined) {
+      formatted.isRetired = details.isRetired;
+    }
+    if (details.dateFirstAvailable) {
+      formatted.dateFirstAvailable = details.dateFirstAvailable;
+    }
+    if (details.dateLastAvailable) {
+      formatted.dateLastAvailable = details.dateLastAvailable;
     }
     
     // Current market value
-    if (details.priceGuide || details.currentValue) {
-      const pg = details.priceGuide || {};
+    if (details.priceGuide || details.currentValue || details.marketValue) {
+      const pg = details.priceGuide || details.marketValue || {};
       formatted.marketValue = {
-        low: formatPriceSmart(pg.minNew || pg.minUsed || 0),
-        mid: formatPriceSmart(pg.avgNew || details.currentValue || 0),
-        high: formatPriceSmart(pg.maxNew || 0),
+        low: formatPriceSmart(pg.minNew || pg.minUsed || pg.low || 0),
+        mid: formatPriceSmart(pg.avgNew || details.currentValue || pg.mid || 0),
+        high: formatPriceSmart(pg.maxNew || pg.high || 0),
       };
     }
+    
+    // DEBUG v7.3 - Log what we extracted
+    console.log(`📦 Formatter BRICKSET - Extracted: setNumber=${formatted.setNumber}, year=${formatted.year}, pieces=${formatted.pieces}, theme=${formatted.theme}, isRetired=${formatted.isRetired}`);
+  }
+
+  // =========================================================================
+  // COMIC VINE DATA (Comics) - v7.0
+  // =========================================================================
+  if (authority.source === 'comicvine' || authority.source === 'Comic Vine' || details.comicVineId) {
+    console.log(`📚 Formatter entering COMIC VINE block`);
+    
+    formatted.comicVineId = details.comicVineId;
+    formatted.issueName = details.issueName;
+    formatted.issueNumber = details.issueNumber;
+    formatted.volumeName = details.volumeName;
+    formatted.volumeId = details.volumeId;
+    formatted.coverDate = details.coverDate;
+    formatted.storeDate = details.storeDate;
+    formatted.deck = details.deck;
+    formatted.description = details.description;
+    formatted.writers = details.writers;
+    formatted.artists = details.artists;
+    formatted.coverArtists = details.coverArtists;
+    formatted.characterAppearances = details.characterAppearances;
+    formatted.characterCount = details.characterCount;
+    formatted.firstAppearances = details.firstAppearances;
+    formatted.hasFirstAppearances = details.hasFirstAppearances;
+    formatted.isKeyIssue = details.isKeyIssue;
+    formatted.coverImage = details.coverImage;
+    formatted.coverImageLarge = details.coverImageLarge;
+    formatted.coverImageThumb = details.coverImageThumb;
+    formatted.comicVineUrl = details.comicVineUrl;
+    formatted.title = details.name || formatted.title;
+    formatted.externalUrl = details.comicVineUrl || authority.externalUrl || formatted.externalUrl;
+    
+    // Image links for consistency
+    if (details.coverImage) {
+      formatted.imageLinks = { thumbnail: details.coverImage };
+    }
+    
+    console.log(`📚 Formatter COMIC VINE - Extracted: issueNumber=${formatted.issueNumber}, volumeName=${formatted.volumeName}, isKeyIssue=${formatted.isKeyIssue}`);
   }
 
   // =========================================================================
@@ -764,6 +868,12 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
       'bricksetId', 'setID', 'setNumber', 'year', 'theme', 'themeGroup', 'subtheme',
       'pieces', 'minifigs', 'ageMin', 'ageMax', 'ageRange', 'packagingType', 'availability',
       'instructionsCount', 'LEGOCom', 'bricksetURL', 'priceGuide', 'currentValue',
+      'isRetired', 'dateFirstAvailable', 'dateLastAvailable', 'rrp', 'pricePerPiece',
+      // Comic Vine
+      'comicVineId', 'issueName', 'issueNumber', 'volumeName', 'volumeId', 'coverDate',
+      'storeDate', 'deck', 'writers', 'artists', 'coverArtists', 'characterAppearances',
+      'characterCount', 'firstAppearances', 'hasFirstAppearances', 'isKeyIssue',
+      'coverImage', 'coverImageLarge', 'coverImageThumb', 'comicVineUrl',
       // Discogs
       'discogsId', 'releaseId', 'masterId', 'master_id', 'artists', 'artistName',
       'labels', 'label', 'formats', 'format', 'country', 'released', 'genres', 'styles',

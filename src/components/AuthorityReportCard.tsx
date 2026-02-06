@@ -292,9 +292,16 @@ export const AuthorityReportCard: React.FC<AuthorityReportCardProps> = ({
   const icon = SOURCE_ICONS[source] || SOURCE_ICONS[authorityData.source?.toLowerCase() || ''] || <Shield className="h-5 w-5" />;
   const sourceName = SOURCE_NAMES[source] || SOURCE_NAMES[authorityData.source?.toLowerCase() || ''] || authorityData.source || 'Authority';
   
-  // Debug log to help troubleshoot
+  // Debug log to help troubleshoot - ENHANCED v7.3
   console.log(`🎴 AuthorityReportCard rendering for source: "${source}"`);
   console.log(`🎴 Authority data keys:`, Object.keys(authorityData));
+  console.log(`🎴 Has itemDetails:`, !!authorityData.itemDetails);
+  if (authorityData.itemDetails) {
+    console.log(`🎴 itemDetails keys:`, Object.keys(authorityData.itemDetails));
+    console.log(`🎴 itemDetails sample:`, JSON.stringify(authorityData.itemDetails).substring(0, 500));
+  }
+  // Log key fields directly
+  console.log(`🎴 Direct fields - setNumber: ${(authorityData as any).setNumber}, year: ${(authorityData as any).year}, pieces: ${(authorityData as any).pieces}`);
   
   return (
     <Card className={`border-green-500/20 bg-green-50/50 dark:bg-green-950/20 ${className}`}>
@@ -627,6 +634,11 @@ const BricksetSection: React.FC<{ data: AuthorityData }> = ({ data }) => {
   // Handle both flat data and nested itemDetails
   const details = (data.itemDetails || data) as AuthorityData;
   
+  // DEBUG v7.3 - Log what we're extracting from
+  console.log(`🧱 BricksetSection - data.itemDetails exists:`, !!data.itemDetails);
+  console.log(`🧱 BricksetSection - using details from:`, data.itemDetails ? 'itemDetails' : 'data directly');
+  console.log(`🧱 BricksetSection - details keys:`, Object.keys(details));
+  
   // Extract values with fallbacks
   const thumbnail = details.imageLinks?.thumbnail || (data.itemDetails?.imageLinks as any)?.thumbnail;
   const setNumber = details.setNumber || (data.itemDetails?.setNumber as string);
@@ -643,6 +655,9 @@ const BricksetSection: React.FC<{ data: AuthorityData }> = ({ data }) => {
   const dateFirstAvailable = details.dateFirstAvailable || (data.itemDetails?.dateFirstAvailable as string);
   const dateLastAvailable = details.dateLastAvailable || (data.itemDetails?.dateLastAvailable as string);
   const isRetired = details.isRetired || (data.itemDetails?.isRetired as boolean);
+  
+  // DEBUG v7.3 - Log extracted values
+  console.log(`🧱 BricksetSection - Extracted: setNumber=${setNumber}, year=${year}, theme=${theme}, pieces=${pieces}`);
   
   // Format dates nicely
   const formatDate = (dateStr?: string) => {

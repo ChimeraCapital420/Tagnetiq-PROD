@@ -138,6 +138,32 @@ export async function fetchBricksetData(itemName: string): Promise<MarketDataSou
     // Extract price data
     const priceData = extractPriceData(bestMatch);
     
+    // DEBUG: Log what we got from Brickset
+    console.log(`🔍 Brickset DEBUG - Set data:`, {
+      setID: bestMatch.setID,
+      number: bestMatch.number,
+      name: bestMatch.name,
+      year: bestMatch.year,
+      theme: bestMatch.theme,
+      pieces: bestMatch.pieces,
+      minifigs: bestMatch.minifigs,
+      availability: bestMatch.availability,
+      retailPriceUS: bestMatch.LEGOCom?.US?.retailPrice,
+      retailPriceUK: bestMatch.LEGOCom?.UK?.retailPrice,
+      dateFirstAvailable: bestMatch.LEGOCom?.US?.dateFirstAvailable,
+      dateLastAvailable: bestMatch.LEGOCom?.US?.dateLastAvailable,
+      imageURL: bestMatch.image?.thumbnailURL,
+      priceData: priceData,
+    });
+    
+    // DEBUG: Log authority data structure
+    console.log(`🔍 Brickset DEBUG - authorityData keys will be:`, [
+      'source', 'verified', 'confidence', 'externalUrl', 
+      'bricksetId', 'setNumber', 'year', 'theme', 'subtheme', 
+      'pieces', 'minifigs', 'ageRange', 'availability', 
+      'isRetired', 'imageLinks', 'itemDetails'
+    ]);
+    
     // Build authority data
     const authorityData: AuthorityData = {
       source: 'brickset',
