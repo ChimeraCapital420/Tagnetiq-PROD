@@ -1,26 +1,8 @@
 // FILE: src/lib/hydra/pricing/index.ts
-// HYDRA Pricing Module Exports
-// Phase 4: Pricing
+// Main exports for HYDRA pricing module
+// Refactored v7.4
 
-// =============================================================================
-// BLENDER
-// =============================================================================
-
-export {
-  blendPrices,
-  blendAIWithAuthority,
-  blendFromVotes,
-  adjustPriceForCondition,
-  getConditionMultiplier,
-  type PriceSource,
-  type BlendedPrice,
-  type BlendOptions,
-} from './blender.js';
-
-// =============================================================================
-// FORMATTER
-// =============================================================================
-
+// Main formatter functions
 export {
   formatPrice,
   formatPriceSmart,
@@ -35,13 +17,18 @@ export {
   formatQuality,
   formatAPIResponse,
   formatErrorResponse,
-  type FormattedAnalysisResponse,
-  type FormattedAuthorityData,
-  type PriceDisplay,
+  default as formatter,
 } from './formatter.js';
 
-// =============================================================================
-// MODULE INFO
-// =============================================================================
+// Types
+export type {
+  FormattedAnalysisResponse,
+  FormattedAuthorityData,
+  PriceDisplay,
+} from './types.js';
 
-export const PRICING_MODULE_VERSION = '6.0.0';
+// Source extractors (for direct use if needed)
+export * from './sources/index.js';
+
+// Blender (existing)
+export * from './blender.js';
