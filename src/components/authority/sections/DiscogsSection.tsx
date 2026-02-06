@@ -1,135 +1,215 @@
 // FILE: src/components/authority/sections/DiscogsSection.tsx
-// Discogs (vinyl/music) authority data display
-// Refactored from monolith v7.3
+// Discogs (Vinyl Records) authority data display
+// v7.5 - Bulletproof data extraction with defensive array handling
 
 'use client';
 
 import React from 'react';
-import { ExternalLink, ShoppingCart } from 'lucide-react';
+import { ExternalLink, Disc3, Music, Calendar, MapPin } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import type { SectionProps } from '../types';
-import { DataRow, ThumbnailImage, formatArray } from '../helpers';
+import { DataRow, ThumbnailImage, formatPrice } from '../helpers';
+import { createFieldExtractor, getExternalUrl, getThumbnailUrl } from '../helpers';
+
+// Helper to safely get first array element or string
+function safeFirst(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    const first = value[0];
+    if (typeof first === 'string') return first;
+    if (typeof first === 'object' && first !== null) {
+      return (first as any).name || (first as any).title || String(first);
+    }
+  }
+  if (typeof value === 'string') return value;
+  return undefined;
+}
+
+// Helper to safely join array or return string
+function safeJoin(value: unknown, separator = ', '): string | undefined {
+  if (Array.isArray(value)) {
+    return value.map(v => {
+      if (typeof v === 'string') return v;
+      if (typeof v === 'object' && v !== null) return (v as any).name || String(v);
+      return String(v);
+    }).join(separator);
+  }
+  if (typeof value === 'string') return value;
+  return undefined;
+}
 
 export const DiscogsSection: React.FC<SectionProps> = ({ data }) => {
-  const details = (data.itemDetails || data) as typeof data;
+  const get = createFieldExtractor(data);
   
-  const thumbnail = details.imageLinks?.thumbnail;
-  const title = details.title;
-  const artistName = details.artistName;
-  const label = details.label;
-  const format = details.format;
-  const country = details.country;
-  const released = details.released;
-  const genres = details.genres;
-  const styles = details.styles;
-  const lowestPrice = details.lowestPrice;
-  const medianPrice = details.medianPrice;
-  const highestPrice = details.highestPrice;
-  const numForSale = details.numForSale;
-  const discogsId = details.discogsId || details.releaseId;
-  const externalUrl = details.externalUrl || data.externalUrl;
+  // Extract vinyl-specific fields with defensive handling
+  const thumbnail = getThumbnailUrl(data) || get<string>('thumb') || get<string>('cover_image');
+  const title = get<string>('title');
+  const artistName = get<string>('artistName') || safeFirst(get<unknown>('artists'));
+  const year = get<number>('year') || get<string>('released');
+  const label = safeFirst(get<unknown>('labels')) || safeFirst(get<unknown>('label'));
+  const catno = get<string>('catno');
+  const format = safeFirst(get<unknown>('formats')) || safeFirst(get<unknown>('format'));
+  const formatDescriptions = get<string[]>('format_descriptions');
+  const country = get<string>('country');
+  const genres = get<string[]>('genres') || get<string[]>('genre');
+  const styles = get<string[]>('styles') || get<string[]>('style');
+  const catalogNumber = get<string>('catalogNumber') || data.catalogNumber || catno;
+  const tracklist = get<unknown[]>('tracklist');
+  const notes = get<string>('notes');
+  
+  // Pricing from Discogs marketplace
+  const lowestPrice = get<number>('lowestPrice') || get<number>('lowest_price');
+  const medianPrice = get<number>('medianPrice');
+  const highestPrice = get<number>('highestPrice');
+  const numForSale = get<number>('numForSale') || get<number>('num_for_sale');
+  const numHave = get<number>('community')?.have || get<number>('have');
+  const numWant = get<number>('community')?.want || get<number>('want');
+  
+  const marketValue = data.marketValue;
+  const externalUrl = getExternalUrl(data);
+
+  const hasData = artistName || label || format || year;
+  const hasPricing = lowestPrice || medianPrice || highestPrice || marketValue;
+  const hasCommunity = numHave || numWant;
 
   return (
     <div className="space-y-3">
-      {/* Album art */}
+      {/* Album Cover */}
       {thumbnail && (
         <div className="flex justify-center">
           <ThumbnailImage
             src={thumbnail}
-            alt={`${artistName} - ${title}`}
-            className="w-28 h-28 object-cover rounded shadow-md"
+            alt={title || 'Album cover'}
+            className="w-24 h-24 object-cover rounded shadow-md"
           />
         </div>
       )}
 
-      {/* For Sale badge */}
-      {numForSale && numForSale > 0 && (
-        <div className="bg-green-500/20 border border-green-500/50 rounded-md p-2 flex items-center justify-center gap-2">
-          <ShoppingCart className="h-4 w-4 text-green-600" />
-          <span className="text-green-700 dark:text-green-400 font-semibold text-sm">
-            {numForSale} copies for sale
-          </span>
+      {/* Title & Artist */}
+      {(title || artistName) && (
+        <div className="text-center">
+          {artistName && <p className="text-sm font-semibold">{artistName}</p>}
+          {title && data.title !== title && (
+            <p className="text-sm text-muted-foreground">{title}</p>
+          )}
         </div>
       )}
 
-      {/* Data grid */}
-      <div className="grid grid-cols-2 gap-3">
-        <DataRow label="Artist" value={artistName} />
-        <DataRow label="Title" value={title} />
-        <DataRow label="Label" value={label} />
-        <DataRow label="Format" value={Array.isArray(format) ? format.join(', ') : format} />
-        <DataRow label="Country" value={country} />
-        <DataRow label="Released" value={released} />
-        <DataRow label="Genres" value={formatArray(genres, 3)} />
-        <DataRow label="Styles" value={formatArray(styles, 3)} />
-        <DataRow label="Discogs ID" value={discogsId} />
-      </div>
+      {/* Format & Year */}
+      {(format || year) && (
+        <div className="flex justify-center items-center gap-2 text-xs text-muted-foreground">
+          {format && <span className="flex items-center gap-1"><Disc3 className="h-3 w-3" />{format}</span>}
+          {year && <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{year}</span>}
+          {country && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{country}</span>}
+        </div>
+      )}
 
-      {/* Marketplace prices */}
-      {(lowestPrice || medianPrice || highestPrice) && (
-        <div className="bg-muted/50 rounded-md p-2">
-          <div className="text-xs text-muted-foreground text-center mb-1">
+      {/* Genre/Style Badges */}
+      {(genres || styles) && (
+        <div className="flex justify-center gap-1 flex-wrap">
+          {genres?.slice(0, 2).map((genre, i) => (
+            <Badge key={`g-${i}`} variant="secondary" className="text-xs">
+              {genre}
+            </Badge>
+          ))}
+          {styles?.slice(0, 3).map((style, i) => (
+            <Badge key={`s-${i}`} variant="outline" className="text-xs">
+              {style}
+            </Badge>
+          ))}
+        </div>
+      )}
+
+      {/* Format Descriptions */}
+      {formatDescriptions && formatDescriptions.length > 0 && (
+        <p className="text-xs text-center text-muted-foreground">
+          {formatDescriptions.join(', ')}
+        </p>
+      )}
+
+      {/* Marketplace Pricing */}
+      {hasPricing && (
+        <div className="bg-muted/50 rounded-md p-3">
+          <div className="text-xs text-muted-foreground text-center mb-2">
             Discogs Marketplace
+            {numForSale && <span className="ml-1">({numForSale} for sale)</span>}
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center text-sm">
+          <div className="grid grid-cols-3 gap-2 text-center">
             <div>
-              <div className="text-muted-foreground text-xs">Low</div>
-              <div className="font-medium">
-                {lowestPrice ? `$${lowestPrice.toFixed(2)}` : '-'}
+              <div className="text-xs text-muted-foreground">Low</div>
+              <div className="font-semibold text-red-500">
+                {marketValue?.low || (lowestPrice ? formatPrice(lowestPrice) : '-')}
               </div>
             </div>
             <div>
-              <div className="text-muted-foreground text-xs">Median</div>
-              <div className="font-medium">
-                {medianPrice ? `$${medianPrice.toFixed(2)}` : '-'}
+              <div className="text-xs text-muted-foreground">Median</div>
+              <div className="font-semibold text-green-500">
+                {marketValue?.mid || (medianPrice ? formatPrice(medianPrice) : '-')}
               </div>
             </div>
             <div>
-              <div className="text-muted-foreground text-xs">High</div>
-              <div className="font-medium">
-                {highestPrice ? `$${highestPrice.toFixed(2)}` : '-'}
+              <div className="text-xs text-muted-foreground">High</div>
+              <div className="font-semibold text-blue-500">
+                {marketValue?.high || (highestPrice ? formatPrice(highestPrice) : '-')}
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Market value from formatter */}
-      {data.marketValue && !lowestPrice && (
-        <div className="bg-muted/50 rounded-md p-2">
-          <div className="text-xs text-muted-foreground text-center mb-1">Market Value</div>
-          <div className="grid grid-cols-3 gap-2 text-center text-sm">
-            <div>
-              <div className="text-muted-foreground text-xs">Low</div>
-              <div className="font-medium">{data.marketValue.low}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Mid</div>
-              <div className="font-medium">{data.marketValue.mid}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">High</div>
-              <div className="font-medium">{data.marketValue.high}</div>
             </div>
           </div>
         </div>
       )}
 
-      {/* External link */}
+      {/* Community Stats */}
+      {hasCommunity && (
+        <div className="flex justify-center gap-4 text-xs text-muted-foreground">
+          {numHave && <span>{numHave.toLocaleString()} have</span>}
+          {numWant && <span>{numWant.toLocaleString()} want</span>}
+        </div>
+      )}
+
+      {/* Data Grid */}
+      {hasData && (
+        <div className="grid grid-cols-2 gap-3">
+          <DataRow label="Artist" value={artistName} />
+          <DataRow label="Label" value={typeof label === 'object' ? (label as any)?.name : label} />
+          <DataRow label="Year" value={year} />
+          <DataRow label="Format" value={typeof format === 'object' ? (format as any)?.name : format} />
+          <DataRow label="Country" value={country} />
+          {catalogNumber && <DataRow label="Cat #" value={catalogNumber} />}
+        </div>
+      )}
+
+      {/* Tracklist Preview */}
+      {tracklist && tracklist.length > 0 && (
+        <div className="text-xs text-muted-foreground">
+          <p className="font-medium mb-1 flex items-center gap-1">
+            <Music className="h-3 w-3" /> Tracklist ({tracklist.length} tracks)
+          </p>
+          <p className="line-clamp-2">
+            {tracklist.slice(0, 4).map((t: any) => t.title || t).join(' • ')}
+            {tracklist.length > 4 && '...'}
+          </p>
+        </div>
+      )}
+
+      {/* No Data Fallback */}
+      {!hasData && !thumbnail && (
+        <div className="text-center py-4">
+          <Disc3 className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
+          <p className="text-sm text-muted-foreground">
+            Record verified but detailed info unavailable
+          </p>
+        </div>
+      )}
+
+      {/* External Link */}
       {externalUrl && (
-        <a
+        
           href={externalUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center justify-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline"
+          className="flex items-center justify-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline mt-2"
         >
           View on Discogs <ExternalLink className="h-3 w-3" />
         </a>
       )}
-
-      {/* Footer */}
-      <p className="text-xs text-muted-foreground text-center">
-        Data provided by Discogs
-      </p>
     </div>
   );
 };

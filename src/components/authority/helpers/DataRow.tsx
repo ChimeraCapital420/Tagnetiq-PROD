@@ -1,6 +1,6 @@
 // FILE: src/components/authority/helpers/DataRow.tsx
 // Reusable data row component for authority sections
-// Refactored from monolith v7.3
+// v7.5
 
 import React from 'react';
 
@@ -12,9 +12,9 @@ interface DataRowProps {
 
 /**
  * Simple label/value row for authority data display
+ * Returns null if value is empty (no empty rows)
  */
 export const DataRow: React.FC<DataRowProps> = ({ label, value, className = '' }) => {
-  // Don't render if no value
   if (value === undefined || value === null || value === '') {
     return null;
   }

@@ -1,6 +1,6 @@
 // FILE: src/components/authority/constants.ts
 // Constants for Authority Report Card
-// Refactored from monolith v7.3
+// v7.5 - All sources including streetwear
 
 import {
   Book,
@@ -27,7 +27,7 @@ export const SOURCE_NAMES: Record<string, string> = {
   'Comic Vine': 'Comic Vine',
   discogs: 'Discogs',
   retailed: 'Retailed',
-  streetwear: 'StockX via Retailed',  // v7.5
+  streetwear: 'StockX via Retailed',
   psa: 'PSA',
   nhtsa: 'NHTSA',
   upcitemdb: 'UPCitemdb',
@@ -44,7 +44,7 @@ export const SOURCE_ICONS: Record<string, LucideIcon> = {
   'Comic Vine': BookOpen,
   discogs: Disc3,
   retailed: Footprints,
-  streetwear: Footprints,  // v7.5 - same as retailed
+  streetwear: Footprints,
   psa: Award,
   nhtsa: Car,
   upcitemdb: Barcode,
@@ -58,9 +58,9 @@ export const SOURCE_COLORS: Record<string, string> = {
   pokemon_tcg: 'yellow',
   brickset: 'red',
   comicvine: 'purple',
-  'Comic Vine': 'purple',
   discogs: 'orange',
   retailed: 'green',
+  streetwear: 'green',
   psa: 'indigo',
   nhtsa: 'slate',
   upcitemdb: 'gray',

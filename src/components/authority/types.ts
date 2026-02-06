@@ -1,26 +1,57 @@
 // FILE: src/components/authority/types.ts
-// All TypeScript interfaces for Authority Report Card system
-// Refactored from monolith v7.3
+// Type definitions for Authority Report Card system
+// v7.5 - Comprehensive types for all authority sources
 
+/**
+ * Market value range from authority sources
+ */
+export interface MarketValue {
+  low: string;
+  mid: string;
+  high: string;
+}
+
+/**
+ * Price by condition/grade
+ */
+export interface PriceByCondition {
+  condition?: string;
+  grade?: string;
+  price: number;
+}
+
+/**
+ * Image links structure (Google Books style)
+ */
+export interface ImageLinks {
+  thumbnail?: string;
+  smallThumbnail?: string;
+  medium?: string;
+  large?: string;
+}
+
+/**
+ * Main Authority Data structure
+ * Contains all possible fields from all authority sources
+ * Each section extracts only the fields it needs
+ */
 export interface AuthorityData {
+  // === COMMON FIELDS ===
   source: string;
   verified?: boolean;
   confidence?: number;
   title?: string;
   catalogNumber?: string;
   externalUrl?: string;
-  marketValue?: {
-    low: string;
-    mid: string;
-    high: string;
-  };
-  pricesByCondition?: Array<{
-    condition: string;
-    grade?: string;
-    price: number;
-  }>;
+  marketValue?: MarketValue;
+  pricesByCondition?: PriceByCondition[];
   
-  // Google Books
+  // === NESTED DETAILS (fallback) ===
+  // Data may be flat OR nested in itemDetails depending on formatter version
+  itemDetails?: Record<string, unknown>;
+  
+  // === GOOGLE BOOKS ===
+  googleBooksId?: string;
   isbn?: string;
   isbn13?: string;
   isbn10?: string;
@@ -33,83 +64,92 @@ export interface AuthorityData {
   language?: string;
   averageRating?: number;
   ratingsCount?: number;
-  imageLinks?: { thumbnail?: string; smallThumbnail?: string };
+  imageLinks?: ImageLinks;
   retailPrice?: number;
+  infoLink?: string;
+  canonicalVolumeLink?: string;
   
-  // Numista (Coins)
-  numistaId?: number;
+  // === NUMISTA (Coins) ===
+  numistaId?: string;
   issuer?: string;
   minYear?: number;
   maxYear?: number;
   value?: string;
+  denomination?: string;
   composition?: string;
   weight?: number;
   size?: number;
-  thickness?: number;
+  diameter?: number;
   shape?: string;
-  orientation?: string;
-  references?: string;
   obverseThumb?: string;
   reverseThumb?: string;
   
-  // Pokemon TCG
+  // === POKEMON TCG ===
   pokemonTcgId?: string;
+  set?: string;
   setName?: string;
-  setCode?: string;
   rarity?: string;
   artist?: string;
   hp?: string;
   types?: string[];
-  cardNumber?: string;
+  number?: string;
+  tcgplayer?: {
+    url?: string;
+    prices?: {
+      normal?: { market?: number; low?: number; high?: number };
+      holofoil?: { market?: number; low?: number; high?: number };
+      reverseHolofoil?: { market?: number; low?: number; high?: number };
+    };
+  };
+  tcgPlayerUrl?: string;
   
-  // Brickset (LEGO)
-  bricksetId?: number;
+  // === BRICKSET (LEGO) ===
+  bricksetId?: string;
   setNumber?: string;
   year?: number;
   theme?: string;
-  themeGroup?: string;
   subtheme?: string;
   pieces?: number;
   minifigs?: number;
+  ageMin?: number;
+  ageMax?: number;
   ageRange?: string;
-  packagingType?: string;
   availability?: string;
+  isRetired?: boolean;
+  dateLastAvailable?: string;
   rrp?: number;
   pricePerPiece?: number;
-  dateFirstAvailable?: string;
-  dateLastAvailable?: string;
-  isRetired?: boolean;
+  currentValue?: number;
+  priceGuide?: {
+    minPrice?: number;
+    maxPrice?: number;
+    avgPrice?: number;
+  };
+  bricksetURL?: string;
   
-  // Comic Vine (Comics)
-  comicVineId?: number;
-  issueName?: string;
+  // === COMIC VINE ===
+  comicVineId?: string;
   issueNumber?: string;
   volumeName?: string;
-  volumeId?: number;
   coverDate?: string;
-  storeDate?: string;
   deck?: string;
-  credits?: Record<string, string[]>;
   writers?: string[];
   artists?: string[];
-  coverArtists?: string[];
-  characterAppearances?: string[];
-  characterCount?: number;
   firstAppearances?: string[];
   hasFirstAppearances?: boolean;
   isKeyIssue?: boolean;
   coverImage?: string;
-  coverImageLarge?: string;
   coverImageThumb?: string;
   comicVineUrl?: string;
+  characterCount?: number;
   
-  // Discogs (Vinyl)
-  discogsId?: number;
-  releaseId?: number;
-  masterId?: number;
+  // === DISCOGS (Vinyl) ===
+  discogsId?: string;
   artistName?: string;
-  label?: string;
-  format?: string[];
+  labels?: unknown[];
+  label?: unknown;
+  formats?: unknown[];
+  format?: unknown;
   country?: string;
   released?: string;
   genres?: string[];
@@ -118,41 +158,44 @@ export interface AuthorityData {
   medianPrice?: number;
   highestPrice?: number;
   numForSale?: number;
+  thumb?: string;
+  uri?: string;
   
-  // Retailed (Sneakers)
+  // === RETAILED (Sneakers/Streetwear) ===
   retailedId?: string;
   sku?: string;
-  styleCode?: string;
+  styleId?: string;
   brand?: string;
   colorway?: string;
   releaseDate?: string;
   gender?: string;
   silhouette?: string;
-  retailPriceMSRP?: number;
-  resalePrices?: {
+  model?: string;
+  msrp?: number;
+  resellPrices?: {
     stockx?: number;
     goat?: number;
     flightClub?: number;
     stadiumGoods?: number;
   };
+  market?: Record<string, number>;
   
-  // PSA (Graded)
+  // === PSA (Graded Cards) ===
   psaCertNumber?: string;
+  certNumber?: string;
   grade?: string;
   gradeDescription?: string;
   cardYear?: string;
   cardBrand?: string;
-  cardCategory?: string;
   cardSubject?: string;
   totalPopulation?: number;
   populationHigher?: number;
   labelType?: string;
+  certUrl?: string;
   
-  // NHTSA (Vehicles)
+  // === NHTSA (Vehicles) ===
   vin?: string;
   make?: string;
-  model?: string;
-  vehicleYear?: number;
   trim?: string;
   bodyClass?: string;
   vehicleType?: string;
@@ -166,21 +209,30 @@ export interface AuthorityData {
   plantCity?: string;
   plantCountry?: string;
   manufacturerName?: string;
+  vehicleYear?: number;
   
-  // UPCitemdb (Barcodes)
+  // === UPCITEMDB (Barcodes) ===
   upc?: string;
   ean?: string;
-  msrp?: number;
   
-  // Fallback - nested itemDetails from fetchers
-  itemDetails?: Record<string, unknown>;
+  // === GENERIC/EXTENSION FIELDS ===
+  name?: string;
+  thumbnail?: string;
+  image?: string;
+  url?: string;
 }
 
+/**
+ * Props for AuthorityReportCard component
+ */
 export interface AuthorityReportCardProps {
   authorityData: AuthorityData;
   className?: string;
 }
 
+/**
+ * Props for individual section components
+ */
 export interface SectionProps {
   data: AuthorityData;
 }

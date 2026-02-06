@@ -1,5 +1,5 @@
 // FILE: src/components/authority/sections/index.ts
-// Export all authority section components
+// Export all authority section components - v7.5
 
 export { GoogleBooksSection } from './GoogleBooksSection';
 export { NumistaSection } from './NumistaSection';
