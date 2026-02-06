@@ -654,10 +654,29 @@ const BricksetSection: React.FC<{ data: AuthorityData }> = ({ data }) => {
   const bricksetId = details.bricksetId || (data.itemDetails?.bricksetId as number);
   const dateFirstAvailable = details.dateFirstAvailable || (data.itemDetails?.dateFirstAvailable as string);
   const dateLastAvailable = details.dateLastAvailable || (data.itemDetails?.dateLastAvailable as string);
-  const isRetired = details.isRetired || (data.itemDetails?.isRetired as boolean);
+  const isRetiredFlag = details.isRetired || (data.itemDetails?.isRetired as boolean);
+  
+  // v7.3 FIXED: Smart retirement detection
+  // A set is retired if:
+  // 1. isRetired flag is true, OR
+  // 2. dateLastAvailable exists (means it's no longer sold), OR
+  // 3. availability explicitly says 'Retired', OR
+  // 4. Set is older than 3 years (LEGO rarely keeps sets in production that long)
+  const currentYear = new Date().getFullYear();
+  const isRetired = isRetiredFlag === true || 
+                    !!dateLastAvailable || 
+                    availability === 'Retired' ||
+                    (year && year < currentYear - 3);
+  
+  // v7.3: Only show "Currently Available" if we're confident it's NOT retired
+  const isCurrentlyAvailable = !isRetired && (
+    availability === 'Retail' || 
+    availability === 'LEGO exclusive'
+  ) && year && year >= currentYear - 2;
   
   // DEBUG v7.3 - Log extracted values
   console.log(`🧱 BricksetSection - Extracted: setNumber=${setNumber}, year=${year}, theme=${theme}, pieces=${pieces}`);
+  console.log(`🧱 BricksetSection - Retirement check: isRetiredFlag=${isRetiredFlag}, dateLastAvailable=${dateLastAvailable}, availability=${availability}, year=${year}, calculated isRetired=${isRetired}`);
   
   // Format dates nicely
   const formatDate = (dateStr?: string) => {
@@ -682,19 +701,20 @@ const BricksetSection: React.FC<{ data: AuthorityData }> = ({ data }) => {
         </div>
       )}
       
-      {/* Retired Badge */}
+      {/* Retired Badge - v7.3 FIXED: Smart detection */}
       {isRetired && (
         <div className="bg-orange-500/20 border border-orange-500/50 rounded-md p-2 flex items-center justify-center gap-2">
           <Package className="h-4 w-4 text-orange-600" />
           <span className="text-orange-700 dark:text-orange-400 font-semibold text-sm">
             Retired Set
             {dateLastAvailable && ` • ${formatDate(dateLastAvailable)}`}
+            {!dateLastAvailable && year && ` • ${year}`}
           </span>
         </div>
       )}
       
-      {/* Currently Available Badge */}
-      {availability === 'Retail' && (
+      {/* Currently Available Badge - v7.3 FIXED: Only show if confident */}
+      {isCurrentlyAvailable && (
         <div className="bg-green-500/20 border border-green-500/50 rounded-md p-2 flex items-center justify-center gap-2">
           <ShoppingBag className="h-4 w-4 text-green-600" />
           <span className="text-green-700 dark:text-green-400 font-semibold text-sm">Currently Available</span>

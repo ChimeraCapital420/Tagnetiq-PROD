@@ -670,31 +670,73 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
   }
 
   // =========================================================================
-  // DISCOGS DATA (Vinyl/Music)
+  // DISCOGS DATA (Vinyl/Music) - v7.3 FIXED: Defensive array checks
   // =========================================================================
   if (authority.source === 'discogs' || details.discogsId || details.releaseId) {
+    console.log(`🎵 Formatter entering DISCOGS block`);
+    
     formatted.discogsId = details.discogsId || details.id;
     formatted.releaseId = details.releaseId || details.id;
     formatted.masterId = details.masterId || details.master_id;
     formatted.title = details.title || formatted.title;
-    formatted.artistName = Array.isArray(details.artists) 
-      ? details.artists.map((a: any) => a.name).join(', ')
-      : details.artistName;
-    formatted.label = Array.isArray(details.labels)
-      ? details.labels.map((l: any) => l.name).join(', ')
-      : details.label;
-    formatted.format = details.formats?.map((f: any) => f.name) || details.format;
+    
+    // v7.3: Defensive artist extraction - handle string, array of objects, or array of strings
+    if (Array.isArray(details.artists)) {
+      formatted.artistName = details.artists.map((a: any) => typeof a === 'string' ? a : a.name).join(', ');
+    } else if (details.artistName) {
+      formatted.artistName = details.artistName;
+    } else if (typeof details.artists === 'string') {
+      formatted.artistName = details.artists;
+    }
+    
+    // v7.3: Defensive label extraction
+    if (Array.isArray(details.labels)) {
+      formatted.label = details.labels.map((l: any) => typeof l === 'string' ? l : l.name).join(', ');
+    } else if (details.label) {
+      formatted.label = typeof details.label === 'string' ? details.label : undefined;
+    }
+    
+    // v7.3: Defensive format extraction - can be array of objects, array of strings, or string
+    if (Array.isArray(details.formats)) {
+      formatted.format = details.formats.map((f: any) => typeof f === 'string' ? f : f.name);
+    } else if (Array.isArray(details.format)) {
+      formatted.format = details.format;
+    } else if (typeof details.format === 'string') {
+      formatted.format = [details.format];
+    }
+    
     formatted.country = details.country;
     formatted.released = details.released || details.year;
-    formatted.genres = details.genres;
-    formatted.styles = details.styles;
-    formatted.tracklist = details.tracklist?.map((t: any) => ({
-      position: t.position,
-      title: t.title,
-      duration: t.duration,
-    }));
-    formatted.imageLinks = details.images?.[0] ? { thumbnail: details.images[0].uri } : undefined;
+    
+    // v7.3: Defensive genre/style extraction
+    formatted.genres = Array.isArray(details.genres) ? details.genres 
+      : (Array.isArray(details.genre) ? details.genre 
+      : (typeof details.genre === 'string' ? [details.genre] : undefined));
+    formatted.styles = Array.isArray(details.styles) ? details.styles
+      : (Array.isArray(details.style) ? details.style
+      : (typeof details.style === 'string' ? [details.style] : undefined));
+    
+    // v7.3: Defensive tracklist extraction
+    if (Array.isArray(details.tracklist)) {
+      formatted.tracklist = details.tracklist.map((t: any) => ({
+        position: t.position || '',
+        title: t.title || '',
+        duration: t.duration,
+      }));
+    }
+    
+    // Image handling - check multiple locations
+    if (details.images?.[0]) {
+      formatted.imageLinks = { thumbnail: details.images[0].uri || details.images[0] };
+    } else if (details.thumb) {
+      formatted.imageLinks = { thumbnail: details.thumb };
+    } else if (details.coverImage) {
+      formatted.imageLinks = { thumbnail: details.coverImage };
+    }
+    
     formatted.externalUrl = details.uri || formatted.externalUrl;
+    
+    console.log(`🎵 Formatter DISCOGS - Extracted: title=${formatted.title}, artist=${formatted.artistName}, format=${formatted.format}`);
     
     // Discogs marketplace stats
     if (details.lowestPrice || details.stats) {
