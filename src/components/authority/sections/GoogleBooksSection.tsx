@@ -1,6 +1,5 @@
 // FILE: src/components/authority/sections/GoogleBooksSection.tsx
-// Google Books authority data display
-// v7.5 - Bulletproof data extraction - FULL VERSION
+// Google Books authority data display - v7.5
 
 'use client';
 
@@ -66,96 +65,54 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
   const hasRating = averageRating !== undefined && averageRating > 0;
   const languageDisplay = language ? language.toUpperCase() : undefined;
 
+  const linkElement = externalUrl ? (
+    <a href={externalUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline mt-2">
+      View on Google Books <ExternalLink className="h-3 w-3" />
+    </a>
+  ) : null;
+
   return (
     <div className="space-y-3">
       {thumbnail && (
         <div className="flex justify-center">
-          <ThumbnailImage
-            src={thumbnail}
-            alt={title || 'Book cover'}
-            className="w-24 h-32 object-cover rounded shadow-md"
-          />
+          <ThumbnailImage src={thumbnail} alt={title || 'Book cover'} className="w-24 h-32 object-cover rounded shadow-md" />
         </div>
       )}
 
       {(title || subtitle) && (
         <div className="text-center">
-          {title && data.title !== title && (
-            <p className="text-sm font-semibold">{title}</p>
-          )}
-          {subtitle && (
-            <p className="text-xs text-muted-foreground">{subtitle}</p>
-          )}
+          {title && data.title !== title && <p className="text-sm font-semibold">{title}</p>}
+          {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
         </div>
       )}
 
       {authors && authors.length > 0 && (
-        <p className="text-sm text-center text-muted-foreground">
-          by {authors.join(', ')}
-        </p>
+        <p className="text-sm text-center text-muted-foreground">by {authors.join(', ')}</p>
       )}
 
       {hasRating && (
         <div className="flex items-center justify-center gap-1">
           <div className="flex items-center">
             {[1, 2, 3, 4, 5].map((star) => (
-              <Star
-                key={star}
-                className={`h-4 w-4 ${
-                  star <= Math.round(averageRating)
-                    ? 'fill-yellow-400 text-yellow-400'
-                    : 'text-gray-300'
-                }`}
-              />
+              <Star key={star} className={`h-4 w-4 ${star <= Math.round(averageRating) ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}`} />
             ))}
           </div>
           <span className="text-sm font-medium ml-1">{averageRating.toFixed(1)}</span>
-          {ratingsCount && (
-            <span className="text-xs text-muted-foreground">
-              ({ratingsCount.toLocaleString()} ratings)
-            </span>
-          )}
+          {ratingsCount && <span className="text-xs text-muted-foreground">({ratingsCount.toLocaleString()} ratings)</span>}
         </div>
       )}
 
       <div className="flex justify-center gap-2 flex-wrap">
-        {printType && (
-          <Badge variant="outline" className="text-xs">
-            <BookOpen className="h-3 w-3 mr-1" />
-            {printType}
-          </Badge>
-        )}
-        {isPublicDomain && (
-          <Badge className="bg-green-500/20 text-green-500 border-green-500/30 text-xs">
-            Public Domain
-          </Badge>
-        )}
-        {isForSale && finalPrice && (
-          <Badge className="bg-blue-500/20 text-blue-500 border-blue-500/30 text-xs">
-            <DollarSign className="h-3 w-3 mr-1" />
-            {formatPrice(finalPrice)}
-          </Badge>
-        )}
-        {maturityRating && maturityRating !== 'NOT_MATURE' && (
-          <Badge variant="secondary" className="text-xs">
-            {MATURITY_LABELS[maturityRating] || maturityRating}
-          </Badge>
-        )}
+        {printType && <Badge variant="outline" className="text-xs"><BookOpen className="h-3 w-3 mr-1" />{printType}</Badge>}
+        {isPublicDomain && <Badge className="bg-green-500/20 text-green-500 border-green-500/30 text-xs">Public Domain</Badge>}
+        {isForSale && finalPrice && <Badge className="bg-blue-500/20 text-blue-500 border-blue-500/30 text-xs"><DollarSign className="h-3 w-3 mr-1" />{formatPrice(finalPrice)}</Badge>}
+        {maturityRating && maturityRating !== 'NOT_MATURE' && <Badge variant="secondary" className="text-xs">{MATURITY_LABELS[maturityRating] || maturityRating}</Badge>}
       </div>
 
       {categories && categories.length > 0 && (
         <div className="flex justify-center gap-1 flex-wrap">
-          {categories.slice(0, 3).map((category, i) => (
-            <Badge key={i} variant="secondary" className="text-xs">
-              <Tag className="h-3 w-3 mr-1" />
-              {category}
-            </Badge>
-          ))}
-          {categories.length > 3 && (
-            <Badge variant="outline" className="text-xs">
-              +{categories.length - 3} more
-            </Badge>
-          )}
+          {categories.slice(0, 3).map((category, i) => <Badge key={i} variant="secondary" className="text-xs"><Tag className="h-3 w-3 mr-1" />{category}</Badge>)}
+          {categories.length > 3 && <Badge variant="outline" className="text-xs">+{categories.length - 3} more</Badge>}
         </div>
       )}
 
@@ -163,27 +120,14 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
         <div className="bg-muted/50 rounded-md p-3">
           <div className="text-xs text-muted-foreground text-center mb-2">Market Value</div>
           <div className="grid grid-cols-3 gap-2 text-center">
-            <div>
-              <div className="text-xs text-muted-foreground">Low</div>
-              <div className="font-semibold text-red-500">{marketValue.low}</div>
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">Mid</div>
-              <div className="font-semibold text-green-500">{marketValue.mid}</div>
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">High</div>
-              <div className="font-semibold text-blue-500">{marketValue.high}</div>
-            </div>
+            <div><div className="text-xs text-muted-foreground">Low</div><div className="font-semibold text-red-500">{marketValue.low}</div></div>
+            <div><div className="text-xs text-muted-foreground">Mid</div><div className="font-semibold text-green-500">{marketValue.mid}</div></div>
+            <div><div className="text-xs text-muted-foreground">High</div><div className="font-semibold text-blue-500">{marketValue.high}</div></div>
           </div>
         </div>
       )}
 
-      {description && (
-        <p className="text-xs text-muted-foreground text-center">
-          {truncateText(description.replace(/<[^>]*>/g, ''), 200)}
-        </p>
-      )}
+      {description && <p className="text-xs text-muted-foreground text-center">{truncateText(description.replace(/<[^>]*>/g, ''), 200)}</p>}
 
       {hasData && (
         <div className="grid grid-cols-2 gap-3">
@@ -194,41 +138,20 @@ export const GoogleBooksSection: React.FC<SectionProps> = ({ data }) => {
           <DataRow label="ISBN" value={finalIsbn} />
           <DataRow label="Language" value={languageDisplay} />
           {finalPrice && <DataRow label="Retail Price" value={formatPrice(finalPrice)} />}
-          {dimensions?.height && (
-            <DataRow 
-              label="Dimensions" 
-              value={`${dimensions.height} × ${dimensions.width}`} 
-            />
-          )}
+          {dimensions?.height && <DataRow label="Dimensions" value={`${dimensions.height} × ${dimensions.width}`} />}
         </div>
       )}
 
-      {googleBooksId && (
-        <p className="text-xs text-center text-muted-foreground font-mono">
-          <Hash className="h-3 w-3 inline mr-1" />
-          {googleBooksId}
-        </p>
-      )}
+      {googleBooksId && <p className="text-xs text-center text-muted-foreground font-mono"><Hash className="h-3 w-3 inline mr-1" />{googleBooksId}</p>}
 
       {!hasData && !thumbnail && (
         <div className="text-center py-4">
           <BookOpen className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
-          <p className="text-sm text-muted-foreground">
-            Book verified but detailed info unavailable
-          </p>
+          <p className="text-sm text-muted-foreground">Book verified but detailed info unavailable</p>
         </div>
       )}
 
-      {externalUrl && (
-        
-          href={externalUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center justify-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline mt-2"
-        >
-          View on Google Books <ExternalLink className="h-3 w-3" />
-        </a>
-      )}
+      {linkElement}
     </div>
   );
 };
