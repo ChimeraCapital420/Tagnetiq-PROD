@@ -1,7 +1,8 @@
 // FILE: src/lib/hydra/fetchers/brickset.ts
-// HYDRA v7.1 - Brickset API Fetcher (LEGO Sets)
+// HYDRA v7.2 - Brickset API Fetcher (LEGO Sets)
 // FIXED v7.0: Now properly authenticates with userHash before API calls
 // FIXED v7.1: Set numbers must include variant (e.g., "8011-1" not "8011")
+// FIXED v7.2: Increased timeouts for cold start (login 15s, search 12s)
 // The Brickset v3 API requires: 1) login to get userHash, 2) then call getSets with userHash
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
@@ -64,7 +65,7 @@ export async function fetchBricksetData(itemName: string): Promise<MarketDataSou
     const searchUrl = `${BRICKSET_API}/getSets?apiKey=${encodeURIComponent(apiKey)}&userHash=${encodeURIComponent(userHash)}&params=${encodeURIComponent(JSON.stringify(searchParams))}`;
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout for search
     
     const response = await fetch(searchUrl, {
       method: 'GET',
@@ -244,7 +245,7 @@ async function getBricksetUserHash(apiKey: string, username: string, password: s
     const loginUrl = `${BRICKSET_API}/login?apiKey=${encodeURIComponent(apiKey)}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for login
     
     const response = await fetch(loginUrl, {
       method: 'GET',
