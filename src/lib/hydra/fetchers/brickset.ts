@@ -145,7 +145,7 @@ export async function fetchBricksetData(itemName: string): Promise<MarketDataSou
       confidence: calculateMatchConfidence(itemName, bestMatch.name, bestMatch.number),
       externalUrl: bestMatch.bricksetURL,
       
-      // Brickset-specific fields
+      // Brickset-specific fields (flat for direct access)
       bricksetId: bestMatch.setID,
       setNumber: `${bestMatch.number}${bestMatch.numberVariant > 1 ? `-${bestMatch.numberVariant}` : ''}`,
       year: bestMatch.year,
@@ -187,6 +187,34 @@ export async function fetchBricksetData(itemName: string): Promise<MarketDataSou
       ratingsCount: bestMatch.reviewCount,
       
       lastUpdated: new Date().toISOString(),
+      
+      // ALSO nest in itemDetails for formatters that expect it there
+      itemDetails: {
+        bricksetId: bestMatch.setID,
+        setNumber: `${bestMatch.number}${bestMatch.numberVariant > 1 ? `-${bestMatch.numberVariant}` : ''}`,
+        year: bestMatch.year,
+        theme: bestMatch.theme,
+        themeGroup: bestMatch.themeGroup,
+        subtheme: bestMatch.subtheme,
+        pieces: bestMatch.pieces,
+        minifigs: bestMatch.minifigs,
+        ageRange: bestMatch.ageRange ? `${bestMatch.ageRange.min || '?'}-${bestMatch.ageRange.max || '?'}` : undefined,
+        packagingType: bestMatch.packagingType,
+        availability: bestMatch.availability,
+        dateFirstAvailable: bestMatch.LEGOCom?.US?.dateFirstAvailable || bestMatch.LEGOCom?.UK?.dateFirstAvailable,
+        dateLastAvailable: bestMatch.LEGOCom?.US?.dateLastAvailable || bestMatch.LEGOCom?.UK?.dateLastAvailable,
+        isRetired: bestMatch.availability === 'Retired' || !!bestMatch.LEGOCom?.US?.dateLastAvailable,
+        rrp: priceData?.retail,
+        pricePerPiece: bestMatch.pieces && priceData?.retail 
+          ? parseFloat((priceData.retail / bestMatch.pieces).toFixed(3)) 
+          : undefined,
+        imageLinks: bestMatch.image ? {
+          thumbnail: bestMatch.image.thumbnailURL,
+          smallThumbnail: bestMatch.image.imageURL,
+        } : undefined,
+        averageRating: bestMatch.rating,
+        ratingsCount: bestMatch.reviewCount,
+      },
     };
     
     return {

@@ -1,8 +1,9 @@
 // FILE: src/lib/hydra/fetchers/index.ts
-// HYDRA v7.1 - Market Data Fetchers Index
+// HYDRA v7.2 - Market Data Fetchers Index
 // FIXED v6.3: Now passes additionalContext to fetchers (especially NHTSA for VIN)
 // FIXED v7.0: Default timeout bumped from 10s → 30s (Pokemon TCG needs it)
 // FIXED v7.1: Proper timeout cancellation - clearTimeout when fetch completes
+// FIXED v7.2: Brickset timeout increased to 25s for login + search on cold start
 
 import type { MarketDataSource, MarketDataResult, ItemCategory } from '../types.js';
 import { getApisForCategory } from '../category-detection.js';
@@ -64,14 +65,14 @@ const FETCHER_TIMEOUTS: Record<string, number> = {
   'pokemon_tcg': 45000,  // INCREASED v7.1: 45s - API can be very slow
   'ebay': 20000,         // INCREASED v7.1: 20s - OAuth + search
   'retailed': 15000,     // 15s
-  'brickset': 15000,     // 15s
+  'brickset': 25000,     // INCREASED v7.2: 25s - login (15s) + search (12s) on cold start
   'numista': 15000,      // 15s
   'google_books': 10000, // 10s - usually fast
   'discogs': 10000,      // 10s - usually fast
   'psa': 15000,          // 15s
   'nhtsa': 10000,        // 10s - free API, usually fast
   'upcitemdb': 10000,    // 10s
-  'comicvine': 10000,    // 10s - usually fast
+  'comicvine': 15000,    // INCREASED v7.2: 15s - two-stage fetch
 };
 
 // ==================== UNIFIED FETCH FUNCTION ====================
