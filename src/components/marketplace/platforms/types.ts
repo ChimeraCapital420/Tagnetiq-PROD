@@ -1,9 +1,12 @@
 // FILE: src/components/marketplace/platforms/types.ts
 // Shared type definitions for marketplace components
+// FIXED: Added alternate field names from analysis results to prevent silent crashes
 
 export interface MarketplaceItem {
   id: string;
   challenge_id?: string;
+
+  // Primary fields
   item_name: string;
   asking_price: number;
   estimated_value?: number;
@@ -22,9 +25,27 @@ export interface MarketplaceItem {
   color?: string;
   material?: string;
   authenticity_details?: string;
+
+  // Alternate field names from analysis results
+  // These may arrive instead of the primary fields depending on where data comes from
+  title?: string;
+  name?: string;
+  price?: number;
+  estimatedValue?: number;
+  imageUrl?: string;
+  image_url?: string;
+
   // Authority source data (for AI distinction)
   authoritySource?: string;
   authorityData?: Record<string, any>;
+
+  // Authority hotlinks - maintained from HYDRA analysis
+  numista_url?: string;
+  googlebooks_url?: string;
+  colnect_url?: string;
+  tcgplayer_url?: string;
+  psa_url?: string;
+  ebay_url?: string;
 }
 
 export interface FormattedListing {

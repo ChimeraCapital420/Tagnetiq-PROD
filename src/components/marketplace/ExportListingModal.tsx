@@ -1,6 +1,7 @@
 // FILE: src/components/marketplace/ExportListingModal.tsx
 // Main modal - thin orchestrator that composes the form and export tabs
 // FIXED: Safe toLocaleString calls with null checks
+// FIXED: ghostData prop threaded through to TagnetiqListingForm
 
 import React, { useState } from 'react';
 import { ExternalLink, Sparkles, Image as ImageIcon } from 'lucide-react';
@@ -18,6 +19,7 @@ import { TagnetiqListingForm } from './TagnetiqListingForm';
 import { PlatformExportTab } from './PlatformExportTab';
 import { PLATFORMS } from './platforms';
 import type { MarketplaceItem } from './platforms/types';
+import type { GhostData } from '@/hooks/useGhostMode';
 
 // Re-export types for backwards compatibility
 export type { MarketplaceItem, FormattedListing, PlatformConfig } from './platforms/types';
@@ -37,7 +39,8 @@ interface ExportListingModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   item: MarketplaceItem;
-  onListOnTagnetiq?: (item: MarketplaceItem, price: number, description: string) => Promise<void>;
+  onListOnTagnetiq?: (item: MarketplaceItem, price: number, description: string, ghostData?: GhostData) => Promise<void>;
+  ghostData?: GhostData | null;
 }
 
 export const ExportListingModal: React.FC<ExportListingModalProps> = ({
@@ -45,6 +48,7 @@ export const ExportListingModal: React.FC<ExportListingModalProps> = ({
   onOpenChange,
   item,
   onListOnTagnetiq,
+  ghostData = null,
 }) => {
   const [activeTab, setActiveTab] = useState('tagnetiq');
   const [customDescription, setCustomDescription] = useState(item?.description || '');
@@ -57,16 +61,17 @@ export const ExportListingModal: React.FC<ExportListingModalProps> = ({
   const handleListOnTagnetiq = async (
     itemToList: MarketplaceItem,
     price: number,
-    description: string
+    description: string,
+    ghost?: GhostData
   ) => {
     if (onListOnTagnetiq) {
-      await onListOnTagnetiq(itemToList, price, description);
+      await onListOnTagnetiq(itemToList, price, description, ghost);
     }
   };
 
-  // Safe item values
+  // Safe item values - support multiple field name patterns from analysis results
   const itemName = item.item_name || item.title || item.name || 'Unknown Item';
-  const askingPrice = item.asking_price ?? item.price ?? item.estimatedValue ?? 0;
+  const askingPrice = item.asking_price ?? item.price ?? item.estimatedValue ?? item.estimated_value ?? 0;
   const imageUrl = item.primary_photo_url || item.imageUrl || item.image_url || '';
 
   return (
@@ -162,6 +167,7 @@ export const ExportListingModal: React.FC<ExportListingModalProps> = ({
               item={item}
               onSubmit={handleListOnTagnetiq}
               disabled={!onListOnTagnetiq}
+              ghostData={ghostData}
             />
           </TabsContent>
 

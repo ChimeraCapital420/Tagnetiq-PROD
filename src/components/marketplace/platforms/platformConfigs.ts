@@ -1,5 +1,6 @@
 // FILE: src/components/marketplace/platforms/platformConfigs.ts
 // All platform configurations - organized by category
+// FIXED: Null-safe formatPrice and truncate helpers prevent crashes on missing item data
 
 import { Globe, Store, ShoppingBag, Camera, Music, Gamepad2, Watch, Gem, Shirt, Car, Palette } from 'lucide-react';
 import type { PlatformConfig, PlatformCategoryConfig, MarketplaceItem, FormattedListing } from './types';
@@ -19,15 +20,29 @@ export const PLATFORM_CATEGORIES: PlatformCategoryConfig[] = [
 ];
 
 // =============================================================================
-// HELPER FUNCTIONS
+// HELPER FUNCTIONS - NULL SAFE
 // =============================================================================
 
-const formatPrice = (price: number, decimals: number = 2): string => {
-  return price.toFixed(decimals);
+const formatPrice = (price: number | string | null | undefined, decimals: number = 2): string => {
+  if (price == null) return (0).toFixed(decimals);
+  const num = typeof price === 'string' ? parseFloat(price) : price;
+  return isNaN(num) ? (0).toFixed(decimals) : num.toFixed(decimals);
 };
 
-const truncate = (text: string, limit: number): string => {
-  return text.slice(0, limit);
+const truncate = (text: string | null | undefined, limit: number): string => {
+  return (text || '').slice(0, limit);
+};
+
+// Safe accessor for item name - checks all possible field names from analysis results
+const getItemName = (item: MarketplaceItem): string => {
+  return item.item_name || item.title || item.name || 'Item';
+};
+
+// Safe accessor for asking price
+const getPrice = (item: MarketplaceItem): number => {
+  const raw = item.asking_price ?? item.price ?? item.estimatedValue ?? item.estimated_value ?? 0;
+  const num = typeof raw === 'string' ? parseFloat(raw) : raw;
+  return isNaN(num) ? 0 : num;
 };
 
 // =============================================================================
@@ -48,7 +63,9 @@ const generalPlatforms: PlatformConfig[] = [
     bestFor: ['All collectibles', 'Auctions', 'Global reach'],
     formatter: (item, customDesc) => {
       const condition = getCondition('ebay', item.condition);
-      const title = truncate(item.item_name, 80);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 80);
       const description = `${customDesc || item.description || ''}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -61,7 +78,7 @@ ${item.is_verified ? '\n✅ Authenticity Verified' : ''}
 
 • Returns accepted within 30 days
 Questions? Message me!`.trim();
-      return { title, description, price: formatPrice(item.asking_price), condition };
+      return { title, description, price: formatPrice(price), condition };
     },
   },
   {
@@ -77,7 +94,9 @@ Questions? Message me!`.trim();
     bestFor: ['Local sales', 'No fees', 'Quick turnover'],
     formatter: (item, customDesc) => {
       const condition = getCondition('facebook', item.condition);
-      const title = truncate(item.item_name, 99);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 99);
       const description = `${customDesc || item.description || ''}
 
 📍 Local pickup available
@@ -85,7 +104,7 @@ Questions? Message me!`.trim();
 ${item.brand ? `Brand: ${item.brand}` : ''}
 ${item.condition ? `Condition: ${condition}` : ''}
 ${item.is_verified ? '\n✅ Verified authentic' : ''}`.trim();
-      return { title, description: truncate(description, 1000), price: formatPrice(item.asking_price, 0), condition };
+      return { title, description: truncate(description, 1000), price: formatPrice(price, 0), condition };
     },
   },
   {
@@ -101,7 +120,9 @@ ${item.is_verified ? '\n✅ Verified authentic' : ''}`.trim();
     bestFor: ['Easy shipping', 'Mobile users', 'Quick sales'],
     formatter: (item, customDesc) => {
       const condition = getCondition('mercari', item.condition);
-      const title = truncate(item.item_name, 40);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 40);
       const description = `${customDesc || item.description || ''}
 
 Condition: ${condition}
@@ -109,7 +130,7 @@ ${item.brand ? `Brand: ${item.brand}` : ''}
 ${item.is_verified ? '✅ Authenticity verified' : ''}
 
 Ships within 3 days • Smoke-free home`.trim();
-      return { title, description: truncate(description, 1000), price: formatPrice(item.asking_price, 0), condition };
+      return { title, description: truncate(description, 1000), price: formatPrice(price, 0), condition };
     },
   },
   {
@@ -124,7 +145,9 @@ Ships within 3 days • Smoke-free home`.trim();
     category: 'general',
     bestFor: ['Local only', 'No fees', 'Cash sales'],
     formatter: (item, customDesc) => {
-      const title = truncate(`${item.item_name} - $${item.asking_price}`, 70);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(`${name} - $${price}`, 70);
       const description = `${customDesc || item.description || ''}
 
 DETAILS:
@@ -132,9 +155,9 @@ ${item.brand ? `- Brand: ${item.brand}` : ''}
 ${item.condition ? `- Condition: ${item.condition}` : ''}
 ${item.is_verified ? 'Item verified for authenticity.' : ''}
 
-PRICE: $${item.asking_price} CASH
+PRICE: $${price} CASH
 Local pickup only. Serious buyers please.`.trim();
-      return { title, description, price: formatPrice(item.asking_price, 0) };
+      return { title, description, price: formatPrice(price, 0) };
     },
   },
   {
@@ -149,17 +172,19 @@ Local pickup only. Serious buyers please.`.trim();
     category: 'general',
     bestFor: ['Local + shipping', 'TruYou verified', 'Mobile app'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 50);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 50);
       const description = `${customDesc || item.description || ''}
 
 ${item.brand ? `Brand: ${item.brand}` : ''}
 ${item.condition ? `Condition: ${item.condition}` : ''}
-💰 Price: $${item.asking_price}
+💰 Price: $${price}
 📦 Can ship or meet locally
 ${item.is_verified ? '✔ Verified item' : ''}
 
 Message with questions!`.trim();
-      return { title, description: truncate(description, 2000), price: formatPrice(item.asking_price, 0) };
+      return { title, description: truncate(description, 2000), price: formatPrice(price, 0) };
     },
   },
   {
@@ -174,7 +199,9 @@ Message with questions!`.trim();
     category: 'general',
     bestFor: ['eBay alternative', 'Lower fees', 'Collectibles'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 140);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 140);
       const description = `${customDesc || item.description || ''}
 
 ITEM DETAILS:
@@ -184,7 +211,7 @@ ${item.estimated_value ? `Market Value: $${item.estimated_value}` : ''}
 ${item.is_verified ? '✅ Verified' : ''}
 
 Fast shipping • Secure packaging`.trim();
-      return { title, description, price: formatPrice(item.asking_price) };
+      return { title, description, price: formatPrice(price) };
     },
   },
 ];
@@ -207,7 +234,9 @@ const cardsPlatforms: PlatformConfig[] = [
     bestFor: ['Pokemon', 'Magic: The Gathering', 'Yu-Gi-Oh!'],
     formatter: (item, customDesc) => {
       const condition = getCondition('tcgplayer', item.condition);
-      const title = truncate(item.item_name, 200);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 200);
       const description = `${customDesc || item.description || ''}
 
 Card Condition: ${condition}
@@ -215,7 +244,7 @@ ${item.year ? `Year: ${item.year}` : ''}
 ${item.is_verified ? '✅ Verified authentic' : ''}
 
 Ships in toploader + bubble mailer`.trim();
-      return { title, description, price: formatPrice(item.asking_price), condition };
+      return { title, description, price: formatPrice(price), condition };
     },
   },
   {
@@ -230,13 +259,15 @@ Ships in toploader + bubble mailer`.trim();
     category: 'cards',
     bestFor: ['Sports cards', 'Graded cards', 'Consignment'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 100);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 100);
       const description = `${customDesc || item.description || ''}
 
 ${item.year ? `Year: ${item.year}` : ''}
 ${item.condition ? `Condition: ${item.condition}` : ''}
 ${item.is_verified ? 'Verified' : ''}`.trim();
-      return { title, description: truncate(description, 500), price: formatPrice(item.asking_price) };
+      return { title, description: truncate(description, 500), price: formatPrice(price) };
     },
   },
   {
@@ -251,12 +282,14 @@ ${item.is_verified ? 'Verified' : ''}`.trim();
     category: 'cards',
     bestFor: ['Bulk sports cards', 'Set builders', 'Vintage cards'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 100);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 100);
       const description = `${customDesc || item.description || ''}
 
 ${item.year ? `Year: ${item.year}` : ''}
 ${item.condition ? `Condition: ${item.condition}` : ''}`.trim();
-      return { title, description: truncate(description, 1000), price: formatPrice(item.asking_price) };
+      return { title, description: truncate(description, 1000), price: formatPrice(price) };
     },
   },
 ];
@@ -278,7 +311,9 @@ const fashionPlatforms: PlatformConfig[] = [
     category: 'fashion',
     bestFor: ['Designer fashion', 'Women\'s clothing', 'Accessories'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 80);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 80);
       const description = `${customDesc || item.description || ''}
 
 ${item.brand ? `Brand: ${item.brand}` : ''}
@@ -288,7 +323,7 @@ ${item.condition ? `Condition: ${item.condition}` : ''}
 ${item.is_verified ? '✨ Authenticity verified' : ''}
 
 Bundle to save! 💕`.trim();
-      return { title, description: truncate(description, 1500), price: formatPrice(item.asking_price, 0) };
+      return { title, description: truncate(description, 1500), price: formatPrice(price, 0) };
     },
   },
   {
@@ -303,7 +338,9 @@ Bundle to save! 💕`.trim();
     category: 'fashion',
     bestFor: ['Vintage fashion', 'Streetwear', 'Y2K trends'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 100);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 100);
       const description = `${customDesc || item.description || ''}
 
 ${item.brand ? `Brand: ${item.brand}` : ''}
@@ -311,7 +348,7 @@ ${item.dimensions ? `Size: ${item.dimensions}` : ''}
 ${item.condition ? `Condition: ${item.condition}` : ''}
 
 #vintage #streetwear #${item.brand?.toLowerCase().replace(/\s+/g, '') || 'fashion'}`.trim();
-      return { title, description: truncate(description, 1000), price: formatPrice(item.asking_price, 0) };
+      return { title, description: truncate(description, 1000), price: formatPrice(price, 0) };
     },
   },
   {
@@ -326,7 +363,9 @@ ${item.condition ? `Condition: ${item.condition}` : ''}
     category: 'fashion',
     bestFor: ['Designer menswear', 'Streetwear', 'Luxury fashion'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 100);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 100);
       const description = `${customDesc || item.description || ''}
 
 ${item.brand ? `Brand: ${item.brand}` : ''}
@@ -335,7 +374,7 @@ ${item.condition ? `Condition: ${item.condition}` : ''}
 ${item.is_verified ? 'Authenticity guaranteed' : ''}
 
 No trades. Price firm.`.trim();
-      return { title, description: truncate(description, 2000), price: formatPrice(item.asking_price, 0) };
+      return { title, description: truncate(description, 2000), price: formatPrice(price, 0) };
     },
   },
   {
@@ -350,13 +389,15 @@ No trades. Price firm.`.trim();
     category: 'fashion',
     bestFor: ['Sneakers', 'Streetwear', 'Verified authentic'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 100);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 100);
       const description = `${customDesc || item.description || ''}
 
 ${item.brand ? `Brand: ${item.brand}` : ''}
 ${item.dimensions ? `Size: ${item.dimensions}` : ''}
 Condition: New/Deadstock`.trim();
-      return { title, description: truncate(description, 500), price: formatPrice(item.asking_price, 0) };
+      return { title, description: truncate(description, 500), price: formatPrice(price, 0) };
     },
   },
 ];
@@ -379,7 +420,9 @@ const musicPlatforms: PlatformConfig[] = [
     bestFor: ['Vinyl records', 'CDs', 'Music collectibles'],
     formatter: (item, customDesc) => {
       const condition = getCondition('discogs', item.condition);
-      const title = truncate(item.item_name, 200);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 200);
       const description = `${customDesc || item.description || ''}
 
 Media Condition: ${condition}
@@ -387,7 +430,7 @@ Sleeve Condition: ${condition}
 ${item.year ? `Year: ${item.year}` : ''}
 
 Ships in protective mailer`.trim();
-      return { title, description, price: formatPrice(item.asking_price), condition };
+      return { title, description, price: formatPrice(price), condition };
     },
   },
   {
@@ -402,7 +445,9 @@ Ships in protective mailer`.trim();
     category: 'music',
     bestFor: ['Musical instruments', 'Audio gear', 'Vintage equipment'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 100);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 100);
       const description = `${customDesc || item.description || ''}
 
 ${item.brand ? `Brand: ${item.brand}` : ''}
@@ -412,7 +457,7 @@ ${item.condition ? `Condition: ${item.condition}` : ''}
 ${item.is_verified ? '✅ Verified' : ''}
 
 Ships safely in padded case`.trim();
-      return { title, description, price: formatPrice(item.asking_price) };
+      return { title, description, price: formatPrice(price) };
     },
   },
 ];
@@ -434,7 +479,9 @@ const luxuryPlatforms: PlatformConfig[] = [
     category: 'luxury',
     bestFor: ['Antiques', 'Fine art', 'Luxury furniture'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 200);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 200);
       const description = `${customDesc || item.description || ''}
 
 ${item.brand ? `Maker/Designer: ${item.brand}` : ''}
@@ -443,7 +490,7 @@ ${item.dimensions ? `Dimensions: ${item.dimensions}` : ''}
 ${item.material ? `Materials: ${item.material}` : ''}
 ${item.condition ? `Condition: ${item.condition}` : ''}
 ${item.is_verified ? 'Provenance verified' : ''}`.trim();
-      return { title, description, price: formatPrice(item.asking_price) };
+      return { title, description, price: formatPrice(price) };
     },
   },
   {
@@ -458,14 +505,16 @@ ${item.is_verified ? 'Provenance verified' : ''}`.trim();
     category: 'luxury',
     bestFor: ['Vintage furniture', 'Home decor', 'Art'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 100);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 100);
       const description = `${customDesc || item.description || ''}
 
 ${item.brand ? `Brand/Designer: ${item.brand}` : ''}
 ${item.year ? `Era: ${item.year}` : ''}
 ${item.dimensions ? `Dimensions: ${item.dimensions}` : ''}
 ${item.condition ? `Condition: ${item.condition}` : ''}`.trim();
-      return { title, description: truncate(description, 2000), price: formatPrice(item.asking_price) };
+      return { title, description: truncate(description, 2000), price: formatPrice(price) };
     },
   },
   {
@@ -480,7 +529,9 @@ ${item.condition ? `Condition: ${item.condition}` : ''}`.trim();
     category: 'luxury',
     bestFor: ['Antiques', 'Vintage jewelry', 'Collectibles'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 100);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 100);
       const description = `${customDesc || item.description || ''}
 
 ${item.brand ? `Maker: ${item.brand}` : ''}
@@ -488,7 +539,7 @@ ${item.year ? `Age/Period: ${item.year}` : ''}
 ${item.dimensions ? `Dimensions: ${item.dimensions}` : ''}
 ${item.condition ? `Condition: ${item.condition}` : ''}
 ${item.is_verified ? 'Authenticated' : ''}`.trim();
-      return { title, description: truncate(description, 3000), price: formatPrice(item.asking_price) };
+      return { title, description: truncate(description, 3000), price: formatPrice(price) };
     },
   },
 ];
@@ -510,7 +561,9 @@ const specialtyPlatforms: PlatformConfig[] = [
     category: 'specialty',
     bestFor: ['Vintage items', 'Handmade', 'Craft supplies'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 140);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 140);
       const description = `${customDesc || item.description || ''}
 
 ${item.brand ? `Brand/Maker: ${item.brand}` : ''}
@@ -520,7 +573,7 @@ ${item.material ? `Materials: ${item.material}` : ''}
 ${item.condition ? `Condition: ${item.condition}` : ''}
 
 ✨ Thank you for visiting my shop!`.trim();
-      return { title, description, price: formatPrice(item.asking_price) };
+      return { title, description, price: formatPrice(price) };
     },
   },
   {
@@ -535,13 +588,15 @@ ${item.condition ? `Condition: ${item.condition}` : ''}
     category: 'specialty',
     bestFor: ['Low fees', 'eBay alternative', 'All categories'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 80);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 80);
       const description = `${customDesc || item.description || ''}
 
 ${item.brand ? `Brand: ${item.brand}` : ''}
 ${item.condition ? `Condition: ${item.condition}` : ''}
 ${item.is_verified ? '✅ Verified' : ''}`.trim();
-      return { title, description, price: formatPrice(item.asking_price) };
+      return { title, description, price: formatPrice(price) };
     },
   },
   {
@@ -556,14 +611,16 @@ ${item.is_verified ? '✅ Verified' : ''}`.trim();
     category: 'specialty',
     bestFor: ['Auctions', 'Estate sales', 'Antiques'],
     formatter: (item, customDesc) => {
-      const title = truncate(item.item_name, 100);
+      const name = getItemName(item);
+      const price = getPrice(item);
+      const title = truncate(name, 100);
       const description = `${customDesc || item.description || ''}
 
 ${item.brand ? `Brand/Maker: ${item.brand}` : ''}
 ${item.year ? `Age/Year: ${item.year}` : ''}
 ${item.condition ? `Condition: ${item.condition}` : ''}
 ${item.is_verified ? 'Authenticated item' : ''}`.trim();
-      return { title, description, price: formatPrice(item.asking_price) };
+      return { title, description, price: formatPrice(price) };
     },
   },
 ];
