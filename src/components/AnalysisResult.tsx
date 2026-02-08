@@ -1,11 +1,14 @@
 // FILE: src/components/AnalysisResult.tsx
-// STATUS: HYDRA v6.2 - With Error Boundary
+// STATUS: HYDRA v6.3 - With Error Boundary
 // ULTRA-DEFENSIVE: Cannot crash on any malformed data
-// FIXED: ListOnMarketplaceButton props (item + ghostData)
+// FIXED: ListOnMarketplaceButton props (item + ghostData + onListOnTagnetiq)
+// FIXED: confidence_score normalized to 0-1 scale for display components
+// FIXED: item_name + asking_price primary fields added to marketplaceItem
 
 import React, { useState, useMemo, Component, ErrorInfo, ReactNode } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +23,9 @@ import { HydraConsensusDisplay } from './HydraConsensusDisplay.js';
 import { AnalysisHistoryNavigator } from './AnalysisHistoryNavigator.js';
 import { AuthorityReportCard } from './AuthorityReportCard.js';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
+import { useNavigate } from 'react-router-dom';
+import type { MarketplaceItem } from './marketplace/platforms/types';
+import type { GhostData } from '@/hooks/useGhostMode';
 
 // =============================================================================
 // ERROR BOUNDARY - Catches ANY crash and shows fallback
@@ -106,6 +112,7 @@ const AnalysisResultContent: React.FC = () => {
     deleteFromHistory
   } = useAppContext();
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   // --- Nexus State Management ---
   const [isRefineOpen, setIsRefineOpen] = useState(false);
@@ -143,9 +150,15 @@ const AnalysisResultContent: React.FC = () => {
     : null;
 
   // ==========================================================================
-  // FIXED: Convert AnalysisResult to MarketplaceItem format
-  // ListOnMarketplaceButton expects "item" prop, not "analysisResult"
-  // ULTRA-DEFENSIVE: All numeric fields default to 0, all strings have fallbacks
+  // FIXED v6.3: Normalize confidence to 0-1 scale
+  // HYDRA returns 0-100 (e.g., 91), but ExportListingModal expects 0-1 (e.g., 0.91)
+  // ==========================================================================
+  const confidenceNormalized = confidenceScore > 1 ? confidenceScore / 100 : confidenceScore;
+
+  // ==========================================================================
+  // FIXED v6.3: Convert AnalysisResult to MarketplaceItem format
+  // Now includes item_name + asking_price as PRIMARY fields
+  // Plus all alternate field names for backwards compatibility
   // ==========================================================================
   const safeImageUrlsForItem = imageUrls.length > 0 ? imageUrls : (imageUrl ? [imageUrl] : []);
   const nowISO = new Date().toISOString();
@@ -154,8 +167,18 @@ const AnalysisResultContent: React.FC = () => {
     // IDs
     id: id || `temp_${Date.now()}`,
     listing_id: id || `temp_${Date.now()}`,
+    challenge_id: id || undefined,
     
-    // Names/Titles
+    // PRIMARY FIELDS - These are what MarketplaceItem type expects first
+    item_name: itemName || 'Unknown Item',
+    asking_price: safeNumber(estimatedValue, 0),
+    estimated_value: safeNumber(estimatedValue, 0),
+    primary_photo_url: safeImageUrlsForItem[0] || '',
+    additional_photos: safeImageUrlsForItem.slice(1),
+    is_verified: !!authorityData,
+    confidence_score: confidenceNormalized,
+    
+    // Alternate name fields for compatibility
     title: itemName || 'Unknown Item',
     name: itemName || 'Unknown Item',
     itemName: itemName || 'Unknown Item',
@@ -164,10 +187,9 @@ const AnalysisResultContent: React.FC = () => {
     description: summary_reasoning || `${itemName || 'Item'} - AI analyzed collectible`,
     summary_reasoning: summary_reasoning || '',
     
-    // PRICES - All must be numbers for .toLocaleString()
+    // Alternate price fields for compatibility
     price: safeNumber(estimatedValue, 0),
     estimatedValue: safeNumber(estimatedValue, 0),
-    estimated_value: safeNumber(estimatedValue, 0),
     listPrice: safeNumber(estimatedValue, 0),
     list_price: safeNumber(estimatedValue, 0),
     marketPrice: safeNumber(estimatedValue, 0),
@@ -178,7 +200,7 @@ const AnalysisResultContent: React.FC = () => {
     // Category
     category: category || 'general',
     
-    // Images
+    // Alternate image fields for compatibility
     imageUrl: safeImageUrlsForItem[0] || '',
     image_url: safeImageUrlsForItem[0] || '',
     imageUrls: safeImageUrlsForItem,
@@ -187,10 +209,9 @@ const AnalysisResultContent: React.FC = () => {
     thumbnailUrl: safeImageUrlsForItem[0] || '',
     thumbnail_url: safeImageUrlsForItem[0] || '',
     
-    // Confidence
-    confidenceScore: safeNumber(confidenceScore, 0),
-    confidence_score: safeNumber(confidenceScore, 0),
-    confidence: safeNumber(confidenceScore, 0),
+    // Alternate confidence fields
+    confidenceScore: confidenceNormalized,
+    confidence: confidenceNormalized,
     
     // Arrays
     valuation_factors: valuation_factors || [],
@@ -200,7 +221,22 @@ const AnalysisResultContent: React.FC = () => {
     condition: lastAnalysisResult.condition || 'good',
     status: 'draft',
     
-    // DATES - All must be valid ISO strings for Date parsing
+    // Authority data
+    authoritySource: authorityData?.source || '',
+    authorityData: authorityData || undefined,
+    numista_url: authorityData?.source === 'numista' && authorityData?.itemDetails?.url 
+      ? authorityData.itemDetails.url : undefined,
+    googlebooks_url: authorityData?.source === 'google_books' && authorityData?.itemDetails?.url
+      ? authorityData.itemDetails.url : undefined,
+    colnect_url: authorityData?.source === 'colnect' && authorityData?.itemDetails?.url
+      ? authorityData.itemDetails.url : undefined,
+    
+    // Item details from analysis
+    brand: lastAnalysisResult.brand || undefined,
+    model: lastAnalysisResult.model || undefined,
+    year: lastAnalysisResult.year || undefined,
+    
+    // DATES
     created_at: nowISO,
     createdAt: nowISO,
     updated_at: nowISO,
@@ -208,7 +244,7 @@ const AnalysisResultContent: React.FC = () => {
     listed_at: nowISO,
     listedAt: nowISO,
     
-    // Seller info (may be needed)
+    // Seller info
     seller_id: lastAnalysisResult.seller_id || '',
     sellerId: lastAnalysisResult.seller_id || '',
     
@@ -216,6 +252,68 @@ const AnalysisResultContent: React.FC = () => {
     ghostData: ghostData || null,
     ghost_data: ghostData || null,
     is_ghost: !!ghostData,
+  };
+
+  // ==========================================================================
+  // FIXED v6.3: onListOnTagnetiq handler - creates actual marketplace listing
+  // Without this, the form is disabled={!onListOnTagnetiq} → disabled={true}
+  // ==========================================================================
+  const handleListOnTagnetiq = async (
+    listingItem: MarketplaceItem,
+    price: number,
+    description: string,
+    ghost?: GhostData
+  ) => {
+    if (!user) {
+      toast.error('Please log in to create a listing');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('arena_listings')
+        .insert({
+          seller_id: user.id,
+          item_name: listingItem.item_name || listingItem.title || listingItem.name || itemName,
+          description: description,
+          asking_price: price,
+          estimated_value: listingItem.estimated_value || estimatedValue,
+          category: listingItem.category || category,
+          condition: listingItem.condition || 'good',
+          primary_photo_url: listingItem.primary_photo_url || listingItem.imageUrl || safeImageUrlsForItem[0] || null,
+          additional_photos: safeImageUrlsForItem.length > 1 ? safeImageUrlsForItem.slice(1) : [],
+          confidence_score: confidenceNormalized,
+          is_verified: !!authorityData,
+          analysis_id: id || null,
+          authority_source: authorityData?.source || null,
+          authority_data: authorityData || null,
+          // Ghost fields
+          is_ghost: !!ghost?.is_ghost,
+          ghost_data: ghost || null,
+          // Status
+          status: 'active',
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Listing creation error:', error);
+        throw new Error(error.message || 'Failed to create listing');
+      }
+
+      toast.success('Listed on TagnetIQ Marketplace!', {
+        action: {
+          label: 'View Listing',
+          onClick: () => navigate('/arena/marketplace'),
+        },
+      });
+    } catch (err: any) {
+      console.error('Marketplace listing failed:', err);
+      toast.error('Listing failed', { 
+        description: err.message || 'Please try again' 
+      });
+      throw err; // Re-throw so the form knows it failed
+    }
   };
 
   const handleClear = () => {
@@ -474,10 +572,11 @@ const AnalysisResultContent: React.FC = () => {
               {!isViewingHistory ? (
                 <>
                   <AddToVaultButton analysisResult={lastAnalysisResult} onSuccess={handleClear} />
-                  {/* FIXED: Pass "item" prop (MarketplaceItem) + "ghostData" prop */}
+                  {/* FIXED v6.3: Pass onListOnTagnetiq so form is NOT disabled */}
                   <ListOnMarketplaceButton 
                     item={marketplaceItem}
                     ghostData={ghostData || null}
+                    onListOnTagnetiq={handleListOnTagnetiq}
                   />
                   <Button variant="secondary" className="w-full" onClick={() => toast.info('Social sharing coming soon!')}>
                     Share to Social
