@@ -1,6 +1,7 @@
 // FILE: src/lib/hydra/fetchers/numista.ts
 // HYDRA v6.3 - Numista Authority Data Fetcher (Coins & Banknotes)
 // FIXED v6.3: Better US coin detection, don't strip denominations, filter by issuer
+// FIXED v7.5: Added retry with simplified query on 400 errors
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
@@ -84,6 +85,11 @@ export async function fetchNumistaData(itemName: string, category?: string): Pro
     
     if (!response.ok) {
       console.error(`❌ Numista API error: ${response.status}`);
+      // FIXED v7.5: Retry with simpler query on 400 error
+      if (response.status === 400) {
+        console.log('🔄 Numista: Retrying with simplified query...');
+        return await retryWithSimpleQuery(itemName, apiKey, categoryFilter, startTime);
+      }
       return createFallbackResult(itemName);
     }
     
@@ -224,6 +230,95 @@ export async function fetchNumistaData(itemName: string, category?: string): Pro
       totalListings: 0,
       error: error instanceof Error ? error.message : 'Unknown error',
     };
+  }
+}
+
+/**
+ * ADDED v7.5: Retry with simplified query when we get 400 errors
+ * Extracts just the key terms to avoid API rejection
+ */
+async function retryWithSimpleQuery(
+  itemName: string, 
+  apiKey: string, 
+  categoryFilter: string, 
+  startTime: number
+): Promise<MarketDataSource> {
+  // Extract just the key terms - remove years, extra words
+  const simpleQuery = itemName
+    .replace(/\d{4}/g, '') // Remove years
+    .replace(/\b(coin|commemorative|rare|vintage|antique|collectible|graded|certified|pcgs|ngc|anacs|icg)\b/gi, '')
+    .replace(/\b(ms|pr|pf|au|xf|vf|f|vg|g)\s*[-]?\s*\d+/gi, '')
+    .replace(/[^a-zA-Z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(word => word.length > 2)
+    .slice(0, 4) // Just first 4 meaningful words
+    .join(' ');
+  
+  if (!simpleQuery || simpleQuery.length < 3) {
+    console.log('⚠️ Numista: Could not build simple query');
+    return createFallbackResult(itemName);
+  }
+  
+  console.log(`🔄 Numista retry with: "${simpleQuery}"`);
+  
+  try {
+    const searchUrl = `${NUMISTA_API_BASE}/types?q=${encodeURIComponent(simpleQuery)}&category=${categoryFilter}&count=10&lang=en`;
+    
+    const response = await fetch(searchUrl, {
+      method: 'GET',
+      headers: { 'Numista-API-Key': apiKey, 'Accept': 'application/json' },
+    });
+    
+    if (!response.ok) {
+      console.error(`❌ Numista retry failed: ${response.status}`);
+      return createFallbackResult(itemName);
+    }
+    
+    const data = await response.json();
+    const types = data.types || [];
+    
+    if (types.length === 0) {
+      console.log('⚠️ Numista: Retry found no results');
+      return createFallbackResult(itemName);
+    }
+    
+    const bestMatch = types[0];
+    console.log(`✅ Numista (retry): Found "${bestMatch.title}" in ${Date.now() - startTime}ms`);
+    
+    return {
+      source: 'numista',
+      available: true,
+      query: simpleQuery,
+      totalListings: data.count || types.length,
+      authorityData: {
+        source: 'numista',
+        verified: true,
+        confidence: 0.60, // Lower confidence for retry
+        itemDetails: {
+          numistaId: bestMatch.id,
+          title: bestMatch.title,
+          issuer: bestMatch.issuer?.name,
+          minYear: bestMatch.min_year,
+          maxYear: bestMatch.max_year,
+          obverseThumb: bestMatch.obverse_thumbnail,
+          reverseThumb: bestMatch.reverse_thumbnail,
+        },
+        externalUrl: `https://en.numista.com/catalogue/pieces${bestMatch.id}.html`,
+        lastUpdated: new Date().toISOString(),
+      },
+      sampleListings: [{
+        title: bestMatch.title,
+        price: 0,
+        condition: 'Reference',
+        url: `https://en.numista.com/catalogue/pieces${bestMatch.id}.html`,
+      }],
+      metadata: { responseTime: Date.now() - startTime, retry: true },
+    };
+  } catch (error) {
+    console.error('❌ Numista retry error:', error);
+    return createFallbackResult(itemName);
   }
 }
 

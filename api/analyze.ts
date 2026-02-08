@@ -1,5 +1,5 @@
 // FILE: api/analyze.ts
-// HYDRA v6.6 - Slim Analysis Handler
+// HYDRA v7.5 - Slim Analysis Handler
 // Orchestrates modular components for multi-AI consensus analysis
 // FIXED v6.3: AI category now properly passed as 3rd parameter to detectItemCategory
 // FIXED v6.3: Vision prompt now instructs VIN extraction from images
@@ -7,6 +7,7 @@
 // FIXED v6.5: Stage 7 now uses HYDRA's pre-calculated blended price (was looking for priceData instead of priceAnalysis)
 // FIXED v6.5: eBay listing count now properly weights against AI consensus
 // FIXED v6.6: Much more aggressive market weighting - 2000 listings at $1 should NOT become $10!
+// FIXED v7.5: eBay data now included in response (was being fetched but not displayed!)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -382,7 +383,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Either an image or item name is required');
     }
     
-    console.log(`\n🔥 === HYDRA v6.6 ANALYSIS START ===`);
+    console.log(`\n🔥 === HYDRA v7.5 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
     console.log(`🖼️ Primary Image: ${hasImage ? 'Yes' : 'No'}`);
@@ -642,6 +643,28 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
     }
     
     // ==========================================================================
+    // STAGE 7.5: Extract eBay Market Data for Response (NEW v7.5)
+    // ==========================================================================
+    // eBay data was being fetched but never passed to response!
+    const ebaySource = marketResult.sources?.find((s: any) => s.source === 'ebay');
+    const ebayData = ebaySource?.available ? {
+      totalListings: ebaySource.totalListings || 0,
+      priceAnalysis: ebaySource.priceAnalysis || null,
+      sampleListings: ebaySource.sampleListings?.slice(0, 5) || [],
+      suggestedPrices: ebaySource.suggestedPrices || null,
+    } : null;
+    
+    // Collect ALL market sources for transparency
+    const marketSources = marketResult.sources
+      ?.filter((s: any) => s.available)
+      .map((s: any) => ({
+        source: s.source,
+        totalListings: s.totalListings || 0,
+        priceAnalysis: s.priceAnalysis || null,
+        hasAuthorityData: !!s.authorityData,
+      })) || [];
+    
+    // ==========================================================================
     // STAGE 8: Format Response
     // ==========================================================================
     const processingTime = Date.now() - startTime;
@@ -654,11 +677,22 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
       processingTime
     );
     
-    // NEW: Add image URLs to response for marketplace integration
+    // NEW v6.4: Add image URLs to response for marketplace integration
+    // FIXED v7.5: Add eBay market data that was being lost
     const responseWithImages = {
       ...response,
       imageUrls: request.originalImageUrls || [],
       thumbnailUrl: request.originalImageUrls?.[0] || null,
+      // NEW v7.5: Include eBay market data
+      ebayMarketData: ebayData,
+      marketSources: marketSources,
+      // Include raw market result for debugging (can remove in production)
+      _debug: {
+        ebayListings: ebaySource?.totalListings || 0,
+        ebayMedian: ebaySource?.priceAnalysis?.median || null,
+        marketSourceCount: marketSources.length,
+        primaryAuthority: authorityData?.source || null,
+      },
     };
     
     // Save to Supabase (non-blocking) - NOW WITH IMAGE URLS

@@ -2,6 +2,7 @@
 // HYDRA v7.0 - Pokemon TCG API Fetcher
 // FIXED v6.3: Retry now uses DIFFERENT query strategies, not identical query
 // FIXED v7.0: Timeout bumped from 10s → 30s (API is slow on cold starts)
+// FIXED v7.5: Added missing Pokemon names (mamoswine, etc), fixed query building
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
@@ -186,6 +187,7 @@ async function retryWithSimpleQuery(
   
   switch (retryLevel) {
     case 1:
+      // FIXED v7.5: Just the name, no "Pokemon" suffix
       simpleQuery = `name:${pokemonName}`;
       break;
     case 2:
@@ -338,7 +340,7 @@ function buildPokemonQuery(itemName: string): string {
   const pokemonName = extractPokemonName(itemName);
   
   if (pokemonName) {
-    // FIXED v6.3.1: Start without wildcard - simpler queries work better
+    // FIXED v7.5: Do NOT include "Pokemon" in name search - causes 400 errors
     let query = `name:${pokemonName}`;
     
     // Add subtype filters if detected (but NOT in the name search)
@@ -364,6 +366,7 @@ function buildPokemonQuery(itemName: string): string {
   }
   
   // Fallback: Clean up the name for search (remove mechanics/noise)
+  // FIXED v7.5: Remove "pokemon" from the search to avoid API errors
   const cleanName = itemName
     .replace(/\b(pokemon|pokémon|card|tcg|holo|holographic|reverse holo)\b/gi, '')
     .replace(/\b(single strike|rapid strike|fusion strike)\b/gi, '')
@@ -490,7 +493,9 @@ function extractSetName(itemName: string): string | null {
 function extractPokemonName(itemName: string): string | null {
   const nameLower = itemName.toLowerCase();
   
+  // FIXED v7.5: Added mamoswine + many missing Pokemon from all generations
   const pokemonNames = [
+    // Gen 1
     'pikachu', 'charizard', 'blastoise', 'venusaur', 'mewtwo', 'mew',
     'ampharos', 'dragonite', 'gyarados', 'snorlax', 'gengar', 'alakazam',
     'machamp', 'golem', 'arcanine', 'lapras', 'vaporeon', 'jolteon', 'flareon',
@@ -511,7 +516,7 @@ function extractPokemonName(itemName: string): string | null {
     'staryu', 'scyther', 'jynx', 'electabuzz', 'magmar', 'pinsir',
     'tauros', 'magikarp', 'ditto', 'porygon', 'omanyte', 'kabuto',
     'aerodactyl', 'dratini', 'dragonair',
-    // Gen 2+
+    // Gen 2
     'chikorita', 'cyndaquil', 'totodile', 'sentret', 'hoothoot', 'ledyba',
     'spinarak', 'chinchou', 'togepi', 'natu', 'mareep', 'marill',
     'sudowoodo', 'politoed', 'hoppip', 'aipom', 'sunkern', 'yanma',
@@ -522,16 +527,94 @@ function extractPokemonName(itemName: string): string | null {
     'houndour', 'kingdra', 'phanpy', 'porygon2', 'stantler', 'smeargle',
     'tyrogue', 'smoochum', 'elekid', 'magby', 'miltank', 'blissey',
     'raikou', 'entei', 'suicune', 'larvitar', 'tyranitar',
-    // Newer gens
-    'stonjourner', 'dracovish', 'dragapult', 'corviknight', 'toxtricity',
-    'grimmsnarl', 'alcremie', 'falinks', 'pincurchin', 'frosmoth',
-    'eiscue', 'indeedee', 'morpeko', 'cufant', 'duraludon', 'dreepy',
-    'kubfu', 'urshifu', 'zarude', 'regieleki', 'regidrago', 
-    'glastrier', 'spectrier', 'calyrex',
-    // Scarlet/Violet
-    'sprigatito', 'fuecoco', 'quaxly', 'koraidon', 'miraidon',
-    'armarouge', 'ceruledge', 'gholdengo', 'annihilape', 'kingambit',
-    'baxcalibur', 'palafin', 'flamigo', 'tinkaton', 'orthworm',
+    // Gen 3
+    'treecko', 'torchic', 'mudkip', 'poochyena', 'zigzagoon', 'wurmple',
+    'lotad', 'seedot', 'taillow', 'wingull', 'ralts', 'surskit',
+    'shroomish', 'slakoth', 'nincada', 'whismur', 'makuhita', 'azurill',
+    'nosepass', 'skitty', 'sableye', 'mawile', 'aron', 'meditite',
+    'electrike', 'plusle', 'minun', 'volbeat', 'illumise', 'roselia',
+    'gulpin', 'carvanha', 'wailmer', 'numel', 'torkoal', 'spoink',
+    'spinda', 'trapinch', 'cacnea', 'swablu', 'zangoose', 'seviper',
+    'lunatone', 'solrock', 'barboach', 'corphish', 'baltoy', 'lileep',
+    'anorith', 'feebas', 'castform', 'kecleon', 'shuppet', 'duskull',
+    'tropius', 'chimecho', 'absol', 'wynaut', 'snorunt', 'spheal',
+    'clamperl', 'relicanth', 'luvdisc', 'bagon', 'beldum', 'regirock',
+    'regice', 'registeel', 'latias', 'latios', 'jirachi', 'deoxys',
+    'blaziken', 'swampert', 'sceptile', 'gardevoir', 'flygon', 'salamence', 'metagross',
+    // Gen 4 - FIXED v7.5: Added mamoswine and other missing Pokemon
+    'turtwig', 'chimchar', 'piplup', 'starly', 'bidoof', 'kricketot',
+    'shinx', 'budew', 'cranidos', 'shieldon', 'burmy', 'combee',
+    'pachirisu', 'buizel', 'cherubi', 'shellos', 'drifloon', 'buneary',
+    'glameow', 'chingling', 'stunky', 'bronzor', 'bonsly', 'mimejr',
+    'happiny', 'chatot', 'spiritomb', 'gible', 'munchlax', 'riolu',
+    'hippopotas', 'skorupi', 'croagunk', 'carnivine', 'finneon', 'mantyke',
+    'snover', 'rotom', 'uxie', 'mesprit', 'azelf', 'heatran',
+    'regigigas', 'cresselia', 'phione', 'manaphy', 'darkrai', 'shaymin',
+    'luxray', 'roserade', 'garchomp', 'lucario', 'weavile', 'magnezone',
+    'rhyperior', 'tangrowth', 'electivire', 'magmortar', 'togekiss', 'yanmega',
+    'gliscor', 'mamoswine', 'porygon-z', 'gallade', 'probopass', 'dusknoir',
+    'froslass', 'infernape', 'empoleon', 'torterra',
+    // Gen 5
+    'victini', 'snivy', 'tepig', 'oshawott', 'patrat', 'lillipup',
+    'purrloin', 'pansage', 'pansear', 'panpour', 'munna', 'pidove',
+    'blitzle', 'roggenrola', 'woobat', 'drilbur', 'audino', 'timburr',
+    'tympole', 'throh', 'sawk', 'sewaddle', 'venipede', 'cottonee',
+    'petilil', 'basculin', 'sandile', 'darumaka', 'maractus', 'dwebble',
+    'scraggy', 'sigilyph', 'yamask', 'tirtouga', 'archen', 'trubbish',
+    'zorua', 'zoroark', 'minccino', 'gothita', 'solosis', 'ducklett',
+    'vanillite', 'deerling', 'emolga', 'karrablast', 'foongus', 'frillish',
+    'alomomola', 'joltik', 'ferroseed', 'klink', 'tynamo', 'elgyem',
+    'litwick', 'axew', 'cubchoo', 'cryogonal', 'shelmet', 'stunfisk',
+    'mienfoo', 'druddigon', 'golett', 'pawniard', 'bouffalant', 'rufflet',
+    'vullaby', 'heatmor', 'durant', 'deino', 'larvesta', 'cobalion',
+    'terrakion', 'virizion', 'tornadus', 'thundurus', 'landorus',
+    'keldeo', 'meloetta', 'genesect', 'hydreigon', 'volcarona',
+    // Gen 6
+    'chespin', 'fennekin', 'froakie', 'bunnelby', 'fletchling', 'scatterbug',
+    'litleo', 'flabebe', 'skiddo', 'pancham', 'furfrou', 'espurr',
+    'honedge', 'spritzee', 'swirlix', 'inkay', 'binacle', 'skrelp',
+    'clauncher', 'helioptile', 'tyrunt', 'amaura', 'hawlucha', 'dedenne',
+    'carbink', 'goomy', 'klefki', 'phantump', 'pumpkaboo', 'bergmite',
+    'noibat', 'diancie', 'hoopa', 'volcanion', 'greninja', 'talonflame',
+    'aegislash', 'goodra', 'noivern',
+    // Gen 7
+    'rowlet', 'litten', 'popplio', 'pikipek', 'yungoos', 'grubbin',
+    'crabrawler', 'oricorio', 'cutiefly', 'rockruff', 'wishiwashi', 'mareanie',
+    'mudbray', 'dewpider', 'fomantis', 'morelull', 'salandit', 'stufful',
+    'bounsweet', 'comfey', 'oranguru', 'passimian', 'wimpod', 'sandygast',
+    'pyukumuku', 'type-null', 'silvally', 'minior', 'komala', 'turtonator',
+    'togedemaru', 'mimikyu', 'bruxish', 'drampa', 'dhelmise', 'jangmo-o',
+    'tapu-koko', 'tapu-lele', 'tapu-bulu', 'tapu-fini', 'cosmog', 'cosmoem',
+    'nihilego', 'buzzwole', 'pheromosa', 'xurkitree', 'celesteela', 'kartana',
+    'guzzlord', 'necrozma', 'magearna', 'marshadow', 'poipole', 'naganadel',
+    'stakataka', 'blacephalon', 'zeraora', 'decidueye', 'incineroar', 'primarina',
+    // Gen 8
+    'grookey', 'scorbunny', 'sobble', 'skwovet', 'rookidee', 'blipbug',
+    'nickit', 'gossifleur', 'wooloo', 'chewtle', 'yamper', 'rolycoly',
+    'applin', 'silicobra', 'cramorant', 'arrokuda', 'toxel', 'sizzlipede',
+    'clobbopus', 'sinistea', 'hatenna', 'impidimp', 'obstagoon', 'perrserker',
+    'cursola', 'sirfetchd', 'mrrime', 'runerigus', 'milcery', 'falinks',
+    'pincurchin', 'snom', 'stonjourner', 'eiscue', 'indeedee', 'morpeko',
+    'cufant', 'dracozolt', 'arctozolt', 'dracovish', 'arctovish', 'duraludon',
+    'dreepy', 'dragapult', 'kubfu', 'urshifu', 'zarude', 'regieleki',
+    'regidrago', 'glastrier', 'spectrier', 'calyrex', 'corviknight', 'toxtricity',
+    'grimmsnarl', 'alcremie', 'frosmoth', 'copperajah', 'rillaboom', 'cinderace', 'inteleon',
+    // Gen 9
+    'sprigatito', 'fuecoco', 'quaxly', 'lechonk', 'tarountula', 'nymble',
+    'pawmi', 'tandemaus', 'fidough', 'smoliv', 'squawkabilly', 'nacli',
+    'charcadet', 'tadbulb', 'wattrel', 'maschiff', 'shroodle', 'bramblin',
+    'toedscool', 'klawf', 'capsakid', 'rellor', 'flittle', 'tinkatink',
+    'wiglett', 'bombirdier', 'finizen', 'varoom', 'cyclizar', 'orthworm',
+    'glimmet', 'greavard', 'flamigo', 'cetoddle', 'veluza', 'dondozo',
+    'tatsugiri', 'annihilape', 'clodsire', 'farigiraf', 'dudunsparce', 'kingambit',
+    'greattusk', 'screamtail', 'brutebonnet', 'fluttermane', 'slitherwing', 'sandyshocks',
+    'irontreads', 'ironbundle', 'ironhands', 'ironjugulis', 'ironmoth', 'ironthorns',
+    'frigibax', 'arctibax', 'baxcalibur', 'gimmighoul', 'gholdengo', 'wochien',
+    'chienpao', 'tinglu', 'chiyu', 'roaringmoon', 'ironvaliant', 'koraidon',
+    'miraidon', 'walkingwake', 'ironleaves', 'tinkaton', 'palafin', 'revavroom',
+    'armarouge', 'ceruledge', 'bellibolt', 'kilowattrel', 'mabosstiff', 'grafaiai',
+    'brambleghast', 'toedscruel', 'scovillain', 'rabsca', 'espathra', 'wugtrio',
+    'cetitan', 'meowscarada', 'skeledirge', 'quaquaval',
   ];
   
   for (const pokemon of pokemonNames) {

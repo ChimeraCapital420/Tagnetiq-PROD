@@ -3,6 +3,7 @@
 // Comic Vine provides comprehensive comic metadata (no pricing - use eBay for that)
 // API Docs: https://comicvine.gamespot.com/api/documentation
 // ENHANCED v7.0: Now fetches full issue details after search for richer authority data
+// FIXED v7.5: Better issue number matching, warns when exact issue not found
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
@@ -55,6 +56,7 @@ interface ComicVineSearchResult {
   character_credits?: ComicVineCharacter[];
   first_appearance_characters?: ComicVineCharacter[];
   first_appearance_teams?: any[];
+  character_died_in?: ComicVineCharacter[];  // ADDED v7.5
   story_arc_credits?: any[];
 }
 
@@ -88,13 +90,13 @@ export async function fetchComicVineData(itemName: string): Promise<MarketDataSo
     const { searchQuery, issueNumber } = parseComicSearchQuery(itemName);
     console.log(`🔍 Comic Vine search: "${searchQuery}"${issueNumber ? ` (issue #${issueNumber})` : ''}`);
     
-    // Search for the issue
+    // Search for the issue - FIXED v7.5: Get more results to find exact match
     const params = new URLSearchParams({
       api_key: COMIC_VINE_API_KEY,
       format: 'json',
       query: searchQuery,
       resources: 'issue',
-      limit: '10',
+      limit: '20',  // CHANGED from 10 to 20 for better matching
     });
     
     const controller = new AbortController();
@@ -126,9 +128,14 @@ export async function fetchComicVineData(itemName: string): Promise<MarketDataSo
       return createEmptyResult('comicvine', startTime, 'No results found');
     }
     
-    // Get best matching result
+    // Get best matching result - FIXED v7.5: Now returns exactIssueMatch flag
     const results = Array.isArray(data.results) ? data.results : [data.results];
-    const bestMatch = findBestMatch(results, itemName, issueNumber);
+    const { bestMatch, exactIssueMatch } = findBestMatch(results, itemName, issueNumber);
+    
+    // FIXED v7.5: Warn if we couldn't find exact issue
+    if (issueNumber && !exactIssueMatch) {
+      console.warn(`⚠️ Comic Vine: Requested issue #${issueNumber} not found, returning best match: #${bestMatch.issue_number}`);
+    }
     
     // Fetch full issue details for richer data
     const fullDetails = await fetchIssueDetails(bestMatch.id);
@@ -139,8 +146,8 @@ export async function fetchComicVineData(itemName: string): Promise<MarketDataSo
     
     console.log(`✅ Comic Vine: Found "${displayName}" in ${responseTime}ms`);
     
-    // Build authority data with full details
-    const authorityData = buildAuthorityData(issueData);
+    // Build authority data with full details - FIXED v7.5: Pass match quality
+    const authorityData = buildAuthorityData(issueData, exactIssueMatch, issueNumber);
     
     return {
       source: 'comicvine',
@@ -187,7 +194,8 @@ async function fetchIssueDetails(issueId: number): Promise<ComicVineSearchResult
         'person_credits', 'character_credits', 'team_credits',
         'story_arc_credits', 'first_appearance_characters',
         'first_appearance_teams', 'first_appearance_concepts',
-        'first_appearance_locations', 'first_appearance_objects'
+        'first_appearance_locations', 'first_appearance_objects',
+        'character_died_in'  // ADDED v7.5
       ].join(',')
     });
     
@@ -275,19 +283,27 @@ function parseComicSearchQuery(itemName: string): { searchQuery: string; issueNu
 
 /**
  * Find best matching result from search results
+ * FIXED v7.5: Now returns exactIssueMatch flag to track match quality
  */
 function findBestMatch(
   results: ComicVineSearchResult[], 
   itemName: string, 
   targetIssue: string | null
-): ComicVineSearchResult {
+): { bestMatch: ComicVineSearchResult; exactIssueMatch: boolean } {
   const nameLower = itemName.toLowerCase();
   
   // If we have a target issue number, prioritize exact matches
   if (targetIssue) {
+    // First try exact string match
     for (const result of results) {
       if (result.issue_number === targetIssue) {
-        return result;
+        return { bestMatch: result, exactIssueMatch: true };
+      }
+    }
+    // Then try numeric match (handles "18" vs "018")
+    for (const result of results) {
+      if (result.issue_number && parseInt(result.issue_number) === parseInt(targetIssue)) {
+        return { bestMatch: result, exactIssueMatch: true };
       }
     }
   }
@@ -296,12 +312,12 @@ function findBestMatch(
   for (const result of results) {
     const volumeName = result.volume?.name?.toLowerCase() || '';
     if (nameLower.includes(volumeName) && volumeName.length > 3) {
-      return result;
+      return { bestMatch: result, exactIssueMatch: false };
     }
   }
   
   // Default to first result
-  return results[0];
+  return { bestMatch: results[0], exactIssueMatch: false };
 }
 
 /**
@@ -320,8 +336,13 @@ function buildDisplayName(issue: ComicVineSearchResult): string {
 
 /**
  * Build rich authority data from Comic Vine result
+ * FIXED v7.5: Now accepts exactIssueMatch and requestedIssue for confidence calculation
  */
-function buildAuthorityData(issue: ComicVineSearchResult): AuthorityData {
+function buildAuthorityData(
+  issue: ComicVineSearchResult,
+  exactIssueMatch: boolean = true,
+  requestedIssue: string | null = null
+): AuthorityData {
   const displayName = buildDisplayName(issue);
   
   // Organize credits by role
@@ -348,14 +369,23 @@ function buildAuthorityData(issue: ComicVineSearchResult): AuthorityData {
     ? issue.first_appearance_characters.map(c => c.name)
     : [];
   
+  // ADDED v7.5: Extract deaths
+  const deaths = Array.isArray(issue.character_died_in)
+    ? issue.character_died_in.map(c => c.name)
+    : [];
+  
   // Check if this is a key issue
   const isKeyIssue = firstAppearances.length > 0 || 
                      issue.issue_number === '1' ||
                      (issue.name?.toLowerCase().includes('first') ?? false);
   
+  // FIXED v7.5: Lower confidence if we didn't find exact issue
+  const confidence = exactIssueMatch ? 0.95 : 0.70;
+  
   return {
     source: 'Comic Vine',
     verified: true,
+    confidence,  // FIXED v7.5: Now uses calculated confidence
     externalUrl: issue.site_detail_url,
     
     // Detailed item information for the authority card
@@ -365,6 +395,8 @@ function buildAuthorityData(issue: ComicVineSearchResult): AuthorityData {
       name: displayName,
       issueName: issue.name,
       issueNumber: issue.issue_number,
+      requestedIssue,  // ADDED v7.5: Track what was requested
+      exactMatch: exactIssueMatch,  // ADDED v7.5: Track match quality
       
       // Volume/Series info
       volumeName: issue.volume?.name,
@@ -393,6 +425,9 @@ function buildAuthorityData(issue: ComicVineSearchResult): AuthorityData {
       firstAppearances: firstAppearances.length > 0 ? firstAppearances : null,
       hasFirstAppearances: firstAppearances.length > 0,
       isKeyIssue,
+      
+      // Deaths (ADDED v7.5)
+      deaths: deaths.length > 0 ? deaths : null,
       
       // Images
       coverImage: issue.image?.medium_url || issue.image?.small_url || null,
