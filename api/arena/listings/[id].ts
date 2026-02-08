@@ -1,6 +1,7 @@
 // FILE: api/arena/listings/[id].ts
 // Single listing endpoint - GET, PATCH, DELETE
 // GET is PUBLIC, PATCH/DELETE require ownership
+// FIXED v2: .catch() not available on Supabase query builders - use try/catch
 
 import { supaAdmin } from '../../_lib/supaAdmin.js';
 import { verifyUser } from '../../_lib/security.js';
@@ -18,7 +19,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Listing ID is required' });
   }
 
-  // Route by method
   switch (req.method) {
     case 'GET':
       return handleGet(id, res);
@@ -190,12 +190,14 @@ async function handlePatch(req: VercelRequest, res: VercelResponse, id: string) 
         }
         updateData.price = price;
         
-        // Log price change for history
-        await supaAdmin.from('listing_price_history').insert({
-          listing_id: id,
-          price: price,
-          changed_at: new Date().toISOString()
-        }).catch(() => {}); // Non-critical, don't fail if table doesn't exist
+        // Log price change - non-critical
+        try {
+          await supaAdmin.from('listing_price_history').insert({
+            listing_id: id,
+            price: price,
+            changed_at: new Date().toISOString()
+          });
+        } catch (_) { /* table may not exist yet */ }
         break;
 
       case 'update_details':
@@ -224,27 +226,30 @@ async function handlePatch(req: VercelRequest, res: VercelResponse, id: string) 
       throw updateError;
     }
 
-    // Update vault item if marked as sold
+    // Update vault item if marked as sold - non-critical
     if (action === 'mark_sold' && updatedListing.vault_item_id) {
-      await supaAdmin
-        .from('vault_items')
-        .update({ 
-          is_listed: false,
-          sold_at: new Date().toISOString(),
-          sold_price: updateData.sold_price
-        })
-        .eq('id', updatedListing.vault_item_id)
-        .catch(() => {}); // Non-critical
+      try {
+        await supaAdmin
+          .from('vault_items')
+          .update({ 
+            is_listed: false,
+            sold_at: new Date().toISOString(),
+            sold_price: updateData.sold_price
+          })
+          .eq('id', updatedListing.vault_item_id);
+      } catch (_) { /* vault sync non-critical */ }
     }
 
-    // Audit log
-    await supaAdmin.from('audit_logs').insert({
-      user_id: user.id,
-      action: `listing_${action || 'updated'}`,
-      resource_type: 'arena_listing',
-      resource_id: id,
-      metadata: { changes: updateData }
-    }).catch(() => {}); // Non-critical
+    // Audit log - non-critical
+    try {
+      await supaAdmin.from('audit_logs').insert({
+        user_id: user.id,
+        action: `listing_${action || 'updated'}`,
+        resource_type: 'arena_listing',
+        resource_id: id,
+        metadata: { changes: updateData }
+      });
+    } catch (_) { /* audit non-critical */ }
 
     return res.status(200).json({
       success: true,
@@ -293,7 +298,7 @@ async function handleDelete(req: VercelRequest, res: VercelResponse, id: string)
       return res.status(400).json({ error: 'Listing is already deleted' });
     }
 
-    // Soft delete - set status to 'deleted'
+    // Soft delete
     const { error: deleteError } = await supaAdmin
       .from('arena_listings')
       .update({ 
@@ -308,22 +313,25 @@ async function handleDelete(req: VercelRequest, res: VercelResponse, id: string)
       throw deleteError;
     }
 
-    // Update vault item to reflect unlisted status
+    // Update vault item - non-critical
     if (listing.vault_item_id) {
-      await supaAdmin
-        .from('vault_items')
-        .update({ is_listed: false })
-        .eq('id', listing.vault_item_id)
-        .catch(() => {}); // Non-critical
+      try {
+        await supaAdmin
+          .from('vault_items')
+          .update({ is_listed: false })
+          .eq('id', listing.vault_item_id);
+      } catch (_) { /* vault sync non-critical */ }
     }
 
-    // Audit log
-    await supaAdmin.from('audit_logs').insert({
-      user_id: user.id,
-      action: 'listing_deleted',
-      resource_type: 'arena_listing',
-      resource_id: id
-    }).catch(() => {}); // Non-critical
+    // Audit log - non-critical
+    try {
+      await supaAdmin.from('audit_logs').insert({
+        user_id: user.id,
+        action: 'listing_deleted',
+        resource_type: 'arena_listing',
+        resource_id: id
+      });
+    } catch (_) { /* audit non-critical */ }
 
     return res.status(200).json({
       success: true,
