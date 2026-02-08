@@ -1,11 +1,11 @@
 // FILE: src/components/AnalysisResult.tsx
-// STATUS: HYDRA v6.3 - With Error Boundary
+// STATUS: HYDRA v6.4 - With Error Boundary
 // ULTRA-DEFENSIVE: Cannot crash on any malformed data
-// FIXED: ListOnMarketplaceButton props (item + ghostData + onListOnTagnetiq)
-// FIXED: confidence_score normalized to 0-1 scale for display components
-// FIXED: item_name + asking_price primary fields added to marketplaceItem
+// FIXED v6.4: handleListOnTagnetiq uses actual arena_listings column names
+// FIXED v6.4: confidence_score normalized to 0-1
+// FIXED v6.4: images[] array instead of primary_photo_url + additional_photos
 
-import React, { useState, useMemo, Component, ErrorInfo, ReactNode } from 'react';
+import React, { useState, Component, ErrorInfo, ReactNode } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -100,6 +100,29 @@ const safeArray = <T,>(value: unknown): T[] => {
 };
 
 // =============================================================================
+// CONDITION ENUM MAPPER
+// arena_listings.condition is a Postgres enum — must match exactly
+// =============================================================================
+function mapConditionToEnum(condition: string): string {
+  const normalized = condition.toLowerCase().trim().replace(/[\s-]+/g, '_');
+  const validConditions = ['mint', 'near_mint', 'excellent', 'good', 'fair', 'poor'];
+  
+  if (validConditions.includes(normalized)) return normalized;
+  
+  const aliases: Record<string, string> = {
+    'new': 'mint',
+    'brand_new': 'mint',
+    'like_new': 'near_mint',
+    'very_good': 'good',
+    'acceptable': 'fair',
+    'damaged': 'poor',
+    'used': 'good',
+  };
+  
+  return aliases[normalized] || 'good';
+}
+
+// =============================================================================
 // MAIN COMPONENT
 // =============================================================================
 
@@ -149,67 +172,50 @@ const AnalysisResultContent: React.FC = () => {
     ? analysisHistory[currentAnalysisIndex] 
     : null;
 
-  // ==========================================================================
-  // FIXED v6.3: Normalize confidence to 0-1 scale
-  // HYDRA returns 0-100 (e.g., 91), but ExportListingModal expects 0-1 (e.g., 0.91)
-  // ==========================================================================
+  // Normalize confidence: HYDRA returns 0-100, components expect 0-1
   const confidenceNormalized = confidenceScore > 1 ? confidenceScore / 100 : confidenceScore;
 
+  // Unified image URLs array for marketplace + export
+  const allImageUrls = imageUrls.length > 0 ? imageUrls : (imageUrl ? [imageUrl] : []);
+
   // ==========================================================================
-  // FIXED v6.3: Convert AnalysisResult to MarketplaceItem format
-  // Now includes item_name + asking_price as PRIMARY fields
-  // Plus all alternate field names for backwards compatibility
+  // Convert AnalysisResult → MarketplaceItem for ListOnMarketplaceButton
   // ==========================================================================
-  const safeImageUrlsForItem = imageUrls.length > 0 ? imageUrls : (imageUrl ? [imageUrl] : []);
   const nowISO = new Date().toISOString();
   
   const marketplaceItem = {
     // IDs
     id: id || `temp_${Date.now()}`,
-    listing_id: id || `temp_${Date.now()}`,
     challenge_id: id || undefined,
     
-    // PRIMARY FIELDS - These are what MarketplaceItem type expects first
-    item_name: itemName || 'Unknown Item',
+    // PRIMARY FIELDS (MarketplaceItem type)
+    item_name: itemName,
     asking_price: safeNumber(estimatedValue, 0),
     estimated_value: safeNumber(estimatedValue, 0),
-    primary_photo_url: safeImageUrlsForItem[0] || '',
-    additional_photos: safeImageUrlsForItem.slice(1),
+    primary_photo_url: allImageUrls[0] || '',
+    additional_photos: allImageUrls.slice(1),
     is_verified: !!authorityData,
     confidence_score: confidenceNormalized,
     
-    // Alternate name fields for compatibility
-    title: itemName || 'Unknown Item',
-    name: itemName || 'Unknown Item',
-    itemName: itemName || 'Unknown Item',
-    
-    // Description
-    description: summary_reasoning || `${itemName || 'Item'} - AI analyzed collectible`,
-    summary_reasoning: summary_reasoning || '',
-    
-    // Alternate price fields for compatibility
+    // ALTERNATE FIELDS (compatibility)
+    title: itemName,
+    name: itemName,
     price: safeNumber(estimatedValue, 0),
     estimatedValue: safeNumber(estimatedValue, 0),
-    listPrice: safeNumber(estimatedValue, 0),
-    list_price: safeNumber(estimatedValue, 0),
-    marketPrice: safeNumber(estimatedValue, 0),
-    market_price: safeNumber(estimatedValue, 0),
-    suggestedPrice: safeNumber(estimatedValue, 0),
-    suggested_price: safeNumber(estimatedValue, 0),
+    
+    // Description
+    description: summary_reasoning || `${itemName} - AI analyzed collectible`,
     
     // Category
     category: category || 'general',
     
-    // Alternate image fields for compatibility
-    imageUrl: safeImageUrlsForItem[0] || '',
-    image_url: safeImageUrlsForItem[0] || '',
-    imageUrls: safeImageUrlsForItem,
-    image_urls: safeImageUrlsForItem,
-    images: safeImageUrlsForItem,
-    thumbnailUrl: safeImageUrlsForItem[0] || '',
-    thumbnail_url: safeImageUrlsForItem[0] || '',
+    // ALL IMAGE FIELDS
+    imageUrl: allImageUrls[0] || '',
+    image_url: allImageUrls[0] || '',
+    imageUrls: allImageUrls,
+    images: allImageUrls,
     
-    // Alternate confidence fields
+    // Confidence (both scales)
     confidenceScore: confidenceNormalized,
     confidence: confidenceNormalized,
     
@@ -217,46 +223,39 @@ const AnalysisResultContent: React.FC = () => {
     valuation_factors: valuation_factors || [],
     tags: lastAnalysisResult.tags || [],
     
-    // Status/Condition
+    // Condition
     condition: lastAnalysisResult.condition || 'good',
-    status: 'draft',
     
     // Authority data
     authoritySource: authorityData?.source || '',
     authorityData: authorityData || undefined,
     numista_url: authorityData?.source === 'numista' && authorityData?.itemDetails?.url 
       ? authorityData.itemDetails.url : undefined,
-    googlebooks_url: authorityData?.source === 'google_books' && authorityData?.itemDetails?.url
-      ? authorityData.itemDetails.url : undefined,
-    colnect_url: authorityData?.source === 'colnect' && authorityData?.itemDetails?.url
-      ? authorityData.itemDetails.url : undefined,
     
-    // Item details from analysis
+    // Item details
     brand: lastAnalysisResult.brand || undefined,
     model: lastAnalysisResult.model || undefined,
     year: lastAnalysisResult.year || undefined,
     
-    // DATES
-    created_at: nowISO,
-    createdAt: nowISO,
-    updated_at: nowISO,
-    updatedAt: nowISO,
-    listed_at: nowISO,
-    listedAt: nowISO,
-    
-    // Seller info
-    seller_id: lastAnalysisResult.seller_id || '',
-    sellerId: lastAnalysisResult.seller_id || '',
-    
-    // Ghost data passthrough
+    // Ghost
     ghostData: ghostData || null,
-    ghost_data: ghostData || null,
     is_ghost: !!ghostData,
   };
 
   // ==========================================================================
-  // FIXED v6.3: onListOnTagnetiq handler - creates actual marketplace listing
-  // Without this, the form is disabled={!onListOnTagnetiq} → disabled={true}
+  // handleListOnTagnetiq — inserts into arena_listings
+  // 
+  // ACTUAL COLUMNS (verified from schema query):
+  //   id, seller_id, vault_item_id, title, description, price, original_price,
+  //   condition (enum), images (text[]), shipping_included, accepts_trades,
+  //   status (enum), views, watchers, created_at, updated_at, expires_at,
+  //   sold_at, deleted_at, metadata (jsonb), category, location_text,
+  //   location_lat, location_lng, offers_shipping, offers_local_pickup,
+  //   sold_price, shipping_available, location, is_ghost, handling_time_hours,
+  //   ghost_location_lat, ghost_location_lng, fulfilled_at
+  //
+  // NEW COLUMNS (added via migration):
+  //   analysis_id, confidence_score, is_verified, estimated_value
   // ==========================================================================
   const handleListOnTagnetiq = async (
     listingItem: MarketplaceItem,
@@ -270,29 +269,68 @@ const AnalysisResultContent: React.FC = () => {
     }
 
     try {
+      // All photos go into images[] column
+      const listingImages = allImageUrls.length > 0 
+        ? allImageUrls 
+        : (listingItem.imageUrl ? [listingItem.imageUrl] : []);
+
+      // Rich metadata in jsonb
+      const listingMetadata: Record<string, any> = {};
+      if (authorityData) {
+        listingMetadata.authority_source = authorityData.source;
+        listingMetadata.authority_data = authorityData;
+      }
+      if (hydraConsensus) {
+        listingMetadata.hydra_consensus = hydraConsensus;
+      }
+      if (valuation_factors.length > 0) {
+        listingMetadata.valuation_factors = valuation_factors;
+      }
+      if (ghost) {
+        listingMetadata.ghost_protocol = ghost;
+      }
+
+      const safeCondition = mapConditionToEnum(listingItem.condition || 'good');
+
+      const insertPayload: Record<string, any> = {
+        // Required fields
+        seller_id: user.id,
+        title: listingItem.item_name || listingItem.title || itemName,
+        description: description,
+        price: price,
+        original_price: safeNumber(estimatedValue, 0),
+        condition: safeCondition,
+        images: listingImages,
+        category: listingItem.category || category || 'general',
+        status: 'active',
+        // Shipping
+        offers_shipping: true,
+        offers_local_pickup: true,
+        shipping_available: true,
+        // Metadata jsonb
+        metadata: Object.keys(listingMetadata).length > 0 ? listingMetadata : null,
+        // New columns (from migration)
+        analysis_id: id || null,
+        confidence_score: confidenceNormalized,
+        is_verified: !!authorityData,
+        estimated_value: safeNumber(estimatedValue, 0),
+      };
+
+      // Ghost Protocol fields (columns already exist in schema)
+      if (ghost) {
+        insertPayload.is_ghost = true;
+        insertPayload.handling_time_hours = ghost.handling_time_hours || 48;
+        if (ghost.store?.location?.lat) {
+          insertPayload.ghost_location_lat = ghost.store.location.lat;
+        }
+        if (ghost.store?.location?.lng) {
+          insertPayload.ghost_location_lng = ghost.store.location.lng;
+        }
+      }
+
       const { data, error } = await supabase
         .from('arena_listings')
-        .insert({
-          seller_id: user.id,
-          item_name: listingItem.item_name || listingItem.title || listingItem.name || itemName,
-          description: description,
-          asking_price: price,
-          estimated_value: listingItem.estimated_value || estimatedValue,
-          category: listingItem.category || category,
-          condition: listingItem.condition || 'good',
-          primary_photo_url: listingItem.primary_photo_url || listingItem.imageUrl || safeImageUrlsForItem[0] || null,
-          additional_photos: safeImageUrlsForItem.length > 1 ? safeImageUrlsForItem.slice(1) : [],
-          confidence_score: confidenceNormalized,
-          is_verified: !!authorityData,
-          analysis_id: id || null,
-          authority_source: authorityData?.source || null,
-          authority_data: authorityData || null,
-          // Ghost fields
-          is_ghost: !!ghost?.is_ghost,
-          ghost_data: ghost || null,
-          // Status
-          status: 'active',
-        })
+        .insert(insertPayload)
         .select()
         .single();
 
@@ -312,7 +350,7 @@ const AnalysisResultContent: React.FC = () => {
       toast.error('Listing failed', { 
         description: err.message || 'Please try again' 
       });
-      throw err; // Re-throw so the form knows it failed
+      throw err;
     }
   };
 
@@ -391,9 +429,6 @@ const AnalysisResultContent: React.FC = () => {
 
   const confidenceColor = confidenceScore > 85 ? 'bg-green-500' : confidenceScore > 65 ? 'bg-yellow-500' : 'bg-red-500';
 
-  // Safe image URLs array
-  const safeImageUrls = imageUrls.length > 0 ? imageUrls : (imageUrl ? [imageUrl] : []);
-
   return (
     <>
       <Card className="w-full max-w-4xl mx-auto border-border/50 bg-background/50 backdrop-blur-sm animate-fade-in relative">
@@ -426,14 +461,14 @@ const AnalysisResultContent: React.FC = () => {
             </Badge>
           </div>
           
-          {/* HYDRA CONSENSUS DISPLAY - with safety check */}
+          {/* HYDRA CONSENSUS DISPLAY */}
           {hydraConsensus && typeof hydraConsensus === 'object' && (
             <div className="mt-4">
               <HydraConsensusDisplay consensus={hydraConsensus} />
             </div>
           )}
 
-          {/* AUTHORITY REPORT CARD - with safety check */}
+          {/* AUTHORITY REPORT CARD */}
           {authorityData && typeof authorityData === 'object' && authorityData.source && (
             <div className="mt-4">
               <AuthorityReportCard authorityData={authorityData} />
@@ -481,10 +516,10 @@ const AnalysisResultContent: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Image Carousel */}
             <div className="relative">
-              {safeImageUrls.length > 0 ? (
+              {allImageUrls.length > 0 ? (
                 <Carousel className="w-full">
                   <CarouselContent>
-                    {safeImageUrls.map((url, index) => (
+                    {allImageUrls.map((url, index) => (
                       <CarouselItem key={index}>
                         <div className="p-1">
                           <Card className="overflow-hidden">
@@ -504,7 +539,7 @@ const AnalysisResultContent: React.FC = () => {
                       </CarouselItem>
                     ))}
                   </CarouselContent>
-                  {safeImageUrls.length > 1 && (
+                  {allImageUrls.length > 1 && (
                     <>
                       <CarouselPrevious />
                       <CarouselNext />
@@ -519,10 +554,10 @@ const AnalysisResultContent: React.FC = () => {
                 </Card>
               )}
               
-              {safeImageUrls.length > 1 && (
+              {allImageUrls.length > 1 && (
                 <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 bg-background/80 backdrop-blur-sm rounded-full px-2 py-1">
                   <span className="text-xs text-muted-foreground">
-                    {safeImageUrls.length} images
+                    {allImageUrls.length} images
                   </span>
                 </div>
               )}
@@ -572,7 +607,6 @@ const AnalysisResultContent: React.FC = () => {
               {!isViewingHistory ? (
                 <>
                   <AddToVaultButton analysisResult={lastAnalysisResult} onSuccess={handleClear} />
-                  {/* FIXED v6.3: Pass onListOnTagnetiq so form is NOT disabled */}
                   <ListOnMarketplaceButton 
                     item={marketplaceItem}
                     ghostData={ghostData || null}
