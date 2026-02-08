@@ -66,6 +66,9 @@ export const ExportListingModal: React.FC<ExportListingModalProps> = ({
   ) => {
     if (onListOnTagnetiq) {
       await onListOnTagnetiq(itemToList, price, description, ghost);
+      // Brief pause so user sees "Listed!" state, then close modal
+      // The toast with "View Listing" link fires on the dashboard behind
+      setTimeout(() => onOpenChange(false), 1200);
     }
   };
 
