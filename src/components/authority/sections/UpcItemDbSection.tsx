@@ -196,22 +196,12 @@ export const UpcItemDbSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Store Offers */}
+      {/* Store Offers - SINGLE LINE ANCHOR TAGS */}
       {offers && offers.length > 0 && (
         <div className="space-y-1">
           <p className="text-xs text-muted-foreground text-center">Available at:</p>
           <div className="flex flex-wrap justify-center gap-2">
-            {offers.slice(0, 4).map((offer, i) => (
-              
-                key={i}
-                href={offer.link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs px-2 py-1 bg-muted rounded hover:bg-muted/80 transition-colors"
-              >
-                {offer.merchant}: {formatPrice(offer.price)}
-              </a>
-            ))}
+            {offers.slice(0, 4).map((offer, i) => <a key={i} href={offer.link} target="_blank" rel="noopener noreferrer" className="text-xs px-2 py-1 bg-muted rounded hover:bg-muted/80 transition-colors">{offer.merchant}: {formatPrice(offer.price)}</a>)}
             {offers.length > 4 && (
               <span className="text-xs text-muted-foreground">+{offers.length - 4} more</span>
             )}
@@ -278,17 +268,8 @@ export const UpcItemDbSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* External Link */}
-      {externalUrl && (
-        
-          href={externalUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center justify-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline mt-2"
-        >
-          View Product Details <ExternalLink className="h-3 w-3" />
-        </a>
-      )}
+      {/* External Link - SINGLE LINE */}
+      {externalUrl && <a href={externalUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline mt-2">View Product Details <ExternalLink className="h-3 w-3" /></a>}
     </div>
   );
 };

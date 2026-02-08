@@ -214,17 +214,8 @@ export const RetailedSection: React.FC<SectionProps> = ({ data }) => {
         </div>
       )}
 
-      {/* External Link */}
-      {externalUrl && (
-        
-          href={externalUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center justify-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline mt-2"
-        >
-          View on StockX <ExternalLink className="h-3 w-3" />
-        </a>
-      )}
+      {/* External Link - SINGLE LINE */}
+      {externalUrl && <a href={externalUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline mt-2">View on StockX <ExternalLink className="h-3 w-3" /></a>}
     </div>
   );
 };
