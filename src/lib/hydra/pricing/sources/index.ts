@@ -1,6 +1,7 @@
 // FILE: src/lib/hydra/pricing/sources/index.ts
 // Source extractor index and dispatcher
 // Refactored from monolith v7.3
+// v8.0: Added Colnect source extractor
 
 import type { FormattedAuthorityData } from '../types.js';
 import type { AuthorityData } from '../../types.js';
@@ -101,7 +102,7 @@ export function extractSourceSpecificData(
       return;
     }
     
-    // Colnect
+    // Colnect (v8.0 - Stamps, Coins, Banknotes, 40+ collectible categories)
     if (isColnectSource(source, details)) {
       extractColnectData(details, formatted);
       return;
@@ -159,7 +160,10 @@ export const EXTRACTED_KEYS = [
   'vin', 'make', 'trim', 'bodyClass', 'vehicleType', 'driveType',
   'fuelType', 'engineCylinders', 'engineDisplacement', 'engineHP', 'transmissionStyle',
   'doors', 'plantCity', 'plantCountry', 'plantCompanyName', 'series', 'gvwr', 'manufacturerName',
-  // Colnect
+  // Colnect (v8.0)
   'colnectId', 'colnectCategory', 'itemName', 'seriesName',
   'producerName', 'producer', 'catalogCodes', 'frontPictureId', 'backPictureId',
+  'colnectItemId', 'categoryDisplay', 'description', 'seriesId', 'producerId',
+  'frontImageUrl', 'backImageUrl', 'conditionPrices',
+  'attribution', 'attributionUrl',
 ];

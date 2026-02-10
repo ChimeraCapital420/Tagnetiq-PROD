@@ -1,7 +1,8 @@
 // FILE: src/lib/hydra/pricing/formatter.ts
-// Price and Response Formatting for HYDRA v7.4
+// Price and Response Formatting for HYDRA v8.0
 // REFACTORED: From 1200 lines to ~300 lines
 // Source-specific extraction delegated to /sources/*.ts
+// v8.0: Colnect attribution requirement handled in source extractor
 
 import type {
   ConsensusResult,
@@ -150,7 +151,7 @@ export function formatAnalysisResponse(
 
 /**
  * Format authority data for response
- * REFACTORED: Delegates to source-specific extractors
+ * Delegates to source-specific extractors in /sources/*.ts
  */
 export function formatAuthorityData(authority: AuthorityData): FormattedAuthorityData {
   const formatted: FormattedAuthorityData = {
@@ -185,19 +186,18 @@ export function formatAuthorityData(authority: AuthorityData): FormattedAuthorit
 
   // Get itemDetails for source-specific extraction
   const details = (authority.itemDetails || {}) as Record<string, unknown>;
-  
-  // Debug logging
-  console.log(`📋 Formatter received authority.source: "${authority.source}"`);
+
+  console.log(`📋 Formatter authority.source: "${authority.source}"`);
   console.log(`📋 Formatter itemDetails keys: ${Object.keys(details).join(', ') || 'EMPTY'}`);
 
-  // Delegate to source-specific extractor
+  // Delegate to source-specific extractors (ebay, numista, colnect, etc.)
   extractSourceSpecificData(authority, details, formatted);
 
   // Include remaining itemDetails as fallback
   if (Object.keys(details).length > 0) {
     const remainingDetails = { ...details };
     EXTRACTED_KEYS.forEach(key => delete remainingDetails[key]);
-    
+
     if (Object.keys(remainingDetails).length > 0) {
       formatted.itemDetails = remainingDetails;
     }

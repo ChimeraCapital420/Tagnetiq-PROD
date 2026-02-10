@@ -1,6 +1,8 @@
 // FILE: src/lib/hydra/index.ts
 // Main export file for HYDRA modular architecture
 // Re-exports all modules for clean imports throughout the application
+// v8.0: category-detection refactored from monolith to folder module
+// v8.0: Added Colnect fetcher for 40+ collectible categories
 
 // =============================================================================
 // TYPES
@@ -38,14 +40,27 @@ export * from './pricing/index.js';
 export * from './storage/index.js';
 
 // =============================================================================
-// CATEGORY DETECTION
+// CATEGORY DETECTION (v8.0: refactored from single file to folder module)
 // =============================================================================
+// CHANGED v8.0: './category-detection.js' → './category-detection/index.js'
 export {
+  // Main detection function
   detectItemCategory,
-  getApisForCategory,
+  
+  // Detection sub-functions
   detectCategoryFromName,
+  detectCategoryByKeywords,
+  checkNamePatternOverrides,
+  
+  // Utilities
+  getApisForCategory,
   normalizeCategory,
-} from './category-detection.js';
+  
+  // Data maps (for direct access / testing)
+  CATEGORY_API_MAP,
+  CATEGORY_KEYWORDS,
+  NAME_PATTERN_OVERRIDES,
+} from './category-detection/index.js';
 
 // =============================================================================
 // FETCHERS (Authority APIs)
@@ -65,6 +80,12 @@ export {
   fetchRetailedData,
   fetchPsaData,
   verifyPsaCerts,
+  
+  // v8.0: Colnect fetcher (stamps, coins, banknotes, 40+ collectible categories)
+  fetchColnectData,
+  hasColnectSupport,
+  getColnectCategories,
+  getColnectCategorySlug,
 } from './fetchers/index.js';
 
 // =============================================================================
@@ -139,7 +160,7 @@ export {
 // =============================================================================
 // VERSION INFO
 // =============================================================================
-export const HYDRA_VERSION = '6.0.1';
+export const HYDRA_VERSION = '8.0.0';
 export const HYDRA_MODULES = {
   config: true,
   prompts: true,

@@ -1,8 +1,10 @@
 // FILE: src/lib/hydra/health-check.ts
-// HYDRA v6.0 - Comprehensive API Health Check System
+// HYDRA v8.0 - Comprehensive API Health Check System
 // Tests all authority APIs and tracks availability
+// v8.0: Added Colnect with custom HMAC-SHA256 health check
 
 import { getRateLimitStatus as getUpcRateLimit, healthCheck as upcHealthCheck } from './fetchers/upcitemdb.js';
+import { healthCheck as colnectHealthCheck } from './fetchers/colnect.js';
 
 // ==================== TYPES ====================
 
@@ -41,6 +43,7 @@ const API_CONFIGS: Array<{
   name: string;
   source: string;
   envKey: string | null;
+  secondaryEnvKey?: string | null;
   testEndpoint: string;
   testQuery?: string;
   documentationUrl: string;
@@ -71,7 +74,7 @@ const API_CONFIGS: Array<{
     testEndpoint: 'https://api.pokemontcg.io/v2/cards',
     testQuery: '?q=name:pikachu&pageSize=1',
     documentationUrl: 'https://docs.pokemontcg.io/',
-    requiresApiKey: false, // Optional but recommended
+    requiresApiKey: false,
   },
   {
     name: 'Brickset (LEGO)',
@@ -88,7 +91,7 @@ const API_CONFIGS: Array<{
     testEndpoint: 'https://www.googleapis.com/books/v1/volumes',
     testQuery: '?q=isbn:9780134685991&maxResults=1',
     documentationUrl: 'https://developers.google.com/books/docs/v1/using',
-    requiresApiKey: false, // Works without key but with limits
+    requiresApiKey: false,
   },
   {
     name: 'Discogs (Music)',
@@ -110,7 +113,7 @@ const API_CONFIGS: Array<{
   {
     name: 'PSA (Graded Cards)',
     source: 'psa',
-    envKey: null, // PSA uses public cert lookup
+    envKey: null,
     testEndpoint: 'https://www.psacard.com/cert',
     documentationUrl: 'https://www.psacard.com/services/psaverify',
     requiresApiKey: false,
@@ -118,7 +121,7 @@ const API_CONFIGS: Array<{
   {
     name: 'NHTSA (Vehicles)',
     source: 'nhtsa',
-    envKey: null, // FREE - no key needed
+    envKey: null,
     testEndpoint: 'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVin/1HGBH41JXMN109186',
     testQuery: '?format=json',
     documentationUrl: 'https://vpic.nhtsa.dot.gov/api/',
@@ -127,19 +130,31 @@ const API_CONFIGS: Array<{
   {
     name: 'UPCitemdb (Barcodes)',
     source: 'upcitemdb',
-    envKey: null, // FREE tier - no key needed
+    envKey: null,
     testEndpoint: 'https://api.upcitemdb.com/prod/trial/lookup',
     documentationUrl: 'https://www.upcitemdb.com/wp/docs/main/development/api/',
     requiresApiKey: false,
     customHealthCheck: upcHealthCheck,
   },
   {
-    name: 'Colnect (Collectibles)',
+    name: 'Comic Vine (Comics)',
+    source: 'comicvine',
+    envKey: 'COMICVINE_API_KEY',
+    testEndpoint: 'https://comicvine.gamespot.com/api/search/',
+    documentationUrl: 'https://comicvine.gamespot.com/api/documentation',
+    requiresApiKey: true,
+  },
+  // v8.0: Colnect uses custom HMAC-SHA256 health check
+  // Requires BOTH COLNECT_API_KEY and COLNECT_API_SECRET
+  {
+    name: 'Colnect (40+ Collectibles)',
     source: 'colnect',
     envKey: 'COLNECT_API_KEY',
-    testEndpoint: 'https://api.colnect.net/api/',
-    documentationUrl: 'https://colnect.com/en/api',
+    secondaryEnvKey: 'COLNECT_API_SECRET',
+    testEndpoint: 'https://api.colnect.net',
+    documentationUrl: 'https://colnect.com/en/help/api',
     requiresApiKey: true,
+    customHealthCheck: colnectHealthCheck,
   },
 ];
 
@@ -160,6 +175,8 @@ function hasApiKey(envKey: string | null): boolean {
 async function testApiEndpoint(config: typeof API_CONFIGS[0]): Promise<APIHealthStatus> {
   const startTime = Date.now();
   const hasKey = hasApiKey(config.envKey);
+  // Check secondary key if specified (e.g., Colnect needs both KEY and SECRET)
+  const hasSecondaryKey = config.secondaryEnvKey ? hasApiKey(config.secondaryEnvKey) : true;
   
   // If custom health check exists, use it
   if (config.customHealthCheck) {
@@ -173,7 +190,7 @@ async function testApiEndpoint(config: typeof API_CONFIGS[0]): Promise<APIHealth
         lastChecked: new Date().toISOString(),
         message: result.message,
         requiresApiKey: config.requiresApiKey,
-        hasApiKey: hasKey,
+        hasApiKey: hasKey && hasSecondaryKey,
         documentationUrl: config.documentationUrl,
       };
     } catch (error) {
@@ -185,21 +202,25 @@ async function testApiEndpoint(config: typeof API_CONFIGS[0]): Promise<APIHealth
         lastChecked: new Date().toISOString(),
         message: error instanceof Error ? error.message : 'Health check failed',
         requiresApiKey: config.requiresApiKey,
-        hasApiKey: hasKey,
+        hasApiKey: hasKey && hasSecondaryKey,
         documentationUrl: config.documentationUrl,
       };
     }
   }
   
   // Check if API key is required but missing
-  if (config.requiresApiKey && !hasKey) {
+  if (config.requiresApiKey && (!hasKey || !hasSecondaryKey)) {
+    const missingKeys: string[] = [];
+    if (!hasKey && config.envKey) missingKeys.push(config.envKey);
+    if (!hasSecondaryKey && config.secondaryEnvKey) missingKeys.push(config.secondaryEnvKey);
+    
     return {
       name: config.name,
       source: config.source,
       status: 'disabled',
       latency: 0,
       lastChecked: new Date().toISOString(),
-      message: `API key not configured. Set ${config.envKey} in environment.`,
+      message: `API key not configured. Set ${missingKeys.join(' and ')} in environment.`,
       requiresApiKey: config.requiresApiKey,
       hasApiKey: false,
       documentationUrl: config.documentationUrl,
@@ -233,6 +254,9 @@ async function testApiEndpoint(config: typeof API_CONFIGS[0]): Promise<APIHealth
           headers['Authorization'] = `Bearer ${key}`;
           break;
         case 'google_books':
+          // Key is added as query param
+          break;
+        case 'comicvine':
           // Key is added as query param
           break;
       }
@@ -341,7 +365,7 @@ async function testApiEndpoint(config: typeof API_CONFIGS[0]): Promise<APIHealth
  * Run comprehensive health check on all APIs
  */
 export async function runHealthCheck(): Promise<HealthCheckReport> {
-  console.log('\n🏥 === HYDRA API HEALTH CHECK ===\n');
+  console.log('\n🏥 === HYDRA API HEALTH CHECK v8.0 ===\n');
   
   const results = await Promise.all(
     API_CONFIGS.map(config => testApiEndpoint(config))
@@ -366,7 +390,9 @@ export async function runHealthCheck(): Promise<HealthCheckReport> {
   
   for (const result of results) {
     if (result.status === 'disabled') {
-      recommendations.push(`Configure ${result.name}: Add ${API_CONFIGS.find(c => c.source === result.source)?.envKey} to your environment`);
+      const config = API_CONFIGS.find(c => c.source === result.source);
+      const keys = [config?.envKey, config?.secondaryEnvKey].filter(Boolean).join(' and ');
+      recommendations.push(`Configure ${result.name}: Add ${keys} to your environment`);
     }
     if (result.status === 'unhealthy' && result.hasApiKey) {
       recommendations.push(`Check ${result.name}: ${result.message}`);
@@ -478,7 +504,7 @@ export function getApiList(): Array<{
     name: config.name,
     source: config.source,
     requiresApiKey: config.requiresApiKey,
-    hasApiKey: hasApiKey(config.envKey),
+    hasApiKey: hasApiKey(config.envKey) && (config.secondaryEnvKey ? hasApiKey(config.secondaryEnvKey) : true),
     documentationUrl: config.documentationUrl,
   }));
 }

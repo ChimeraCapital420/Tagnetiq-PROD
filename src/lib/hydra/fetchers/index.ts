@@ -1,9 +1,10 @@
 // FILE: src/lib/hydra/fetchers/index.ts
-// HYDRA v7.2 - Market Data Fetchers Index
+// HYDRA v8.0 - Market Data Fetchers Index
 // FIXED v6.3: Now passes additionalContext to fetchers (especially NHTSA for VIN)
 // FIXED v7.0: Default timeout bumped from 10s → 30s (Pokemon TCG needs it)
 // FIXED v7.1: Proper timeout cancellation - clearTimeout when fetch completes
 // FIXED v7.2: Brickset timeout increased to 25s for login + search on cold start
+// ADDED v8.0: Colnect fetcher for 40+ collectible categories (HMAC auth, server-side only)
 
 import type { MarketDataSource, MarketDataResult, ItemCategory } from '../types.js';
 import { getApisForCategory } from '../category-detection.js';
@@ -20,6 +21,7 @@ export { fetchPsaData, verifyPsaCerts } from './psa.js';
 export { fetchNhtsaData, validateVIN, decodeVINBatch } from './nhtsa.js';
 export { fetchUpcItemDbData, extractBarcode, validateUPC, searchByName as searchUpcByName, getRateLimitStatus as getUpcRateLimitStatus } from './upcitemdb.js';
 export { fetchComicVineData } from './comicvine.js';
+export { fetchColnectData, hasColnectSupport, getColnectCategories, getColnectCategorySlug } from './colnect.js';
 
 // Import for internal use
 import { fetchEbayData } from './ebay.js';
@@ -33,6 +35,7 @@ import { fetchPsaData } from './psa.js';
 import { fetchNhtsaData } from './nhtsa.js';
 import { fetchUpcItemDbData } from './upcitemdb.js';
 import { fetchComicVineData } from './comicvine.js';
+import { fetchColnectData } from './colnect.js';
 
 // ==================== FETCHER REGISTRY ====================
 
@@ -55,6 +58,7 @@ const FETCHER_REGISTRY: Record<string, StandardFetcherFunction | ExtendedFetcher
   'nhtsa': fetchNhtsaData,
   'upcitemdb': fetchUpcItemDbData,
   'comicvine': fetchComicVineData,
+  'colnect': fetchColnectData,
 };
 
 // Fetchers that accept additionalContext as their second parameter
@@ -73,6 +77,7 @@ const FETCHER_TIMEOUTS: Record<string, number> = {
   'nhtsa': 10000,        // 10s - free API, usually fast
   'upcitemdb': 10000,    // 10s
   'comicvine': 15000,    // INCREASED v7.2: 15s - two-stage fetch
+  'colnect': 15000,      // v8.0: 15s - HMAC auth + search (no CORS, server-side only)
 };
 
 // ==================== UNIFIED FETCH FUNCTION ====================
@@ -249,6 +254,10 @@ function calculateBlendedPrice(sources: MarketDataSource[]): { blendedPrice: num
     if (source.source === 'ebay') {
       weight = 1.2; // eBay (real market data) gets medium-high weight
     }
+    // Colnect market prices are real transaction data - high weight
+    if (source.source === 'colnect' && source.authorityData) {
+      weight = 1.4; // Slightly less than dedicated authorities but high
+    }
     
     // Use median as primary price (most reliable)
     if (analysis.median > 0) {
@@ -299,6 +308,11 @@ function calculatePriceConfidence(sources: MarketDataSource[]): number {
     confidence += 0.1;
   }
   
+  // Colnect cross-reference boosts confidence
+  if (available.some(s => s.source === 'colnect' && s.authorityData)) {
+    confidence += 0.05;
+  }
+  
   return Math.min(confidence, 0.98);
 }
 
@@ -311,6 +325,11 @@ function determineMarketInfluence(sources: MarketDataSource[], category: ItemCat
   
   const hasAuthority = availableSources.some(s => s.authorityData);
   const hasEbay = availableSources.some(s => s.source === 'ebay' && (s.totalListings || 0) > 5);
+  const hasColnect = availableSources.some(s => s.source === 'colnect' && s.authorityData);
+  
+  if (hasAuthority && hasEbay && hasColnect) {
+    return 'high_confidence_multi_source_catalog_verified';
+  }
   
   if (hasAuthority && hasEbay) {
     return 'high_confidence_multi_source';
@@ -318,6 +337,10 @@ function determineMarketInfluence(sources: MarketDataSource[], category: ItemCat
   
   if (hasAuthority) {
     return 'authority_verified';
+  }
+  
+  if (hasColnect) {
+    return 'catalog_verified';
   }
   
   if (hasEbay) {

@@ -1,6 +1,7 @@
 // FILE: src/lib/hydra/types.ts
 // Centralized TypeScript interfaces for HYDRA system
 // All modules should import types from here
+// v8.0: Added ColnectData, ColnectMarketPrice, and new category types
 
 // =============================================================================
 // AI PROVIDER TYPES
@@ -211,7 +212,140 @@ export interface EbayListing {
 // =============================================================================
 
 /**
+ * All supported item categories
+ * v8.0: Added Colnect-primary categories
+ */
+export type ItemCategory =
+  // Coins & Currency
+  | 'coins'
+  | 'banknotes'
+  | 'currency'
+  // Stamps (Colnect primary)
+  | 'stamps'
+  | 'postage_stamps'
+  | 'miniature_sheets'
+  // Postcards (Colnect primary)
+  | 'postcards'
+  // Phone Cards (Colnect primary)
+  | 'phonecards'
+  // Medals & Tokens (Colnect primary)
+  | 'medals'
+  | 'tokens'
+  // Pins & Patches (Colnect primary)
+  | 'pins'
+  | 'patches'
+  // Stickers (Colnect primary)
+  | 'stickers'
+  // Keychains & Magnets (Colnect primary)
+  | 'keychains'
+  | 'magnets'
+  // Tickets (Colnect primary)
+  | 'tickets'
+  // Beverage Collectibles (Colnect primary)
+  | 'beer_coasters'
+  | 'bottlecaps'
+  | 'drink_labels'
+  | 'sugar_packets'
+  | 'tea_bags'
+  // Card Collectibles (Colnect primary)
+  | 'casino_cards'
+  | 'gift_cards'
+  | 'hotel_key_cards'
+  // Kids Meal Toys (Colnect primary)
+  | 'kids_meal_toys'
+  | 'happy_meal'
+  // LEGO
+  | 'lego'
+  | 'building_blocks'
+  // Trading Cards
+  | 'trading_cards'
+  | 'pokemon_cards'
+  | 'pokemon'
+  | 'mtg_cards'
+  | 'sports_cards'
+  | 'baseball_cards'
+  | 'football_cards'
+  | 'basketball_cards'
+  | 'hockey_cards'
+  | 'graded_cards'
+  | 'yugioh_cards'
+  // Books
+  | 'books'
+  | 'rare_books'
+  | 'textbooks'
+  // Comics
+  | 'comics'
+  | 'manga'
+  | 'graphic_novels'
+  // Video Games
+  | 'video_games'
+  | 'retro_games'
+  | 'game_consoles'
+  // Music
+  | 'vinyl_records'
+  | 'vinyl'
+  | 'music'
+  | 'records'
+  | 'cds'
+  | 'cassettes'
+  // Sneakers
+  | 'sneakers'
+  | 'shoes'
+  | 'jordans'
+  // Streetwear
+  | 'streetwear'
+  | 'hype_apparel'
+  | 'supreme'
+  | 'bape'
+  // Apparel
+  | 'apparel'
+  | 'clothing'
+  | 'jerseys'
+  | 'vintage_clothing'
+  | 'designer_fashion'
+  // Vehicles
+  | 'vehicles'
+  | 'cars'
+  | 'trucks'
+  | 'motorcycles'
+  | 'automotive'
+  | 'autos'
+  // Household
+  | 'household'
+  | 'appliances'
+  | 'kitchen'
+  | 'home'
+  | 'tools'
+  | 'power_tools'
+  | 'baby'
+  | 'pets'
+  | 'grocery'
+  | 'beauty'
+  | 'health'
+  // General
+  | 'general'
+  | 'collectibles'
+  | 'antiques'
+  | 'vintage'
+  | 'toys'
+  | 'action_figures'
+  | 'watches'
+  | 'jewelry'
+  | 'electronics'
+  | 'art';
+
+/**
  * Result from category detection
+ */
+export interface CategoryDetection {
+  category: ItemCategory;
+  confidence: number;
+  keywords: string[];
+  source: string;
+}
+
+/**
+ * Result from category detection (alias for backward compat)
  */
 export interface CategoryResult {
   category: string;
@@ -226,9 +360,12 @@ export interface CategoryResult {
  */
 export type CategorySource = 
   | 'name_parsing'
+  | 'name_override'
   | 'ai_vote'
   | 'user_hint'
+  | 'category_hint'
   | 'keyword_match'
+  | 'keyword_detection'
   | 'authority_data'
   | 'default';
 
@@ -372,6 +509,38 @@ export interface ComicVineData {
   description?: string;
   imageUrl?: string;
   url: string;
+}
+
+/**
+ * Colnect collectible data (v8.0)
+ * Covers 40+ categories: stamps, coins, banknotes, medals, tokens, pins, etc.
+ */
+export interface ColnectData {
+  colnectItemId: number;
+  colnectCategory: string;
+  categoryDisplay: string;
+  itemName: string;
+  description?: string;
+  catalogCodes?: string;
+  seriesId?: number;
+  producerId?: number;
+  frontImageUrl?: string;
+  backImageUrl?: string;
+  conditionPrices?: Record<string, number>;
+  attribution: string;
+  attributionUrl: string;
+}
+
+/**
+ * Colnect market price entry
+ */
+export interface ColnectMarketPrice {
+  itemId: number;
+  condition: string;
+  prices: Array<{
+    currencyId: number;
+    price: number;
+  }>;
 }
 
 // =============================================================================

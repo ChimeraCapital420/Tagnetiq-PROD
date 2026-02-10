@@ -1,6 +1,7 @@
 // FILE: src/lib/hydra/pricing/types.ts
 // Types for HYDRA pricing formatter
 // Refactored from monolith v7.3
+// v8.0: Added Colnect fields with ToS-required attribution
 
 import type { ConsensusResult, AuthorityData, ModelVote } from '../types.js';
 import type { BlendedPrice } from './blender.js';
@@ -219,14 +220,19 @@ export interface FormattedAuthorityData {
   gvwr?: string;
   manufacturerName?: string;
   
-  // Colnect
+  // Colnect (v8.0 - Stamps, Coins, Banknotes, 40+ collectible categories)
   colnectId?: number;
   colnectCategory?: string;
+  categoryDisplay?: string;
+  colnectItemName?: string;
   seriesName?: string;
   producerName?: string;
   frontImageUrl?: string;
   backImageUrl?: string;
   catalogCodes?: string;
+  conditionPrices?: Record<string, number>;
+  colnectAttribution?: string;      // REQUIRED by Colnect ToS
+  colnectAttributionUrl?: string;    // REQUIRED by Colnect ToS
   
   // Fallback
   itemDetails?: Record<string, unknown>;
