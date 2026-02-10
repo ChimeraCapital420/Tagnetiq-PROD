@@ -7,7 +7,7 @@
 // ADDED v8.0: Colnect fetcher for 40+ collectible categories (HMAC auth, server-side only)
 
 import type { MarketDataSource, MarketDataResult, ItemCategory } from '../types.js';
-import { getApisForCategory } from '../category-detection.js';
+import { getApisForCategory } from '../category-detection/index.js';
 
 // Export individual fetchers
 export { fetchEbayData } from './ebay.js';
