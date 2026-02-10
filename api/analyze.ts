@@ -1,5 +1,5 @@
 // FILE: api/analyze.ts
-// HYDRA v7.5 - Slim Analysis Handler
+// HYDRA v8.0 - Slim Analysis Handler
 // Orchestrates modular components for multi-AI consensus analysis
 // FIXED v6.3: AI category now properly passed as 3rd parameter to detectItemCategory
 // FIXED v6.3: Vision prompt now instructs VIN extraction from images
@@ -8,6 +8,7 @@
 // FIXED v6.5: eBay listing count now properly weights against AI consensus
 // FIXED v6.6: Much more aggressive market weighting - 2000 listings at $1 should NOT become $10!
 // FIXED v7.5: eBay data now included in response (was being fetched but not displayed!)
+// ADDED v8.0: Provider benchmark tracking - scores every AI vote against market ground truth
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -50,6 +51,9 @@ import { fetchMarketData } from '../src/lib/hydra/fetchers/index.js';
 import { AI_PROVIDERS } from '../src/lib/hydra/config/providers.js';
 import { AI_MODEL_WEIGHTS } from '../src/lib/hydra/config/constants.js';
 
+// v8.0: Provider benchmark tracking
+import { recordBenchmarks, buildBenchmarkContext } from '../src/lib/hydra/benchmarks/index.js';
+
 // =============================================================================
 // CONFIG
 // =============================================================================
@@ -70,14 +74,14 @@ interface AnalyzeRequest {
   analysisId?: string;
   categoryHint?: string;
   condition?: string;
-  originalImageUrls?: string[];  // NEW: Original quality URLs for marketplace
+  originalImageUrls?: string[];  // Original quality URLs for marketplace
 }
 
 interface MultiModalItem {
   type: 'photo' | 'video' | 'document' | 'certificate';
   name: string;
   data: string;
-  originalUrl?: string;  // NEW: Original URL from Supabase storage
+  originalUrl?: string;  // Original URL from Supabase storage
   additionalFrames?: string[];
   metadata?: {
     documentType?: string;
@@ -127,7 +131,7 @@ function validateRequest(body: unknown): AnalyzeRequest {
       }
     });
     
-    // NEW: Collect original URLs for marketplace (filter out blob: URLs)
+    // Collect original URLs for marketplace (filter out blob: URLs)
     const originalImageUrls: string[] = [];
     items.forEach(item => {
       if (item.originalUrl && !item.originalUrl.startsWith('blob:')) {
@@ -167,7 +171,7 @@ function validateRequest(body: unknown): AnalyzeRequest {
       analysisId: typeof rawBody.analysisId === 'string' ? rawBody.analysisId : `analysis_${Date.now()}`,
       categoryHint: categoryHint !== 'general' ? categoryHint : undefined,
       condition: typeof rawBody.condition === 'string' ? rawBody.condition : 'good',
-      originalImageUrls: originalImageUrls.length > 0 ? originalImageUrls : undefined,  // NEW
+      originalImageUrls: originalImageUrls.length > 0 ? originalImageUrls : undefined,
     };
   }
   
@@ -184,7 +188,7 @@ function validateRequest(body: unknown): AnalyzeRequest {
     analysisId: typeof analysisId === 'string' ? analysisId : `analysis_${Date.now()}`,
     categoryHint: typeof categoryHint === 'string' ? categoryHint : undefined,
     condition: typeof condition === 'string' ? condition : 'good',
-    originalImageUrls: Array.isArray(originalImageUrls) ? originalImageUrls.filter((u): u is string => typeof u === 'string' && !u.startsWith('blob:')) : undefined,  // NEW
+    originalImageUrls: Array.isArray(originalImageUrls) ? originalImageUrls.filter((u): u is string => typeof u === 'string' && !u.startsWith('blob:')) : undefined,
   };
 }
 
@@ -383,12 +387,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Either an image or item name is required');
     }
     
-    console.log(`\n🔥 === HYDRA v7.5 ANALYSIS START ===`);
+    console.log(`\n🔥 === HYDRA v8.0 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
     console.log(`🖼️ Primary Image: ${hasImage ? 'Yes' : 'No'}`);
     console.log(`🖼️ Additional Images: ${request.additionalImages?.length || 0}`);
-    console.log(`🔗 Original URLs for Marketplace: ${request.originalImageUrls?.length || 0}`);  // NEW
+    console.log(`🔗 Original URLs for Marketplace: ${request.originalImageUrls?.length || 0}`);
     
     // 2. Build images array
     const images: string[] = [];
@@ -525,17 +529,21 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
     
     // ==========================================================================
     // STAGE 4: Market Search (Perplexity)
+    // v8.0: Track votes separately for benchmark scoring by stage
     // ==========================================================================
+    let perplexityVotes: ModelVote[] = [];
     if (isProviderAvailable('perplexity')) {
       console.log(`\n  Stage 3 - Market Search: perplexity`);
       const marketSearchPrompt = `Find current market prices and recent sales for: "${identifiedItemName}". ${extractedVIN ? `VIN: ${extractedVIN}. ` : ''}Category: ${finalCategory}. Provide specific price data from eBay sold listings, auction results, or dealer prices.`;
-      const perplexityVotes = await runProviderStage(['perplexity'], [], marketSearchPrompt, { isMarketSearch: true });
+      perplexityVotes = await runProviderStage(['perplexity'], [], marketSearchPrompt, { isMarketSearch: true });
       allVotes.push(...perplexityVotes);
     }
     
     // ==========================================================================
     // STAGE 5: Tiebreaker if needed
+    // v8.0: Track votes separately for benchmark scoring by stage
     // ==========================================================================
+    let tiebreakerVotes: ModelVote[] = [];
     if (allVotes.length >= 4 && isProviderAvailable('deepseek')) {
       const { shouldTrigger, reason } = shouldTriggerTiebreaker(allVotes);
       
@@ -546,7 +554,7 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
           itemNameHint: identifiedItemName,
           additionalInstructions: 'Previous AI analyses show disagreement. Provide your independent assessment to help reach consensus.',
         });
-        const tiebreakerVotes = await runProviderStage(['deepseek'], [], tiebreakerPrompt, { isTiebreaker: true });
+        tiebreakerVotes = await runProviderStage(['deepseek'], [], tiebreakerPrompt, { isTiebreaker: true });
         allVotes.push(...tiebreakerVotes);
       }
     }
@@ -582,8 +590,8 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
       const aiWeight = 1 - marketWeight;
       
       // Log the weighting decision
-      const ebaySource = marketResult.sources?.find((s: any) => s.source === 'ebay');
-      const ebayListings = ebaySource?.totalListings || 0;
+      const ebaySourceForBlend = marketResult.sources?.find((s: any) => s.source === 'ebay');
+      const ebayListings = ebaySourceForBlend?.totalListings || 0;
       console.log(`\n  📊 === PRICE BLEND (v6.5) ===`);
       console.log(`  💰 HYDRA market price: $${hydraPrice.toFixed(2)} (${marketResult.blendedPrice.method})`);
       console.log(`  🛒 eBay listings: ${ebayListings}`);
@@ -665,6 +673,48 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
       })) || [];
     
     // ==========================================================================
+    // STAGE 7.6: Provider Benchmark Tracking (NEW v8.0)
+    // Records every AI vote against market-verified ground truth
+    // Non-blocking — never delays the response to the user
+    // ==========================================================================
+    try {
+      const benchmarkCtx = buildBenchmarkContext({
+        analysisId: analysisId,
+        itemName: identifiedItemName,
+        category: finalCategory,
+        categoryConfidence: categoryResult?.confidence || 0,
+        hasImage: hasImage,
+        blendedPrice: {
+          finalPrice: blendedPrice.finalPrice,
+          method: blendedPrice.method,
+          confidence: blendedPrice.confidence,
+        },
+        authorityData: authorityData,
+        ebaySource: ebaySource || null,
+        consensus: {
+          estimatedValue: consensus.estimatedValue,
+          decision: consensus.decision,
+          analysisQuality: consensus.analysisQuality,
+        },
+        totalVotes: allVotes.length,
+      });
+
+      // Fire and forget — scores all votes against ground truth, inserts to Supabase
+      recordBenchmarks(
+        visionVotes,
+        textVotes,
+        perplexityVotes,
+        tiebreakerVotes,
+        benchmarkCtx
+      );
+
+      console.log(`  🎯 Benchmarks: ${allVotes.length} votes queued for ground truth scoring`);
+    } catch (benchErr: any) {
+      // Never let benchmarks break the main analysis flow
+      console.error('  ⚠️ Benchmark setup failed (non-fatal):', benchErr.message);
+    }
+    
+    // ==========================================================================
     // STAGE 8: Format Response
     // ==========================================================================
     const processingTime = Date.now() - startTime;
@@ -677,13 +727,13 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
       processingTime
     );
     
-    // NEW v6.4: Add image URLs to response for marketplace integration
+    // Add image URLs to response for marketplace integration
     // FIXED v7.5: Add eBay market data that was being lost
     const responseWithImages = {
       ...response,
       imageUrls: request.originalImageUrls || [],
       thumbnailUrl: request.originalImageUrls?.[0] || null,
-      // NEW v7.5: Include eBay market data
+      // v7.5: Include eBay market data
       ebayMarketData: ebayData,
       marketSources: marketSources,
       // Include raw market result for debugging (can remove in production)
@@ -695,7 +745,7 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
       },
     };
     
-    // Save to Supabase (non-blocking) - NOW WITH IMAGE URLS
+    // Save to Supabase (non-blocking) - WITH IMAGE URLS
     if (isSupabaseAvailable()) {
       saveAnalysisAsync(
         analysisId, 
@@ -705,7 +755,7 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
         allVotes, 
         authorityData, 
         processingTime,
-        request.originalImageUrls  // NEW: Pass image URLs to save function
+        request.originalImageUrls  // Pass image URLs to save function
       );
     }
     
