@@ -1,9 +1,15 @@
 // FILE: src/lib/hydra/category-detection/data/api-map.ts
-// HYDRA v8.0 - Category → API Mapping
+// HYDRA v8.2 - Category → API Mapping
 // Pure data: maps each category to the APIs that should be queried.
 // Order matters: first API is primary authority, others are fallbacks.
+// maxSources default is 3, so keep lists ≤ 3 entries.
 //
 // HOW TO ADD: Just add a new key-value pair. No logic changes needed.
+//
+// v8.2: Added 'kroger' for household/grocery/beauty/health categories
+//   Kroger gives REAL current shelf prices — gold for retail item valuation.
+//   UPCitemdb (barcode) + Kroger (store price) + eBay (resale market) = full picture.
+//   Note: Barcode Spider is NOT listed here — it's a cascade fallback INSIDE upcitemdb.ts.
 
 export const CATEGORY_API_MAP: Record<string, string[]> = {
   // ==================== COINS & CURRENCY ====================
@@ -122,18 +128,21 @@ export const CATEGORY_API_MAP: Record<string, string[]> = {
   'automotive': ['nhtsa', 'ebay'],
   'autos': ['nhtsa', 'ebay'],
 
-  // ==================== HOUSEHOLD ====================
-  'household': ['upcitemdb', 'ebay'],
-  'appliances': ['upcitemdb', 'ebay'],
-  'kitchen': ['upcitemdb', 'ebay'],
-  'home': ['upcitemdb', 'ebay'],
+  // ==================== HOUSEHOLD (v8.2: +kroger) ====================
+  // UPCitemdb: barcode → product identity (cascades to Barcode Spider on fail)
+  // Kroger: UPC → real current shelf price at 2,700+ stores
+  // eBay: resale/secondary market pricing
+  'household': ['upcitemdb', 'kroger', 'ebay'],
+  'appliances': ['upcitemdb', 'kroger', 'ebay'],
+  'kitchen': ['upcitemdb', 'kroger', 'ebay'],
+  'home': ['upcitemdb', 'kroger', 'ebay'],
   'tools': ['upcitemdb', 'ebay'],
   'power_tools': ['upcitemdb', 'ebay'],
-  'baby': ['upcitemdb', 'ebay'],
-  'pets': ['upcitemdb', 'ebay'],
-  'grocery': ['upcitemdb', 'ebay'],
-  'beauty': ['upcitemdb', 'ebay'],
-  'health': ['upcitemdb', 'ebay'],
+  'baby': ['upcitemdb', 'kroger', 'ebay'],
+  'pets': ['upcitemdb', 'kroger', 'ebay'],
+  'grocery': ['upcitemdb', 'kroger', 'ebay'],
+  'beauty': ['upcitemdb', 'kroger', 'ebay'],
+  'health': ['upcitemdb', 'kroger', 'ebay'],
 
   // ==================== GENERAL ====================
   'general': ['ebay'],

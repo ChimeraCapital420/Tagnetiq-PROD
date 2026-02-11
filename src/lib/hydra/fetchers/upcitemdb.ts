@@ -1,13 +1,15 @@
 // FILE: src/lib/hydra/fetchers/upcitemdb.ts
-// HYDRA v8.1 - UPCitemdb Barcode Lookup Fetcher
+// HYDRA v8.2 - UPCitemdb Barcode Lookup Fetcher (with Barcode Spider cascade)
 // FREE API - 100 requests/day
 // Documentation: https://www.upcitemdb.com/wp/docs/main/development/api/
 // FIXED v8.1: Now accepts additionalContext with raw barcode from device scanner
-//   - Device scanner reads all 12/13 digits perfectly via react-zxing
-//   - AI vision often truncates barcodes when reading from images
-//   - additionalContext format: "UPC: 053538155504" (full barcode from scanner)
+// ADDED v8.2: Cascade fallback to Barcode Spider on 400/404/no-results
+//   - UPCitemdb free tier rejects some international barcodes (e.g. 697-prefix China)
+//   - Barcode Spider has broader global coverage via BARCODE_SPIDER_TOKEN
+//   - Cascade: UPCitemdb → Barcode Spider → give up
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
+import { fetchBarcodeSpiderData, isBarcodeSpiderAvailable } from './barcode-spider.js';
 
 const UPCITEMDB_API_BASE = 'https://api.upcitemdb.com/prod/trial';
 
@@ -120,9 +122,13 @@ export function validateUPC(upc: string): boolean {
  * Main fetch function - lookup by UPC/EAN barcode
  * 
  * FIXED v8.1: Now accepts additionalContext parameter
- * When the device scanner reads a barcode, the full digits come through
- * additionalContext as "UPC: 053538155504". This is more reliable than
- * extracting barcodes from AI-identified item names (which are often truncated).
+ * ADDED v8.2: Cascade fallback to Barcode Spider on failure
+ * 
+ * Flow:
+ *   1. Extract barcode from scanner (additionalContext) or AI item name
+ *   2. Try UPCitemdb free API
+ *   3. On 400/404/no-results → cascade to Barcode Spider (if token available)
+ *   4. Return best result or fallback
  * 
  * @param itemName - The AI-identified item name (may contain partial barcode)
  * @param additionalContext - Context string, may contain "UPC: <digits>" from scanner
@@ -134,30 +140,17 @@ export async function fetchUpcItemDbData(itemName: string, additionalContext?: s
     // Check rate limit
     if (!checkRateLimit()) {
       console.log('⚠️ UPCitemdb: Daily rate limit reached (100/day)');
+      // v8.2: Even if rate-limited, try Barcode Spider if we have a barcode
+      const barcode = extractBarcodeFromContext(itemName, additionalContext);
+      if (barcode && isBarcodeSpiderAvailable()) {
+        console.log('🕷️ UPCitemdb rate-limited, cascading to Barcode Spider...');
+        return fetchBarcodeSpiderData(barcode, itemName);
+      }
       return createFallbackResult(itemName, 'Rate limit exceeded');
     }
 
-    // FIXED v8.1: Check additionalContext for raw barcode from scanner FIRST
-    // The device's barcode scanner (react-zxing) reads all 12/13 digits perfectly.
-    // AI vision often truncates barcode numbers when reading from images.
-    let barcode: string | null = null;
-
-    if (additionalContext) {
-      // Try to extract raw barcode from scanner context (format: "UPC: 053538155504")
-      const upcMatch = additionalContext.match(/UPC:\s*(\d{8,14})/i);
-      if (upcMatch) {
-        barcode = upcMatch[1];
-        console.log(`📊 UPCitemdb: Using raw barcode from scanner: ${barcode}`);
-      }
-    }
-
-    // Fallback: try to extract barcode from item name (AI-identified, may be truncated)
-    if (!barcode) {
-      barcode = extractBarcode(itemName);
-      if (barcode) {
-        console.log(`🔍 UPCitemdb: Extracted barcode from item name: ${barcode}`);
-      }
-    }
+    // Extract barcode from scanner context or AI item name
+    const barcode = extractBarcodeFromContext(itemName, additionalContext);
     
     if (!barcode) {
       console.log('⚠️ UPCitemdb: No barcode found in item name or scanner context');
@@ -178,20 +171,39 @@ export async function fetchUpcItemDbData(itemName: string, additionalContext?: s
     // Increment request counter
     dailyRequestCount++;
 
+    // =========================================================================
+    // v8.2: CASCADE TO BARCODE SPIDER on failure
+    // UPCitemdb free tier rejects some international barcodes (400 error)
+    // and doesn't have all products (404/empty results)
+    // =========================================================================
     if (!response.ok) {
       if (response.status === 429) {
-        console.error('❌ UPCitemdb: Rate limited');
-        return createFallbackResult(itemName, 'Rate limited');
+        console.error('❌ UPCitemdb: Rate limited by server');
+      } else {
+        console.error(`❌ UPCitemdb API error: ${response.status}`);
       }
-      console.error(`❌ UPCitemdb API error: ${response.status}`);
+
+      // Cascade to Barcode Spider
+      if (isBarcodeSpiderAvailable()) {
+        console.log(`🕷️ UPCitemdb ${response.status} → cascading to Barcode Spider...`);
+        return fetchBarcodeSpiderData(barcode, itemName);
+      }
+
       return createFallbackResult(itemName, `API error: ${response.status}`);
     }
 
     const data = await response.json();
 
-    // Check for valid results
+    // Check for valid results — cascade on empty
     if (!data.items || data.items.length === 0) {
       console.log('⚠️ UPCitemdb: No products found for barcode');
+
+      // Cascade to Barcode Spider
+      if (isBarcodeSpiderAvailable()) {
+        console.log('🕷️ UPCitemdb empty → cascading to Barcode Spider...');
+        return fetchBarcodeSpiderData(barcode, itemName);
+      }
+
       return createFallbackResult(itemName, 'Product not found');
     }
 
@@ -298,6 +310,18 @@ export async function fetchUpcItemDbData(itemName: string, additionalContext?: s
 
   } catch (error) {
     console.error('❌ UPCitemdb fetch error:', error);
+
+    // v8.2: Last-resort cascade on unexpected errors
+    const barcode = extractBarcodeFromContext(itemName, additionalContext);
+    if (barcode && isBarcodeSpiderAvailable()) {
+      console.log('🕷️ UPCitemdb exception → cascading to Barcode Spider...');
+      try {
+        return await fetchBarcodeSpiderData(barcode, itemName);
+      } catch (spiderError) {
+        console.error('❌ Barcode Spider cascade also failed:', spiderError);
+      }
+    }
+
     return {
       source: 'upcitemdb',
       available: false,
@@ -306,6 +330,32 @@ export async function fetchUpcItemDbData(itemName: string, additionalContext?: s
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   }
+}
+
+// =============================================================================
+// BARCODE EXTRACTION HELPER (v8.1 + v8.2 refactored)
+// =============================================================================
+
+/**
+ * Extract barcode from additionalContext (scanner) or item name (AI vision)
+ * Scanner barcodes are always preferred — they're the full, accurate digits.
+ */
+function extractBarcodeFromContext(itemName: string, additionalContext?: string): string | null {
+  // Priority 1: Raw barcode from device scanner via additionalContext
+  if (additionalContext) {
+    const upcMatch = additionalContext.match(/UPC:\s*(\d{8,14})/i);
+    if (upcMatch) {
+      console.log(`📊 Barcode from scanner: ${upcMatch[1]}`);
+      return upcMatch[1];
+    }
+  }
+
+  // Priority 2: Extract from AI-identified item name (may be truncated)
+  const barcode = extractBarcode(itemName);
+  if (barcode) {
+    console.log(`🔍 Barcode from item name: ${barcode}`);
+  }
+  return barcode;
 }
 
 /**

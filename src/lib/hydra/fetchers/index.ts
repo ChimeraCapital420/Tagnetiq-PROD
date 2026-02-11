@@ -1,11 +1,13 @@
 // FILE: src/lib/hydra/fetchers/index.ts
-// HYDRA v8.1 - Market Data Fetchers Index
+// HYDRA v8.2 - Market Data Fetchers Index
 // FIXED v6.3: Now passes additionalContext to fetchers (especially NHTSA for VIN)
 // FIXED v7.0: Default timeout bumped from 10s → 30s (Pokemon TCG needs it)
 // FIXED v7.1: Proper timeout cancellation - clearTimeout when fetch completes
 // FIXED v7.2: Brickset timeout increased to 25s for login + search on cold start
 // ADDED v8.0: Colnect fetcher for 40+ collectible categories (HMAC auth, server-side only)
 // FIXED v8.1: UPCitemdb now context-aware — receives raw barcodes from scanner
+// ADDED v8.2: Barcode Spider fetcher (international barcode fallback)
+// ADDED v8.2: Kroger fetcher (real retail store prices for household/grocery)
 
 import type { MarketDataSource, MarketDataResult, ItemCategory } from '../types.js';
 import { getApisForCategory } from '../category-detection/index.js';
@@ -23,6 +25,8 @@ export { fetchNhtsaData, validateVIN, decodeVINBatch } from './nhtsa.js';
 export { fetchUpcItemDbData, extractBarcode, validateUPC, searchByName as searchUpcByName, getRateLimitStatus as getUpcRateLimitStatus } from './upcitemdb.js';
 export { fetchComicVineData } from './comicvine.js';
 export { fetchColnectData, hasColnectSupport, getColnectCategories, getColnectCategorySlug } from './colnect.js';
+export { fetchBarcodeSpiderData, isBarcodeSpiderAvailable } from './barcode-spider.js';
+export { fetchKrogerData, isKrogerAvailable } from './kroger.js';
 
 // Import for internal use
 import { fetchEbayData } from './ebay.js';
@@ -37,13 +41,15 @@ import { fetchNhtsaData } from './nhtsa.js';
 import { fetchUpcItemDbData } from './upcitemdb.js';
 import { fetchComicVineData } from './comicvine.js';
 import { fetchColnectData } from './colnect.js';
+import { fetchBarcodeSpiderData } from './barcode-spider.js';
+import { fetchKrogerData } from './kroger.js';
 
 // ==================== FETCHER REGISTRY ====================
 
 // Standard fetcher function type (itemName, category)
 type StandardFetcherFunction = (itemName: string, category?: string) => Promise<MarketDataSource>;
 
-// Extended fetcher function type (itemName, additionalContext) - for NHTSA, PSA, UPCitemdb
+// Extended fetcher function type (itemName, additionalContext) - for NHTSA, PSA, UPCitemdb, Kroger
 type ExtendedFetcherFunction = (itemName: string, additionalContext?: string) => Promise<MarketDataSource>;
 
 // Registry uses standard type, but some fetchers accept additional params
@@ -60,26 +66,31 @@ const FETCHER_REGISTRY: Record<string, StandardFetcherFunction | ExtendedFetcher
   'upcitemdb': fetchUpcItemDbData,
   'comicvine': fetchComicVineData,
   'colnect': fetchColnectData,
+  'barcode_spider': fetchBarcodeSpiderData,
+  'kroger': fetchKrogerData,
 };
 
 // Fetchers that accept additionalContext as their second parameter
-// FIXED v8.1: Added upcitemdb — receives raw barcodes from device scanner
-const CONTEXT_AWARE_FETCHERS = ['nhtsa', 'psa', 'upcitemdb'];
+// v8.1: upcitemdb — receives raw barcodes from device scanner
+// v8.2: kroger — receives barcodes for UPC-based product lookup
+const CONTEXT_AWARE_FETCHERS = ['nhtsa', 'psa', 'upcitemdb', 'kroger'];
 
 // Per-fetcher timeout overrides (some APIs are slower than others)
 const FETCHER_TIMEOUTS: Record<string, number> = {
-  'pokemon_tcg': 45000,  // INCREASED v7.1: 45s - API can be very slow
-  'ebay': 20000,         // INCREASED v7.1: 20s - OAuth + search
-  'retailed': 15000,     // 15s
-  'brickset': 25000,     // INCREASED v7.2: 25s - login (15s) + search (12s) on cold start
-  'numista': 15000,      // 15s
-  'google_books': 10000, // 10s - usually fast
-  'discogs': 10000,      // 10s - usually fast
-  'psa': 15000,          // 15s
-  'nhtsa': 10000,        // 10s - free API, usually fast
-  'upcitemdb': 10000,    // 10s
-  'comicvine': 15000,    // INCREASED v7.2: 15s - two-stage fetch
-  'colnect': 15000,      // v8.0: 15s - HMAC auth + search (no CORS, server-side only)
+  'pokemon_tcg': 45000,    // INCREASED v7.1: 45s - API can be very slow
+  'ebay': 20000,           // INCREASED v7.1: 20s - OAuth + search
+  'retailed': 15000,       // 15s
+  'brickset': 25000,       // INCREASED v7.2: 25s - login (15s) + search (12s) on cold start
+  'numista': 15000,        // 15s
+  'google_books': 10000,   // 10s - usually fast
+  'discogs': 10000,        // 10s - usually fast
+  'psa': 15000,            // 15s
+  'nhtsa': 10000,          // 10s - free API, usually fast
+  'upcitemdb': 15000,      // v8.2: INCREASED 10s → 15s (now includes Barcode Spider cascade)
+  'comicvine': 15000,      // INCREASED v7.2: 15s - two-stage fetch
+  'colnect': 15000,        // v8.0: 15s - HMAC auth + search (no CORS, server-side only)
+  'barcode_spider': 10000, // v8.2: 10s - simple REST lookup
+  'kroger': 15000,         // v8.2: 15s - OAuth + product search
 };
 
 // ==================== UNIFIED FETCH FUNCTION ====================
@@ -151,7 +162,7 @@ export async function fetchMarketData(
       });
 
       // Build the actual fetch promise
-      // FIXED v8.1: Pass additionalContext to context-aware fetchers (NHTSA, PSA, UPCitemdb)
+      // v8.1/v8.2: Pass additionalContext to context-aware fetchers
       let fetchPromise: Promise<MarketDataSource>;
       if (CONTEXT_AWARE_FETCHERS.includes(api) && additionalContext) {
         fetchPromise = (fetcher as ExtendedFetcherFunction)(itemName, additionalContext);
@@ -261,6 +272,14 @@ function calculateBlendedPrice(sources: MarketDataSource[]): { blendedPrice: num
     if (source.source === 'colnect' && source.authorityData) {
       weight = 1.4; // Slightly less than dedicated authorities but high
     }
+    // v8.2: Kroger = real current shelf price — very reliable for retail items
+    if (source.source === 'kroger' && source.authorityData) {
+      weight = 1.6; // Current retail price is strongest signal for household items
+    }
+    // v8.2: Barcode Spider store prices — reliable aggregate
+    if (source.source === 'barcode_spider' && source.authorityData) {
+      weight = 1.3;
+    }
 
     // Use median as primary price (most reliable)
     if (analysis.median > 0) {
@@ -316,6 +335,11 @@ function calculatePriceConfidence(sources: MarketDataSource[]): number {
     confidence += 0.05;
   }
 
+  // v8.2: Kroger = real retail price boosts confidence significantly
+  if (available.some(s => s.source === 'kroger' && s.authorityData)) {
+    confidence += 0.1;
+  }
+
   return Math.min(confidence, 0.98);
 }
 
@@ -329,13 +353,18 @@ function determineMarketInfluence(sources: MarketDataSource[], category: ItemCat
   const hasAuthority = availableSources.some(s => s.authorityData);
   const hasEbay = availableSources.some(s => s.source === 'ebay' && (s.totalListings || 0) > 5);
   const hasColnect = availableSources.some(s => s.source === 'colnect' && s.authorityData);
+  const hasKroger = availableSources.some(s => s.source === 'kroger' && s.authorityData);
 
-  if (hasAuthority && hasEbay && hasColnect) {
+  if (hasAuthority && hasEbay && (hasColnect || hasKroger)) {
     return 'high_confidence_multi_source_catalog_verified';
   }
 
   if (hasAuthority && hasEbay) {
     return 'high_confidence_multi_source';
+  }
+
+  if (hasKroger) {
+    return 'retail_price_verified';
   }
 
   if (hasAuthority) {
