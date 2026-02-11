@@ -1,7 +1,11 @@
 // FILE: src/lib/hydra/fetchers/upcitemdb.ts
-// HYDRA v6.0 - UPCitemdb Barcode Lookup Fetcher
+// HYDRA v8.1 - UPCitemdb Barcode Lookup Fetcher
 // FREE API - 100 requests/day
 // Documentation: https://www.upcitemdb.com/wp/docs/main/development/api/
+// FIXED v8.1: Now accepts additionalContext with raw barcode from device scanner
+//   - Device scanner reads all 12/13 digits perfectly via react-zxing
+//   - AI vision often truncates barcodes when reading from images
+//   - additionalContext format: "UPC: 053538155504" (full barcode from scanner)
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
@@ -114,8 +118,16 @@ export function validateUPC(upc: string): boolean {
 
 /**
  * Main fetch function - lookup by UPC/EAN barcode
+ * 
+ * FIXED v8.1: Now accepts additionalContext parameter
+ * When the device scanner reads a barcode, the full digits come through
+ * additionalContext as "UPC: 053538155504". This is more reliable than
+ * extracting barcodes from AI-identified item names (which are often truncated).
+ * 
+ * @param itemName - The AI-identified item name (may contain partial barcode)
+ * @param additionalContext - Context string, may contain "UPC: <digits>" from scanner
  */
-export async function fetchUpcItemDbData(itemName: string): Promise<MarketDataSource> {
+export async function fetchUpcItemDbData(itemName: string, additionalContext?: string): Promise<MarketDataSource> {
   const startTime = Date.now();
 
   try {
@@ -125,11 +137,30 @@ export async function fetchUpcItemDbData(itemName: string): Promise<MarketDataSo
       return createFallbackResult(itemName, 'Rate limit exceeded');
     }
 
-    // Extract barcode from item name
-    const barcode = extractBarcode(itemName);
+    // FIXED v8.1: Check additionalContext for raw barcode from scanner FIRST
+    // The device's barcode scanner (react-zxing) reads all 12/13 digits perfectly.
+    // AI vision often truncates barcode numbers when reading from images.
+    let barcode: string | null = null;
+
+    if (additionalContext) {
+      // Try to extract raw barcode from scanner context (format: "UPC: 053538155504")
+      const upcMatch = additionalContext.match(/UPC:\s*(\d{8,14})/i);
+      if (upcMatch) {
+        barcode = upcMatch[1];
+        console.log(`📊 UPCitemdb: Using raw barcode from scanner: ${barcode}`);
+      }
+    }
+
+    // Fallback: try to extract barcode from item name (AI-identified, may be truncated)
+    if (!barcode) {
+      barcode = extractBarcode(itemName);
+      if (barcode) {
+        console.log(`🔍 UPCitemdb: Extracted barcode from item name: ${barcode}`);
+      }
+    }
     
     if (!barcode) {
-      console.log('⚠️ UPCitemdb: No barcode found in item name');
+      console.log('⚠️ UPCitemdb: No barcode found in item name or scanner context');
       return createFallbackResult(itemName, 'No barcode detected');
     }
 
@@ -261,6 +292,7 @@ export async function fetchUpcItemDbData(itemName: string): Promise<MarketDataSo
         category: item.category,
         offersCount: (item.offers || []).length,
         rateLimitRemaining: DAILY_LIMIT - dailyRequestCount,
+        barcodeSource: additionalContext?.includes('UPC:') ? 'scanner' : 'ai_vision',
       },
     };
 

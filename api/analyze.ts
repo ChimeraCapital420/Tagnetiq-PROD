@@ -1,5 +1,5 @@
 // FILE: api/analyze.ts
-// HYDRA v8.0 - Slim Analysis Handler
+// HYDRA v8.1 - Slim Analysis Handler
 // Orchestrates modular components for multi-AI consensus analysis
 // FIXED v6.3: AI category now properly passed as 3rd parameter to detectItemCategory
 // FIXED v6.3: Vision prompt now instructs VIN extraction from images
@@ -9,6 +9,7 @@
 // FIXED v6.6: Much more aggressive market weighting - 2000 listings at $1 should NOT become $10!
 // FIXED v7.5: eBay data now included in response (was being fetched but not displayed!)
 // ADDED v8.0: Provider benchmark tracking - scores every AI vote against market ground truth
+// FIXED v8.1: Raw barcodes from scanner now passed to UPCitemdb via additionalContext
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -75,6 +76,7 @@ interface AnalyzeRequest {
   categoryHint?: string;
   condition?: string;
   originalImageUrls?: string[];  // Original quality URLs for marketplace
+  scannedBarcodes?: string[];    // v8.1: Raw barcodes from device scanner
 }
 
 interface MultiModalItem {
@@ -147,6 +149,21 @@ function validateRequest(body: unknown): AnalyzeRequest {
       });
     }
     
+    // v8.1: Extract raw barcodes from scanner metadata
+    // The device's barcode scanner (react-zxing) reads all 12/13 digits perfectly.
+    // AI vision often truncates barcode numbers when reading from images.
+    // This ensures fetchers get the full, accurate barcode.
+    const scannedBarcodes: string[] = [];
+    items.forEach(item => {
+      if (item.metadata?.barcodes) {
+        item.metadata.barcodes.forEach(bc => {
+          if (bc && !scannedBarcodes.includes(bc)) {
+            scannedBarcodes.push(bc);
+          }
+        });
+      }
+    });
+    
     // Generate item name - let AI identify from image
     let itemName = '';
     
@@ -172,6 +189,7 @@ function validateRequest(body: unknown): AnalyzeRequest {
       categoryHint: categoryHint !== 'general' ? categoryHint : undefined,
       condition: typeof rawBody.condition === 'string' ? rawBody.condition : 'good',
       originalImageUrls: originalImageUrls.length > 0 ? originalImageUrls : undefined,
+      scannedBarcodes: scannedBarcodes.length > 0 ? scannedBarcodes : undefined,
     };
   }
   
@@ -393,6 +411,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log(`🖼️ Primary Image: ${hasImage ? 'Yes' : 'No'}`);
     console.log(`🖼️ Additional Images: ${request.additionalImages?.length || 0}`);
     console.log(`🔗 Original URLs for Marketplace: ${request.originalImageUrls?.length || 0}`);
+    if (request.scannedBarcodes?.length) {
+      console.log(`📊 Scanner Barcodes: ${request.scannedBarcodes.join(', ')}`);
+    }
     
     // 2. Build images array
     const images: string[] = [];
@@ -488,7 +509,7 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
     // ==========================================================================
     console.log(`\n  Stage 2 - Market Data + Text Analysis (parallel)`);
     
-    // Build additional context for market data (includes extracted VIN)
+    // Build additional context for market data (includes extracted VIN + barcodes)
     const marketContext: Record<string, any> = {};
     if (extractedVIN) {
       marketContext.vin = extractedVIN;
@@ -497,13 +518,27 @@ Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, co
     if (rawVisionResponse?.additionalDetails) {
       marketContext.visionDetails = rawVisionResponse.additionalDetails;
     }
+
+    // FIXED v8.1: Pass raw barcodes from scanner to fetchers
+    // The device's barcode scanner (react-zxing) reads all 12/13 digits perfectly.
+    // AI vision often truncates barcode numbers when reading from images.
+    // This ensures UPCitemdb (and future barcode APIs) get the full, accurate barcode.
+    if (request.scannedBarcodes && request.scannedBarcodes.length > 0) {
+      const barcodeStr = `UPC: ${request.scannedBarcodes[0]}`;
+      marketContext.barcodes = request.scannedBarcodes;
+      marketContext.additionalContext = marketContext.additionalContext
+        ? `${marketContext.additionalContext} | ${barcodeStr}`
+        : barcodeStr;
+      console.log(`  📊 Raw barcode from scanner: ${request.scannedBarcodes[0]}`);
+    }
     
     // Start market data fetch with IDENTIFIED item name and context
     // FIXED v6.3: Pass additional context for VIN extraction
+    // FIXED v8.1: additionalContext now includes barcodes from scanner
     const marketPromise = fetchMarketData(
       identifiedItemName, 
       finalCategory,
-      marketContext.additionalContext // Pass VIN context to fetchers
+      marketContext.additionalContext // Pass VIN + barcode context to fetchers
     );
     
     // Text analysis models
