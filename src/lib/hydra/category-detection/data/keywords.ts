@@ -1,9 +1,11 @@
 // FILE: src/lib/hydra/category-detection/data/keywords.ts
-// HYDRA v8.0 - Category Keyword Definitions
+// HYDRA v8.3 - Category Keyword Definitions
 // Pure data: keyword arrays for each category.
 // Used by keyword-scoring detector. Longer phrases score higher.
 //
 // HOW TO ADD: Just add keywords to existing arrays or create new category entries.
+// UPDATED v8.3: Added grocery category for food/beverage/pantry items
+//               Expanded household with cleaning, laundry, bathroom keywords
 
 export const CATEGORY_KEYWORDS: Record<string, string[]> = {
   // ==================== STAMPS ====================
@@ -178,6 +180,53 @@ export const CATEGORY_KEYWORDS: Record<string, string[]> = {
     'stockx', 'goat app',
   ],
 
+  // ==================== GROCERY / FOOD / BEVERAGE ==================== (NEW v8.3)
+  grocery: [
+    // Food types
+    'honey', 'syrup', 'maple syrup', 'agave', 'molasses',
+    'sauce', 'hot sauce', 'bbq sauce', 'ketchup', 'mustard', 'mayo', 'mayonnaise',
+    'salsa', 'ranch', 'dressing', 'vinegar', 'soy sauce', 'teriyaki',
+    'jam', 'jelly', 'preserves', 'marmalade', 'peanut butter', 'nutella',
+    'cereal', 'oatmeal', 'granola', 'granola bar', 'protein bar', 'energy bar',
+    'chips', 'crackers', 'pretzels', 'popcorn', 'trail mix', 'nuts', 'almonds',
+    'pasta', 'rice', 'noodles', 'ramen', 'mac and cheese', 'macaroni',
+    'soup', 'broth', 'stock', 'canned', 'canned goods',
+    'bread', 'bagel', 'tortilla', 'wrap', 'pita', 'muffin',
+    'chocolate', 'candy', 'gummy', 'gummies', 'licorice', 'skittles', 'snickers',
+    'cookie', 'cookies', 'brownie', 'cake mix', 'frosting',
+    'flour', 'sugar', 'baking soda', 'baking powder', 'yeast', 'vanilla extract',
+    'spice', 'seasoning', 'salt', 'pepper', 'cinnamon', 'paprika', 'cumin', 'oregano',
+    'olive oil', 'cooking oil', 'vegetable oil', 'coconut oil', 'canola oil',
+    'milk', 'almond milk', 'oat milk', 'soy milk', 'creamer', 'half and half',
+    'yogurt', 'cheese', 'butter', 'cream cheese', 'sour cream',
+    'eggs', 'egg', 'dozen eggs',
+    'juice', 'orange juice', 'apple juice', 'cranberry juice', 'grape juice',
+    'soda', 'cola', 'pepsi', 'coca-cola', 'sprite', 'mountain dew', 'dr pepper',
+    'water', 'sparkling water', 'seltzer', 'la croix', 'topo chico',
+    'coffee', 'coffee beans', 'ground coffee', 'k-cups', 'k-cup',
+    'tea', 'green tea', 'black tea', 'herbal tea', 'tea bags',
+    'energy drink', 'red bull', 'monster', 'gatorade', 'powerade',
+    'beer', 'wine', 'liquor', 'vodka', 'whiskey', 'tequila', 'rum',
+    // Container/packaging clues
+    'jar', 'bottle', 'can', 'box', 'pouch', 'bag', 'carton', 'gallon',
+    'oz', 'ounce', 'pound', 'lb', 'fl oz', 'liter', 'quart', 'pint',
+    // Brand names (grocery-specific)
+    'kraft', 'heinz', 'campbells', "campbell's", 'general mills', 'kelloggs',
+    'quaker', 'nabisco', 'frito-lay', 'frito lay', 'pepperidge farm',
+    'smuckers', "smucker's", 'jif', 'skippy', 'pace', 'tostitos',
+    'barilla', 'ragu', 'prego', 'hunts', "hunt's", 'del monte',
+    'goya', 'old el paso', 'ortega', 'taco bell',
+    'dole', 'chiquita', 'sunkist', 'ocean spray',
+    'nestle', 'hershey', 'mars', 'mondelez', 'ferrero',
+    'starbucks', 'folgers', 'maxwell house', 'dunkin',
+    'organic', 'non-gmo', 'gluten free', 'gluten-free', 'sugar free', 'low sodium',
+    'vegan', 'plant based', 'plant-based', 'keto', 'paleo',
+    'nutrition facts', 'serving size', 'calories', 'ingredients',
+    // Store brands
+    'great value', 'kirkland', 'market pantry', 'good gather',
+    'store brand', 'generic brand', '365 everyday',
+  ],
+
   // ==================== HOUSEHOLD ====================
   household: [
     'appliance', 'kitchen', 'blender', 'mixer', 'coffee maker', 'keurig', 'nespresso',
@@ -188,6 +237,26 @@ export const CATEGORY_KEYWORDS: Record<string, string[]> = {
     'pet feeder', 'litter box', 'aquarium', 'dog bed', 'cat tree',
     'new in box', 'nib', 'sealed', 'factory sealed', 'unopened',
     'walmart', 'target', 'costco', 'amazon basics',
+    // Cleaning & laundry (NEW v8.3)
+    'detergent', 'laundry', 'fabric softener', 'dryer sheets', 'bleach',
+    'dish soap', 'dishwasher', 'sponge', 'paper towel', 'paper towels',
+    'trash bag', 'trash bags', 'garbage bags', 'aluminum foil', 'plastic wrap',
+    'clorox', 'lysol', 'windex', 'mr clean', 'dawn', 'tide', 'gain', 'downy',
+    'swiffer', 'pledge', 'febreze', 'air freshener', 'glade',
+    // Bathroom / personal care (NEW v8.3)
+    'shampoo', 'conditioner', 'body wash', 'soap', 'hand soap',
+    'toothpaste', 'toothbrush', 'mouthwash', 'floss', 'dental',
+    'deodorant', 'antiperspirant', 'lotion', 'moisturizer', 'sunscreen',
+    'razor', 'shaving cream', 'tissue', 'tissues', 'toilet paper',
+    'band-aid', 'bandage', 'first aid', 'thermometer',
+    'dove', 'old spice', 'head shoulders', 'pantene', 'tresemme',
+    'colgate', 'crest', 'oral-b', 'listerine', 'neutrogena', 'cetaphil',
+    'aveeno', 'vaseline', 'nivea', 'eucerin',
+    // Baby & pet (expanded v8.3)
+    'diaper', 'diapers', 'wipes', 'baby wipes', 'formula', 'baby formula',
+    'pampers', 'huggies', 'luvs', 'similac', 'enfamil',
+    'dog food', 'cat food', 'pet food', 'purina', 'blue buffalo', 'iams',
+    'pedigree', 'meow mix', 'fancy feast', 'cat litter', 'kitty litter',
   ],
 
   // ==================== VEHICLES ====================

@@ -1,5 +1,5 @@
 // FILE: src/lib/hydra/fetchers/index.ts
-// HYDRA v8.2 - Market Data Fetchers Index
+// HYDRA v8.3 - Market Data Fetchers Index
 // FIXED v6.3: Now passes additionalContext to fetchers (especially NHTSA for VIN)
 // FIXED v7.0: Default timeout bumped from 10s → 30s (Pokemon TCG needs it)
 // FIXED v7.1: Proper timeout cancellation - clearTimeout when fetch completes
@@ -8,6 +8,9 @@
 // FIXED v8.1: UPCitemdb now context-aware — receives raw barcodes from scanner
 // ADDED v8.2: Barcode Spider fetcher (international barcode fallback)
 // ADDED v8.2: Kroger fetcher (real retail store prices for household/grocery)
+// FIXED v8.3: Barcode-aware injection — when additionalContext contains a UPC/EAN,
+//             upcitemdb is ALWAYS included regardless of detected category.
+//             This ensures scanned barcodes always get a product lookup + report card.
 
 import type { MarketDataSource, MarketDataResult, ItemCategory } from '../types.js';
 import { getApisForCategory } from '../category-detection/index.js';
@@ -93,6 +96,21 @@ const FETCHER_TIMEOUTS: Record<string, number> = {
   'kroger': 15000,         // v8.2: 15s - OAuth + product search
 };
 
+// ==================== BARCODE DETECTION (v8.3) ====================
+
+/**
+ * Check if additionalContext contains a barcode (UPC/EAN).
+ * Returns true if a 8-14 digit barcode pattern is found.
+ * Used to force-inject upcitemdb into the API list when a physical
+ * barcode was scanned by the device camera.
+ */
+function contextHasBarcode(additionalContext?: string): boolean {
+  if (!additionalContext) return false;
+  // Match "UPC: 053538155504" or raw 8-14 digit sequences
+  return /(?:UPC|EAN|GTIN|barcode)[:\s]*\d{8,14}/i.test(additionalContext)
+      || /\b\d{8,14}\b/.test(additionalContext);
+}
+
 // ==================== UNIFIED FETCH FUNCTION ====================
 
 /**
@@ -129,13 +147,36 @@ export async function fetchMarketData(
   let apis = getApisForCategory(category);
   console.log(`🔌 APIs for category: ${apis.join(', ')}`);
 
+  // === v8.3: BARCODE-AWARE INJECTION ===
+  // When the device scanner reads a barcode, ALWAYS include upcitemdb
+  // regardless of detected category. This ensures:
+  //   1. Products always get a UPCitemdb lookup + report card
+  //   2. Works even when category detection misclassifies (e.g. honey → "general")
+  //   3. The barcode digits are passed via additionalContext to the fetcher
+  const hasBarcode = contextHasBarcode(additionalContext);
+  if (hasBarcode && !apis.includes('upcitemdb')) {
+    console.log(`📦 Barcode detected in context — injecting upcitemdb`);
+    // Insert upcitemdb at the front (primary authority for barcoded items)
+    apis = ['upcitemdb', ...apis];
+  }
+
   // Ensure eBay is included if requested
   if (includeEbay && !apis.includes('ebay')) {
     apis = [...apis, 'ebay'];
   }
 
-  // Limit to max sources
-  apis = apis.slice(0, maxSources);
+  // Limit to max sources (but always keep upcitemdb if barcode was detected)
+  if (apis.length > maxSources) {
+    if (hasBarcode) {
+      // Keep upcitemdb + trim the rest to fit maxSources
+      const withoutUpc = apis.filter(a => a !== 'upcitemdb');
+      apis = ['upcitemdb', ...withoutUpc.slice(0, maxSources - 1)];
+    } else {
+      apis = apis.slice(0, maxSources);
+    }
+  }
+
+  console.log(`🚀 Final API list: ${apis.join(', ')}`);
 
   // Run fetchers in parallel with per-fetcher timeouts
   const fetchPromises = apis.map(async (api) => {
