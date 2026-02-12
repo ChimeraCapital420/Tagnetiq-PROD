@@ -17,7 +17,6 @@ export {
   formatQuality,
   formatAPIResponse,
   formatErrorResponse,
-  default as formatter,
 } from './formatter.js';
 
 // Types
