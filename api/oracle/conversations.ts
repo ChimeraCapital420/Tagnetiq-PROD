@@ -2,6 +2,7 @@
 // Oracle Sprint B — Conversation persistence endpoints
 // GET: Load recent conversations or a specific conversation
 // DELETE: Clear a conversation
+// FIXED: VITE_PUBLIC_SUPABASE_URL → SUPABASE_URL
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -12,7 +13,7 @@ export const config = {
 };
 
 const supabaseAdmin = createClient(
-  process.env.VITE_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
@@ -25,7 +26,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { id } = req.query;
 
       if (id && typeof id === 'string') {
-        // Load specific conversation
         const { data, error } = await supabaseAdmin
           .from('oracle_conversations')
           .select('*')
@@ -40,7 +40,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ conversation: data });
       }
 
-      // List recent conversations (last 20)
       const { data: conversations, error } = await supabaseAdmin
         .from('oracle_conversations')
         .select('id, title, created_at, updated_at, scan_count_at_creation')

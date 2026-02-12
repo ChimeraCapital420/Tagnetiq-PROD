@@ -1,5 +1,8 @@
 // FILE: api/oracle/proactive.ts
 // The Argos Engine - Oracle's proactive intelligence system
+// FIXED: VITE_PUBLIC_SUPABASE_URL → SUPABASE_URL
+// FIXED: SUPABASE_ANON_KEY_KEY → VITE_SUPABASE_ANON_KEY
+// FIXED: gpt-4-vision-preview → gpt-4o-mini (deprecated model)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -7,17 +10,17 @@ import OpenAI from 'openai';
 import { z } from 'zod';
 
 const supabase = createClient(
-  process.env.VITE_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY_KEY!
+  process.env.SUPABASE_URL!,
+  process.env.VITE_SUPABASE_ANON_KEY!
 );
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_2_KEY!
+  apiKey: process.env.TIER2_OPENAI_TOKEN!
 });
 
 // Schema validation
 const sweepSchema = z.object({
-  image: z.string() // base64 encoded image
+  image: z.string()
 });
 
 const triageSchema = z.object({
@@ -28,10 +31,10 @@ const triageSchema = z.object({
 async function verifyAuth(req: VercelRequest) {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return null;
-  
+
   const { data: { user }, error } = await supabase.auth.getUser(token);
   if (error || !user) return null;
-  
+
   return user;
 }
 
@@ -39,20 +42,20 @@ async function verifyAuth(req: VercelRequest) {
 async function performSweep(image: string) {
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4-vision-preview",
+      model: 'gpt-4o-mini',
       messages: [
         {
-          role: "system",
-          content: "You are a rapid object detector. Identify the main objects in the image and return ONLY a comma-separated list of general categories (e.g., 'book,watch,toy'). Be concise."
+          role: 'system',
+          content: 'You are a rapid object detector. Identify the main objects in the image and return ONLY a comma-separated list of general categories (e.g., "book,watch,toy"). Be concise.'
         },
         {
-          role: "user",
+          role: 'user',
           content: [
             {
-              type: "image_url",
+              type: 'image_url',
               image_url: {
                 url: `data:image/jpeg;base64,${image}`,
-                detail: "low" // Use low detail for speed
+                detail: 'low'
               }
             }
           ]
@@ -75,10 +78,10 @@ async function performTriage(image: string, category: string, userId: string) {
   try {
     // Tier 1: Hydra Analysis (full identification and valuation)
     const hydraPromise = openai.chat.completions.create({
-      model: "gpt-4-vision-preview",
+      model: 'gpt-4o-mini',
       messages: [
         {
-          role: "system",
+          role: 'system',
           content: `You are an expert appraiser specializing in ${category}. Analyze this item and provide:
 1. Specific identification (brand, model, edition, etc.)
 2. Estimated value range
@@ -88,13 +91,13 @@ async function performTriage(image: string, category: string, userId: string) {
 Format your response as JSON with fields: identification, estimated_value, key_features, condition`
         },
         {
-          role: "user",
+          role: 'user',
           content: [
             {
-              type: "image_url",
+              type: 'image_url',
               image_url: {
                 url: `data:image/jpeg;base64,${image}`,
-                detail: "high"
+                detail: 'high'
               }
             }
           ]
@@ -137,7 +140,7 @@ Format your response as JSON with fields: identification, estimated_value, key_f
       const content = hydraResponse.choices[0]?.message?.content || '{}';
       analysis = JSON.parse(content);
     } catch {
-      analysis = { 
+      analysis = {
         identification: hydraResponse.choices[0]?.message?.content || 'Unknown',
         estimated_value: 'Unable to determine'
       };
@@ -148,7 +151,7 @@ Format your response as JSON with fields: identification, estimated_value, key_f
     const personalMatches = interests.filter(interest => {
       const value = interest.interest_value.toLowerCase();
       const identification = analysis.identification?.toLowerCase() || '';
-      
+
       switch (interest.interest_type) {
         case 'category':
           return category.toLowerCase().includes(value);
@@ -164,11 +167,11 @@ Format your response as JSON with fields: identification, estimated_value, key_f
     // Check market relevance
     const watchlist = watchlistResult.data || [];
     const bounties = bountiesResult.data || [];
-    
+
     const watchlistMatches = watchlist.filter(item => {
       const searchTerms = item.search_terms?.toLowerCase() || '';
       const identification = analysis.identification?.toLowerCase() || '';
-      return searchTerms.split(',').some(term => identification.includes(term.trim()));
+      return searchTerms.split(',').some((term: string) => identification.includes(term.trim()));
     });
 
     const bountyMatches = bounties.filter(bounty => {
@@ -178,7 +181,7 @@ Format your response as JSON with fields: identification, estimated_value, key_f
     });
 
     // Synthesize nudge response
-    const nudgeReasons = [];
+    const nudgeReasons: string[] = [];
     let priority = 'low';
 
     if (analysis.estimated_value && analysis.estimated_value !== 'Unable to determine') {
@@ -190,7 +193,7 @@ Format your response as JSON with fields: identification, estimated_value, key_f
     }
 
     if (personalMatches.length > 0) {
-      nudgeReasons.push(`Matches your ${personalMatches.map(m => `'${m.interest_value}'`).join(', ')} interest${personalMatches.length > 1 ? 's' : ''}`);
+      nudgeReasons.push(`Matches your ${personalMatches.map((m: any) => `'${m.interest_value}'`).join(', ')} interest${personalMatches.length > 1 ? 's' : ''}`);
       priority = priority === 'low' ? 'medium' : priority;
     }
 
@@ -234,15 +237,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     switch (endpoint) {
-      case 'sweep':
+      case 'sweep': {
         const { image } = sweepSchema.parse(req.body);
         const categories = await performSweep(image);
         return res.status(200).json({ categories });
+      }
 
-      case 'triage':
+      case 'triage': {
         const triageData = triageSchema.parse(req.body);
         const result = await performTriage(triageData.image, triageData.category, user.id);
         return res.status(200).json(result);
+      }
 
       default:
         return res.status(404).json({ error: 'Endpoint not found' });
@@ -251,7 +256,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Invalid request data' });
     }
-    
+
     console.error('Proactive engine error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }

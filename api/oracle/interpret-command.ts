@@ -1,17 +1,16 @@
 // FILE: api/oracle/interpret-command.ts
 // Oracle Phase 1 — NLU intent classification (API fallback only)
-// FIXED: Downgraded from gpt-4-turbo → gpt-4o-mini (10x cheaper, 3x faster, same accuracy)
-// FIXED: Removed edge runtime — OpenAI SDK requires Node.js runtime
-// NOTE: This endpoint is now only called for ambiguous commands.
-//       Common commands (scan, vault, navigate, search) are classified client-side
-//       in src/lib/oracle/command-router.ts
+// Uses gpt-4o-mini (10x cheaper, 3x faster than gpt-4-turbo)
+// NOTE: No Supabase client needed — uses verifyUser from _lib/security.js
+// NOTE: This endpoint is only called for ambiguous commands.
+//       Common commands are classified client-side in command-router.ts
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
 import { verifyUser } from '../_lib/security.js';
 
 export const config = {
-  maxDuration: 15, // Intent classification should be fast
+  maxDuration: 15,
 };
 
 const openai = new OpenAI({ apiKey: process.env.TIER2_OPENAI_TOKEN });
@@ -70,14 +69,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       : command;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', // Fast + cheap for intent classification
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
       ],
       response_format: { type: 'json_object' },
       max_tokens: 200,
-      temperature: 0.1, // Low temp for consistent classification
+      temperature: 0.1,
     });
 
     const result = completion.choices[0].message.content;

@@ -4,6 +4,7 @@
 // Now queries vault items for portfolio questions
 //
 // Cost: ~$0.001 per message (gpt-4o-mini)
+// FIXED: VITE_PUBLIC_SUPABASE_URL → SUPABASE_URL
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -17,7 +18,7 @@ export const config = {
 const openai = new OpenAI({ apiKey: process.env.TIER2_OPENAI_TOKEN });
 
 const supabaseAdmin = createClient(
-  process.env.VITE_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
@@ -240,14 +241,12 @@ function getQuickChips(scanHistory: any[], vaultItems: any[]): Array<{ label: st
       });
     }
 
-    // Vault chip if they have items
     if (vaultItems.length > 0) {
       chips.push({ label: '💎 Vault value', message: 'What\'s my collection worth right now?' });
     } else {
       chips.push({ label: '📈 My best finds', message: 'What are my most valuable scans so far?' });
     }
 
-    // Category-aware chips
     const categories = [...new Set(scanHistory.slice(0, 20).map((s: any) => s.category || s.analysis_result?.category || 'general'))];
 
     if (categories.includes('vehicles') || categories.includes('vehicles-value')) {
@@ -273,7 +272,6 @@ function getQuickChips(scanHistory: any[], vaultItems: any[]): Array<{ label: st
 // =============================================================================
 
 function generateTitle(firstMessage: string): string {
-  // Take first 50 chars of user's first message as title
   const clean = firstMessage.trim().replace(/\n/g, ' ');
   if (clean.length <= 50) return clean;
   return clean.substring(0, 47) + '...';
@@ -330,7 +328,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       { role: 'system', content: systemPrompt },
     ];
 
-    // Add conversation history (last 20 messages)
     if (Array.isArray(conversationHistory)) {
       const recentHistory = conversationHistory.slice(-20);
       for (const turn of recentHistory) {
@@ -362,37 +359,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let activeConversationId = conversationId || null;
 
-    if (activeConversationId) {
-      // Append to existing conversation
-      const { data: existing } = await supabaseAdmin
-        .from('oracle_conversations')
-        .select('messages')
-        .eq('id', activeConversationId)
-        .eq('user_id', user.id)
-        .single();
-
-      if (existing) {
-        const updatedMessages = [...(existing.messages as any[]), userMsg, assistantMsg];
-        await supabaseAdmin
+    try {
+      if (activeConversationId) {
+        const { data: existing } = await supabaseAdmin
           .from('oracle_conversations')
-          .update({ messages: updatedMessages })
-          .eq('id', activeConversationId);
-      }
-    } else {
-      // Create new conversation
-      const { data: newConvo } = await supabaseAdmin
-        .from('oracle_conversations')
-        .insert({
-          user_id: user.id,
-          title: generateTitle(message),
-          messages: [userMsg, assistantMsg],
-          scan_count_at_creation: scanHistory?.length || 0,
-          is_active: true,
-        })
-        .select('id')
-        .single();
+          .select('messages')
+          .eq('id', activeConversationId)
+          .eq('user_id', user.id)
+          .single();
 
-      activeConversationId = newConvo?.id || null;
+        if (existing) {
+          const updatedMessages = [...(existing.messages as any[]), userMsg, assistantMsg];
+          await supabaseAdmin
+            .from('oracle_conversations')
+            .update({ messages: updatedMessages })
+            .eq('id', activeConversationId);
+        }
+      } else {
+        const { data: newConvo } = await supabaseAdmin
+          .from('oracle_conversations')
+          .insert({
+            user_id: user.id,
+            title: generateTitle(message),
+            messages: [userMsg, assistantMsg],
+            scan_count_at_creation: scanHistory?.length || 0,
+            is_active: true,
+          })
+          .select('id')
+          .single();
+
+        activeConversationId = newConvo?.id || null;
+      }
+    } catch (convError: any) {
+      // Don't fail the whole response if conversation persistence fails
+      // (e.g., table doesn't exist yet)
+      console.warn('Conversation persistence failed (non-fatal):', convError.message);
     }
 
     // ── Response ──────────────────────────────────────────

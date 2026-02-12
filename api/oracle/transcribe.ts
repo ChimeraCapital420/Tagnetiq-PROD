@@ -2,6 +2,7 @@
 // Oracle Phase 1 — Dedicated Whisper transcription for voice commands
 // SEPARATE from /api/boardroom/transcribe (admin-only, heavy pipeline)
 // This endpoint is lightweight: short audio clips (< 10s), user-facing, rate-aware
+// NOTE: No Supabase client needed — uses verifyUser from _lib/security.js
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -25,9 +26,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await verifyUser(req);
 
     // Parse multipart form data
-    // Vercel automatically parses multipart when using Node.js runtime
     const contentType = req.headers['content-type'] || '';
-    
+
     if (!contentType.includes('multipart/form-data')) {
       return res.status(400).json({ error: 'Expected multipart/form-data' });
     }
@@ -67,9 +67,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const transcription = await openai.audio.transcriptions.create({
       file: audioFile,
       model: 'whisper-1',
-      language: language || undefined, // Let Whisper auto-detect if not specified
-      prompt: 'scan, vault, search, navigate, open, help, arena, dashboard', // Bias toward command vocabulary
-      temperature: 0.0, // Deterministic for commands
+      language: language || undefined,
+      prompt: 'scan, vault, search, navigate, open, help, arena, dashboard',
+      temperature: 0.0,
     });
 
     const text = (transcription.text || '').trim();
@@ -100,20 +100,17 @@ function parseMultipart(body: Buffer, boundary: string): {
   let filename: string | null = null;
   let language: string | null = null;
 
-  // Split by boundary
   const parts = splitBuffer(body, boundaryBuffer);
 
   for (const part of parts) {
-    const partStr = part.toString('utf-8', 0, Math.min(part.length, 500)); // Read headers only
+    const partStr = part.toString('utf-8', 0, Math.min(part.length, 500));
 
-    // Find header/body separator
     const headerEnd = part.indexOf('\r\n\r\n');
     if (headerEnd === -1) continue;
 
     const headers = partStr.substring(0, headerEnd);
     const bodyStart = headerEnd + 4;
 
-    // Trim trailing \r\n
     let bodyEnd = part.length;
     if (part[bodyEnd - 2] === 0x0d && part[bodyEnd - 1] === 0x0a) {
       bodyEnd -= 2;

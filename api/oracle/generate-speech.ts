@@ -1,7 +1,7 @@
 // FILE: api/oracle/generate-speech.ts
 // Oracle Phase 1 — Premium voice generation with ElevenLabs
-// FIXED: Removed edge runtime + require('stream') — was crashing on Vercel Edge
-// FIXED: SUPABASE_ANON_KEY_KEY → SUPABASE_ANON_KEY (typo)
+// FIXED: VITE_PUBLIC_SUPABASE_URL → SUPABASE_URL
+// FIXED: SUPABASE_ANON_KEY_KEY → VITE_SUPABASE_ANON_KEY
 // FIXED: Proper Node.js streaming using arrayBuffer → Buffer → res.end()
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -13,8 +13,8 @@ export const config = {
 };
 
 const supabase = createClient(
-  process.env.VITE_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY! // FIXED: was SUPABASE_ANON_KEY_KEY
+  process.env.SUPABASE_URL!,
+  process.env.VITE_SUPABASE_ANON_KEY!
 );
 
 // Map our voice IDs → ElevenLabs voice IDs
@@ -93,7 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
         body: JSON.stringify({
           text,
-          model_id: 'eleven_multilingual_v2', // Upgraded from v1 for better multilingual
+          model_id: 'eleven_multilingual_v2',
           voice_settings: {
             stability: 0.5,
             similarity_boost: 0.75,
@@ -110,8 +110,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error(`ElevenLabs API error: ${elevenLabsResponse.status}`);
     }
 
-    // FIXED: Proper Node.js streaming — read full buffer and send
-    // This works reliably on Vercel Serverless (not Edge)
     const audioBuffer = await elevenLabsResponse.arrayBuffer();
 
     res.setHeader('Content-Type', 'audio/mpeg');

@@ -1,6 +1,7 @@
 // FILE: api/oracle/voices.ts
 // Oracle Voice Discovery Endpoint — Lists available premium voices
-// FIXED: SUPABASE_ANON_KEY_KEY → SUPABASE_ANON_KEY (typo)
+// FIXED: VITE_PUBLIC_SUPABASE_URL → SUPABASE_URL
+// FIXED: SUPABASE_ANON_KEY_KEY → VITE_SUPABASE_ANON_KEY
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -10,8 +11,8 @@ export const config = {
 };
 
 const supabase = createClient(
-  process.env.VITE_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY! // FIXED: was SUPABASE_ANON_KEY_KEY
+  process.env.SUPABASE_URL!,
+  process.env.VITE_SUPABASE_ANON_KEY!
 );
 
 // Premium voice catalog with ElevenLabs voice IDs
@@ -156,7 +157,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // Return voice list without internal ElevenLabs IDs
     const voices = PREMIUM_VOICES.map(voice => ({
       id: voice.id,
       name: voice.name,
@@ -167,7 +167,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       tier: voice.tier,
     }));
 
-    // Cache for 1 hour — voice list doesn't change often
     res.setHeader('Cache-Control', 'public, max-age=3600');
     res.status(200).json({ voices });
   } catch (error) {
