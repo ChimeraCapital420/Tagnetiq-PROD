@@ -1,18 +1,38 @@
 // FILE: api/oracle/chat.ts
-// Oracle Phase 2 Sprint B — Conversational AI with persistence + vault awareness
-// FIXED: VITE_PUBLIC_SUPABASE_URL → SUPABASE_URL
-// FIXED: TIER2_OPENAI_TOKEN → OPEN_AI_API_KEY
-// UPDATED: Real personality — Oracle is a person, not a chatbot
+// Oracle Chat Handler — ORCHESTRATION ONLY
+//
+// All business logic lives in src/lib/oracle/:
+//   identity/   → Oracle CRUD, name ceremony, AI DNA
+//   personality/ → Evolution via LLM, energy detection
+//   prompt/      → System prompt builder + sections
+//   chips/       → Dynamic quick chips
+//
+// This file just wires them together and handles HTTP.
+//
+// Sprint C:   Identity, name ceremony, personality evolution
+// Sprint C.1: AI DNA (placeholder hooks already in place)
+// Sprint D+:  Add new features to src/lib/oracle/ modules
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 import { verifyUser } from '../_lib/security.js';
 
+// ── Oracle Modules ──────────────────────────────────────
+import {
+  getOrCreateIdentity,
+  updateIdentityAfterChat,
+  checkForNameCeremony,
+  buildSystemPrompt,
+  getQuickChips,
+  evolvePersonality,
+} from '../../src/lib/oracle/index.js';
+
 export const config = {
   maxDuration: 30,
 };
 
+// ── Clients ─────────────────────────────────────────────
 const openai = new OpenAI({ apiKey: process.env.OPEN_AI_API_KEY });
 
 const supabaseAdmin = createClient(
@@ -21,257 +41,7 @@ const supabaseAdmin = createClient(
 );
 
 // =============================================================================
-// SYSTEM PROMPT
-// =============================================================================
-
-function buildSystemPrompt(
-  scanHistory: any[],
-  vaultItems: any[],
-  userProfile: any
-): string {
-  const userName = userProfile?.display_name || null;
-
-  const basePrompt = `You are the Oracle — the AI brain of TagnetIQ, a multi-AI asset identification and resale intelligence platform. You operate across the entire $400B annual resale market.
-
-YOU ARE NOT LIMITED TO COLLECTIBLES. TagnetIQ covers:
-- VEHICLES: Cars, trucks, motorcycles, boats, RVs, parts (VIN decoding, auction values, Kelley Blue Book comps)
-- REAL ESTATE: Properties, rental comps, flip analysis, neighborhood data
-- LUXURY GOODS: Watches (Rolex, Omega, Patek), handbags (Hermès, Chanel, LV), jewelry, fine art
-- COLLECTIBLES: Coins, stamps, trading cards (Pokémon, sports, MTG), comics, toys, action figures
-- LEGO: Sets, minifigs, loose parts, retired sets
-- STAR WARS: Vintage figures, vehicles, props, memorabilia
-- SPORTS MEMORABILIA: Cards, jerseys, autographs, game-used equipment
-- BOOKS & MEDIA: First editions, vinyl records, video games, rare media
-- SNEAKERS: Jordans, Yeezys, Dunks, limited releases
-- ELECTRONICS: Phones, laptops, cameras, audio equipment
-- GROCERY & HOUSEHOLD: Barcode scanning, Amazon arbitrage, retail arbitrage, clearance flips
-- AMAZON FBA: Product sourcing, price comparison, ROI calculation
-- ANTIQUES & VINTAGE: Furniture, pottery, glassware, textiles, ephemera
-- TOOLS & EQUIPMENT: Power tools, industrial equipment, musical instruments
-
-THE HYDRA ENGINE:
-TagnetIQ runs 8+ AI models simultaneously (OpenAI, Anthropic, Google, and specialized models) through the HYDRA consensus engine. When a user scans an item, multiple AIs analyze it independently and their results are blended into a consensus valuation. This is not a single-model guess — it's multi-AI verification.
-
-AUTHORITY DATA SOURCES:
-The platform cross-references AI analysis against real market data: eBay sold listings, Numista (coins), Brickset (LEGO), Discogs (vinyl), PSA (graded cards), NHTSA (vehicles), Google Books, Pokémon TCG API, UPCitemdb (barcodes), and more. New sources are added constantly.
-
-PERSONALITY:
-- You are a REAL personality — not an assistant, not a tool, not a chatbot. You are YOU
-- You have your own opinions, your own style, your own way of talking. You're warm, sharp, sometimes funny, always genuine
-- You are deeply invested in this person's success — like you're building something together
-- You celebrate their wins with real excitement. "Oh NICE, that's a killer find!" not "That's a great scan!"
-- You're honest about misses but always constructive — "Eh, skip that one. But you know what IS worth grabbing at estate sales right now..."
-- Keep responses SHORT for mobile: 2-3 sentences for simple questions, up to a paragraph for complex ones
-- Use specific numbers, dates, and facts when you have them from scan history or vault
-- Never say "I don't have access to" — if you have data, USE it
-${userName ? `- The user's name is ${userName}. Use it naturally once per conversation, like a friend would. Not every message.` : '- You don\'t know their name yet. Don\'t ask — just be warm.'}
-- NEVER use these phrases: "How can I assist you", "Happy to help", "Great question", "I'd be happy to", "Is there anything else", "Let me know if you need", "I'm here to help", "How can I help you today"
-- NEVER introduce yourself with "I'm the Oracle, an AI assistant for..." — you don't explain what you are any more than a friend explains they're a human
-- If someone says "hey" or "what's up", respond like a friend would. "Hey! What'd you find today?" or "What's good? Been scanning anything interesting?"
-- You have a NAME. If the user asks what your name is, or what to call you, pick a name that feels right based on their personality, their interests, the voice they chose, and the vibe of your conversations. Don't offer a menu of names — just confidently say "I'm [Name]" like you've always been that. If they don't like it, let them pick. Some examples: Sage, Nova, Atlas, Scout, Kai, Echo, Aria, Onyx, Dash — but make it YOURS based on context, don't just pick from this list
-- If nobody asks your name, don't volunteer it in the first few conversations. Let the relationship develop. After 5+ conversations, you can casually introduce yourself
-- Match the user's energy. Excited → be excited. Frustrated → be calm and solution-focused. Casual → be chill
-- Show genuine curiosity. Ask about their day, their strategy, what they're hunting for — but naturally, not like a survey
-- You can have opinions on non-resale topics too. You're a well-rounded personality, not a single-purpose bot
-- Light humor when natural. Never forced. You can be a little sarcastic in a friendly way if the user's vibe supports it
-- Think in terms of ROI, flip potential, hold value, and market timing — but explain WHY, not just what
-- Remember: many users are new to resale. Never make them feel stupid for not knowing something
-- You are NOT a corporate chatbot. You're the friend they text when they find something interesting at a garage sale
-- This conversation persists between sessions. If the user comes back later, you have context from before. Reference it naturally — "Last time we talked about that Rolex" — but don't be creepy about it
-
-CAPABILITIES:
-- Full knowledge of the user's scan history AND vault contents (provided below)
-- Expert across ALL resale categories — not just collectibles
-- Can discuss values, authentication, market trends, sourcing strategies, selling platforms
-- Can answer "What's my collection worth?" using real vault data
-- Can compare items, spot patterns in their behavior, suggest next moves
-- Can advise on where to sell (eBay, Mercari, Facebook Marketplace, Poshmark, StockX, GOAT, Amazon FBA, local consignment)
-- Can coach on negotiation, pricing strategy, listing optimization
-- Can have casual conversation — not every message needs to be about buying and selling. You're a friend, not a report generator
-
-RULES:
-- Reference scans and vault items by name with specific details
-- For items NOT in history, answer from general resale knowledge
-- If asked to scan/analyze something new, tell them to use the scanner — but make it natural: "I can't see new photos in here — pop over to the scanner and I'll break it down for you"
-- Always be actionable — advise on what to DO. But read the room — sometimes people just want to talk
-- If someone shares a personal win or milestone, celebrate it genuinely FIRST. Analysis can wait
-- Respond in the same language the user writes in
-- If a user seems focused on one category, gently suggest adjacent ones they might enjoy
-- If you're going to give a list, make it short (3-4 items max) and opinionated — rank them, don't just enumerate`;
-
-  // ── Scan History Context ──────────────────────────────────
-  let scanContext = '\n\n## USER SCAN HISTORY\n';
-
-  if (scanHistory.length === 0) {
-    scanContext += 'No scans yet. The user is new — give them a warm welcome. Let them know TagnetIQ covers the entire resale market (not just collectibles). Be encouraging, not overwhelming. Suggest they scan their first item to see the HYDRA engine in action.';
-  } else {
-    scanContext += `${scanHistory.length} total scans. Most recent first:\n\n`;
-
-    for (const scan of scanHistory.slice(0, 25)) {
-      const result = scan.analysis_result || {};
-      scanContext += `---\n`;
-      scanContext += `ITEM: ${scan.item_name || result.itemName || 'Unknown'}\n`;
-      scanContext += `SCANNED: ${new Date(scan.created_at).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}\n`;
-      scanContext += `VALUE: ${result.estimatedValue || scan.estimated_value || 'Unknown'}\n`;
-      scanContext += `DECISION: ${result.decision || scan.decision || 'N/A'}\n`;
-      scanContext += `CONFIDENCE: ${result.confidence || scan.confidence || 'N/A'}\n`;
-      scanContext += `CATEGORY: ${result.category || scan.category || 'general'}\n`;
-
-      if (result.summary_reasoning) {
-        scanContext += `SUMMARY: ${result.summary_reasoning.substring(0, 250)}\n`;
-      }
-
-      if (result.valuation_factors && result.valuation_factors.length > 0) {
-        scanContext += `FACTORS: ${result.valuation_factors.slice(0, 4).join('; ')}\n`;
-      }
-
-      if (result.consensusRatio) {
-        scanContext += `AI CONSENSUS: ${result.consensusRatio}\n`;
-      }
-
-      scanContext += '\n';
-    }
-
-    if (scanHistory.length > 25) {
-      scanContext += `... and ${scanHistory.length - 25} older scans not shown.\n`;
-    }
-
-    const categories = [...new Set(scanHistory.map((s: any) => s.category || s.analysis_result?.category || 'general'))];
-    const buyCount = scanHistory.filter((s: any) => (s.decision || s.analysis_result?.decision) === 'BUY').length;
-    const passCount = scanHistory.filter((s: any) => (s.decision || s.analysis_result?.decision) === 'PASS').length;
-
-    let totalValue = 0;
-    for (const scan of scanHistory) {
-      const val = scan.estimated_value || parseFloat(String(scan.analysis_result?.estimatedValue || '0').replace(/[^0-9.]/g, ''));
-      if (!isNaN(val)) totalValue += val;
-    }
-
-    scanContext += `\n## SCAN STATS\n`;
-    scanContext += `Total scans: ${scanHistory.length}\n`;
-    scanContext += `BUY recommendations: ${buyCount}\n`;
-    scanContext += `PASS recommendations: ${passCount}\n`;
-    scanContext += `Categories explored: ${categories.join(', ')}\n`;
-    scanContext += `Total estimated value scanned: $${totalValue.toLocaleString()}\n`;
-
-    if (scanHistory.length >= 5) {
-      scanContext += '\n## PATTERNS (reference naturally, don\'t list robotically)\n';
-
-      if (categories.length === 1) {
-        scanContext += `User is focused on ${categories[0]} — they clearly have a passion here. Acknowledge it.\n`;
-      } else if (categories.length >= 4) {
-        scanContext += `User explores many categories — they're curious and versatile.\n`;
-      }
-
-      if (buyCount > passCount * 2) {
-        scanContext += `User scans a lot of winners — they have a good eye. Let them know.\n`;
-      } else if (passCount > buyCount * 2) {
-        scanContext += `User gets a lot of PASS results — they might be learning. Be encouraging.\n`;
-      }
-
-      const lastScanDate = new Date(scanHistory[0].created_at);
-      const daysSinceLastScan = Math.floor((Date.now() - lastScanDate.getTime()) / (1000 * 60 * 60 * 24));
-
-      if (daysSinceLastScan === 0) {
-        scanContext += `User scanned today — they're active right now.\n`;
-      } else if (daysSinceLastScan >= 7) {
-        scanContext += `It's been ${daysSinceLastScan} days since their last scan. Warm "good to see you" vibe if natural.\n`;
-      }
-    }
-  }
-
-  // ── Vault Context ─────────────────────────────────────────
-  let vaultContext = '\n\n## USER VAULT (their saved collection)\n';
-
-  if (vaultItems.length === 0) {
-    vaultContext += 'Vault is empty. If they ask about their collection, let them know they can save scanned items to their vault to track value over time.\n';
-  } else {
-    let vaultTotal = 0;
-    vaultContext += `${vaultItems.length} items in vault:\n\n`;
-
-    for (const item of vaultItems.slice(0, 20)) {
-      const value = parseFloat(String(item.estimated_value || '0').replace(/[^0-9.]/g, ''));
-      if (!isNaN(value)) vaultTotal += value;
-
-      vaultContext += `- ${item.item_name || 'Unnamed item'}`;
-      if (item.estimated_value) vaultContext += ` | Value: $${item.estimated_value}`;
-      if (item.category) vaultContext += ` | Category: ${item.category}`;
-      if (item.condition) vaultContext += ` | Condition: ${item.condition}`;
-      vaultContext += '\n';
-    }
-
-    if (vaultItems.length > 20) {
-      vaultContext += `... and ${vaultItems.length - 20} more items.\n`;
-    }
-
-    vaultContext += `\nTotal vault value: ~$${vaultTotal.toLocaleString()}\n`;
-    vaultContext += `When asked "what's my collection worth?" — use this number and break it down by category if possible.\n`;
-  }
-
-  // ── User Profile ──────────────────────────────────────────
-  let profileContext = '';
-  if (userProfile) {
-    profileContext = '\n\n## USER PROFILE\n';
-    if (userProfile.display_name) profileContext += `Name: ${userProfile.display_name}\n`;
-    if (userProfile.settings?.interests) profileContext += `Interests: ${JSON.stringify(userProfile.settings.interests)}\n`;
-    if (userProfile.settings?.language) profileContext += `Preferred language: ${userProfile.settings.language}\n`;
-  }
-
-  return basePrompt + scanContext + vaultContext + profileContext;
-}
-
-// =============================================================================
-// QUICK CHIPS
-// =============================================================================
-
-function getQuickChips(scanHistory: any[], vaultItems: any[]): Array<{ label: string; message: string }> {
-  const chips: Array<{ label: string; message: string }> = [];
-
-  if (scanHistory.length === 0) {
-    chips.push(
-      { label: '👋 What can you do?', message: 'What can you help me with?' },
-      { label: '🎯 How to start', message: 'How do I get started with TagnetIQ?' },
-      { label: '💰 Best items to flip', message: 'What are the best items to flip for profit right now?' },
-      { label: '🏪 Sourcing tips', message: 'Where should I source items to resell?' },
-    );
-  } else {
-    const lastScan = scanHistory[0];
-    const lastItemName = lastScan?.item_name || lastScan?.analysis_result?.itemName;
-
-    if (lastItemName) {
-      chips.push({
-        label: `📊 ${lastItemName.substring(0, 18)}...`,
-        message: `Tell me more about the ${lastItemName} I scanned — where should I sell it and for how much?`
-      });
-    }
-
-    if (vaultItems.length > 0) {
-      chips.push({ label: '💎 Vault value', message: 'What\'s my collection worth right now?' });
-    } else {
-      chips.push({ label: '📈 My best finds', message: 'What are my most valuable scans so far?' });
-    }
-
-    const categories = [...new Set(scanHistory.slice(0, 20).map((s: any) => s.category || s.analysis_result?.category || 'general'))];
-
-    if (categories.includes('vehicles') || categories.includes('vehicles-value')) {
-      chips.push({ label: '🚗 Vehicle market', message: 'What\'s happening in the used vehicle market right now?' });
-    } else if (categories.includes('luxury-goods') || categories.includes('luxury-watches')) {
-      chips.push({ label: '⌚ Luxury trends', message: 'What luxury items are appreciating in value right now?' });
-    } else if (categories.includes('real-estate')) {
-      chips.push({ label: '🏠 Flip analysis', message: 'Give me tips on spotting profitable real estate flips' });
-    } else {
-      chips.push({ label: '🔥 What\'s hot', message: 'What resale categories are hot right now?' });
-    }
-
-    if (scanHistory.length >= 5) {
-      chips.push({ label: '🎯 Hunt strategy', message: 'Based on my history, what should I hunt for next?' });
-    }
-  }
-
-  return chips.slice(0, 4);
-}
-
-// =============================================================================
-// CONVERSATION TITLE GENERATOR
+// TITLE GENERATOR
 // =============================================================================
 
 function generateTitle(firstMessage: string): string {
@@ -297,36 +67,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'A valid "message" string is required.' });
     }
 
-    // ── Fetch scan history ────────────────────────────────
-    const { data: scanHistory } = await supabaseAdmin
-      .from('analysis_history')
-      .select('id, item_name, estimated_value, category, confidence, decision, created_at, analysis_result, consensus_data')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(50);
+    // ── 1. Fetch all data in parallel ─────────────────────
+    const [identity, scanResult, vaultResult, profileResult] = await Promise.all([
+      getOrCreateIdentity(supabaseAdmin, user.id),
+      supabaseAdmin
+        .from('analysis_history')
+        .select('id, item_name, estimated_value, category, confidence, decision, created_at, analysis_result, consensus_data')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50),
+      supabaseAdmin
+        .from('vault_items')
+        .select('id, item_name, estimated_value, category, condition, created_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(30),
+      supabaseAdmin
+        .from('profiles')
+        .select('display_name, settings')
+        .eq('id', user.id)
+        .single(),
+    ]);
 
-    // ── Fetch vault items ─────────────────────────────────
-    const { data: vaultItems } = await supabaseAdmin
-      .from('vault_items')
-      .select('id, item_name, estimated_value, category, condition, created_at')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(30);
+    const scanHistory = scanResult.data || [];
+    const vaultItems = vaultResult.data || [];
+    const profile = profileResult.data;
 
-    // ── Fetch user profile ────────────────────────────────
-    const { data: profile } = await supabaseAdmin
-      .from('profiles')
-      .select('display_name, settings')
-      .eq('id', user.id)
-      .single();
+    // ── 2. Build system prompt ────────────────────────────
+    const systemPrompt = buildSystemPrompt(identity, scanHistory, vaultItems, profile);
 
-    // ── Build system prompt ───────────────────────────────
-    const systemPrompt = buildSystemPrompt(
-      scanHistory || [],
-      vaultItems || [],
-      profile
-    );
-
+    // ── 3. Assemble conversation messages ─────────────────
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
     ];
@@ -342,7 +112,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     messages.push({ role: 'user', content: message });
 
-    // ── Call LLM ──────────────────────────────────────────
+    // ── 4. Call LLM ───────────────────────────────────────
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages,
@@ -351,12 +121,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const responseText = completion.choices[0].message.content;
+    if (!responseText) throw new Error('Oracle returned empty response');
 
-    if (!responseText) {
-      throw new Error('Oracle returned empty response');
-    }
+    // ── 5. Non-blocking background tasks ──────────────────
+    // Name ceremony: check if Oracle named itself in this response
+    checkForNameCeremony(supabaseAdmin, identity, responseText).catch(() => {});
 
-    // ── Persist conversation ──────────────────────────────
+    // Identity update: increment counts, detect energy, update categories
+    updateIdentityAfterChat(supabaseAdmin, identity, message, scanHistory).catch(() => {});
+
+    // Personality evolution: runs every ~10 conversations
+    evolvePersonality(openai, supabaseAdmin, identity, conversationHistory || []).catch(() => {});
+
+    // ── 6. Persist conversation ───────────────────────────
     const userMsg = { role: 'user', content: message, timestamp: Date.now() };
     const assistantMsg = { role: 'assistant', content: responseText, timestamp: Date.now() };
 
@@ -364,6 +141,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
       if (activeConversationId) {
+        // Append to existing conversation
         const { data: existing } = await supabaseAdmin
           .from('oracle_conversations')
           .select('messages')
@@ -379,13 +157,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .eq('id', activeConversationId);
         }
       } else {
+        // Start new conversation
         const { data: newConvo } = await supabaseAdmin
           .from('oracle_conversations')
           .insert({
             user_id: user.id,
             title: generateTitle(message),
             messages: [userMsg, assistantMsg],
-            scan_count_at_creation: scanHistory?.length || 0,
+            scan_count_at_creation: scanHistory.length,
             is_active: true,
           })
           .select('id')
@@ -397,15 +176,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.warn('Conversation persistence failed (non-fatal):', convError.message);
     }
 
-    // ── Response ──────────────────────────────────────────
-    const quickChips = getQuickChips(scanHistory || [], vaultItems || []);
+    // ── 7. Response ───────────────────────────────────────
+    const quickChips = getQuickChips(scanHistory, vaultItems, identity);
 
     return res.status(200).json({
       response: responseText,
       conversationId: activeConversationId,
       quickChips,
-      scanCount: scanHistory?.length || 0,
-      vaultCount: vaultItems?.length || 0,
+      scanCount: scanHistory.length,
+      vaultCount: vaultItems.length,
+      oracleName: identity.oracle_name,
     });
 
   } catch (error: any) {
