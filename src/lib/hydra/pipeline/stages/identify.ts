@@ -5,6 +5,7 @@
 //
 // v9.0: Waited for ALL providers (caused 13-20s Stage 1)
 // v9.1: First-responder returns in 3-5s, adds Anthropic vision
+// v9.1.1: Garbage name rejection — provider fallback names no longer accepted
 
 import { ProviderFactory } from '../../ai/provider-factory.js';
 import { isProviderAvailable } from '../../config/providers.js';
@@ -14,6 +15,73 @@ import { detectItemCategory } from '../../category-detection/index.js';
 import type { ModelVote } from '../../types.js';
 import type { IdentifyResult } from '../types.js';
 import { buildIdentifyPrompt } from '../prompts/identify-prompt.js';
+
+// =============================================================================
+// GARBAGE NAME DETECTION
+// =============================================================================
+
+/**
+ * Names that indicate the provider failed to identify the item
+ * but returned a fallback response instead of null.
+ * These MUST be rejected by the first-responder.
+ */
+const GARBAGE_NAME_PATTERNS = [
+  // Provider fallback names (hardcoded in provider classes)
+  'google gemini',
+  'openai analysis',
+  'anthropic analysis',
+  'claude analysis',
+  'gpt analysis',
+  'mistral analysis',
+  'deepseek analysis',
+  'groq analysis',
+  'perplexity analysis',
+  'xai analysis',
+  'grok analysis',
+  // Generic non-identification names
+  'analysis unavailable',
+  'unidentified item',
+  'unknown item',
+  'general item',
+  'unidentified general',
+  'unidentified object',
+  'unknown object',
+  'item analysis',
+  'image analysis',
+  'photo analysis',
+  'digital service',
+  'ai analysis',
+];
+
+/**
+ * Check if a name is a garbage fallback that should be rejected
+ */
+function isGarbageName(name: string): boolean {
+  if (!name || name.trim().length < 3) return true;
+  
+  const lower = name.toLowerCase().trim();
+  
+  // Check against known garbage patterns
+  for (const pattern of GARBAGE_NAME_PATTERNS) {
+    if (lower.includes(pattern)) return true;
+  }
+  
+  // Reject names that are just provider/AI terms
+  if (/^(the |a |an )?(analysis|service|model|provider|result|response|output)/i.test(lower)) {
+    return true;
+  }
+  
+  // Reject names containing AI provider brand names as the main subject
+  // "Google Gemini Analysis" = garbage, but "Google Pixel 7 Phone" = valid
+  const providerBrands = ['gemini', 'claude', 'gpt-4', 'gpt4', 'mistral', 'llama', 'deepseek', 'grok'];
+  for (const brand of providerBrands) {
+    if (lower.includes(brand) && !lower.includes('card') && !lower.includes('figure') && !lower.includes('toy')) {
+      return true;
+    }
+  }
+  
+  return false;
+}
 
 // =============================================================================
 // IDENTIFY STAGE — FIRST RESPONDER PATTERN
@@ -28,8 +96,9 @@ import { buildIdentifyPrompt } from '../prompts/identify-prompt.js';
  * Before: Wait for all → 13-20s (slowest provider wins)
  * After:  First responder → 3-5s (fastest provider wins)
  * 
- * Pipeline moves to Stage 2 immediately after first identification.
- * Slow providers' results are discarded — speed > completeness for ID.
+ * v9.1.1: Garbage name rejection
+ * Provider fallback names like "Google Gemini Analysis" are now rejected.
+ * Only real identifications are accepted.
  */
 export async function runIdentifyStage(
   images: string[],
@@ -71,14 +140,14 @@ export async function runIdentifyStage(
   );
   
   if (!vote) {
-    console.log(`    ⚠️ No providers returned identification`);
+    console.log(`    ⚠️ No providers returned valid identification`);
     return buildFallbackIdentifyResult(itemNameHint, categoryHint, stageStart);
   }
   
   const rawResponse = vote.rawResponse as any;
   
   // Extract identified item name
-  const identifiedName = vote.itemName && vote.itemName !== 'Unknown Item'
+  const identifiedName = vote.itemName && !isGarbageName(vote.itemName)
     ? vote.itemName
     : itemNameHint || 'Unidentified Item';
   
@@ -139,6 +208,8 @@ export async function runIdentifyStage(
  * - OpenAI can take 10-15s with images
  * 
  * Instead of waiting 15s for OpenAI, we return Google's result in 3s.
+ * 
+ * v9.1.1: Garbage names are rejected — provider must return real identification.
  */
 async function raceToFirstIdentification(
   providerIds: string[],
@@ -228,10 +299,10 @@ async function runIdentifyProvider(
     
     const responseTime = Date.now() - start;
     
-    // Validate it actually identified something (not just "Unknown Item")
+    // Validate it actually identified something real
     const itemName = result.response.itemName || '';
-    if (!itemName || itemName === 'Unknown Item' || itemName === 'Unidentified Item') {
-      console.log(`    ✗ ${providerId}: Could not identify item (${responseTime}ms)`);
+    if (!itemName || isGarbageName(itemName)) {
+      console.log(`    ✗ ${providerId}: Rejected garbage name "${itemName}" (${responseTime}ms)`);
       return null;
     }
     

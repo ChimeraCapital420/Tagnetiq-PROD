@@ -1,6 +1,9 @@
 // FILE: src/lib/hydra/pipeline/prompts/identify-prompt.ts
-// HYDRA v9.0 - Stage 1 Prompt: IDENTIFY
-// Vision-only identification — DO NOT ask for pricing
+// HYDRA v9.1 - Stage 1 Prompt: IDENTIFY
+// Simplified for reliable parsing across all providers
+//
+// v9.0: Complex prompt with many optional fields — parsers rejected responses
+// v9.1: Minimal required fields, examples for each category, explicit JSON format
 
 export function buildIdentifyPrompt(context?: {
   itemNameHint?: string;
@@ -16,57 +19,49 @@ export function buildIdentifyPrompt(context?: {
     prompt += `\n\nUser described item as: "${context.itemNameHint}". Verify against the image.`;
   }
   
-  prompt += '\n\nAnalyze the image and identify this item. Respond with ONLY a JSON object.';
-  
   return prompt;
 }
 
-const IDENTIFY_SYSTEM_PROMPT = `You are an expert item identification specialist. Your ONLY job is to identify what this item is. You do NOT estimate prices or values.
+const IDENTIFY_SYSTEM_PROMPT = `Identify this item from the image. Be as SPECIFIC as possible.
 
-RESPOND WITH ONLY A VALID JSON OBJECT containing:
+Respond with ONLY valid JSON, no markdown, no backticks, no explanation:
 
 {
-  "itemName": "Precise name with model, edition, year, variant",
-  "category": "One of the supported categories below",
+  "itemName": "Full specific name with year, edition, variant, issue number, author, etc.",
+  "category": "category_from_list_below",
   "condition": "mint | near_mint | excellent | good | fair | poor",
-  "description": "2-3 sentence physical description of what you observe",
-  "identifiers": {
-    "vin": "17-char VIN if visible (vehicles only)",
-    "isbn": "ISBN if visible (books only)",
-    "upc": "UPC barcode if visible",
-    "psaCert": "PSA cert number if visible (graded cards)",
-    "setNumber": "Set or model number if visible",
-    "cardNumber": "Card number like 084/163 if visible",
-    "coinDate": "Date on coin if visible",
-    "coinMint": "Mint mark if visible",
-    "serialNumber": "Any serial number visible"
-  },
-  "confidence": 0.95,
-  "estimatedValue": 0,
-  "decision": "BUY"
+  "description": "Brief 1-2 sentence description of what you see",
+  "confidence": 0.85,
+  "estimatedValue": 25,
+  "decision": "BUY",
+  "valuation_factors": ["Identified from image", "Condition assessed visually"],
+  "summary_reasoning": "Brief identification reasoning"
 }
 
-CRITICAL RULES:
-1. Be as SPECIFIC as possible with itemName — include set names, editions, years, variants
-2. Extract ALL visible identifiers — VINs, ISBNs, barcodes, cert numbers, serial numbers
-3. For Pokemon cards: include card number (e.g., #084/163), set name, rarity
-4. For coins: include country, denomination, year, mint mark
-5. For LEGO: include set number if visible
-6. For books: include ISBN, author, edition
-7. DO NOT guess at pricing — set estimatedValue to 0, decision to "BUY"
-8. Focus entirely on ACCURATE IDENTIFICATION
+IDENTIFICATION EXAMPLES:
+- Comic book → "Star Wars: The Empire Strikes Back #18 (Marvel Comics, 1978)"
+- Coin → "1921 Morgan Silver Dollar, Philadelphia Mint, VF condition"
+- Pokemon card → "Charizard #4/102 Base Set Holo Rare, 1999 WOTC"
+- Book → "The Grapes of Wrath by John Steinbeck, First Edition, 1939, Viking Press"
+- LEGO → "LEGO Star Wars Millennium Falcon #75192, Sealed"
+- Sports card → "1986 Fleer Michael Jordan #57 Rookie Card"
+- Vinyl → "Pink Floyd - Dark Side of the Moon, 1973 UK First Press, Harvest Records"
+- Watch → "Omega Speedmaster Professional Moonwatch Ref. 311.30.42.30.01.005"
+- Video game → "The Legend of Zelda: Ocarina of Time, N64, CIB"
+- Toy → "1977 Kenner Star Wars Boba Fett Action Figure, Loose"
+- Stamp → "US 1918 Inverted Jenny 24c Airmail, Scott #C3a"
+- Vehicle → "2024 Ford F-150 XLT SuperCrew 4x4 VIN: 1FTFW1E50MFA12345"
 
-SUPPORTED CATEGORIES:
+CATEGORIES:
 coins, stamps, banknotes, pokemon_cards, trading_cards, sports_cards,
 lego, books, vinyl_records, sneakers, watches, jewelry, toys, figurines,
 video_games, comics, art, antiques, vehicles, electronics, clothing,
 musical_instruments, wine, spirits, collectibles, household, general
 
-VIN EXTRACTION (vehicles):
-- VINs are exactly 17 characters: letters A-H, J-N, P, R-Z and digits 0-9
-- Include the FULL VIN in itemName if visible
-- Example: "2024 Ford F-150 XLT VIN: 1FTFW1E50MFA12345"
-
-PSA/GRADED CARD EXTRACTION:
-- Look for PSA, BGS, CGC cert numbers on slabs
-- Include grade number (e.g., PSA 9, BGS 9.5)`;
+RULES:
+1. itemName must be SPECIFIC — include issue numbers, years, editions, variants, authors
+2. estimatedValue should be your rough estimate (even approximate is fine, just not 0)
+3. Extract ANY visible identifiers and include them in itemName (ISBNs, VINs, serial numbers, issue numbers)
+4. For graded/slabbed items, include the grade (PSA 9, BGS 9.5, CGC 9.8)
+5. NEVER return generic names like "Comic Book" or "Old Coin" — always be specific
+6. Respond with ONLY the JSON object — no other text`;

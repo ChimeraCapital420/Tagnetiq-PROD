@@ -1,6 +1,8 @@
 // FILE: src/lib/hydra/ai/google.ts
 // Google Gemini Provider for HYDRA
 // Primary vision AI with multimodal capabilities
+//
+// v9.1.1: Removed fake fallback name — parsing failure = throw, not fake data
 
 import { BaseAIProvider, ProviderConfig } from './base-provider.js';
 import type { AIAnalysisResponse } from '../types.js';
@@ -54,27 +56,29 @@ export class GoogleProvider extends BaseAIProvider {
         ],
       };
 
-      // Add image if provided
+      // Add images (support multiple)
       if (images.length > 0) {
-        const imageData = this.cleanBase64Image(images[0]);
-        requestBody.contents[0].parts.push({
-          inline_data: {
-            mime_type: 'image/jpeg',
-            data: imageData,
-          },
-        });
+        for (const img of images.slice(0, 4)) {
+          const imageData = this.cleanBase64Image(img);
+          requestBody.contents[0].parts.push({
+            inline_data: {
+              mime_type: 'image/jpeg',
+              data: imageData,
+            },
+          });
+        }
       }
 
       // Add text prompt
       requestBody.contents[0].parts.push({
-        text: prompt + '\n\nPlease respond with valid JSON only.',
+        text: prompt + '\n\nRespond with ONLY valid JSON. No markdown, no backticks, no explanation.',
       });
 
       // Get model from config
-      const model = this.provider.model || AI_PROVIDERS.google.models[0]; // gemini-2.0-flash
+      const model = this.provider.model || AI_PROVIDERS.google.primaryModel || 'gemini-2.0-flash';
       const endpoint = `${GoogleProvider.API_BASE}/${model}:generateContent?key=${this.apiKey}`;
 
-      console.log(`🔍 Google: Using ${model} model`);
+      console.log(`    🔍 Google: Using ${model} model`);
 
       // Make API request with retry logic for rate limits
       const response = await this.retryWithBackoff(async () => {
@@ -95,7 +99,6 @@ export class GoogleProvider extends BaseAIProvider {
         const errorText = await response.text();
         console.error('Google API error details:', response.status, errorText);
         
-        // Specific error handling
         if (response.status === 429) {
           throw new Error('Gemini API error: 429 - Rate limit exceeded');
         } else if (response.status === 400) {
@@ -141,28 +144,13 @@ export class GoogleProvider extends BaseAIProvider {
 
       const parsed = this.parseAnalysisResult(cleanedResponse);
 
-      // Create fallback if parsing failed
+      // v9.1.1: NO MORE FAKE FALLBACK
+      // If parsing failed, throw — don't return garbage like "Google Gemini Analysis"
+      // The first-responder in identify.ts will handle the failure gracefully
       if (!parsed) {
-        console.warn('Google: Failed to parse response, creating fallback');
-        const responseTime = Date.now() - startTime;
-        return {
-          response: {
-            itemName: 'Google Gemini Analysis',
-            estimatedValue: 25.0,
-            decision: 'SELL' as const,
-            valuation_factors: [
-              'Google Gemini analysis completed',
-              'Market assessment performed',
-              'Condition evaluation done',
-              'Price comparison executed',
-              'Resale potential reviewed',
-            ],
-            summary_reasoning: `Analysis completed by Google ${model} with market research`,
-            confidence: 0.78,
-          },
-          confidence: 0.78,
-          responseTime,
-        };
+        console.warn('Google: Failed to parse response, throwing (no fake fallback)');
+        console.warn('Google raw (first 200 chars):', cleanedResponse.substring(0, 200));
+        throw new Error('Google: Response parsing failed');
       }
 
       const responseTime = Date.now() - startTime;
@@ -207,7 +195,7 @@ export async function analyzeWithGoogle(
   const provider = new GoogleProvider({
     id: 'google-standalone',
     name: 'Google',
-    model: AI_PROVIDERS.google.models[0],
+    model: AI_PROVIDERS.google.primaryModel || 'gemini-2.0-flash',
     baseWeight: AI_MODEL_WEIGHTS.google,
     apiKey: key,
   });
