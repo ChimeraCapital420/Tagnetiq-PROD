@@ -426,30 +426,3 @@ export function formatErrorResponse(
 }
 
 // =============================================================================
-// EXPORTS
-// =============================================================================
-
-export default {
-  formatPrice,
-  formatPriceSmart,
-  formatPriceRange,
-  createPriceDisplay,
-  formatAnalysisResponse,
-  formatAuthorityData,
-  generateSummaryReasoning,
-  formatVotes,
-  formatVoteSummaryText,
-  formatConfidence,
-  formatQuality,
-  formatAPIResponse,
-  formatErrorResponse,
-};
-```
-
----
-
-Push that and test a scan. The `decisionAgreement` crash is gone — `safeMetrics()` now handles both the new pipeline format and the compat object from `analyze.ts`.
-
-While that builds, paste one of the broken providers so we can get all 8 engines firing:
-```
-src/lib/hydra/ai/google.ts
