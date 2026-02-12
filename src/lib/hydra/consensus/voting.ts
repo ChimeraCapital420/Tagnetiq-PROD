@@ -1,7 +1,8 @@
 // FILE: src/lib/hydra/consensus/voting.ts
 // Vote Collection and Tallying Logic for HYDRA Consensus Engine
 // Extracted from hydra-engine.ts
-// FIXED: Added calculateConsensus() — was missing, crashed reason.ts Stage 3
+// FIXED: Added calculateConsensus() for reason.ts Stage 3
+// FIXED: All exports present for engine.ts imports
 
 import type { ModelVote, ParsedAnalysis, AIProvider } from '../types.js';
 import { AI_MODEL_WEIGHTS } from '../config/constants.js';
@@ -11,19 +12,12 @@ import { AI_MODEL_WEIGHTS } from '../config/constants.js';
 // =============================================================================
 
 export interface VoteTally {
-  /** Total weight of BUY votes */
   buyWeight: number;
-  /** Total weight of SELL votes */
   sellWeight: number;
-  /** Total weight of all votes */
   totalWeight: number;
-  /** Weighted difference as percentage (0-1) */
   weightDifference: number;
-  /** Winning decision */
   decision: 'BUY' | 'SELL';
-  /** Whether the vote is close (within threshold) */
   isCloseVote: boolean;
-  /** Vote counts */
   counts: {
     buy: number;
     sell: number;
@@ -32,33 +26,23 @@ export interface VoteTally {
 }
 
 export interface VoteStats {
-  /** Average confidence across all votes */
   avgConfidence: number;
-  /** Average response time in ms */
   avgResponseTime: number;
-  /** Weighted average value */
   weightedValue: number;
-  /** Value agreement score (0-1) */
   valueAgreement: number;
-  /** Decision agreement score (0-1) */
   decisionAgreement: number;
-  /** Most common item name */
   consensusItemName: string;
 }
 
 export interface VoteCollection {
-  /** All collected votes */
   votes: ModelVote[];
-  /** Votes by stage */
   byStage: {
     primaryVision: ModelVote[];
     textAnalysis: ModelVote[];
     marketSearch: ModelVote[];
     tiebreaker: ModelVote[];
   };
-  /** Vote tally */
   tally: VoteTally;
-  /** Vote statistics */
   stats: VoteStats;
 }
 
@@ -77,10 +61,6 @@ export interface ConsensusResult {
 // WEIGHT CALCULATION
 // =============================================================================
 
-/**
- * Calculate dynamic weight for a vote based on provider and confidence
- * Mirrors the logic in hydra-engine.ts calculateWeight()
- */
 export function calculateVoteWeight(
   provider: AIProvider | { name: string; baseWeight?: number; specialty?: string },
   confidence: number,
@@ -89,25 +69,20 @@ export function calculateVoteWeight(
     isMarketSearch?: boolean;
   }
 ): number {
-  // Get base weight from provider or defaults
   const baseWeight = provider.baseWeight ??
     AI_MODEL_WEIGHTS[provider.name.toLowerCase()] ??
     0.75;
 
-  // Calculate weight based on confidence (matches hydra-engine.ts)
   let weight = baseWeight * confidence;
 
-  // Apply specialty bonuses (30% bonus for real-time pricing)
   if (provider.specialty === 'pricing' || provider.name === 'Perplexity') {
     weight *= 1.3;
   }
 
-  // Apply market search boost (20% boost for real-time data)
   if (options?.isMarketSearch) {
     weight *= 1.2;
   }
 
-  // Apply tiebreaker reduction (60% of normal weight)
   if (options?.isTiebreaker) {
     weight *= 0.6;
   }
@@ -115,10 +90,10 @@ export function calculateVoteWeight(
   return weight;
 }
 
-/**
- * Create a ModelVote from provider response
- * Matches the vote creation logic in hydra-engine.ts
- */
+// =============================================================================
+// VOTE CREATION
+// =============================================================================
+
 export function createVote(
   provider: AIProvider | { id: string; name: string; baseWeight?: number; specialty?: string },
   analysis: ParsedAnalysis,
@@ -131,17 +106,14 @@ export function createVote(
     fallbackItemName?: string;
   }
 ): ModelVote {
-  // Safely parse estimatedValue with null checking (matches hydra-engine.ts)
   const safeEstimatedValue = analysis.estimatedValue != null
     ? parseFloat(analysis.estimatedValue.toString())
     : 0;
 
-  // Build provider name with suffix
   let providerName = provider.name;
   if (options?.isTiebreaker) providerName += ' (TIEBREAKER)';
   if (options?.isEmergency) providerName += ' (EMERGENCY)';
 
-  // Adjust confidence for special cases
   let adjustedConfidence = confidence;
   if (options?.isTiebreaker) adjustedConfidence *= 0.8;
   if (options?.isEmergency) adjustedConfidence *= 0.5;
@@ -164,13 +136,6 @@ export function createVote(
 // VOTE TALLYING
 // =============================================================================
 
-/**
- * Tally votes by decision
- * Matches the tally logic in hydra-engine.ts
- *
- * @param votes - Array of model votes
- * @param closeVoteThreshold - Threshold for considering a vote "close" (default 15%)
- */
 export function tallyVotes(
   votes: ModelVote[],
   closeVoteThreshold: number = 0.15
@@ -213,10 +178,10 @@ export function tallyVotes(
   };
 }
 
-/**
- * Calculate vote statistics
- * Extracted from hydra-engine.ts calculateConsensus()
- */
+// =============================================================================
+// VOTE STATISTICS
+// =============================================================================
+
 export function calculateVoteStats(votes: ModelVote[]): VoteStats {
   if (votes.length === 0) {
     return {
@@ -229,19 +194,14 @@ export function calculateVoteStats(votes: ModelVote[]): VoteStats {
     };
   }
 
-  // Average confidence
   const avgConfidence = votes.reduce((sum, v) => sum + v.confidence, 0) / votes.length;
-
-  // Average response time
   const avgResponseTime = votes.reduce((sum, v) => sum + v.responseTime, 0) / votes.length;
 
-  // Weighted average value
   const totalWeight = votes.reduce((sum, v) => sum + v.weight, 0);
   const weightedValue = totalWeight > 0
     ? votes.reduce((sum, v) => sum + (v.estimatedValue * v.weight), 0) / totalWeight
     : 0;
 
-  // Value agreement (coefficient of variation) - matches hydra-engine.ts
   const values = votes.map(v => v.estimatedValue).filter(v => v > 0);
   let valueAgreement = 1;
   if (values.length > 1) {
@@ -251,13 +211,11 @@ export function calculateVoteStats(votes: ModelVote[]): VoteStats {
     valueAgreement = Math.max(0, 1 - coefficientOfVariation);
   }
 
-  // Decision agreement
   const tally = tallyVotes(votes);
   const decisionAgreement = tally.totalWeight > 0
     ? Math.max(tally.buyWeight, tally.sellWeight) / tally.totalWeight
     : 0;
 
-  // Most common item name (weighted by confidence) - matches hydra-engine.ts
   const nameVotes = votes.reduce((acc, v) => {
     const name = v.itemName || 'Unknown Item';
     acc[name] = (acc[name] || 0) + (v.weight * v.confidence);
@@ -278,17 +236,9 @@ export function calculateVoteStats(votes: ModelVote[]): VoteStats {
 }
 
 // =============================================================================
-// CONSENSUS CALCULATION
+// CONSENSUS CALCULATION (used by reason.ts)
 // =============================================================================
 
-/**
- * Calculate full consensus from votes with optional authority data anchoring
- * This is the function that reason.ts and other stages call to produce
- * the final consensus object from a set of model votes.
- *
- * If authorityData is provided (e.g., Numista price for coins, Brickset for LEGO),
- * the estimated value is anchored toward the authority price to reduce hallucination.
- */
 export function calculateConsensus(
   votes: ModelVote[],
   authorityData?: {
@@ -315,47 +265,24 @@ export function calculateConsensus(
 
   let estimatedValue = stats.weightedValue;
 
-  // Authority anchoring — if we have a known market price, blend toward it
-  // This prevents AI hallucination on well-catalogued items
   if (authorityData?.price && authorityData.price > 0) {
     const authorityPrice = authorityData.price;
-    // Weight authority at 40%, AI consensus at 60%
-    // This keeps AI influence but prevents wild outliers
     estimatedValue = (authorityPrice * 0.4) + (stats.weightedValue * 0.6);
 
-    // If AI consensus is wildly off (>3x or <0.3x authority), pull harder toward authority
     const ratio = stats.weightedValue / authorityPrice;
     if (ratio > 3 || ratio < 0.33) {
       estimatedValue = (authorityPrice * 0.6) + (stats.weightedValue * 0.4);
     }
-  } else if (authorityData?.itemDetails) {
-    // We have authority identification but no price — just use for context
-    // No value anchoring, but boost confidence if item was positively identified
   }
 
-  // Determine confidence as percentage (0-100)
   const rawConfidence = stats.avgConfidence * 100;
   let confidence = Math.round(rawConfidence);
 
-  // Boost confidence if votes agree on value
-  if (stats.valueAgreement > 0.8) {
-    confidence = Math.min(100, confidence + 5);
-  }
-
-  // Reduce confidence if vote is close
-  if (tally.isCloseVote) {
-    confidence = Math.max(10, confidence - 10);
-  }
-
-  // Reduce confidence if few votes
-  if (votes.length < 2) {
-    confidence = Math.max(10, confidence - 15);
-  }
-
-  // Clamp
+  if (stats.valueAgreement > 0.8) confidence = Math.min(100, confidence + 5);
+  if (tally.isCloseVote) confidence = Math.max(10, confidence - 10);
+  if (votes.length < 2) confidence = Math.max(10, confidence - 15);
   confidence = Math.max(0, Math.min(100, confidence));
 
-  // Determine analysis quality tier
   let analysisQuality: string;
   if (confidence >= 80 && stats.valueAgreement > 0.7 && votes.length >= 3) {
     analysisQuality = 'HIGH';
@@ -369,7 +296,6 @@ export function calculateConsensus(
     analysisQuality = 'DEGRADED';
   }
 
-  // Build reasoning summary from best vote
   const bestVote = votes.reduce((a, b) => a.weight > b.weight ? a : b);
   const reasoning = bestVote.rawResponse?.summary_reasoning
     || bestVote.rawResponse?.reasoning
@@ -377,7 +303,7 @@ export function calculateConsensus(
 
   return {
     itemName: stats.consensusItemName,
-    estimatedValue: Math.round(estimatedValue * 100) / 100, // Round to cents
+    estimatedValue: Math.round(estimatedValue * 100) / 100,
     decision: tally.decision,
     confidence,
     reasoning: typeof reasoning === 'string' ? reasoning : String(reasoning),
@@ -391,9 +317,6 @@ export function calculateConsensus(
 // VOTE COLLECTION
 // =============================================================================
 
-/**
- * Collect and organize votes by stage
- */
 export function collectVotes(
   primaryVision: ModelVote[],
   textAnalysis: ModelVote[],
@@ -415,7 +338,119 @@ export function collectVotes(
   };
 }
 
+// =============================================================================
+// VOTE FILTERING & EXTRACTION (used by engine.ts)
+// =============================================================================
+
+export function filterVotesByProvider(
+  votes: ModelVote[],
+  providerNames: string[]
+): ModelVote[] {
+  const normalizedNames = providerNames.map(n => n.toLowerCase());
+  return votes.filter(v =>
+    normalizedNames.includes(v.providerName.toLowerCase().replace(' (tiebreaker)', '').replace(' (emergency)', ''))
+  );
+}
+
+export function getBestVote(votes: ModelVote[]): ModelVote | null {
+  if (votes.length === 0) return null;
+  return votes.reduce((best, vote) => vote.weight > best.weight ? vote : best, votes[0]);
+}
+
 /**
- * Filter votes by provider type
+ * Get item description from best vote for context sharing
+ * Used by engine.ts calculateStagedConsensus() to enhance prompts for text-only providers
  */
-e
+export function extractItemContext(votes: ModelVote[]): {
+  itemName: string;
+  description: string;
+} {
+  const bestVote = getBestVote(votes);
+
+  if (!bestVote) {
+    return { itemName: '', description: '' };
+  }
+
+  const itemName = bestVote.itemName || 'Unknown Item';
+  const reasoning = bestVote.rawResponse?.summary_reasoning || '';
+  const description = reasoning ? `${itemName}: ${reasoning}` : itemName;
+
+  return { itemName, description };
+}
+
+/**
+ * Create enhanced prompt for text-only providers
+ */
+export function createEnhancedPrompt(
+  basePrompt: string,
+  itemContext: { itemName: string; description: string }
+): string {
+  if (!itemContext.description) {
+    return basePrompt;
+  }
+
+  return `${basePrompt}
+
+Based on expert visual analysis by multiple AI systems, this item has been identified as: "${itemContext.description}"
+
+Please provide your valuation analysis for this ${itemContext.itemName}.`;
+}
+
+/**
+ * Create market search prompt for Perplexity
+ */
+export function createMarketSearchPrompt(
+  basePrompt: string,
+  itemName: string
+): string {
+  return `${basePrompt}
+
+IMPORTANT: Search for recent eBay sold listings, Amazon prices, and current market values for: "${itemName}". Include specific sold prices from the last 30 days with dates and conditions.`;
+}
+
+// =============================================================================
+// VOTE LOGGING
+// =============================================================================
+
+export function logVoteSummary(collection: VoteCollection): void {
+  const { byStage, tally, stats } = collection;
+
+  console.log(`🎯 Vote Collection Summary:`);
+  console.log(`   └── Primary vision: ${byStage.primaryVision.length}`);
+  console.log(`   └── Text analysis: ${byStage.textAnalysis.length}`);
+  console.log(`   └── Market search: ${byStage.marketSearch.length}`);
+  console.log(`   └── Tiebreaker: ${byStage.tiebreaker.length}`);
+  console.log(`   └── Total: ${collection.votes.length}`);
+  console.log(`🗳️ Vote Tally:`);
+  console.log(`   └── BUY: ${tally.counts.buy} (weight: ${tally.buyWeight.toFixed(2)})`);
+  console.log(`   └── SELL: ${tally.counts.sell} (weight: ${tally.sellWeight.toFixed(2)})`);
+  console.log(`   └── Decision: ${tally.decision} (diff: ${(tally.weightDifference * 100).toFixed(1)}%)`);
+  console.log(`📊 Vote Stats:`);
+  console.log(`   └── Avg Confidence: ${(stats.avgConfidence * 100).toFixed(1)}%`);
+  console.log(`   └── Value Agreement: ${(stats.valueAgreement * 100).toFixed(1)}%`);
+  console.log(`   └── Weighted Value: $${stats.weightedValue.toFixed(2)}`);
+}
+
+export function logVoteDetails(stageName: string, vote: ModelVote): void {
+  console.log(`🎯 ${stageName} ${vote.providerName} identified: "${vote.itemName}" (confidence: ${vote.confidence.toFixed(2)})`);
+}
+
+// =============================================================================
+// DEFAULT EXPORT
+// =============================================================================
+
+export default {
+  calculateVoteWeight,
+  createVote,
+  tallyVotes,
+  calculateVoteStats,
+  calculateConsensus,
+  collectVotes,
+  filterVotesByProvider,
+  getBestVote,
+  extractItemContext,
+  createEnhancedPrompt,
+  createMarketSearchPrompt,
+  logVoteSummary,
+  logVoteDetails,
+};
