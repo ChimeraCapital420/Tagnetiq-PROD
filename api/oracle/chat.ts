@@ -1,7 +1,7 @@
 // FILE: api/oracle/chat.ts
-// Oracle Phase 2 — Conversational AI assistant with scan history context
-// Covers the full $400B annual resale market: vehicles, real estate, luxury,
-// collectibles, electronics, grocery arbitrage, sneakers, Amazon FBA, and more
+// Oracle Phase 2 Sprint B — Conversational AI with persistence + vault awareness
+// Now saves conversations to Supabase so Oracle remembers across sessions
+// Now queries vault items for portfolio questions
 //
 // Cost: ~$0.001 per message (gpt-4o-mini)
 
@@ -22,10 +22,14 @@ const supabaseAdmin = createClient(
 );
 
 // =============================================================================
-// SYSTEM PROMPT — Full resale market scope + warm personality
+// SYSTEM PROMPT
 // =============================================================================
 
-function buildSystemPrompt(scanHistory: any[], userProfile: any): string {
+function buildSystemPrompt(
+  scanHistory: any[],
+  vaultItems: any[],
+  userProfile: any
+): string {
   const userName = userProfile?.display_name || null;
 
   const basePrompt = `You are the Oracle — the AI brain of TagnetIQ, a multi-AI asset identification and resale intelligence platform. You operate across the entire $400B annual resale market.
@@ -56,8 +60,8 @@ PERSONALITY:
 - You are warm, kind, and genuinely invested in this person's success — like a trusted friend who happens to be brilliant at finding value in everything
 - You celebrate their wins ("That scan was a great find!"), encourage them through misses ("Not every item is a winner — that's how you build the eye"), and make them feel like they have an unfair advantage with you in their corner
 - Keep responses SHORT for mobile: 2-3 sentences for simple questions, up to a paragraph for complex ones
-- Use specific numbers, dates, and facts when you have them from scan history
-- Never say "I don't have access to" — if you have scan data, USE it
+- Use specific numbers, dates, and facts when you have them from scan history or vault
+- Never say "I don't have access to" — if you have scan or vault data, USE it
 - Be honest about buy/pass decisions but always frame passes constructively — "This one's not the move, but here's what to look for instead"
 - Think in terms of ROI, flip potential, hold value, and market timing — but explain WHY, not just what
 ${userName ? `- The user's name is ${userName}. Use it naturally once per conversation — not every message, not robotically. Like a friend would.` : '- You don\'t know their name yet. That\'s fine — don\'t ask for it, just be warm.'}
@@ -66,28 +70,30 @@ ${userName ? `- The user's name is ${userName}. Use it naturally once per conver
 - You are NOT a corporate chatbot. No "How can I assist you today?" energy. You're the friend they text when they find something interesting at a garage sale
 - Show genuine curiosity about what they're into. If someone scans a lot of one category, that's a passion — acknowledge it
 - Light humor is welcome when natural. Never forced, never corny
+- This conversation persists between sessions. If the user comes back later, you have context from before. Reference it naturally — "Last time we talked about that Rolex" — but don't be creepy about it
 
 CAPABILITIES:
-- Full knowledge of the user's scan history (provided below)
+- Full knowledge of the user's scan history AND vault contents (provided below)
 - Expert across ALL resale categories — not just collectibles
 - Can discuss values, authentication, market trends, sourcing strategies, selling platforms
-- Can compare items, spot patterns in their scanning behavior, suggest next moves
+- Can answer "What's my collection worth?" using real vault data
+- Can compare items, spot patterns in their behavior, suggest next moves
 - Can advise on where to sell (eBay, Mercari, Facebook Marketplace, Poshmark, StockX, GOAT, Amazon FBA, local consignment)
 - Can coach on negotiation, pricing strategy, listing optimization
 - Can have casual conversation too — not every message needs to be about buying and selling
 
 RULES:
-- Reference scans by name with specific details from the data
+- Reference scans and vault items by name with specific details
 - For items NOT in history, answer from general resale knowledge
-- If asked to scan/analyze something new, tell them to use the scanner (you can't see new images in chat mode)
-- Always be actionable — don't just inform, advise on what to DO. But read the room — sometimes the user just wants to chat, not get a strategy breakdown
+- If asked to scan/analyze something new, tell them to use the scanner
+- Always be actionable — don't just inform, advise on what to DO. But read the room — sometimes the user just wants to chat
 - If someone shares a personal win or milestone, celebrate it genuinely before jumping to analysis
 - Respond in the same language the user writes in
-- If a user seems focused on one category, proactively suggest adjacent categories they might not have considered — but gently, like a suggestion, not a lecture
-- NEVER start a response with "Great question!" or "That's a great question!" — just answer naturally
-- NEVER use the phrase "Happy to help" — you're not a customer service bot, you're a friend`;
+- If a user seems focused on one category, proactively suggest adjacent categories — but gently
+- NEVER start with "Great question!" or "That's a great question!" — just answer naturally
+- NEVER use "Happy to help" — you're not a customer service bot, you're a friend`;
 
-  // Build scan history context
+  // ── Scan History Context ──────────────────────────────────
   let scanContext = '\n\n## USER SCAN HISTORY\n';
 
   if (scanHistory.length === 0) {
@@ -129,7 +135,6 @@ RULES:
     const buyCount = scanHistory.filter((s: any) => (s.decision || s.analysis_result?.decision) === 'BUY').length;
     const passCount = scanHistory.filter((s: any) => (s.decision || s.analysis_result?.decision) === 'PASS').length;
 
-    // Calculate total estimated value
     let totalValue = 0;
     for (const scan of scanHistory) {
       const val = scan.estimated_value || parseFloat(String(scan.analysis_result?.estimatedValue || '0').replace(/[^0-9.]/g, ''));
@@ -143,37 +148,62 @@ RULES:
     scanContext += `Categories explored: ${categories.join(', ')}\n`;
     scanContext += `Total estimated value scanned: $${totalValue.toLocaleString()}\n`;
 
-    // Pattern notes for Oracle to reference naturally
+    // Pattern notes
     if (scanHistory.length >= 5) {
-      scanContext += '\n## PATTERNS (reference naturally, don\'t list these robotically)\n';
+      scanContext += '\n## PATTERNS (reference naturally, don\'t list robotically)\n';
 
       if (categories.length === 1) {
         scanContext += `User is focused on ${categories[0]} — they clearly have a passion here. Acknowledge it.\n`;
       } else if (categories.length >= 4) {
-        scanContext += `User explores many categories — they\'re curious and versatile. They might enjoy hearing about cross-category opportunities.\n`;
+        scanContext += `User explores many categories — they're curious and versatile.\n`;
       }
 
       if (buyCount > passCount * 2) {
         scanContext += `User scans a lot of winners — they have a good eye. Let them know.\n`;
       } else if (passCount > buyCount * 2) {
-        scanContext += `User gets a lot of PASS results — they might be learning what to look for, or scanning things they\'re curious about. Be encouraging.\n`;
+        scanContext += `User gets a lot of PASS results — they might be learning. Be encouraging.\n`;
       }
 
-      const recentScans = scanHistory.slice(0, 5);
-      const lastScanDate = new Date(recentScans[0].created_at);
+      const lastScanDate = new Date(scanHistory[0].created_at);
       const daysSinceLastScan = Math.floor((Date.now() - lastScanDate.getTime()) / (1000 * 60 * 60 * 24));
 
       if (daysSinceLastScan === 0) {
-        scanContext += `User scanned today — they\'re active right now.\n`;
-      } else if (daysSinceLastScan <= 2) {
-        scanContext += `User was active in the last couple days.\n`;
+        scanContext += `User scanned today — they're active right now.\n`;
       } else if (daysSinceLastScan >= 7) {
-        scanContext += `It\'s been ${daysSinceLastScan} days since their last scan. If it comes up naturally, a warm "good to see you" vibe is nice.\n`;
+        scanContext += `It's been ${daysSinceLastScan} days since their last scan. Warm "good to see you" vibe if natural.\n`;
       }
     }
   }
 
-  // User profile context
+  // ── Vault Context ─────────────────────────────────────────
+  let vaultContext = '\n\n## USER VAULT (their saved collection)\n';
+
+  if (vaultItems.length === 0) {
+    vaultContext += 'Vault is empty. If they ask about their collection, let them know they can save scanned items to their vault to track value over time.\n';
+  } else {
+    let vaultTotal = 0;
+    vaultContext += `${vaultItems.length} items in vault:\n\n`;
+
+    for (const item of vaultItems.slice(0, 20)) {
+      const value = parseFloat(String(item.estimated_value || '0').replace(/[^0-9.]/g, ''));
+      if (!isNaN(value)) vaultTotal += value;
+
+      vaultContext += `- ${item.item_name || 'Unnamed item'}`;
+      if (item.estimated_value) vaultContext += ` | Value: $${item.estimated_value}`;
+      if (item.category) vaultContext += ` | Category: ${item.category}`;
+      if (item.condition) vaultContext += ` | Condition: ${item.condition}`;
+      vaultContext += '\n';
+    }
+
+    if (vaultItems.length > 20) {
+      vaultContext += `... and ${vaultItems.length - 20} more items.\n`;
+    }
+
+    vaultContext += `\nTotal vault value: ~$${vaultTotal.toLocaleString()}\n`;
+    vaultContext += `When asked "what's my collection worth?" — use this number and break it down by category if possible.\n`;
+  }
+
+  // ── User Profile ──────────────────────────────────────────
   let profileContext = '';
   if (userProfile) {
     profileContext = '\n\n## USER PROFILE\n';
@@ -182,14 +212,14 @@ RULES:
     if (userProfile.settings?.language) profileContext += `Preferred language: ${userProfile.settings.language}\n`;
   }
 
-  return basePrompt + scanContext + profileContext;
+  return basePrompt + scanContext + vaultContext + profileContext;
 }
 
 // =============================================================================
-// QUICK CHIPS — Dynamic based on scan history
+// QUICK CHIPS
 // =============================================================================
 
-function getQuickChips(scanHistory: any[]): Array<{ label: string; message: string }> {
+function getQuickChips(scanHistory: any[], vaultItems: any[]): Array<{ label: string; message: string }> {
   const chips: Array<{ label: string; message: string }> = [];
 
   if (scanHistory.length === 0) {
@@ -210,7 +240,12 @@ function getQuickChips(scanHistory: any[]): Array<{ label: string; message: stri
       });
     }
 
-    chips.push({ label: '📈 My best finds', message: 'What are my most valuable scans so far?' });
+    // Vault chip if they have items
+    if (vaultItems.length > 0) {
+      chips.push({ label: '💎 Vault value', message: 'What\'s my collection worth right now?' });
+    } else {
+      chips.push({ label: '📈 My best finds', message: 'What are my most valuable scans so far?' });
+    }
 
     // Category-aware chips
     const categories = [...new Set(scanHistory.slice(0, 20).map((s: any) => s.category || s.analysis_result?.category || 'general'))];
@@ -226,11 +261,22 @@ function getQuickChips(scanHistory: any[]): Array<{ label: string; message: stri
     }
 
     if (scanHistory.length >= 5) {
-      chips.push({ label: '🎯 Hunt strategy', message: 'Based on my scan history, what should I hunt for next and where?' });
+      chips.push({ label: '🎯 Hunt strategy', message: 'Based on my history, what should I hunt for next?' });
     }
   }
 
   return chips.slice(0, 4);
+}
+
+// =============================================================================
+// CONVERSATION TITLE GENERATOR
+// =============================================================================
+
+function generateTitle(firstMessage: string): string {
+  // Take first 50 chars of user's first message as title
+  const clean = firstMessage.trim().replace(/\n/g, ' ');
+  if (clean.length <= 50) return clean;
+  return clean.substring(0, 47) + '...';
 }
 
 // =============================================================================
@@ -244,33 +290,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const user = await verifyUser(req);
-    const { message, conversationHistory } = req.body;
+    const { message, conversationHistory, conversationId } = req.body;
 
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'A valid "message" string is required.' });
     }
 
-    // Fetch user's scan history
-    const { data: scanHistory, error: histError } = await supabaseAdmin
+    // ── Fetch scan history ────────────────────────────────
+    const { data: scanHistory } = await supabaseAdmin
       .from('analysis_history')
       .select('id, item_name, estimated_value, category, confidence, decision, created_at, analysis_result, consensus_data')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(50);
 
-    if (histError) {
-      console.error('Failed to fetch scan history:', histError);
-    }
+    // ── Fetch vault items ─────────────────────────────────
+    const { data: vaultItems } = await supabaseAdmin
+      .from('vault_items')
+      .select('id, item_name, estimated_value, category, condition, created_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(30);
 
-    // Fetch user profile for context
+    // ── Fetch user profile ────────────────────────────────
     const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('display_name, settings')
       .eq('id', user.id)
       .single();
 
-    // Build messages array
-    const systemPrompt = buildSystemPrompt(scanHistory || [], profile);
+    // ── Build system prompt ───────────────────────────────
+    const systemPrompt = buildSystemPrompt(
+      scanHistory || [],
+      vaultItems || [],
+      profile
+    );
 
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
@@ -288,6 +342,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     messages.push({ role: 'user', content: message });
 
+    // ── Call LLM ──────────────────────────────────────────
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages,
@@ -301,12 +356,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Oracle returned empty response');
     }
 
-    const quickChips = getQuickChips(scanHistory || []);
+    // ── Persist conversation ──────────────────────────────
+    const userMsg = { role: 'user', content: message, timestamp: Date.now() };
+    const assistantMsg = { role: 'assistant', content: responseText, timestamp: Date.now() };
+
+    let activeConversationId = conversationId || null;
+
+    if (activeConversationId) {
+      // Append to existing conversation
+      const { data: existing } = await supabaseAdmin
+        .from('oracle_conversations')
+        .select('messages')
+        .eq('id', activeConversationId)
+        .eq('user_id', user.id)
+        .single();
+
+      if (existing) {
+        const updatedMessages = [...(existing.messages as any[]), userMsg, assistantMsg];
+        await supabaseAdmin
+          .from('oracle_conversations')
+          .update({ messages: updatedMessages })
+          .eq('id', activeConversationId);
+      }
+    } else {
+      // Create new conversation
+      const { data: newConvo } = await supabaseAdmin
+        .from('oracle_conversations')
+        .insert({
+          user_id: user.id,
+          title: generateTitle(message),
+          messages: [userMsg, assistantMsg],
+          scan_count_at_creation: scanHistory?.length || 0,
+          is_active: true,
+        })
+        .select('id')
+        .single();
+
+      activeConversationId = newConvo?.id || null;
+    }
+
+    // ── Response ──────────────────────────────────────────
+    const quickChips = getQuickChips(scanHistory || [], vaultItems || []);
 
     return res.status(200).json({
       response: responseText,
+      conversationId: activeConversationId,
       quickChips,
       scanCount: scanHistory?.length || 0,
+      vaultCount: vaultItems?.length || 0,
     });
 
   } catch (error: any) {

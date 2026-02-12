@@ -1,11 +1,11 @@
 // FILE: src/pages/Oracle.tsx
-// Oracle Phase 2 — Full-page conversational AI assistant
-// Mobile-first chat interface with voice + text input
-// Queries scan history for context-aware responses
+// Oracle Phase 2 Sprint B — Full-page chat with conversation persistence
+// Conversations survive between sessions — Oracle remembers
+// Mobile-first, voice + text, auto-speak toggle
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Mic, MicOff, Loader2, Volume2, VolumeX, Sparkles, ChevronLeft, Zap } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, Volume2, VolumeX, ChevronLeft, Zap, Plus, History, Trash2, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useStt } from '@/hooks/useStt';
@@ -20,7 +20,6 @@ import { toast } from 'sonner';
 // =============================================================================
 
 interface ChatMessage {
-  id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
@@ -29,6 +28,13 @@ interface ChatMessage {
 interface QuickChip {
   label: string;
   message: string;
+}
+
+interface ConversationSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
 }
 
 // =============================================================================
@@ -41,15 +47,19 @@ export default function OraclePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [quickChips, setQuickChips] = useState<QuickChip[]>([]);
   const [scanCount, setScanCount] = useState(0);
+  const [vaultCount, setVaultCount] = useState(0);
   const [autoSpeak, setAutoSpeak] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [pastConversations, setPastConversations] = useState<ConversationSummary[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   const { profile } = useAuth();
   const navigate = useNavigate();
-  const { startListening, stopListening, isListening, isSupported: micSupported, engine } = useStt();
+  const { startListening, stopListening, isListening, isSupported: micSupported } = useStt();
   const { speak, isSpeaking, cancel: cancelSpeech } = useTts();
   const { t } = useTranslation();
 
@@ -58,22 +68,67 @@ export default function OraclePage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Load initial chips on mount
+  // Load most recent active conversation on mount
   useEffect(() => {
-    loadInitialChips();
+    loadRecentConversation();
   }, []);
 
-  const loadInitialChips = async () => {
+  // ── Load most recent conversation ─────────────────────
+  const loadRecentConversation = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
-      // Send empty greeting to get chips + scan count
+      const response = await fetch('/api/oracle/conversations', {
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      });
+
+      if (!response.ok) return;
+
+      const { conversations } = await response.json();
+
+      if (conversations && conversations.length > 0) {
+        // Load the most recent conversation
+        const latest = conversations[0];
+        const detailRes = await fetch(`/api/oracle/conversations?id=${latest.id}`, {
+          headers: { 'Authorization': `Bearer ${session.access_token}` },
+        });
+
+        if (detailRes.ok) {
+          const { conversation } = await detailRes.json();
+          setConversationId(conversation.id);
+          setMessages(conversation.messages || []);
+          // Get fresh chips
+          loadChips(session.access_token);
+          return;
+        }
+      }
+
+      // No existing conversation — start fresh
+      startNewConversation(session.access_token);
+    } catch (err) {
+      console.error('Failed to load conversation:', err);
+    }
+  };
+
+  // ── Start a brand new conversation ────────────────────
+  const startNewConversation = async (accessToken?: string) => {
+    setConversationId(null);
+    setMessages([]);
+
+    try {
+      let token = accessToken;
+      if (!token) {
+        const { data: { session } } = await supabase.auth.getSession();
+        token = session?.access_token;
+      }
+      if (!token) return;
+
       const response = await fetch('/api/oracle/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           message: 'Hello',
@@ -85,26 +140,116 @@ export default function OraclePage() {
         const data = await response.json();
         setQuickChips(data.quickChips || []);
         setScanCount(data.scanCount || 0);
+        setVaultCount(data.vaultCount || 0);
+        setConversationId(data.conversationId || null);
 
-        // Add welcome message
         setMessages([{
-          id: 'welcome',
           role: 'assistant',
           content: data.response,
           timestamp: Date.now(),
         }]);
       }
     } catch (err) {
-      console.error('Failed to load Oracle:', err);
+      console.error('Failed to start conversation:', err);
     }
   };
 
-  // ── Send message ──────────────────────────────────────────
+  // ── Load chips only ───────────────────────────────────
+  const loadChips = async (accessToken: string) => {
+    try {
+      const response = await fetch('/api/oracle/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          message: 'refresh chips',
+          conversationHistory: messages.slice(-2),
+          conversationId,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setQuickChips(data.quickChips || []);
+        setScanCount(data.scanCount || 0);
+        setVaultCount(data.vaultCount || 0);
+      }
+    } catch { /* silent */ }
+  };
+
+  // ── Load conversation history list ────────────────────
+  const loadConversationHistory = async () => {
+    setIsLoadingHistory(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const response = await fetch('/api/oracle/conversations', {
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      });
+
+      if (response.ok) {
+        const { conversations } = await response.json();
+        setPastConversations(conversations || []);
+      }
+    } catch (err) {
+      console.error('Failed to load history:', err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  // ── Load a specific past conversation ─────────────────
+  const loadConversation = async (id: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const response = await fetch(`/api/oracle/conversations?id=${id}`, {
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      });
+
+      if (response.ok) {
+        const { conversation } = await response.json();
+        setConversationId(conversation.id);
+        setMessages(conversation.messages || []);
+        setShowHistory(false);
+      }
+    } catch (err) {
+      toast.error('Failed to load conversation');
+    }
+  };
+
+  // ── Delete a conversation ─────────────────────────────
+  const deleteConversation = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      await fetch(`/api/oracle/conversations?id=${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      });
+
+      setPastConversations(prev => prev.filter(c => c.id !== id));
+
+      // If we deleted the active conversation, start fresh
+      if (id === conversationId) {
+        startNewConversation(session.access_token);
+      }
+    } catch (err) {
+      toast.error('Failed to delete conversation');
+    }
+  };
+
+  // ── Send message ──────────────────────────────────────
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || isLoading) return;
 
     const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
       role: 'user',
       content: text.trim(),
       timestamp: Date.now(),
@@ -118,10 +263,7 @@ export default function OraclePage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not authenticated');
 
-      // Build conversation history (exclude welcome message internals)
-      const history = [...messages, userMessage]
-        .filter(m => m.id !== 'welcome' || m.role === 'assistant')
-        .map(m => ({ role: m.role, content: m.content }));
+      const history = messages.map(m => ({ role: m.role, content: m.content }));
 
       const response = await fetch('/api/oracle/chat', {
         method: 'POST',
@@ -131,7 +273,8 @@ export default function OraclePage() {
         },
         body: JSON.stringify({
           message: text.trim(),
-          conversationHistory: history.slice(-20), // Last 20 messages
+          conversationHistory: history.slice(-20),
+          conversationId,
         }),
       });
 
@@ -140,7 +283,6 @@ export default function OraclePage() {
       const data = await response.json();
 
       const assistantMessage: ChatMessage = {
-        id: `oracle-${Date.now()}`,
         role: 'assistant',
         content: data.response,
         timestamp: Date.now(),
@@ -148,10 +290,13 @@ export default function OraclePage() {
 
       setMessages(prev => [...prev, assistantMessage]);
 
-      // Update chips
+      // Update state
+      if (data.conversationId) setConversationId(data.conversationId);
       if (data.quickChips) setQuickChips(data.quickChips);
+      if (data.scanCount !== undefined) setScanCount(data.scanCount);
+      if (data.vaultCount !== undefined) setVaultCount(data.vaultCount);
 
-      // Auto-speak if enabled
+      // Auto-speak
       if (autoSpeak && data.response) {
         const voiceURI = profile?.settings?.tts_voice_uri || null;
         const premiumVoiceId = profile?.settings?.premium_voice_id || null;
@@ -164,22 +309,19 @@ export default function OraclePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [messages, isLoading, autoSpeak, profile, speak]);
+  }, [messages, isLoading, autoSpeak, profile, speak, conversationId]);
 
-  // ── Voice input ───────────────────────────────────────────
+  // ── Voice input ───────────────────────────────────────
   const handleVoiceInput = useCallback(async () => {
     if (isListening) {
       stopListening();
       return;
     }
-
     const transcript = await startListening();
-    if (transcript) {
-      sendMessage(transcript);
-    }
+    if (transcript) sendMessage(transcript);
   }, [isListening, startListening, stopListening, sendMessage]);
 
-  // ── Keyboard submit ───────────────────────────────────────
+  // ── Keyboard ──────────────────────────────────────────
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -187,16 +329,11 @@ export default function OraclePage() {
     }
   };
 
-  // ── Quick chip tap ────────────────────────────────────────
-  const handleChipTap = (chip: QuickChip) => {
-    sendMessage(chip.message);
-  };
-
-  // ── Render ────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────
   return (
     <div className="flex flex-col h-[calc(100dvh-3.5rem)] bg-background">
 
-      {/* ── Header ────────────────────────────────────── */}
+      {/* ── Header ──────────────────────────────────── */}
       <div className="flex-none border-b border-border/50 bg-background/80 backdrop-blur-sm">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
@@ -213,13 +350,39 @@ export default function OraclePage() {
               <div>
                 <h1 className="text-sm font-semibold leading-tight">Oracle</h1>
                 <p className="text-[10px] text-muted-foreground leading-tight">
-                  {scanCount > 0 ? `${scanCount} scans in memory` : 'Ready to assist'}
+                  {scanCount > 0
+                    ? `${scanCount} scans${vaultCount > 0 ? ` · ${vaultCount} vault items` : ''}`
+                    : 'Ready to assist'}
                 </p>
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-1">
+            {/* History toggle */}
+            <button
+              onClick={() => {
+                setShowHistory(!showHistory);
+                if (!showHistory) loadConversationHistory();
+              }}
+              className={cn(
+                'p-2 rounded-lg transition-colors',
+                showHistory ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50'
+              )}
+              aria-label="Conversation history"
+            >
+              <History className="w-4 h-4" />
+            </button>
+
+            {/* New conversation */}
+            <button
+              onClick={() => startNewConversation()}
+              className="p-2 rounded-lg text-muted-foreground hover:bg-accent/50 transition-colors"
+              aria-label="New conversation"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+
             {/* Auto-speak toggle */}
             <button
               onClick={() => {
@@ -238,21 +401,72 @@ export default function OraclePage() {
         </div>
       </div>
 
-      {/* ── Messages ──────────────────────────────────── */}
-      <div
-        ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scroll-smooth"
-      >
-        {messages.map((msg) => (
+      {/* ── History Panel (slide over) ─────────────── */}
+      <AnimatePresence>
+        {showHistory && (
           <motion.div
-            key={msg.id}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="flex-none border-b border-border/50 bg-accent/20 max-h-[40vh] overflow-y-auto"
+          >
+            <div className="px-4 py-2">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-muted-foreground">Past conversations</span>
+                <button onClick={() => setShowHistory(false)} className="p-1 rounded hover:bg-accent/50">
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+
+              {isLoadingHistory ? (
+                <div className="py-4 text-center">
+                  <Loader2 className="w-4 h-4 animate-spin mx-auto text-muted-foreground" />
+                </div>
+              ) : pastConversations.length === 0 ? (
+                <p className="py-4 text-center text-xs text-muted-foreground">No past conversations yet</p>
+              ) : (
+                <div className="space-y-1">
+                  {pastConversations.map((convo) => (
+                    <button
+                      key={convo.id}
+                      onClick={() => loadConversation(convo.id)}
+                      className={cn(
+                        'w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left transition-colors',
+                        convo.id === conversationId ? 'bg-primary/10' : 'hover:bg-accent/50'
+                      )}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium truncate">{convo.title}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {new Date(convo.updated_at).toLocaleDateString('en-US', {
+                            month: 'short', day: 'numeric',
+                          })}
+                        </p>
+                      </div>
+                      <button
+                        onClick={(e) => deleteConversation(convo.id, e)}
+                        className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Messages ──────────────────────────────────── */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scroll-smooth">
+        {messages.map((msg, i) => (
+          <motion.div
+            key={`${msg.timestamp}-${i}`}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.2 }}
-            className={cn(
-              'flex',
-              msg.role === 'user' ? 'justify-end' : 'justify-start'
-            )}
+            className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}
           >
             <div
               className={cn(
@@ -262,14 +476,13 @@ export default function OraclePage() {
                   : 'bg-accent/60 text-foreground rounded-bl-md'
               )}
             >
-              {/* Render markdown-lite: bold, line breaks */}
-              {msg.content.split('\n').map((line, i) => (
-                <React.Fragment key={i}>
-                  {i > 0 && <br />}
-                  {line.split(/\*\*(.*?)\*\*/g).map((part, j) =>
-                    j % 2 === 1
-                      ? <strong key={j} className="font-semibold">{part}</strong>
-                      : <span key={j}>{part}</span>
+              {msg.content.split('\n').map((line, j) => (
+                <React.Fragment key={j}>
+                  {j > 0 && <br />}
+                  {line.split(/\*\*(.*?)\*\*/g).map((part, k) =>
+                    k % 2 === 1
+                      ? <strong key={k} className="font-semibold">{part}</strong>
+                      : <span key={k}>{part}</span>
                   )}
                 </React.Fragment>
               ))}
@@ -277,13 +490,8 @@ export default function OraclePage() {
           </motion.div>
         ))}
 
-        {/* Loading indicator */}
         {isLoading && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex justify-start"
-          >
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex justify-start">
             <div className="bg-accent/60 rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-2">
               <div className="flex gap-1">
                 <span className="w-1.5 h-1.5 bg-foreground/40 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -313,7 +521,7 @@ export default function OraclePage() {
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: i * 0.05 }}
-                  onClick={() => handleChipTap(chip)}
+                  onClick={() => sendMessage(chip.message)}
                   disabled={isLoading}
                   className="flex-none text-xs px-3 py-1.5 rounded-full border border-border/50 bg-accent/30 hover:bg-accent/60 transition-colors whitespace-nowrap disabled:opacity-50"
                 >
@@ -328,7 +536,6 @@ export default function OraclePage() {
       {/* ── Input Bar ─────────────────────────────────── */}
       <div className="flex-none border-t border-border/50 bg-background/80 backdrop-blur-sm px-3 py-3 pb-[env(safe-area-inset-bottom,12px)]">
         <div className="flex items-end gap-2">
-          {/* Text input */}
           <div className="flex-1 relative">
             <input
               ref={inputRef}
@@ -349,7 +556,6 @@ export default function OraclePage() {
             />
           </div>
 
-          {/* Mic button */}
           {micSupported && (
             <button
               onClick={handleVoiceInput}
@@ -362,15 +568,10 @@ export default function OraclePage() {
               )}
               aria-label={isListening ? 'Stop listening' : 'Voice input'}
             >
-              {isListening ? (
-                <MicOff className="w-4 h-4" />
-              ) : (
-                <Mic className="w-4 h-4" />
-              )}
+              {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
             </button>
           )}
 
-          {/* Send button */}
           <button
             onClick={() => sendMessage(inputValue)}
             disabled={!inputValue.trim() || isLoading}
@@ -382,11 +583,7 @@ export default function OraclePage() {
             )}
             aria-label="Send message"
           >
-            {isLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
+            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </button>
         </div>
       </div>
