@@ -38,12 +38,14 @@ import ProfilePage from '@/pages/Profile';
 import UserProfilePage from '@/pages/UserProfilePage';
 import Onboarding from '@/pages/Onboarding';
 import BoardroomPage from '@/pages/Boardroom';
-import OraclePage from '@/pages/Oracle';
 import { FeedbackModal } from '@/components/beta/FeedbackModal';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
 
 // UPDATED: Import from refactored scanner module
 import DualScanner from '@/components/scanner';
+
+// UPDATED: Import from refactored oracle module
+import { OraclePage } from '@/components/oracle';
 
 // NEW: Component to handle onboarding redirect logic
 const OnboardingGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
