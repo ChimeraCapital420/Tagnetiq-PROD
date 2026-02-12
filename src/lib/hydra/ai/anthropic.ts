@@ -74,7 +74,7 @@ export class AnthropicProvider extends BaseAIProvider {
             'anthropic-version': AnthropicProvider.API_VERSION,
           },
           body: JSON.stringify({
-            model: this.provider.model || AI_PROVIDERS.Anthropic.models[0], // claude-sonnet-4-20250514
+            model: this.provider.model || AI_PROVIDERS.anthropic.models[0], // claude-sonnet-4-20250514
             max_tokens: 1024,
             messages,
             temperature: 0.1,
@@ -140,7 +140,7 @@ export async function analyzeWithAnthropic(
   const provider = new AnthropicProvider({
     id: 'anthropic-standalone',
     name: 'Anthropic',
-    model: AI_PROVIDERS.Anthropic.models[0],
+    model: AI_PROVIDERS.anthropic.models[0],
     baseWeight: AI_MODEL_WEIGHTS.anthropic,
     apiKey: key,
   });

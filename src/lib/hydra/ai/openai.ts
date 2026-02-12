@@ -64,7 +64,7 @@ export class OpenAIProvider extends BaseAIProvider {
               'Authorization': `Bearer ${this.apiKey}`,
             },
             body: JSON.stringify({
-              model: this.provider.model || AI_PROVIDERS.OpenAI.models[0],
+              model: this.provider.model || AI_PROVIDERS.openai.models[0],
               max_tokens: 800,
               response_format: { type: 'json_object' },
               messages: [
@@ -136,7 +136,7 @@ export async function analyzeWithOpenAI(
   const provider = new OpenAIProvider({
     id: 'openai-standalone',
     name: 'OpenAI',
-    model: AI_PROVIDERS.OpenAI.models[0],
+    model: AI_PROVIDERS.openai.models[0],
     baseWeight: AI_MODEL_WEIGHTS.openai,
     apiKey: key,
   });

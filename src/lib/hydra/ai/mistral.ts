@@ -51,7 +51,7 @@ Example format:
             'Authorization': `Bearer ${this.apiKey}`,
           },
           body: JSON.stringify({
-            model: this.provider.model || AI_PROVIDERS.Mistral?.models?.[0] || 'mistral-small-latest',
+            model: this.provider.model || AI_PROVIDERS.mistral?.models?.[0] || 'mistral-small-latest',
             messages: [
               {
                 role: 'system',
@@ -169,7 +169,7 @@ export async function analyzeWithMistral(
   const provider = new MistralProvider({
     id: 'mistral-standalone',
     name: 'Mistral',
-    model: AI_PROVIDERS.Mistral?.models?.[0] || 'mistral-small-latest',
+    model: AI_PROVIDERS.mistral?.models?.[0] || 'mistral-small-latest',
     baseWeight: AI_MODEL_WEIGHTS.mistral || 0.75,
     apiKey: key,
   });

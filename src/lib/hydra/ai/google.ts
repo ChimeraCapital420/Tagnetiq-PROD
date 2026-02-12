@@ -71,7 +71,7 @@ export class GoogleProvider extends BaseAIProvider {
       });
 
       // Get model from config
-      const model = this.provider.model || AI_PROVIDERS.Google.models[0]; // gemini-2.0-flash
+      const model = this.provider.model || AI_PROVIDERS.google.models[0]; // gemini-2.0-flash
       const endpoint = `${GoogleProvider.API_BASE}/${model}:generateContent?key=${this.apiKey}`;
 
       console.log(`🔍 Google: Using ${model} model`);
@@ -207,7 +207,7 @@ export async function analyzeWithGoogle(
   const provider = new GoogleProvider({
     id: 'google-standalone',
     name: 'Google',
-    model: AI_PROVIDERS.Google.models[0],
+    model: AI_PROVIDERS.google.models[0],
     baseWeight: AI_MODEL_WEIGHTS.google,
     apiKey: key,
   });

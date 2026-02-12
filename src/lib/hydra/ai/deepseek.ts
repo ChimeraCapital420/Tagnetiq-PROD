@@ -53,7 +53,7 @@ ${prompt}`;
             'Authorization': `Bearer ${this.apiKey}`,
           },
           body: JSON.stringify({
-            model: this.provider.model || AI_PROVIDERS.DeepSeek.models[0], // deepseek-chat
+            model: this.provider.model || AI_PROVIDERS.deepseek.models[0], // deepseek-chat
             messages: [
               {
                 role: 'system',
@@ -132,7 +132,7 @@ ${prompt}`;
             'Authorization': `Bearer ${this.apiKey}`,
           },
           body: JSON.stringify({
-            model: this.provider.model || AI_PROVIDERS.DeepSeek.models[0],
+            model: this.provider.model || AI_PROVIDERS.deepseek.models[0],
             messages: [
               {
                 role: 'system',
@@ -317,7 +317,7 @@ export async function analyzeWithDeepSeek(
   const provider = new DeepSeekProvider({
     id: 'deepseek-standalone',
     name: 'DeepSeek',
-    model: AI_PROVIDERS.DeepSeek.models[0],
+    model: AI_PROVIDERS.deepseek.models[0],
     baseWeight: AI_MODEL_WEIGHTS.deepseek,
     apiKey: key,
   });
@@ -341,7 +341,7 @@ export async function runDeepSeekTiebreaker(
   const provider = new DeepSeekProvider({
     id: 'deepseek-tiebreaker',
     name: 'DeepSeek',
-    model: AI_PROVIDERS.DeepSeek.models[0],
+    model: AI_PROVIDERS.deepseek.models[0],
     baseWeight: AI_MODEL_WEIGHTS.deepseek,
     apiKey: key,
   });

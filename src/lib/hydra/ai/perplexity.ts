@@ -80,7 +80,7 @@ CRITICAL: Output ONLY valid JSON. No markdown, no explanations, no citations out
             'Authorization': `Bearer ${this.apiKey}`,
           },
           body: JSON.stringify({
-            model: this.provider.model || AI_PROVIDERS.Perplexity?.models?.[0] || 'sonar',
+            model: this.provider.model || AI_PROVIDERS.perplexity?.models?.[0] || 'sonar',
             messages: [
               {
                 role: 'system',
@@ -253,7 +253,7 @@ export async function analyzeWithPerplexity(
   const provider = new PerplexityProvider({
     id: 'perplexity-standalone',
     name: 'Perplexity',
-    model: AI_PROVIDERS.Perplexity?.models?.[0] || 'sonar',
+    model: AI_PROVIDERS.perplexity?.models?.[0] || 'sonar',
     baseWeight: AI_MODEL_WEIGHTS.perplexity || 0.85,
     apiKey: key,
   });

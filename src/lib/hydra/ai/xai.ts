@@ -48,7 +48,7 @@ IMPORTANT: You must output ONLY a valid JSON object. No other text, no markdown,
             'Authorization': `Bearer ${this.apiKey}`,
           },
           body: JSON.stringify({
-            model: this.provider.model || AI_PROVIDERS.xAI?.models?.[0] || 'grok-3',
+            model: this.provider.model || AI_PROVIDERS.xai?.models?.[0] || 'grok-3',
             messages: [
               {
                 role: 'system',
@@ -125,7 +125,7 @@ export async function analyzeWithXAI(
   const provider = new XAIProvider({
     id: 'xai-standalone',
     name: 'xAI',
-    model: AI_PROVIDERS.xAI?.models?.[0] || 'grok-3',
+    model: AI_PROVIDERS.xai?.models?.[0] || 'grok-3',
     baseWeight: AI_MODEL_WEIGHTS.xai || 0.80,
     apiKey: key,
   });

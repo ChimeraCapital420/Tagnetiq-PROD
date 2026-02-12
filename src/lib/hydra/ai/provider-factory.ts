@@ -138,7 +138,7 @@ export class ProviderFactory {
     }
 
     try {
-      const config = AI_PROVIDERS.DeepSeek;
+      const config = AI_PROVIDERS.deepseek;
       return this.create({
         id: 'deepseek-tiebreaker',
         name: 'DeepSeek',

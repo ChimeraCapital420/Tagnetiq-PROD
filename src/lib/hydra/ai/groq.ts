@@ -47,7 +47,7 @@ export class GroqProvider extends BaseAIProvider {
             'Authorization': `Bearer ${this.apiKey}`,
           },
           body: JSON.stringify({
-            model: this.provider.model || AI_PROVIDERS.Groq?.models?.[0] || 'llama-3.1-8b-instant',
+            model: this.provider.model || AI_PROVIDERS.groq?.models?.[0] || 'llama-3.1-8b-instant',
             messages: [
               {
                 role: 'system',
@@ -129,7 +129,7 @@ export async function analyzeWithGroq(
   const provider = new GroqProvider({
     id: 'groq-standalone',
     name: 'Groq',
-    model: AI_PROVIDERS.Groq?.models?.[0] || 'llama-3.1-8b-instant',
+    model: AI_PROVIDERS.groq?.models?.[0] || 'llama-3.1-8b-instant',
     baseWeight: AI_MODEL_WEIGHTS.groq || 0.75,
     apiKey: key,
   });
