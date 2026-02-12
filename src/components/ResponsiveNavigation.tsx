@@ -1,12 +1,12 @@
 // FILE: src/components/ResponsiveNavigation.tsx
-// FIXED: Dashboard button now has LayoutDashboard icon visible on all screen sizes
-// Mobile-first responsive navigation
+// Mobile-first responsive navigation with Oracle
+// Oracle replaces Arena in primary nav — it's the AI brain users come back to daily
 
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import SettingsDropdown from './SettingsDropdown.js';
 import { Button } from '@/components/ui/button';
-import { Shield, Scan, Sword, Store, LayoutDashboard } from 'lucide-react';
+import { Shield, Scan, Store, LayoutDashboard, Zap } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import AlertsDropdown from '@/components/arena/AlertsDropdown';
@@ -23,12 +23,12 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
   const { showArenaWelcome, setIsScannerOpen } = useAppContext();
 
   // Determine active states based on current path
-  const isVaultActive = location.pathname.startsWith('/vault');
-  const isArenaActive = location.pathname.startsWith('/arena') && !location.pathname.includes('/marketplace');
-  const isMarketplaceActive = location.pathname.includes('/marketplace');
   const isDashboardActive = location.pathname === '/' || location.pathname.startsWith('/dashboard');
+  const isOracleActive = location.pathname.startsWith('/oracle');
+  const isMarketplaceActive = location.pathname.includes('/marketplace') || location.pathname.startsWith('/arena');
+  const isVaultActive = location.pathname.startsWith('/vault');
 
-  const handleArenaClick = (e: React.MouseEvent) => {
+  const handleMarketClick = (e: React.MouseEvent) => {
     e.preventDefault();
     showArenaWelcome(() => navigate('/arena/marketplace'));
   };
@@ -51,9 +51,9 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                 </Link>
             </div>
             
-            {/* Navigation Buttons */}
+            {/* Navigation Buttons — 5 primary actions */}
             <nav className="flex items-center gap-0.5 sm:gap-1 md:gap-2">
-                {/* FIXED: Dashboard button now has icon visible on mobile */}
+                {/* Dashboard */}
                 <Button 
                   asChild 
                   variant={isDashboardActive ? 'secondary' : 'ghost'} 
@@ -66,7 +66,7 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                     </Link>
                 </Button>
                 
-                {/* Scan Button - Primary action, always visible */}
+                {/* Scan — Primary action, always visible */}
                 <Button 
                   onClick={() => setIsScannerOpen(true)} 
                   size="sm"
@@ -75,34 +75,34 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                     <Scan className="h-4 w-4" />
                     <span className="hidden sm:inline-block sm:ml-1">Scan</span>
                 </Button>
+
+                {/* Oracle — AI Assistant */}
+                <Button 
+                  asChild 
+                  variant={isOracleActive ? 'secondary' : 'ghost'} 
+                  size="sm"
+                  className="touch-manipulation px-2 sm:px-3"
+                >
+                    <Link to="/oracle" className="flex items-center gap-1">
+                        <Zap className="h-4 w-4" />
+                        <span className="hidden sm:inline-block">Oracle</span>
+                    </Link>
+                </Button>
                 
-                {/* Market Button */}
+                {/* Market */}
                 <Button 
                   asChild 
                   variant={isMarketplaceActive ? 'secondary' : 'ghost'} 
                   size="sm"
                   className="touch-manipulation px-2 sm:px-3"
                 >
-                    <Link to="/arena/marketplace" className="flex items-center gap-1">
+                    <Link to="/arena/marketplace" onClick={handleMarketClick} className="flex items-center gap-1">
                         <Store className="h-4 w-4" />
                         <span className="hidden sm:inline-block">Market</span>
                     </Link>
                 </Button>
                 
-                {/* Arena Button */}
-                <Button 
-                  asChild 
-                  variant={isArenaActive ? 'secondary' : 'ghost'} 
-                  size="sm"
-                  className="touch-manipulation px-2 sm:px-3"
-                >
-                    <Link to="/arena/marketplace" onClick={handleArenaClick} className="flex items-center gap-1">
-                        <Sword className="h-4 w-4" />
-                        <span className="hidden sm:inline-block">Arena</span>
-                    </Link>
-                </Button>
-                
-                {/* Vault Button */}
+                {/* Vault */}
                 <Button 
                   asChild 
                   variant={isVaultActive ? 'secondary' : 'ghost'} 
