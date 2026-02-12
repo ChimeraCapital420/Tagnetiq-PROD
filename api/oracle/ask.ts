@@ -11,7 +11,7 @@ export const config = {
   maxDuration: 60,
 };
 
-const openai = new OpenAI({ apiKey: process.env.TIER2_OPENAI_TOKEN });
+const openai = new OpenAI({ apiKey: process.env.OPEN_AI_API_KEY });
 
 const systemPrompt = `
 You are the Oracle, the AI heart of the TagnetIQ platform. You serve as an expert analyst and a proactive business partner to the user. Your personality is professional, insightful, and slightly futuristic. You are not a simple chatbot; you are a high-level advisor.

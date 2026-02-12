@@ -13,7 +13,7 @@ export const config = {
   maxDuration: 15,
 };
 
-const openai = new OpenAI({ apiKey: process.env.TIER2_OPENAI_TOKEN });
+const openai = new OpenAI({ apiKey: process.env.OPEN_AI_API_KEY });
 
 const systemPrompt = `You are the "TagnetIQ Command Interpreter." Convert natural language commands into structured JSON.
 

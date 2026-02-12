@@ -15,7 +15,7 @@ const supabase = createClient(
 );
 
 const openai = new OpenAI({
-  apiKey: process.env.TIER2_OPENAI_TOKEN!
+  apiKey: process.env.OPEN_AI_API_KEY!
 });
 
 // Schema validation

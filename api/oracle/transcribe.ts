@@ -12,7 +12,7 @@ export const config = {
   maxDuration: 15,
 };
 
-const openai = new OpenAI({ apiKey: process.env.TIER2_OPENAI_TOKEN });
+const openai = new OpenAI({ apiKey: process.env.OPEN_AI_API_KEY });
 
 // Max audio size: 2MB — voice commands are short (< 10 seconds)
 const MAX_AUDIO_SIZE = 2 * 1024 * 1024;

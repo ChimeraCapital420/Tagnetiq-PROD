@@ -15,7 +15,7 @@ export const config = {
   maxDuration: 30,
 };
 
-const openai = new OpenAI({ apiKey: process.env.TIER2_OPENAI_TOKEN });
+const openai = new OpenAI({ apiKey: process.env.OPEN_AI_API_KEY });
 
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL!,
