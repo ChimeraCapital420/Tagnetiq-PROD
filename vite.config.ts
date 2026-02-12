@@ -26,7 +26,33 @@ export default defineConfig({
             type: 'image/png'
           }
         ]
-      }
+      },
+      // FIX: Raise precache limit so the SW doesn't choke on large chunks
+      workbox: {
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4MB limit
+        // Don't precache source maps or huge chunks — fetch on demand instead
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        runtimeCaching: [
+          {
+            // Cache API calls with network-first strategy
+            urlPattern: /^https:\/\/.*\/api\//,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'api-cache',
+              expiration: { maxEntries: 50, maxAgeSeconds: 300 },
+            },
+          },
+          {
+            // Cache fonts/images with cache-first
+            urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp|woff2)$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'asset-cache',
+              expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 },
+            },
+          },
+        ],
+      },
     })
   ],
   resolve: {
@@ -37,13 +63,30 @@ export default defineConfig({
   build: {
     target: 'esnext',
     minify: 'terser',
+    chunkSizeWarningLimit: 600, // Raise from default 500 to reduce noise
     rollupOptions: {
       output: {
         manualChunks: {
+          // ── Framework ─────────────────────────────────
           'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          'ui-vendor': ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu', '@radix-ui/react-tabs'],
+
+          // ── UI libraries ──────────────────────────────
+          'ui-vendor': [
+            '@radix-ui/react-dialog',
+            '@radix-ui/react-dropdown-menu',
+            '@radix-ui/react-tabs',
+          ],
+          'animation': ['framer-motion'],
+
+          // ── Data layer ────────────────────────────────
           'supabase': ['@supabase/supabase-js'],
-          'ai-vendors': ['@anthropic-ai/sdk', '@google/generative-ai', 'openai']
+
+          // ── AI SDKs (server-side, but imported in shared types)
+          'ai-vendors': ['@anthropic-ai/sdk', '@google/generative-ai', 'openai'],
+
+          // ── Utilities ─────────────────────────────────
+          'i18n': ['i18next', 'react-i18next'],
+          'charts': ['recharts'],
         }
       }
     }
