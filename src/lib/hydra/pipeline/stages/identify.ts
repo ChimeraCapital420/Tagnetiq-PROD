@@ -1,7 +1,10 @@
 // FILE: src/lib/hydra/pipeline/stages/identify.ts
-// HYDRA v9.0 - Stage 1: IDENTIFY
-// Fast vision identification — Google Flash + OpenAI
-// Task: What is this item? Do NOT price it.
+// HYDRA v9.1 - Stage 1: IDENTIFY
+// First-responder pattern: return as soon as ONE vision model identifies
+// Don't wait for slowest provider — pipeline moves immediately
+//
+// v9.0: Waited for ALL providers (caused 13-20s Stage 1)
+// v9.1: First-responder returns in 3-5s, adds Anthropic vision
 
 import { ProviderFactory } from '../../ai/provider-factory.js';
 import { isProviderAvailable } from '../../config/providers.js';
@@ -13,29 +16,34 @@ import type { IdentifyResult } from '../types.js';
 import { buildIdentifyPrompt } from '../prompts/identify-prompt.js';
 
 // =============================================================================
-// IDENTIFY STAGE
+// IDENTIFY STAGE — FIRST RESPONDER PATTERN
 // =============================================================================
 
 /**
  * Stage 1: Vision identification
- * Runs Google Flash + OpenAI in parallel
- * Returns item name, category, condition, identifiers
- * DOES NOT ask for pricing — that's Stage 3's job
+ * Runs Google Flash + OpenAI + Anthropic in parallel
+ * Returns as soon as FIRST provider identifies — doesn't wait for all
  * 
- * Starts Stage 2 as soon as FIRST provider resolves (speed optimization)
+ * v9.1 Speed optimization:
+ * Before: Wait for all → 13-20s (slowest provider wins)
+ * After:  First responder → 3-5s (fastest provider wins)
+ * 
+ * Pipeline moves to Stage 2 immediately after first identification.
+ * Slow providers' results are discarded — speed > completeness for ID.
  */
 export async function runIdentifyStage(
   images: string[],
   itemNameHint: string,
   categoryHint?: string,
-  timeout: number = 8000
+  timeout: number = 20000
 ): Promise<IdentifyResult> {
   const stageStart = Date.now();
   
   console.log(`\n  🔍 Stage 1 — IDENTIFY`);
   
-  // Only vision providers participate in identification
-  const identifyProviders = ['google', 'openai'].filter(isProviderAvailable);
+  // All vision-capable providers participate in identification
+  // Anthropic added in v9.1 — strong vision, often fastest
+  const identifyProviders = ['google', 'openai', 'anthropic'].filter(isProviderAvailable);
   
   if (identifyProviders.length === 0) {
     console.log(`    ⚠️ No vision providers available, using hint only`);
@@ -50,32 +58,28 @@ export async function runIdentifyStage(
     categoryHint,
   });
   
-  // Run providers in parallel with timeout
-  const results = await Promise.allSettled(
-    identifyProviders.map(providerId => 
-      runIdentifyProvider(providerId, images, prompt, timeout)
-    )
+  // =========================================================================
+  // FIRST RESPONDER PATTERN
+  // Fire all providers simultaneously, return when FIRST one identifies.
+  // Don't wait for slow providers — speed is critical for UX.
+  // =========================================================================
+  const vote = await raceToFirstIdentification(
+    identifyProviders,
+    images,
+    prompt,
+    timeout
   );
   
-  // Collect successful votes
-  const votes: ModelVote[] = results
-    .filter((r): r is PromiseFulfilledResult<ModelVote | null> => r.status === 'fulfilled')
-    .map(r => r.value)
-    .filter((v): v is ModelVote => v !== null);
-  
-  console.log(`    ✅ ${votes.length}/${identifyProviders.length} providers responded`);
-  
-  if (votes.length === 0) {
+  if (!vote) {
+    console.log(`    ⚠️ No providers returned identification`);
     return buildFallbackIdentifyResult(itemNameHint, categoryHint, stageStart);
   }
   
-  // Pick best identification (highest confidence/weight)
-  const bestVote = votes.reduce((a, b) => a.weight > b.weight ? a : b);
-  const rawResponse = bestVote.rawResponse as any;
+  const rawResponse = vote.rawResponse as any;
   
   // Extract identified item name
-  const identifiedName = bestVote.itemName && bestVote.itemName !== 'Unknown Item'
-    ? bestVote.itemName
+  const identifiedName = vote.itemName && vote.itemName !== 'Unknown Item'
+    ? vote.itemName
     : itemNameHint || 'Unidentified Item';
   
   // Extract category from AI
@@ -103,7 +107,9 @@ export async function runIdentifyStage(
   
   console.log(`    🎯 Identified: "${identifiedName}"`);
   console.log(`    🏷️ Category: ${categoryResult.category} (${categoryResult.confidence}%)`);
+  console.log(`    🏃 First responder: ${vote.providerId} (${vote.responseTime}ms)`);
   if (identifiers.vin) console.log(`    🚗 VIN: ${identifiers.vin}`);
+  if (identifiers.isbn) console.log(`    📚 ISBN: ${identifiers.isbn}`);
   if (identifiers.psaCert) console.log(`    🏆 PSA Cert: ${identifiers.psaCert}`);
   console.log(`    ⏱️ Stage 1 complete: ${stageTime}ms`);
   
@@ -113,10 +119,75 @@ export async function runIdentifyStage(
     condition,
     identifiers,
     description,
-    primaryProvider: bestVote.providerId,
-    votes,
+    primaryProvider: vote.providerId,
+    votes: [vote],
     stageTimeMs: stageTime,
   };
+}
+
+// =============================================================================
+// FIRST RESPONDER — RACE TO FIRST VALID IDENTIFICATION
+// =============================================================================
+
+/**
+ * Race all vision providers. Return the FIRST valid identification.
+ * Remaining providers are abandoned — we don't wait.
+ * 
+ * This is the key speed optimization:
+ * - Google Flash often returns in 2-3s
+ * - Anthropic often returns in 3-5s  
+ * - OpenAI can take 10-15s with images
+ * 
+ * Instead of waiting 15s for OpenAI, we return Google's result in 3s.
+ */
+async function raceToFirstIdentification(
+  providerIds: string[],
+  images: string[],
+  prompt: string,
+  timeout: number
+): Promise<ModelVote | null> {
+  return new Promise((resolve) => {
+    let resolved = false;
+    let completed = 0;
+    const total = providerIds.length;
+    
+    // Timeout — if nobody responds, return null
+    const timeoutId = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        console.log(`    ⏱️ All identification providers timed out (${timeout}ms)`);
+        resolve(null);
+      }
+    }, timeout);
+    
+    // Fire all providers simultaneously
+    providerIds.forEach(providerId => {
+      runIdentifyProvider(providerId, images, prompt, timeout)
+        .then(vote => {
+          completed++;
+          
+          if (vote && !resolved) {
+            // FIRST valid result — resolve immediately
+            resolved = true;
+            clearTimeout(timeoutId);
+            resolve(vote);
+          } else if (completed === total && !resolved) {
+            // All done, none succeeded
+            resolved = true;
+            clearTimeout(timeoutId);
+            resolve(null);
+          }
+        })
+        .catch(() => {
+          completed++;
+          if (completed === total && !resolved) {
+            resolved = true;
+            clearTimeout(timeoutId);
+            resolve(null);
+          }
+        });
+    });
+  });
 }
 
 // =============================================================================
@@ -139,13 +210,15 @@ async function runIdentifyProvider(
       baseWeight: AI_MODEL_WEIGHTS[providerId as keyof typeof AI_MODEL_WEIGHTS] || 1.0,
     });
     
-    // Race against timeout
+    // Individual provider timeout (slightly less than stage timeout)
+    const providerTimeout = Math.min(timeout - 500, 15000);
+    
     const result = await Promise.race([
       provider.analyze(images, prompt),
       new Promise<null>((resolve) => setTimeout(() => {
-        console.log(`    ⏱️ ${providerId} identification timed out (${timeout}ms)`);
+        console.log(`    ⏱️ ${providerId} identification timed out (${providerTimeout}ms)`);
         resolve(null);
-      }, timeout))
+      }, providerTimeout))
     ]);
     
     if (!result || !result.response) {
@@ -154,6 +227,13 @@ async function runIdentifyProvider(
     }
     
     const responseTime = Date.now() - start;
+    
+    // Validate it actually identified something (not just "Unknown Item")
+    const itemName = result.response.itemName || '';
+    if (!itemName || itemName === 'Unknown Item' || itemName === 'Unidentified Item') {
+      console.log(`    ✗ ${providerId}: Could not identify item (${responseTime}ms)`);
+      return null;
+    }
     
     const vote = createVote(
       { id: providerId, name: providerId, baseWeight: result.confidence || 0.8 },
@@ -200,10 +280,9 @@ function extractIdentifiers(
     if (details.cardNumber || details.card_number) identifiers.cardNumber = details.cardNumber || details.card_number;
   }
   
-  // Extract VIN from text (imported from vin module when extracted)
+  // Extract VIN from text
   const vinMatch = itemName.toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/);
   if (vinMatch && !identifiers.vin) {
-    // Basic VIN validation: must have 3+ digits, not all letters
     const candidate = vinMatch[0];
     const digits = (candidate.match(/\d/g) || []).length;
     if (digits >= 3) {
