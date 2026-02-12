@@ -1,59 +1,36 @@
 // FILE: api/analyze.ts
-// HYDRA v8.1 - Slim Analysis Handler
-// Orchestrates modular components for multi-AI consensus analysis
-// FIXED v6.3: AI category now properly passed as 3rd parameter to detectItemCategory
-// FIXED v6.3: Vision prompt now instructs VIN extraction from images
-// UPDATED v6.4: Now accepts and persists originalImageUrls for marketplace integration
-// FIXED v6.5: Stage 7 now uses HYDRA's pre-calculated blended price (was looking for priceData instead of priceAnalysis)
-// FIXED v6.5: eBay listing count now properly weights against AI consensus
-// FIXED v6.6: Much more aggressive market weighting - 2000 listings at $1 should NOT become $10!
-// FIXED v7.5: eBay data now included in response (was being fetched but not displayed!)
-// ADDED v8.0: Provider benchmark tracking - scores every AI vote against market ground truth
-// FIXED v8.1: Raw barcodes from scanner now passed to UPCitemdb via additionalContext
+// HYDRA v9.0 - Slim Analysis Handler
+// Evidence-based pipeline: IDENTIFY → FETCH → REASON → VALIDATE
+// Reduced from 866 lines to ~200 lines — orchestration only
+//
+// CHANGELOG:
+// v6.3: AI category passed to detectItemCategory
+// v6.4: originalImageUrls for marketplace
+// v6.5: HYDRA blended price (was ignoring market data)
+// v6.6: Aggressive market weighting
+// v7.5: eBay data in response
+// v8.0: Provider benchmark tracking
+// v8.1: Scanner barcode passthrough (additionalContext)
+// v8.2: Barcode Spider cascade + Kroger retail pricing
+// v9.0: Evidence-based pipeline — AIs reason WITH market data, not blind
+// v9.0.1: Barcode passthrough wired into pipeline (was missing from v9.0)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// Import from modular HYDRA architecture
+// v9.0: Pipeline orchestrator replaces manual stage management
+import { runPipeline } from '../src/lib/hydra/pipeline/index.js';
+
+// Self-heal: dynamic weights from benchmark data
+import { getDynamicWeights } from '../src/lib/hydra/self-heal/index.js';
+
+// Response formatting + storage (unchanged)
 import {
-  // Category detection
-  detectItemCategory,
-  
-  // AI providers
-  ProviderFactory,
-  isProviderAvailable,
-  
-  // Consensus
-  calculateConsensus,
-  shouldTriggerTiebreaker,
-  createVote,
-  
-  // Pricing
-  blendPrices,
   formatAnalysisResponse,
   formatAPIResponse,
   formatErrorResponse,
-  
-  // Storage
   saveAnalysisAsync,
   isSupabaseAvailable,
-  
-  // Prompts
-  buildAnalysisPrompt,
-  buildUserMessage,
-  
-  // Types
-  type ModelVote,
 } from '../src/lib/hydra/index.js';
-
-// Import fetchers
-import { fetchMarketData } from '../src/lib/hydra/fetchers/index.js';
-
-// Import provider config for creating providers
-import { AI_PROVIDERS } from '../src/lib/hydra/config/providers.js';
-import { AI_MODEL_WEIGHTS } from '../src/lib/hydra/config/constants.js';
-
-// v8.0: Provider benchmark tracking
-import { recordBenchmarks, buildBenchmarkContext } from '../src/lib/hydra/benchmarks/index.js';
 
 // =============================================================================
 // CONFIG
@@ -75,15 +52,17 @@ interface AnalyzeRequest {
   analysisId?: string;
   categoryHint?: string;
   condition?: string;
-  originalImageUrls?: string[];  // Original quality URLs for marketplace
-  scannedBarcodes?: string[];    // v8.1: Raw barcodes from device scanner
+  originalImageUrls?: string[];
+  // v8.1+: Raw barcodes from device scanner (react-zxing reads all 12/13 digits)
+  // These are MORE accurate than AI vision barcode reading (which truncates)
+  scannedBarcodes?: string[];
 }
 
 interface MultiModalItem {
   type: 'photo' | 'video' | 'document' | 'certificate';
   name: string;
   data: string;
-  originalUrl?: string;  // Original URL from Supabase storage
+  originalUrl?: string;
   additionalFrames?: string[];
   metadata?: {
     documentType?: string;
@@ -97,50 +76,44 @@ function validateRequest(body: unknown): AnalyzeRequest {
   if (!body || typeof body !== 'object') {
     throw new Error('Invalid request body');
   }
-  
+
   const rawBody = body as Record<string, unknown>;
-  
+
   // ==========================================================================
   // HANDLE MULTI-MODAL FORMAT (from DualScanner)
   // ==========================================================================
   if (rawBody.items && Array.isArray(rawBody.items) && rawBody.items.length > 0) {
     const items = rawBody.items as MultiModalItem[];
     const primaryItem = items[0];
-    
-    // Extract image data from the primary item
+
+    // Extract primary image
     let imageBase64: string | undefined;
     if (primaryItem.data) {
-      // Remove data URL prefix if present
-      imageBase64 = primaryItem.data.includes('base64,') 
-        ? primaryItem.data.split('base64,')[1] 
+      imageBase64 = primaryItem.data.includes('base64,')
+        ? primaryItem.data.split('base64,')[1]
         : primaryItem.data;
     }
-    
+
     // Collect additional images from other items and video frames
     const additionalImages: string[] = [];
-    
     if (primaryItem.additionalFrames) {
       primaryItem.additionalFrames.forEach(frame => {
-        const cleanFrame = frame.includes('base64,') ? frame.split('base64,')[1] : frame;
-        additionalImages.push(cleanFrame);
+        additionalImages.push(frame.includes('base64,') ? frame.split('base64,')[1] : frame);
       });
     }
-    
     items.slice(1).forEach(item => {
       if (item.data) {
-        const cleanData = item.data.includes('base64,') ? item.data.split('base64,')[1] : item.data;
-        additionalImages.push(cleanData);
+        additionalImages.push(item.data.includes('base64,') ? item.data.split('base64,')[1] : item.data);
       }
     });
-    
-    // Collect original URLs for marketplace (filter out blob: URLs)
+
+    // Collect original image URLs for marketplace listings
     const originalImageUrls: string[] = [];
     items.forEach(item => {
       if (item.originalUrl && !item.originalUrl.startsWith('blob:')) {
         originalImageUrls.push(item.originalUrl);
       }
     });
-    // Also check top-level originalImageUrls array
     if (Array.isArray(rawBody.originalImageUrls)) {
       (rawBody.originalImageUrls as string[]).forEach(url => {
         if (url && !url.startsWith('blob:') && !originalImageUrls.includes(url)) {
@@ -148,25 +121,30 @@ function validateRequest(body: unknown): AnalyzeRequest {
         }
       });
     }
-    
-    // v8.1: Extract raw barcodes from scanner metadata
+
+    // ========================================================================
+    // FIXED v8.1/v9.0.1: Extract raw barcodes from device scanner
     // The device's barcode scanner (react-zxing) reads all 12/13 digits perfectly.
     // AI vision often truncates barcode numbers when reading from images.
-    // This ensures fetchers get the full, accurate barcode.
+    // DualScanner sends barcodes via: items[].metadata.barcodes[]
+    // ========================================================================
     const scannedBarcodes: string[] = [];
     items.forEach(item => {
-      if (item.metadata?.barcodes) {
+      if (item.metadata?.barcodes && Array.isArray(item.metadata.barcodes)) {
         item.metadata.barcodes.forEach(bc => {
-          if (bc && !scannedBarcodes.includes(bc)) {
+          if (bc && typeof bc === 'string' && bc.length >= 8 && !scannedBarcodes.includes(bc)) {
             scannedBarcodes.push(bc);
           }
         });
       }
     });
-    
-    // Generate item name - let AI identify from image
+
+    if (scannedBarcodes.length > 0) {
+      console.log(`📊 Scanner barcodes extracted: ${scannedBarcodes.join(', ')}`);
+    }
+
+    // Extract item name
     let itemName = '';
-    
     if (primaryItem.name && !primaryItem.name.startsWith('Photo ') && !primaryItem.name.startsWith('Video ')) {
       itemName = primaryItem.name;
     } else if (primaryItem.metadata?.description) {
@@ -174,12 +152,9 @@ function validateRequest(body: unknown): AnalyzeRequest {
     } else if (primaryItem.metadata?.extractedText) {
       itemName = primaryItem.metadata.extractedText.substring(0, 50).trim();
     }
-    // If no name, leave empty - AI will identify it
-    
-    const categoryHint = (rawBody.subcategory_id as string) || 
-                         (rawBody.category_id as string) || 
-                         undefined;
-    
+
+    const categoryHint = (rawBody.subcategory_id as string) || (rawBody.category_id as string) || undefined;
+
     return {
       itemName,
       imageBase64,
@@ -192,13 +167,12 @@ function validateRequest(body: unknown): AnalyzeRequest {
       scannedBarcodes: scannedBarcodes.length > 0 ? scannedBarcodes : undefined,
     };
   }
-  
+
   // ==========================================================================
-  // HANDLE STANDARD FORMAT (direct itemName)
+  // HANDLE STANDARD FORMAT
   // ==========================================================================
   const { itemName, imageBase64, userId, analysisId, categoryHint, condition, originalImageUrls } = rawBody;
-  
-  // itemName can be empty if we have an image - AI will identify it
+
   return {
     itemName: typeof itemName === 'string' ? itemName.trim() : '',
     imageBase64: typeof imageBase64 === 'string' ? imageBase64 : undefined,
@@ -207,168 +181,8 @@ function validateRequest(body: unknown): AnalyzeRequest {
     categoryHint: typeof categoryHint === 'string' ? categoryHint : undefined,
     condition: typeof condition === 'string' ? condition : 'good',
     originalImageUrls: Array.isArray(originalImageUrls) ? originalImageUrls.filter((u): u is string => typeof u === 'string' && !u.startsWith('blob:')) : undefined,
+    // Standard format doesn't send barcodes — only DualScanner multi-modal does
   };
-}
-
-// =============================================================================
-// VIN EXTRACTION HELPER
-// =============================================================================
-
-/**
- * Extract VIN from AI-identified item name or raw response
- * VINs are 17 characters: letters A-H, J-N, P, R-Z and digits 0-9
- * 
- * FIXED v6.3.1: Added validation to prevent false positives like "FADVENTUREBYGARYB"
- * - VINs must contain at least 3 digits (real VINs always have digits)
- * - VINs must not be all letters (that's just text)
- * - Context should include vehicle-related keywords
- */
-function extractVINFromText(text: string, requireVehicleContext: boolean = true): string | null {
-  if (!text) return null;
-  
-  const normalized = text.toUpperCase();
-  const textLower = text.toLowerCase();
-  
-  // If requiring vehicle context, check for vehicle-related keywords
-  if (requireVehicleContext) {
-    const vehicleKeywords = [
-      'vin', 'vehicle', 'car', 'truck', 'suv', 'auto', 'motor',
-      'ford', 'chevy', 'chevrolet', 'toyota', 'honda', 'nissan', 'dodge',
-      'jeep', 'gmc', 'bmw', 'mercedes', 'audi', 'lexus', 'tesla',
-      'door jamb', 'dashboard', 'windshield', 'title', 'registration',
-      'odometer', 'mileage', 'carfax', 'autocheck'
-    ];
-    
-    const hasVehicleContext = vehicleKeywords.some(kw => textLower.includes(kw));
-    if (!hasVehicleContext) {
-      return null; // No vehicle context, don't extract VIN
-    }
-  }
-  
-  // Pattern 1: VIN with explicit label (highest confidence)
-  const labeledVinPattern = /VIN[:\s#-]*([A-HJ-NPR-Z0-9]{17})/gi;
-  const labeledMatch = normalized.match(labeledVinPattern);
-  if (labeledMatch) {
-    const vin = labeledMatch[0].replace(/VIN[:\s#-]*/gi, '');
-    if (isValidVINStructure(vin)) {
-      return vin;
-    }
-  }
-  
-  // Pattern 2: Standard 17-character VIN (with validation)
-  const vinPattern = /\b[A-HJ-NPR-Z0-9]{17}\b/g;
-  const matches = normalized.match(vinPattern);
-  
-  if (matches && matches.length > 0) {
-    for (const match of matches) {
-      if (isValidVINStructure(match)) {
-        return match;
-      }
-    }
-  }
-  
-  // Pattern 3: VIN with spaces or dashes (sometimes formatted)
-  const spacedPattern = /([A-HJ-NPR-Z0-9][\s-]?){17}/g;
-  const spacedMatches = normalized.match(spacedPattern);
-  if (spacedMatches) {
-    for (const match of spacedMatches) {
-      const cleaned = match.replace(/[\s-]/g, '');
-      if (cleaned.length === 17 && isValidVINStructure(cleaned)) {
-        return cleaned;
-      }
-    }
-  }
-  
-  return null;
-}
-
-/**
- * Validate VIN structure to prevent false positives
- * Real VINs have specific characteristics that random text doesn't
- */
-function isValidVINStructure(vin: string): boolean {
-  if (!vin || vin.length !== 17) return false;
-  
-  // Must not contain I, O, Q (never used in VINs)
-  if (/[IOQ]/i.test(vin)) return false;
-  
-  // Must contain at least 3 digits (all real VINs have digits)
-  const digitCount = (vin.match(/\d/g) || []).length;
-  if (digitCount < 3) return false;
-  
-  // Must not be all letters (that's just text, not a VIN)
-  if (/^[A-Z]+$/i.test(vin)) return false;
-  
-  // Check for common VIN patterns:
-  // Position 1: Country of origin (1-5 = North America, S = UK, W = Germany, J = Japan, etc.)
-  const validFirstChars = '123456789ABCDEFGHJKLMNPRSTUVWXYZ';
-  if (!validFirstChars.includes(vin[0])) return false;
-  
-  // Position 9 is the check digit (0-9 or X)
-  const checkDigit = vin[8];
-  if (!/[0-9X]/.test(checkDigit)) return false;
-  
-  // Position 10 is model year (A-Y excluding I, O, Q, U, Z, or 1-9)
-  const yearChar = vin[9];
-  if (!/[A-HJ-NPR-TV-Y1-9]/.test(yearChar)) return false;
-  
-  // Positions 12-17 are the serial number (usually mostly digits)
-  const serialSection = vin.substring(11);
-  const serialDigits = (serialSection.match(/\d/g) || []).length;
-  if (serialDigits < 3) return false; // Serial section should have digits
-  
-  return true;
-}
-
-// =============================================================================
-// MARKET WEIGHT CALCULATION (NEW v6.5)
-// =============================================================================
-
-/**
- * Calculate how much weight to give market data vs AI consensus
- * More eBay listings = more trust in real market data
- * Authority data = more trust in catalog prices
- * 
- * FIXED v6.6: Much more aggressive weighting for high listing counts
- * A $1 card with 2000+ listings should NOT become $10!
- * 
- * @returns weight from 0.0 to 0.95 (market data percentage)
- */
-function calculateMarketWeight(marketResult: any): number {
-  let weight = 0.50; // Base 50% market / 50% AI
-  
-  // Find eBay source and check listing count
-  const ebaySource = marketResult.sources?.find((s: any) => s.source === 'ebay');
-  if (ebaySource?.totalListings) {
-    const listings = ebaySource.totalListings;
-    
-    // FIXED v6.6: Much more aggressive scaling for high listing counts
-    if (listings >= 1000) {
-      weight += 0.43; // 1000+ listings: 93% market (commodity item)
-    } else if (listings >= 500) {
-      weight += 0.40; // 500-999 listings: 90% market
-    } else if (listings >= 100) {
-      weight += 0.35; // 100-499 listings: 85% market
-    } else if (listings >= 50) {
-      weight += 0.30; // 50-99 listings: 80% market
-    } else if (listings >= 20) {
-      weight += 0.25; // 20-49 listings: 75% market
-    } else if (listings >= 10) {
-      weight += 0.15; // 10-19 listings: 65% market
-    } else if (listings >= 5) {
-      weight += 0.10; // 5-9 listings: 60% market
-    } else if (listings >= 1) {
-      weight += 0.05; // 1-4 listings: 55% market
-    }
-  }
-  
-  // Authority data present = more trust in market/catalog data
-  if (marketResult.primaryAuthority) {
-    weight += 0.05; // +5% for authority verification (reduced from 10%)
-  }
-  
-  // Cap at 95% (minimal AI input for edge cases only)
-  return Math.min(weight, 0.95);
 }
 
 // =============================================================================
@@ -376,18 +190,13 @@ function calculateMarketWeight(marketResult: any): number {
 // =============================================================================
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS headers
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const startTime = Date.now();
   let analysisId = '';
@@ -396,506 +205,137 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 1. Validate request
     const request = validateRequest(req.body);
     analysisId = request.analysisId!;
-    
+
     const hasImage = !!request.imageBase64;
     const hasItemName = request.itemName.length > 0;
-    
-    // Must have either image or item name
+
     if (!hasImage && !hasItemName) {
       throw new Error('Either an image or item name is required');
     }
-    
-    console.log(`\n🔥 === HYDRA v8.0 ANALYSIS START ===`);
+
+    console.log(`\n🔥 === HYDRA v9.0 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
-    console.log(`🖼️ Primary Image: ${hasImage ? 'Yes' : 'No'}`);
-    console.log(`🖼️ Additional Images: ${request.additionalImages?.length || 0}`);
-    console.log(`🔗 Original URLs for Marketplace: ${request.originalImageUrls?.length || 0}`);
+    console.log(`🖼️ Images: ${hasImage ? 1 + (request.additionalImages?.length || 0) : 0}`);
     if (request.scannedBarcodes?.length) {
-      console.log(`📊 Scanner Barcodes: ${request.scannedBarcodes.join(', ')}`);
+      console.log(`📊 Scanner barcodes: ${request.scannedBarcodes.join(', ')}`);
     }
-    
+
     // 2. Build images array
     const images: string[] = [];
-    if (request.imageBase64) {
-      images.push(request.imageBase64);
-    }
-    if (request.additionalImages) {
-      images.push(...request.additionalImages.slice(0, 3));
-    }
-    
-    // ==========================================================================
-    // STAGE 1: Primary Vision Analysis (MUST RUN FIRST to identify item)
-    // ==========================================================================
-    const visionProviders = ['openai', 'anthropic', 'google'].filter(isProviderAvailable);
-    console.log(`\n  Stage 1 - Vision: ${visionProviders.join(', ') || 'none'}`);
-    
-    // Build initial prompt with VIN extraction instructions
-    const initialPrompt = buildAnalysisPrompt({
-      categoryHint: request.categoryHint,
-      itemNameHint: hasItemName ? request.itemName : undefined,
-    });
-    
-    // FIXED v6.3: Add VIN extraction instructions to vision prompt
-    const vinExtractionInstructions = `
-IMPORTANT: If you see a VIN (Vehicle Identification Number) anywhere in the image:
-- VINs are exactly 17 characters long (letters and numbers, excluding I, O, Q)
-- INCLUDE THE FULL VIN in your itemName response
-- Example: Instead of "Ford Vehicle VIN Plate", respond with "Ford F-150 VIN: 1FTFW1E50MFA12345"
-- Extract and include any visible VIN, serial number, or identification number in the item name
+    if (request.imageBase64) images.push(request.imageBase64);
+    if (request.additionalImages) images.push(...request.additionalImages.slice(0, 3));
 
-Also extract: PSA cert numbers, ISBN numbers, UPC barcodes, LEGO set numbers, coin dates/mints, card numbers.
-`;
-    
-    const userMessage = buildUserMessage(hasImage, request.itemName || 'Identify this item');
-    const fullPrompt = `${initialPrompt}\n\n${vinExtractionInstructions}\n\n${userMessage}`;
-    
-    const visionVotes = await runProviderStage(visionProviders, images, fullPrompt);
-    
-    // ==========================================================================
-    // EXTRACT IDENTIFIED ITEM NAME FROM VISION RESULTS
-    // ==========================================================================
-    let identifiedItemName = request.itemName;
-    let identifiedCategory = 'general';
-    let extractedVIN: string | null = null;
-    let rawVisionResponse: any = null;
-    
-    if (visionVotes.length > 0) {
-      // Get the best vote (highest weight/confidence)
-      const bestVote = visionVotes.reduce((a, b) => a.weight > b.weight ? a : b);
-      
-      // Use the AI-identified item name
-      if (bestVote.itemName && bestVote.itemName !== 'Unknown Item') {
-        identifiedItemName = bestVote.itemName;
-        console.log(`\n  🎯 AI Identified: "${identifiedItemName}"`);
-      }
-      
-      // Check if AI detected a category
-      rawVisionResponse = bestVote.rawResponse as any;
-      if (rawVisionResponse?.category && rawVisionResponse.category !== 'general') {
-        identifiedCategory = rawVisionResponse.category;
-        console.log(`  🏷️ AI Category: ${identifiedCategory}`);
-      }
-      
-      // FIXED v6.3: Try to extract VIN from the item name or raw response
-      extractedVIN = extractVINFromText(identifiedItemName);
-      if (!extractedVIN && rawVisionResponse?.additionalDetails) {
-        extractedVIN = extractVINFromText(JSON.stringify(rawVisionResponse.additionalDetails));
-      }
-      if (extractedVIN) {
-        console.log(`  🚗 Extracted VIN: ${extractedVIN}`);
-      }
-    }
-    
-    // Fallback if still no name
-    if (!identifiedItemName) {
-      identifiedItemName = 'Unidentified Item';
-    }
-    
-    // ==========================================================================
-    // STAGE 2: Category Detection (using AI-identified item name)
-    // FIXED v6.3: Pass identifiedCategory as 3rd parameter (aiDetectedCategory)
-    // ==========================================================================
-    const categoryResult = detectItemCategory(
-      identifiedItemName, 
-      request.categoryHint,  // 2nd param: categoryHint from request
-      identifiedCategory     // 3rd param: aiDetectedCategory from vision AI
-    );
-    const finalCategory = categoryResult.category;
-    console.log(`\n  🏷️ Final Category: ${finalCategory} (${categoryResult.confidence}%)`);
-    
-    // ==========================================================================
-    // STAGE 3: Parallel - Market Data + Text AI Analysis
-    // ==========================================================================
-    console.log(`\n  Stage 2 - Market Data + Text Analysis (parallel)`);
-    
-    // Build additional context for market data (includes extracted VIN + barcodes)
-    const marketContext: Record<string, any> = {};
-    if (extractedVIN) {
-      marketContext.vin = extractedVIN;
-      marketContext.additionalContext = `VIN: ${extractedVIN}`;
-    }
-    if (rawVisionResponse?.additionalDetails) {
-      marketContext.visionDetails = rawVisionResponse.additionalDetails;
-    }
-
-    // FIXED v8.1: Pass raw barcodes from scanner to fetchers
-    // The device's barcode scanner (react-zxing) reads all 12/13 digits perfectly.
-    // AI vision often truncates barcode numbers when reading from images.
-    // This ensures UPCitemdb (and future barcode APIs) get the full, accurate barcode.
+    // ========================================================================
+    // 3. Build additionalContext from scanner barcodes
+    // FIXED v9.0.1: This was MISSING in the original v9.0 file.
+    // The device scanner reads perfect 12/13-digit barcodes via react-zxing.
+    // We pass them as "UPC: <digits>" so fetchers (upcitemdb → barcode spider
+    // cascade, kroger) can use the REAL barcode instead of AI-truncated ones.
+    // ========================================================================
+    let additionalContext: string | undefined;
     if (request.scannedBarcodes && request.scannedBarcodes.length > 0) {
-      const barcodeStr = `UPC: ${request.scannedBarcodes[0]}`;
-      marketContext.barcodes = request.scannedBarcodes;
-      marketContext.additionalContext = marketContext.additionalContext
-        ? `${marketContext.additionalContext} | ${barcodeStr}`
-        : barcodeStr;
-      console.log(`  📊 Raw barcode from scanner: ${request.scannedBarcodes[0]}`);
+      // Pass first barcode as primary UPC context
+      // Format: "UPC: 053538155504" — matches extractBarcodeFromContext() in upcitemdb.ts
+      additionalContext = `UPC: ${request.scannedBarcodes[0]}`;
+      console.log(`🔗 Barcode context for fetchers: "${additionalContext}"`);
     }
-    
-    // Start market data fetch with IDENTIFIED item name and context
-    // FIXED v6.3: Pass additional context for VIN extraction
-    // FIXED v8.1: additionalContext now includes barcodes from scanner
-    const marketPromise = fetchMarketData(
-      identifiedItemName, 
-      finalCategory,
-      marketContext.additionalContext // Pass VIN + barcode context to fetchers
-    );
-    
-    // Text analysis models
-    const textProviders = ['mistral', 'groq', 'xai'].filter(isProviderAvailable);
-    console.log(`    Text providers: ${textProviders.join(', ') || 'none'}`);
-    
-    // Build text prompt with identified item context
-    const textPrompt = buildAnalysisPrompt({
-      categoryHint: finalCategory,
-      itemNameHint: identifiedItemName,
-      additionalInstructions: `The item has been visually identified as: "${identifiedItemName}". ${extractedVIN ? `VIN: ${extractedVIN}. ` : ''}Provide your valuation analysis.`,
+
+    // 4. Get dynamic weights from self-heal (non-blocking, cached)
+    const dynamicWeights = await getDynamicWeights().catch(() => null);
+
+    // 5. Run the evidence-based pipeline
+    const pipelineResult = await runPipeline(images, request.itemName, {
+      categoryHint: request.categoryHint,
+      condition: request.condition,
+      additionalContext,  // ← v9.0.1: Scanner barcodes now reach fetchers
+      analysisId,
+      hasImage,
+      dynamicWeights: dynamicWeights || undefined,
     });
-    
-    const textVotesPromise = runProviderStage(textProviders, [], textPrompt);
-    
-    // Wait for both
-    const [marketResult, textVotes] = await Promise.all([marketPromise, textVotesPromise]);
-    
-    console.log(`    📈 Market sources: ${marketResult.sources.length}`);
-    
-    // Combine all votes
-    const allVotes: ModelVote[] = [...visionVotes, ...textVotes];
-    
-    // ==========================================================================
-    // STAGE 4: Market Search (Perplexity)
-    // v8.0: Track votes separately for benchmark scoring by stage
-    // ==========================================================================
-    let perplexityVotes: ModelVote[] = [];
-    if (isProviderAvailable('perplexity')) {
-      console.log(`\n  Stage 3 - Market Search: perplexity`);
-      const marketSearchPrompt = `Find current market prices and recent sales for: "${identifiedItemName}". ${extractedVIN ? `VIN: ${extractedVIN}. ` : ''}Category: ${finalCategory}. Provide specific price data from eBay sold listings, auction results, or dealer prices.`;
-      perplexityVotes = await runProviderStage(['perplexity'], [], marketSearchPrompt, { isMarketSearch: true });
-      allVotes.push(...perplexityVotes);
-    }
-    
-    // ==========================================================================
-    // STAGE 5: Tiebreaker if needed
-    // v8.0: Track votes separately for benchmark scoring by stage
-    // ==========================================================================
-    let tiebreakerVotes: ModelVote[] = [];
-    if (allVotes.length >= 4 && isProviderAvailable('deepseek')) {
-      const { shouldTrigger, reason } = shouldTriggerTiebreaker(allVotes);
-      
-      if (shouldTrigger) {
-        console.log(`\n  Stage 4 - Tiebreaker: deepseek (${reason})`);
-        const tiebreakerPrompt = buildAnalysisPrompt({
-          categoryHint: finalCategory,
-          itemNameHint: identifiedItemName,
-          additionalInstructions: 'Previous AI analyses show disagreement. Provide your independent assessment to help reach consensus.',
-        });
-        tiebreakerVotes = await runProviderStage(['deepseek'], [], tiebreakerPrompt, { isTiebreaker: true });
-        allVotes.push(...tiebreakerVotes);
-      }
-    }
-    
-    console.log(`\n  📊 Total AI Votes: ${allVotes.length}`);
-    
-    // ==========================================================================
-    // STAGE 6: Calculate Consensus
-    // ==========================================================================
-    const authorityData = marketResult.primaryAuthority || null;
-    const consensus = calculateConsensus(allVotes, authorityData);
-    
-    // Override consensus item name with our identified name
-    consensus.itemName = identifiedItemName;
-    
-    console.log(`  🎯 Decision: ${consensus.decision} @ $${consensus.estimatedValue}`);
-    console.log(`  📊 Confidence: ${consensus.confidence}% (${consensus.analysisQuality})`);
-    
-    // ==========================================================================
-    // STAGE 7: Blend Prices (FIXED v6.5)
-    // ==========================================================================
-    // FIXED v6.5: Use HYDRA's pre-calculated blended price from real market data
-    // The old code looked for `priceData` which doesn't exist - HYDRA returns `priceAnalysis`
-    // This was causing all market data to be ignored in favor of AI consensus!
-    
-    let blendedPrice;
-    
-    // Check if HYDRA already calculated a valid market-based price
-    if (marketResult.blendedPrice && marketResult.blendedPrice.value > 0) {
-      const hydraPrice = marketResult.blendedPrice.value;
-      const aiPrice = consensus.estimatedValue;
-      const marketWeight = calculateMarketWeight(marketResult);
-      const aiWeight = 1 - marketWeight;
-      
-      // Log the weighting decision
-      const ebaySourceForBlend = marketResult.sources?.find((s: any) => s.source === 'ebay');
-      const ebayListings = ebaySourceForBlend?.totalListings || 0;
-      console.log(`\n  📊 === PRICE BLEND (v6.5) ===`);
-      console.log(`  💰 HYDRA market price: $${hydraPrice.toFixed(2)} (${marketResult.blendedPrice.method})`);
-      console.log(`  🛒 eBay listings: ${ebayListings}`);
-      console.log(`  🏛️ Authority: ${authorityData ? authorityData.source : 'none'}`);
-      console.log(`  🤖 AI consensus: $${aiPrice.toFixed(2)}`);
-      console.log(`  ⚖️ Weights: ${Math.round(marketWeight * 100)}% market / ${Math.round(aiWeight * 100)}% AI`);
-      
-      // Calculate weighted blend
-      const finalPrice = parseFloat(
-        (hydraPrice * marketWeight + aiPrice * aiWeight).toFixed(2)
-      );
-      
-      console.log(`  ✅ Final blended price: $${finalPrice.toFixed(2)}`);
-      
-      // Build blendedPrice object for response formatter
-      blendedPrice = {
-        finalPrice,
-        method: `market_ai_blend_${Math.round(marketWeight * 100)}pct_market`,
-        confidence: Math.min(
-          (marketResult.blendedPrice.confidence || 0.7) + (ebayListings >= 10 ? 0.1 : 0),
-          0.95
-        ) * 100,
-        range: {
-          low: Math.min(hydraPrice * 0.8, aiPrice * 0.7),
-          high: Math.max(hydraPrice * 1.2, aiPrice * 1.1),
-        },
-        sources: marketResult.sources
-          .filter((s: any) => s.available && s.priceAnalysis)
-          .map((s: any) => ({
-            source: s.source,
-            value: s.priceAnalysis?.median || 0,
-            weight: s.source === 'ebay' ? 1.2 : (s.authorityData ? 1.5 : 1.0),
-          })),
-        authorityVerified: !!authorityData,
-      };
-    } else {
-      // No market data - fall back to legacy blendPrices
-      // This handles edge cases where HYDRA couldn't get any market data
-      console.log(`\n  ⚠️ No HYDRA market data, using legacy blend`);
-      
-      // Try the legacy method (but it probably won't find anything either)
-      const marketPrices = marketResult.sources
-        .filter((s: any) => s.priceAnalysis?.median > 0)
-        .map((s: any) => ({ 
-          source: s.source, 
-          prices: [s.priceAnalysis.median] // Convert priceAnalysis to prices array
-        }));
-      
-      blendedPrice = blendPrices(
-        consensus.estimatedValue,
-        authorityData,
-        marketPrices.length > 0 ? marketPrices : null,
-        { condition: request.condition }
-      );
-      
-      console.log(`  🤖 AI consensus only: $${blendedPrice.finalPrice.toFixed(2)}`);
-    }
-    
-    // ==========================================================================
-    // STAGE 7.5: Extract eBay Market Data for Response (NEW v7.5)
-    // ==========================================================================
-    // eBay data was being fetched but never passed to response!
-    const ebaySource = marketResult.sources?.find((s: any) => s.source === 'ebay');
-    const ebayData = ebaySource?.available ? {
-      totalListings: ebaySource.totalListings || 0,
-      priceAnalysis: ebaySource.priceAnalysis || null,
-      sampleListings: ebaySource.sampleListings?.slice(0, 5) || [],
-      suggestedPrices: ebaySource.suggestedPrices || null,
-    } : null;
-    
-    // Collect ALL market sources for transparency
-    const marketSources = marketResult.sources
-      ?.filter((s: any) => s.available)
-      .map((s: any) => ({
-        source: s.source,
-        totalListings: s.totalListings || 0,
-        priceAnalysis: s.priceAnalysis || null,
-        hasAuthorityData: !!s.authorityData,
-      })) || [];
-    
-    // ==========================================================================
-    // STAGE 7.6: Provider Benchmark Tracking (NEW v8.0)
-    // Records every AI vote against market-verified ground truth
-    // Non-blocking — never delays the response to the user
-    // ==========================================================================
-    try {
-      const benchmarkCtx = buildBenchmarkContext({
-        analysisId: analysisId,
-        itemName: identifiedItemName,
-        category: finalCategory,
-        categoryConfidence: categoryResult?.confidence || 0,
-        hasImage: hasImage,
-        blendedPrice: {
-          finalPrice: blendedPrice.finalPrice,
-          method: blendedPrice.method,
-          confidence: blendedPrice.confidence,
-        },
-        authorityData: authorityData,
-        ebaySource: ebaySource || null,
-        consensus: {
-          estimatedValue: consensus.estimatedValue,
-          decision: consensus.decision,
-          analysisQuality: consensus.analysisQuality,
-        },
-        totalVotes: allVotes.length,
-      });
 
-      // Fire and forget — scores all votes against ground truth, inserts to Supabase
-      recordBenchmarks(
-        visionVotes,
-        textVotes,
-        perplexityVotes,
-        tiebreakerVotes,
-        benchmarkCtx
-      );
-
-      console.log(`  🎯 Benchmarks: ${allVotes.length} votes queued for ground truth scoring`);
-    } catch (benchErr: any) {
-      // Never let benchmarks break the main analysis flow
-      console.error('  ⚠️ Benchmark setup failed (non-fatal):', benchErr.message);
-    }
-    
-    // ==========================================================================
-    // STAGE 8: Format Response
-    // ==========================================================================
+    // 6. Format response (using existing formatter for backward compatibility)
     const processingTime = Date.now() - startTime;
+
+    const blendedPrice = {
+      finalPrice: pipelineResult.finalPrice,
+      method: pipelineResult.priceMethod,
+      confidence: pipelineResult.confidence,
+      range: pipelineResult.priceRange,
+      sources: pipelineResult.marketSources.map((s: any) => ({
+        source: s.source,
+        value: s.priceAnalysis?.median || 0,
+        weight: s.hasAuthorityData ? 1.5 : 1.0,
+      })),
+      authorityVerified: !!pipelineResult.authorityData,
+    };
+
+    // Build consensus-compatible object for formatter
+    const consensusCompat = {
+      itemName: pipelineResult.itemName,
+      decision: pipelineResult.decision,
+      estimatedValue: pipelineResult.finalPrice,
+      confidence: pipelineResult.confidence,
+      analysisQuality: pipelineResult.analysisQuality,
+      reasoning: pipelineResult.stages.reason.consensus.reasoning,
+      votes: pipelineResult.allVotes,
+    };
+
     const response = formatAnalysisResponse(
       analysisId,
-      consensus,
-      finalCategory,
+      consensusCompat,
+      pipelineResult.category,
       blendedPrice,
-      authorityData,
+      pipelineResult.authorityData,
       processingTime
     );
-    
-    // Add image URLs to response for marketplace integration
-    // FIXED v7.5: Add eBay market data that was being lost
-    const responseWithImages = {
+
+    const responseWithExtras = {
       ...response,
       imageUrls: request.originalImageUrls || [],
       thumbnailUrl: request.originalImageUrls?.[0] || null,
-      // v7.5: Include eBay market data
-      ebayMarketData: ebayData,
-      marketSources: marketSources,
-      // Include raw market result for debugging (can remove in production)
+      ebayMarketData: pipelineResult.ebayData,
+      marketSources: pipelineResult.marketSources,
+      // v9.0: Pipeline timing data
+      pipelineVersion: '9.0',
+      pipelineTiming: pipelineResult.timing,
       _debug: {
-        ebayListings: ebaySource?.totalListings || 0,
-        ebayMedian: ebaySource?.priceAnalysis?.median || null,
-        marketSourceCount: marketSources.length,
-        primaryAuthority: authorityData?.source || null,
+        ebayListings: pipelineResult.ebayData?.totalListings || 0,
+        ebayMedian: pipelineResult.ebayData?.priceAnalysis?.median || null,
+        marketSourceCount: pipelineResult.marketSources.length,
+        primaryAuthority: pipelineResult.authorityData?.source || null,
+        barcodeSource: request.scannedBarcodes?.length ? 'scanner' : 'ai_vision',
+        scannedBarcodes: request.scannedBarcodes || [],
+        stages: {
+          identify: `${pipelineResult.timing.identify}ms`,
+          fetch: `${pipelineResult.timing.fetch}ms`,
+          reason: `${pipelineResult.timing.reason}ms`,
+          validate: `${pipelineResult.timing.validate}ms`,
+        },
+        dynamicWeightsActive: !!dynamicWeights,
       },
     };
-    
-    // Save to Supabase (non-blocking) - WITH IMAGE URLS
+
+    // 7. Save to Supabase (non-blocking)
     if (isSupabaseAvailable()) {
       saveAnalysisAsync(
-        analysisId, 
-        consensus, 
-        finalCategory, 
-        request.userId, 
-        allVotes, 
-        authorityData, 
+        analysisId,
+        consensusCompat,
+        pipelineResult.category,
+        request.userId,
+        pipelineResult.allVotes,
+        pipelineResult.authorityData,
         processingTime,
-        request.originalImageUrls  // Pass image URLs to save function
+        request.originalImageUrls
       );
     }
-    
+
     console.log(`\n  ✅ Complete in ${processingTime}ms\n`);
-    
-    return res.status(200).json(formatAPIResponse(responseWithImages));
-    
+
+    return res.status(200).json(formatAPIResponse(responseWithExtras));
+
   } catch (error: any) {
     console.error(`❌ Error:`, error.message);
     return res.status(500).json(formatErrorResponse(error, analysisId));
   }
-}
-
-// =============================================================================
-// HELPER: Create provider from string ID
-// =============================================================================
-
-function createProviderFromId(providerId: string) {
-  const id = providerId.toLowerCase();
-  
-  // Lookup config using lowercase key (matches AI_PROVIDERS keys)
-  const config = AI_PROVIDERS[id];
-  if (!config) {
-    throw new Error(`No config for provider: ${providerId}`);
-  }
-  
-  // Display name mapping for ProviderFactory
-  const displayNameMap: Record<string, string> = {
-    'openai': 'OpenAI',
-    'anthropic': 'Anthropic',
-    'google': 'Google',
-    'deepseek': 'DeepSeek',
-    'mistral': 'Mistral',
-    'groq': 'Groq',
-    'xai': 'xAI',
-    'perplexity': 'Perplexity',
-  };
-  
-  const displayName = displayNameMap[id] || config.name;
-  
-  return ProviderFactory.create({
-    id: `${id}-analysis`,
-    name: displayName,
-    model: config.primaryModel || config.models[0],
-    baseWeight: AI_MODEL_WEIGHTS[id as keyof typeof AI_MODEL_WEIGHTS] || config.weight || 1.0,
-  });
-}
-
-// =============================================================================
-// PROVIDER STAGE RUNNER
-// =============================================================================
-
-async function runProviderStage(
-  providers: string[],
-  images: string[],
-  prompt: string,
-  options?: {
-    isTiebreaker?: boolean;
-    isMarketSearch?: boolean;
-  }
-): Promise<ModelVote[]> {
-  const results = await Promise.allSettled(
-    providers.map(async (providerId) => {
-      const start = Date.now();
-      try {
-        const provider = createProviderFromId(providerId);
-        const result = await provider.analyze(images, prompt);
-        const responseTime = Date.now() - start;
-        
-        // Get the parsed analysis from the result
-        const analysis = result.response;
-        
-        // Handle case where analysis might be null
-        if (!analysis) {
-          console.log(`    ✗ ${providerId}: No analysis returned`);
-          return null;
-        }
-        
-        // Create provider info object for createVote
-        const providerInfo = {
-          id: providerId,
-          name: providerId.charAt(0).toUpperCase() + providerId.slice(1),
-          baseWeight: result.confidence || 0.8,
-        };
-        
-        // Create vote with correct signature
-        const vote = createVote(
-          providerInfo,
-          analysis,
-          result.confidence || 0.8,
-          responseTime,
-          options || {}
-        );
-        
-        console.log(`    ✓ ${providerId}: ${vote.decision} @ $${vote.estimatedValue.toFixed(2)}`);
-        return vote;
-      } catch (error: any) {
-        console.log(`    ✗ ${providerId}: ${error.message}`);
-        return null;
-      }
-    })
-  );
-  
-  return results
-    .filter((r): r is PromiseFulfilledResult<ModelVote | null> => r.status === 'fulfilled')
-    .map(r => r.value)
-    .filter((v): v is ModelVote => v !== null);
 }
