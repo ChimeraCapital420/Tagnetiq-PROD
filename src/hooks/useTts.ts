@@ -1,11 +1,48 @@
 // FILE: src/hooks/useTts.ts
 // Oracle TTS — Premium ElevenLabs voice with browser fallback
-// FIXED: Was using `session` from useAuth() which doesn't exist on AuthContext
-//        Now gets session directly from supabase.auth.getSession()
+// FIXED: Gets session from supabase directly (not AuthContext)
+// FIXED: Dispatches global 'oracle-speak-start' / 'oracle-speak-end' events
+//        so OracleVisualizer (separate component) knows when speech is active
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
+
+// =============================================================================
+// GLOBAL SPEAKING STATE
+// Each useTts() instance has its own isSpeaking, but other components
+// (like OracleVisualizer) need to know when ANY instance is speaking.
+// We use CustomEvents on window for this.
+// =============================================================================
+
+function emitSpeakingState(speaking: boolean) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('oracle-speaking', { detail: { speaking } }));
+}
+
+/**
+ * Hook for components that just need to know if Oracle is speaking.
+ * Lighter than importing full useTts — no speech capabilities, just state.
+ */
+export function useOracleSpeakingState() {
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setIsSpeaking(detail.speaking);
+    };
+
+    window.addEventListener('oracle-speaking', handler);
+    return () => window.removeEventListener('oracle-speaking', handler);
+  }, []);
+
+  return isSpeaking;
+}
+
+// =============================================================================
+// MAIN TTS HOOK
+// =============================================================================
 
 export const useTts = () => {
   const { i18n } = useTranslation();
@@ -13,6 +50,12 @@ export const useTts = () => {
   const [preferredVoice, setPreferredVoice] = useState<SpeechSynthesisVoice | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Helper to set speaking state locally AND globally
+  const setSpeaking = useCallback((value: boolean) => {
+    setIsSpeaking(value);
+    emitSpeakingState(value);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.speechSynthesis) return;
@@ -42,10 +85,9 @@ export const useTts = () => {
 
     // ── Premium ElevenLabs path ────────────────────────────
     if (premiumVoiceId) {
-      setIsSpeaking(true);
+      setSpeaking(true);
 
       try {
-        // Get session directly from supabase — not from AuthContext
         const { data: { session } } = await supabase.auth.getSession();
 
         if (!session) {
@@ -76,14 +118,14 @@ export const useTts = () => {
         audioRef.current = audio;
 
         audio.addEventListener('ended', () => {
-          setIsSpeaking(false);
+          setSpeaking(false);
           audioRef.current = null;
           URL.revokeObjectURL(audioUrl);
         });
 
         audio.addEventListener('error', () => {
           console.error('Error playing ElevenLabs audio');
-          setIsSpeaking(false);
+          setSpeaking(false);
           audioRef.current = null;
           URL.revokeObjectURL(audioUrl);
         });
@@ -92,8 +134,7 @@ export const useTts = () => {
 
       } catch (error) {
         console.error('Premium voice error, falling back to browser TTS:', error);
-        setIsSpeaking(false);
-        // Fallback to browser TTS — don't pass premiumVoiceId to avoid loop
+        setSpeaking(false);
         speakWithBrowser(text, voiceURI);
       }
 
@@ -103,11 +144,10 @@ export const useTts = () => {
     // ── Browser TTS fallback ──────────────────────────────
     speakWithBrowser(text, voiceURI);
 
-  }, [voices, preferredVoice, i18n.language]);
+  }, [voices, preferredVoice, i18n.language, setSpeaking]);
 
   /**
    * Browser SpeechSynthesis — the free robotic fallback.
-   * Only used when no premiumVoiceId is set or when ElevenLabs fails.
    */
   const speakWithBrowser = useCallback((text: string, voiceURI?: string | null) => {
     if (typeof window === 'undefined' || !window.speechSynthesis) {
@@ -127,12 +167,12 @@ export const useTts = () => {
       utterance.voice = voiceToUse;
     }
 
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
+    utterance.onstart = () => setSpeaking(true);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
 
     window.speechSynthesis.speak(utterance);
-  }, [voices, preferredVoice, i18n.language]);
+  }, [voices, preferredVoice, i18n.language, setSpeaking]);
 
   const cancel = useCallback(() => {
     if (audioRef.current) {
@@ -143,8 +183,8 @@ export const useTts = () => {
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
-    setIsSpeaking(false);
-  }, []);
+    setSpeaking(false);
+  }, [setSpeaking]);
 
   const setVoiceByURI = useCallback((uri: string) => {
     const foundVoice = voices.find(v => v.voiceURI === uri);

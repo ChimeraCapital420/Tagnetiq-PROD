@@ -1,35 +1,41 @@
 // FILE: src/components/OracleVisualizer.tsx
-// Oracle Visual Presence — Enhanced with user preference support
-// FIXED: React hooks violation — conditional return was before useEffect.
-//        Now all hooks run unconditionally; rendering is controlled via JSX.
+// Oracle Visual Presence — Reacts when Oracle speaks
+// FIXED: Was calling its own useTts() which has separate state from OracleVoiceButton's useTts()
+//        Now uses global 'oracle-speaking' event via useOracleSpeakingState() hook
+// FIXED: CymaticVisualizer and GenerativeVisualizer are now real components (not missing lazy imports)
 
 import React, { useEffect, useRef, lazy, Suspense } from 'react';
-import { useTts } from '@/hooks/useTts';
+import { useOracleSpeakingState } from '@/hooks/useTts';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 
-// Lazy load visualizers for better performance
+// Lazy load custom visualizers
 const CymaticVisualizer = lazy(() => import('./oracle/CymaticVisualizer'));
 const GenerativeVisualizer = lazy(() => import('./oracle/GenerativeVisualizer'));
 
 const OracleVisualizer: React.FC = () => {
-  const { isSpeaking } = useTts();
+  // This uses the global event-based state — works across all useTts() instances
+  const isSpeaking = useOracleSpeakingState();
   const { profile } = useAuth();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameId = useRef<number>();
 
-  // Get user's visualizer preference
+  // Get user's visualizer preference from profile settings
   const visualizerType = profile?.settings?.oracle_visualizer_preference || 'default';
   const useCustomVisualizer = visualizerType !== 'default';
 
-  // Default visualizer canvas animation
-  // This hook ALWAYS runs (React rules) but only draws when conditions are met
+  // Default canvas visualizer animation
   useEffect(() => {
-    // Skip if using a custom visualizer or not speaking
     if (useCustomVisualizer || !isSpeaking) {
       if (animationFrameId.current) {
         cancelAnimationFrame(animationFrameId.current);
         animationFrameId.current = undefined;
+      }
+      // Clear canvas when not speaking
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
       }
       return;
     }
@@ -99,9 +105,7 @@ const OracleVisualizer: React.FC = () => {
     };
   }, [isSpeaking, useCustomVisualizer]);
 
-  // ── Render ────────────────────────────────────────────────
-
-  // Custom visualizer (cymatic / generative)
+  // ── Custom visualizer ─────────────────────────────────
   if (useCustomVisualizer && isSpeaking) {
     return (
       <Suspense fallback={null}>
@@ -114,7 +118,7 @@ const OracleVisualizer: React.FC = () => {
     );
   }
 
-  // Default canvas visualizer (or hidden when not speaking)
+  // ── Default canvas visualizer ─────────────────────────
   return (
     <div
       className={cn(
