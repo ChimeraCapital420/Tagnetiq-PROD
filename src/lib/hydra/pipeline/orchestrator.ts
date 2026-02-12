@@ -1,7 +1,10 @@
 // FILE: src/lib/hydra/pipeline/orchestrator.ts
-// HYDRA v9.0 - Pipeline Orchestrator
+// HYDRA v9.1 - Pipeline Orchestrator
 // Evidence-based pipeline: IDENTIFY → FETCH → REASON → VALIDATE
 // Each stage feeds into the next. Market data informs AI reasoning.
+//
+// v9.0: Original pipeline
+// v9.1: Fixed stage timeouts — identify 20s (first-responder), reason 15s
 
 import type { ItemCategory, ModelVote } from '../types.js';
 import type {
@@ -21,10 +24,10 @@ import { recordBenchmarks, buildBenchmarkContext } from '../benchmarks/index.js'
 // =============================================================================
 
 /**
- * Run the full HYDRA v9.0 evidence-based pipeline
+ * Run the full HYDRA v9.1 evidence-based pipeline
  * 
  * Flow:
- * 1. IDENTIFY — What is this item? (vision providers)
+ * 1. IDENTIFY — What is this item? (vision providers, first-responder)
  * 2. FETCH — Get market evidence (APIs + web search)
  * 3. REASON — Analyze with evidence (reasoning providers)
  * 4. VALIDATE — Sanity check (Groq speed-check)
@@ -50,6 +53,7 @@ export async function runPipeline(
   
   // =========================================================================
   // STAGE 1: IDENTIFY
+  // v9.1: First-responder pattern — returns on first valid ID (3-5s typical)
   // =========================================================================
   const identifyResult = await runIdentifyStage(
     images,
@@ -82,6 +86,7 @@ export async function runPipeline(
   // =========================================================================
   // STAGE 3: REASON WITH EVIDENCE
   // AIs receive market data and reason from it — no blind guessing
+  // v9.1: 15s timeout — Anthropic/DeepSeek were timing out at 8s
   // =========================================================================
   const reasonResult = await runReasonStage(
     itemName,
@@ -370,10 +375,10 @@ function getDefaultConfig(): PipelineConfig {
   return {
     maxDuration: 55000,
     stageTimeouts: {
-      identify: 8000,
+      identify: 20000,  // v9.1: Was 8000 — first-responder returns fast, but slow providers get time
       fetch: 10000,
-      reason: 8000,
-      validate: 2000,
+      reason: 15000,    // v9.1: Was 8000 — Anthropic/DeepSeek were timing out at 6-8s
+      validate: 3000,   // v9.1: Was 2000 — small buffer for Groq
     },
     enableValidation: true,
     enableBenchmarks: true,
