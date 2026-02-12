@@ -1,8 +1,9 @@
 // FILE: src/lib/hydra/pricing/formatter.ts
-// Price and Response Formatting for HYDRA v8.0
+// Price and Response Formatting for HYDRA v8.0 → v9.0
 // REFACTORED: From 1200 lines to ~300 lines
 // Source-specific extraction delegated to /sources/*.ts
 // v8.0: Colnect attribution requirement handled in source extractor
+// v9.0.2: FIXED — Safe access for consensusMetrics (was crashing every scan)
 
 import type {
   ConsensusResult,
@@ -23,6 +24,46 @@ export type {
   FormattedAuthorityData, 
   PriceDisplay 
 } from './types.js';
+
+// =============================================================================
+// SAFE METRICS HELPER
+// =============================================================================
+
+/**
+ * Safely extract consensus metrics from either the new pipeline format
+ * or the legacy hydra-engine format. Prevents crashes when consensusMetrics
+ * is undefined (which happens when analyze.ts builds a compat object).
+ */
+function safeMetrics(consensus: ConsensusResult): {
+  totalVotes: number;
+  avgAIConfidence: number;
+  decisionAgreement: number;
+  valueAgreement: number;
+  participationRate: number;
+  authorityVerified: boolean;
+} {
+  // New pipeline format: consensusMetrics exists
+  if (consensus.consensusMetrics) {
+    return {
+      totalVotes: consensus.totalVotes ?? 0,
+      avgAIConfidence: consensus.consensusMetrics.avgAIConfidence ?? 0,
+      decisionAgreement: consensus.consensusMetrics.decisionAgreement ?? 0,
+      valueAgreement: consensus.consensusMetrics.valueAgreement ?? 0,
+      participationRate: consensus.consensusMetrics.participationRate ?? 0,
+      authorityVerified: consensus.consensusMetrics.authorityVerified ?? false,
+    };
+  }
+
+  // Legacy/compat format: extract from what we have
+  return {
+    totalVotes: consensus.totalVotes ?? (consensus as any).votes?.length ?? 0,
+    avgAIConfidence: (consensus as any).confidence ? (consensus as any).confidence / 100 : 0,
+    decisionAgreement: 0,
+    valueAgreement: 0,
+    participationRate: 0,
+    authorityVerified: false,
+  };
+}
 
 // =============================================================================
 // PRICE FORMATTING
@@ -99,6 +140,7 @@ export function createPriceDisplay(
 
 /**
  * Format full analysis response
+ * FIXED v9.0.2: Safe access for consensusMetrics — no more crashes
  */
 export function formatAnalysisResponse(
   analysisId: string,
@@ -114,10 +156,12 @@ export function formatAnalysisResponse(
     high: estimatedValue * 1.2,
   };
 
+  const metrics = safeMetrics(consensus);
+
   const valuationFactors = consensus.valuationFactors || [
-    `${consensus.totalVotes} AI models analyzed`,
+    `${metrics.totalVotes} AI models analyzed`,
     `${consensus.analysisQuality} analysis quality`,
-    `${Math.round(consensus.consensusMetrics.decisionAgreement * 100)}% decision agreement`,
+    `${Math.round(metrics.decisionAgreement * 100)}% decision agreement`,
   ];
 
   return {
@@ -139,10 +183,10 @@ export function formatAnalysisResponse(
     valuationFactors,
     authorityData: authorityData ? formatAuthorityData(authorityData) : undefined,
     metrics: {
-      totalVotes: consensus.totalVotes,
-      avgAIConfidence: Math.round(consensus.consensusMetrics.avgAIConfidence * 100),
-      decisionAgreement: Math.round(consensus.consensusMetrics.decisionAgreement * 100),
-      valueAgreement: Math.round(consensus.consensusMetrics.valueAgreement * 100),
+      totalVotes: metrics.totalVotes,
+      avgAIConfidence: Math.round(metrics.avgAIConfidence * 100),
+      decisionAgreement: Math.round(metrics.decisionAgreement * 100),
+      valueAgreement: Math.round(metrics.valueAgreement * 100),
     },
     timestamp: new Date().toISOString(),
     processingTime,
@@ -400,3 +444,12 @@ export default {
   formatAPIResponse,
   formatErrorResponse,
 };
+```
+
+---
+
+Push that and test a scan. The `decisionAgreement` crash is gone — `safeMetrics()` now handles both the new pipeline format and the compat object from `analyze.ts`.
+
+While that builds, paste one of the broken providers so we can get all 8 engines firing:
+```
+src/lib/hydra/ai/google.ts
