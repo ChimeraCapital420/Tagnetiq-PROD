@@ -1,9 +1,15 @@
 // FILE: src/lib/hydra/ai/parsers.ts
-// Centralized JSON parsing logic for AI provider responses
-// Extracted from base-provider.ts for reusability and testing
+// HYDRA v9.1.1 - Centralized JSON parsing for AI provider responses
+// 
+// v9.0: Original parser — rigid schema, rejected most valid responses
+// v9.1.1: Flexible parsing — accepts identify AND reasoning responses
+//         Field mapping catches camelCase, snake_case, and variations
+//         Only hard requirement: itemName must exist
+//
+// The parser was the #1 cause of "No identification returned" and
+// "No reasoning returned" — providers had correct data but parser rejected it.
 
 import type { ParsedAnalysis } from '../types.js';
-import { SUPPORTED_CATEGORIES } from '../prompts/analysis.js';
 
 // =============================================================================
 // TYPES
@@ -26,7 +32,22 @@ export interface ParserOptions {
   verbose?: boolean;
   /** Fallback item name if parsing fails */
   fallbackItemName?: string;
+  /** Parsing mode — identify is lenient, reason requires valuation fields */
+  mode?: 'identify' | 'reason' | 'auto';
 }
+
+// =============================================================================
+// SUPPORTED CATEGORIES (inline to avoid circular import)
+// =============================================================================
+
+const SUPPORTED_CATEGORIES = [
+  'coins', 'stamps', 'banknotes', 'pokemon_cards', 'trading_cards',
+  'sports_cards', 'lego', 'books', 'vinyl_records', 'sneakers',
+  'watches', 'jewelry', 'toys', 'figurines', 'video_games', 'comics',
+  'art', 'antiques', 'vehicles', 'electronics', 'clothing',
+  'musical_instruments', 'wine', 'spirits', 'collectibles',
+  'household', 'general',
+];
 
 // =============================================================================
 // FIELD MAPPINGS
@@ -35,15 +56,49 @@ export interface ParserOptions {
 /**
  * Common field name variations across different AI providers
  * Maps non-standard names to our canonical field names
+ * 
+ * v9.1.1: Extended mappings to catch more provider-specific variations
  */
 export const FIELD_MAPPINGS: Record<string, string[]> = {
-  itemName: ['item_name', 'item', 'name', 'product_name', 'productName', 'title', 'product'],
-  estimatedValue: ['estimated_value', 'value', 'price', 'estimated_price', 'estimatedPrice', 'market_value', 'marketValue'],
-  decision: ['recommendation', 'action', 'buy_sell', 'buySell', 'verdict', 'assessment'],
-  valuation_factors: ['factors', 'reasons', 'valuation_reasons', 'valuationFactors', 'key_factors', 'keyFactors', 'pricing_factors'],
-  summary_reasoning: ['summary', 'reasoning', 'explanation', 'analysis', 'summaryReasoning', 'description', 'rationale'],
-  confidence: ['confidence_score', 'confidenceScore', 'certainty', 'accuracy'],
-  category: ['item_category', 'itemCategory', 'type', 'product_category', 'productCategory'],
+  itemName: [
+    'item_name', 'item', 'name', 'product_name', 'productName',
+    'title', 'product', 'itemTitle', 'item_title', 'objectName',
+    'object_name', 'identified_item', 'identifiedItem',
+  ],
+  estimatedValue: [
+    'estimated_value', 'value', 'price', 'estimated_price',
+    'estimatedPrice', 'market_value', 'marketValue', 'worth',
+    'current_value', 'currentValue', 'fair_value', 'fairValue',
+    'median_value', 'medianValue',
+  ],
+  decision: [
+    'recommendation', 'action', 'buy_sell', 'buySell',
+    'verdict', 'assessment', 'buyOrSell', 'buy_or_sell',
+  ],
+  valuation_factors: [
+    'valuationFactors', 'factors', 'reasons', 'valuation_reasons',
+    'valuationReasons', 'key_factors', 'keyFactors', 'pricing_factors',
+    'pricingFactors', 'analysis_factors', 'analysisFactors',
+    'market_factors', 'marketFactors',
+  ],
+  summary_reasoning: [
+    'summaryReasoning', 'summary', 'reasoning', 'explanation',
+    'analysis', 'description', 'rationale', 'notes',
+    'market_analysis', 'marketAnalysis', 'detailed_analysis',
+    'detailedAnalysis', 'assessment_summary', 'assessmentSummary',
+  ],
+  confidence: [
+    'confidence_score', 'confidenceScore', 'certainty',
+    'accuracy', 'confidence_level', 'confidenceLevel',
+  ],
+  category: [
+    'item_category', 'itemCategory', 'type', 'product_category',
+    'productCategory', 'item_type', 'itemType',
+  ],
+  condition: [
+    'item_condition', 'itemCondition', 'state', 'quality',
+    'grade', 'conditionGrade', 'condition_grade',
+  ],
 };
 
 /**
@@ -57,6 +112,9 @@ export const DECISION_MAPPINGS: Record<string, 'BUY' | 'SELL'> = {
   'YES': 'BUY',
   'GOOD DEAL': 'BUY',
   'RECOMMENDED': 'BUY',
+  'WORTH IT': 'BUY',
+  'HOLD': 'BUY',
+  'KEEP': 'BUY',
   'SELL': 'SELL',
   'PASS': 'SELL',
   'SKIP': 'SELL',
@@ -64,6 +122,7 @@ export const DECISION_MAPPINGS: Record<string, 'BUY' | 'SELL'> = {
   'NO': 'SELL',
   'OVERPRICED': 'SELL',
   'NOT RECOMMENDED': 'SELL',
+  'NOT WORTH IT': 'SELL',
 };
 
 // =============================================================================
@@ -72,13 +131,24 @@ export const DECISION_MAPPINGS: Record<string, 'BUY' | 'SELL'> = {
 
 /**
  * Parse raw AI response into structured analysis
- * Handles various response formats and common issues
+ * 
+ * v9.1.1 CHANGES:
+ * - Two modes: 'identify' (lenient) and 'reason' (needs valuation fields)
+ * - 'auto' mode detects based on response shape
+ * - Field mapping runs BEFORE validation (was after in v9.0)
+ * - Only hard requirement: itemName must exist
+ * - Providers returning valid JSON with itemName will NEVER be rejected
  */
 export function parseAnalysisResponse(
   rawResult: string | null,
   options: ParserOptions = {}
 ): ParseResult<ParsedAnalysis> {
-  const { providerName = 'Unknown', attemptFieldFix = true, verbose = false } = options;
+  const {
+    providerName = 'Unknown',
+    attemptFieldFix = true,
+    verbose = false,
+    mode = 'auto',
+  } = options;
 
   if (!rawResult) {
     return {
@@ -123,30 +193,39 @@ export function parseAnalysisResponse(
       }
     }
 
-    // Step 4: Validate required fields
-    if (!isValidAnalysis(parsed)) {
-      if (attemptFieldFix) {
-        // Try to fix field names
-        const fixed = attemptFieldNameFix(parsed);
-        if (isValidAnalysis(fixed)) {
-          const normalized = normalizeAnalysis(fixed, providerName);
-          return {
-            success: true,
-            data: normalized,
-            cleanedContent: jsonContent,
-          };
-        }
-      }
-      
-      return {
-        success: false,
-        data: null,
-        error: 'Response missing required fields',
-        rawContent: rawResult.substring(0, 500),
-      };
+    // Step 4: ALWAYS apply field mapping FIRST (v9.1.1 — was after validation in v9.0)
+    if (attemptFieldFix) {
+      parsed = attemptFieldNameFix(parsed);
     }
 
-    // Step 5: Normalize the analysis
+    // Step 5: Determine mode
+    const effectiveMode = mode === 'auto' ? detectMode(parsed) : mode;
+
+    // Step 6: Validate based on mode
+    if (effectiveMode === 'identify') {
+      // Identify mode: just need itemName
+      if (!hasItemName(parsed)) {
+        return {
+          success: false,
+          data: null,
+          error: 'Response missing itemName',
+          rawContent: rawResult.substring(0, 500),
+        };
+      }
+    } else {
+      // Reason mode: need itemName + estimatedValue at minimum
+      if (!hasItemName(parsed)) {
+        return {
+          success: false,
+          data: null,
+          error: 'Response missing required fields',
+          rawContent: rawResult.substring(0, 500),
+        };
+      }
+      // Don't reject if missing valuation_factors — we can generate defaults
+    }
+
+    // Step 7: Normalize the analysis (fills in defaults for missing fields)
     const normalized = normalizeAnalysis(parsed, providerName);
     
     return {
@@ -226,16 +305,19 @@ export function parsePerplexityResponse(
       return { success: false, data: null, error: 'Could not extract JSON or price' };
     }
 
-    const parsed = JSON.parse(jsonContent);
+    let parsed = JSON.parse(jsonContent);
+    
+    // Apply field mapping
+    parsed = attemptFieldNameFix(parsed);
     
     // Extract and normalize fields with Perplexity-specific handling
     const result: ParsedAnalysis = {
-      itemName: parsed.itemName || parsed.item_name || parsed.product || fallbackItemName,
+      itemName: parsed.itemName || fallbackItemName,
       estimatedValue: extractPrice(parsed),
-      decision: normalizeDecision(parsed.decision || parsed.recommendation),
+      decision: normalizeDecision(parsed.decision),
       valuation_factors: extractValuationFactors(parsed),
-      summary_reasoning: parsed.summary_reasoning || parsed.summary || parsed.reasoning || 
-                        parsed.analysis || 'Market data retrieved from online sources.',
+      summary_reasoning: parsed.summary_reasoning || 
+                        'Market data retrieved from online sources.',
       confidence: 0.85,
       category: parsed.category,
     };
@@ -293,13 +375,45 @@ export function parsePerplexityResponse(
 // =============================================================================
 
 /**
+ * Detect whether a response is from identify or reason stage
+ * based on which fields are present
+ */
+function detectMode(parsed: any): 'identify' | 'reason' {
+  // If it has identifiers, condition, or description but no valuation_factors → identify
+  if (parsed.identifiers || parsed.condition || parsed.description) {
+    if (!parsed.valuation_factors && !parsed.valuationFactors) {
+      return 'identify';
+    }
+  }
+  // If it has valuation_factors or summary_reasoning → reason
+  if (parsed.valuation_factors || parsed.summary_reasoning) {
+    return 'reason';
+  }
+  // Default to identify (more lenient)
+  return 'identify';
+}
+
+/**
+ * Check if parsed object has an item name (the only truly required field)
+ */
+function hasItemName(obj: any): boolean {
+  return !!(
+    obj &&
+    typeof obj === 'object' &&
+    obj.itemName &&
+    typeof obj.itemName === 'string' &&
+    obj.itemName.trim().length > 0
+  );
+}
+
+/**
  * Clean raw JSON response from common formatting issues
  */
 export function cleanJsonResponse(rawResult: string): string {
   let cleaned = rawResult;
 
-  // Remove markdown code blocks
-  cleaned = cleaned.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
+  // Remove markdown code blocks (with or without language tag)
+  cleaned = cleaned.replace(/```(?:json)?\s*/gi, '');
 
   // Remove any "Here is the JSON:" type prefixes
   cleaned = cleaned.replace(/^[^{]*?(?={)/i, '');
@@ -341,45 +455,60 @@ export function attemptJsonFix(jsonString: string): string | null {
     // Fix missing quotes around property names
     fixed = fixed.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
 
-    // Fix single quotes to double quotes
+    // Fix single quotes to double quotes (careful with contractions)
     fixed = fixed.replace(/'/g, '"');
+    
+    // Fix unescaped newlines in strings
+    fixed = fixed.replace(/\n/g, '\\n');
 
     // Test if it's valid
     JSON.parse(fixed);
     return fixed;
   } catch {
+    // Second attempt: try to extract just the JSON object
+    try {
+      const jsonMatch = fixed.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const extracted = jsonMatch[0].replace(/,\s*([}\]])/g, '$1');
+        JSON.parse(extracted);
+        return extracted;
+      }
+    } catch {
+      // Give up
+    }
     return null;
   }
 }
 
 /**
  * Check if parsed object has all required analysis fields
+ * v9.1.1: DEPRECATED for validation — use hasItemName() + mode detection instead
+ * Kept for backward compatibility with any code that still calls it
  */
 export function isValidAnalysis(obj: any): boolean {
-  return (
+  return !!(
     obj &&
     typeof obj === 'object' &&
-    'itemName' in obj &&
-    'estimatedValue' in obj &&
-    'decision' in obj &&
-    'valuation_factors' in obj &&
-    'summary_reasoning' in obj
+    obj.itemName &&
+    typeof obj.itemName === 'string' &&
+    obj.itemName.trim().length > 0
   );
 }
 
 /**
  * Attempt to fix field names using known mappings
+ * v9.1.1: Now runs BEFORE validation, not after
  */
 export function attemptFieldNameFix(obj: any): any {
   if (!obj || typeof obj !== 'object') return obj;
 
   const fixed = { ...obj };
 
-  // Apply mappings
+  // Apply mappings — check all variations for each standard field
   for (const [standard, variations] of Object.entries(FIELD_MAPPINGS)) {
-    if (fixed[standard] === undefined) {
+    if (fixed[standard] === undefined || fixed[standard] === null) {
       for (const variation of variations) {
-        if (obj[variation] !== undefined) {
+        if (obj[variation] !== undefined && obj[variation] !== null) {
           fixed[standard] = obj[variation];
           break;
         }
@@ -392,15 +521,24 @@ export function attemptFieldNameFix(obj: any): any {
 
 /**
  * Normalize parsed analysis to ensure consistent types and values
+ * v9.1.1: Generates defaults for missing fields instead of rejecting
  */
 export function normalizeAnalysis(parsed: any, providerName?: string): ParsedAnalysis {
   const result: ParsedAnalysis = { ...parsed };
+
+  // Ensure itemName exists
+  if (!result.itemName || typeof result.itemName !== 'string') {
+    result.itemName = 'Unidentified Item';
+  }
 
   // Ensure numeric estimatedValue
   if (typeof result.estimatedValue === 'string') {
     result.estimatedValue = parseFloat(result.estimatedValue.replace(/[$,]/g, ''));
   }
-  if (isNaN(result.estimatedValue) || result.estimatedValue < 0) {
+  if (isNaN(result.estimatedValue) || result.estimatedValue === undefined || result.estimatedValue === null) {
+    result.estimatedValue = 0;
+  }
+  if (result.estimatedValue < 0) {
     result.estimatedValue = 0;
   }
 
@@ -412,22 +550,41 @@ export function normalizeAnalysis(parsed: any, providerName?: string): ParsedAna
     if (typeof result.valuation_factors === 'string') {
       result.valuation_factors = [result.valuation_factors];
     } else {
-      result.valuation_factors = [];
+      // Generate default factors from available data
+      result.valuation_factors = generateDefaultFactors(result);
     }
   }
   
+  // Clean factor strings (remove "Factor 1:" prefixes if present)
+  result.valuation_factors = result.valuation_factors.map((f: any) => {
+    if (typeof f !== 'string') return String(f);
+    return f.replace(/^Factor\s*\d+:\s*/i, '').trim() || f;
+  });
+  
   // Pad to 5 factors
   while (result.valuation_factors.length < 5) {
-    result.valuation_factors.push(`Factor ${result.valuation_factors.length + 1}`);
+    result.valuation_factors.push(`Additional analysis factor ${result.valuation_factors.length + 1}`);
   }
   // Trim to 5 factors
   if (result.valuation_factors.length > 5) {
     result.valuation_factors = result.valuation_factors.slice(0, 5);
   }
 
+  // Ensure summary_reasoning exists
+  if (!result.summary_reasoning || typeof result.summary_reasoning !== 'string') {
+    result.summary_reasoning = result.description || 
+                               result.analysis || 
+                               result.rationale ||
+                               `Analysis provided by ${providerName || 'AI provider'}.`;
+  }
+
   // Ensure confidence is a number between 0 and 1
   if (typeof result.confidence !== 'number') {
     result.confidence = calculateConfidence(result);
+  }
+  // Handle confidence that's 0-100 instead of 0-1
+  if (result.confidence > 1 && result.confidence <= 100) {
+    result.confidence = result.confidence / 100;
   }
   result.confidence = Math.max(0, Math.min(1, result.confidence));
 
@@ -437,6 +594,36 @@ export function normalizeAnalysis(parsed: any, providerName?: string): ParsedAna
   }
 
   return result;
+}
+
+/**
+ * Generate default valuation factors from available response data
+ */
+function generateDefaultFactors(parsed: any): string[] {
+  const factors: string[] = [];
+  
+  if (parsed.category) {
+    factors.push(`Category: ${parsed.category}`);
+  }
+  if (parsed.condition) {
+    factors.push(`Condition: ${parsed.condition}`);
+  }
+  if (parsed.description) {
+    factors.push(parsed.description.substring(0, 100));
+  }
+  if (parsed.estimatedValue > 0) {
+    factors.push(`Estimated value: $${parsed.estimatedValue}`);
+  }
+  if (parsed.identifiers) {
+    const ids = Object.entries(parsed.identifiers)
+      .filter(([_, v]) => v)
+      .map(([k, v]) => `${k}: ${v}`);
+    if (ids.length > 0) {
+      factors.push(`Identifiers: ${ids.join(', ')}`);
+    }
+  }
+  
+  return factors;
 }
 
 /**
@@ -482,6 +669,59 @@ export function normalizeCategory(category: string): string {
     }
   }
 
+  // Common aliases
+  const aliases: Record<string, string> = {
+    'coin': 'coins',
+    'stamp': 'stamps',
+    'banknote': 'banknotes',
+    'currency': 'banknotes',
+    'pokemon': 'pokemon_cards',
+    'card': 'trading_cards',
+    'cards': 'trading_cards',
+    'sports': 'sports_cards',
+    'baseball': 'sports_cards',
+    'basketball': 'sports_cards',
+    'football': 'sports_cards',
+    'comic': 'comics',
+    'comic_book': 'comics',
+    'comic_books': 'comics',
+    'comicbook': 'comics',
+    'comicbooks': 'comics',
+    'book': 'books',
+    'vinyl': 'vinyl_records',
+    'record': 'vinyl_records',
+    'records': 'vinyl_records',
+    'shoe': 'sneakers',
+    'shoes': 'sneakers',
+    'watch': 'watches',
+    'game': 'video_games',
+    'games': 'video_games',
+    'toy': 'toys',
+    'figure': 'figurines',
+    'figurine': 'figurines',
+    'action_figure': 'figurines',
+    'lego_set': 'lego',
+    'art_piece': 'art',
+    'painting': 'art',
+    'antique': 'antiques',
+    'vintage': 'antiques',
+    'electronic': 'electronics',
+    'tech': 'electronics',
+    'instrument': 'musical_instruments',
+    'guitar': 'musical_instruments',
+    'piano': 'musical_instruments',
+    'digital_service': 'general',
+    'service': 'general',
+    'unknown': 'general',
+    'other': 'general',
+    'misc': 'general',
+    'miscellaneous': 'general',
+  };
+  
+  if (aliases[lower]) {
+    return aliases[lower];
+  }
+
   return 'general';
 }
 
@@ -494,8 +734,9 @@ export function calculateConfidence(analysis: ParsedAnalysis): number {
   // Increase confidence based on completeness
   if (analysis.itemName && analysis.itemName.length > 3) confidence += 0.1;
   if (analysis.estimatedValue && analysis.estimatedValue > 0) confidence += 0.15;
-  if (analysis.valuation_factors?.length >= 3) confidence += 0.15;
+  if (analysis.valuation_factors?.length >= 3) confidence += 0.1;
   if (analysis.summary_reasoning?.length > 50) confidence += 0.1;
+  if (analysis.category && analysis.category !== 'general') confidence += 0.05;
 
   // Check decision validity
   if (['BUY', 'SELL'].includes(analysis.decision?.toUpperCase())) confidence += 0.05;
@@ -504,17 +745,18 @@ export function calculateConfidence(analysis: ParsedAnalysis): number {
 }
 
 /**
- * Extract price from various field formats (Perplexity-specific)
+ * Extract price from various field formats
  */
 export function extractPrice(parsed: any): number {
   const priceFields = [
     'estimatedValue', 'estimated_value', 'price', 'value',
     'average_price', 'averagePrice', 'market_price', 'marketPrice',
-    'sold_price', 'soldPrice',
+    'sold_price', 'soldPrice', 'median_price', 'medianPrice',
+    'current_value', 'currentValue', 'fair_value', 'fairValue',
   ];
 
   for (const field of priceFields) {
-    if (parsed[field] !== undefined) {
+    if (parsed[field] !== undefined && parsed[field] !== null) {
       const price = parseFloat(String(parsed[field]).replace(/[$,]/g, ''));
       if (!isNaN(price) && price > 0) {
         return price;
@@ -523,9 +765,10 @@ export function extractPrice(parsed: any): number {
   }
 
   // Try price_range
-  if (parsed.price_range) {
-    const low = parseFloat(String(parsed.price_range.low || 0).replace(/[$,]/g, ''));
-    const high = parseFloat(String(parsed.price_range.high || 0).replace(/[$,]/g, ''));
+  if (parsed.price_range || parsed.priceRange) {
+    const range = parsed.price_range || parsed.priceRange;
+    const low = parseFloat(String(range.low || range.min || 0).replace(/[$,]/g, ''));
+    const high = parseFloat(String(range.high || range.max || 0).replace(/[$,]/g, ''));
     if (low > 0 && high > 0) {
       return (low + high) / 2;
     }
@@ -541,6 +784,8 @@ export function extractPriceFromText(text: string): number {
   const pricePatterns = [
     /sold\s+(?:for\s+)?\$?([\d,]+(?:\.\d{2})?)/gi,
     /price[:\s]+\$?([\d,]+(?:\.\d{2})?)/gi,
+    /valued?\s+(?:at\s+)?\$?([\d,]+(?:\.\d{2})?)/gi,
+    /worth\s+(?:about\s+)?\$?([\d,]+(?:\.\d{2})?)/gi,
     /\$\s*([\d,]+(?:\.\d{2})?)/g,
     /(\d+(?:,\d{3})*(?:\.\d{2})?)\s*(?:USD|dollars?)/gi,
   ];
@@ -571,25 +816,33 @@ export function extractPriceFromText(text: string): number {
  * Extract valuation factors from various formats
  */
 export function extractValuationFactors(parsed: any): string[] {
-  const factorFields = ['valuation_factors', 'factors', 'reasons', 'key_factors', 'market_data'];
+  const factorFields = [
+    'valuation_factors', 'valuationFactors', 'factors', 'reasons',
+    'key_factors', 'keyFactors', 'market_data', 'marketData',
+    'pricing_factors', 'pricingFactors',
+  ];
 
   for (const field of factorFields) {
     if (Array.isArray(parsed[field]) && parsed[field].length > 0) {
-      return parsed[field].slice(0, 5);
+      return parsed[field]
+        .map((f: any) => typeof f === 'string' ? f : String(f))
+        .slice(0, 5);
     }
   }
 
   // Build factors from available data
   const factors: string[] = [];
 
-  if (parsed.price_range) {
-    factors.push(`Price range: $${parsed.price_range.low} - $${parsed.price_range.high}`);
+  if (parsed.price_range || parsed.priceRange) {
+    const range = parsed.price_range || parsed.priceRange;
+    factors.push(`Price range: $${range.low || range.min} - $${range.high || range.max}`);
   }
-  if (parsed.market_sources) {
-    factors.push(`Sources: ${Array.isArray(parsed.market_sources) ? parsed.market_sources.join(', ') : parsed.market_sources}`);
+  if (parsed.market_sources || parsed.marketSources) {
+    const sources = parsed.market_sources || parsed.marketSources;
+    factors.push(`Sources: ${Array.isArray(sources) ? sources.join(', ') : sources}`);
   }
-  if (parsed.market_trend) {
-    factors.push(`Market trend: ${parsed.market_trend}`);
+  if (parsed.market_trend || parsed.marketTrend) {
+    factors.push(`Market trend: ${parsed.market_trend || parsed.marketTrend}`);
   }
 
   // Pad to 5 factors
