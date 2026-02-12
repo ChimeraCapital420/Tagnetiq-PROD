@@ -1,12 +1,7 @@
 // FILE: src/components/oracle/OracleVoiceButton.tsx
-// Oracle Phase 1 — Consolidated voice interface
-// REPLACES: GlobalVoiceControl.tsx + JarvisVoiceInterface.tsx + jarvis/VoiceInterface.tsx
-//
-// Mobile-first design:
-//   - Large touch target (56px) positioned for thumb reach
-//   - Single tap to listen → auto-classify → execute → speak
-//   - Visual feedback: pulse when listening, spinner when processing, wave when speaking
-//   - Keyboard shortcut: Ctrl+Shift+O (O for Oracle)
+// Oracle Phase 2 — Voice interface with conversation support
+// FIXED: Now shows transcript bubble during chat responses (not just commands)
+// FIXED: Processing state stays visible while waiting for chat API response
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -46,7 +41,6 @@ export default function OracleVoiceButton() {
   // Sync listening state (safety net)
   useEffect(() => {
     if (!isListening && state === 'listening') {
-      // Recognition ended without us handling it — reset
       setState('idle');
     }
   }, [isListening, state]);
@@ -104,10 +98,13 @@ export default function OracleVoiceButton() {
     try {
       const ctx = buildContext();
       await routeCommand(transcript, i18n.language, ctx);
-      // State will transition to 'speaking' via the isSpeaking effect,
-      // then back to 'idle' when speech ends
+      // routeCommand now handles speaking internally (including chat responses)
+      // State will transition to 'speaking' via isSpeaking effect
       if (!isSpeaking) {
-        setState('idle');
+        // Give a moment for speak() to kick in before going idle
+        setTimeout(() => {
+          if (!isSpeaking) setState('idle');
+        }, 500);
       }
     } catch (error) {
       console.error('Oracle command error:', error);
@@ -181,7 +178,7 @@ export default function OracleVoiceButton() {
         aria-label={
           state === 'idle' ? 'Activate Oracle voice' :
           state === 'listening' ? 'Stop listening' :
-          state === 'processing' ? 'Processing command' :
+          state === 'processing' ? 'Processing...' :
           'Oracle speaking — tap to stop'
         }
       >

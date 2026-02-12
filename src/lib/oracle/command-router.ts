@@ -1,16 +1,15 @@
 // FILE: src/lib/oracle/command-router.ts
-// Oracle Phase 1 — Client-side command routing with API fallback
-// REPLACES: src/lib/command-handler.ts (which had two conflicting systems crammed together)
+// Oracle Phase 2 — Client-side command routing with chat fallback
+// FIXED: "what have I scanned" no longer opens camera (was: cmd.includes('scan'))
+// FIXED: Conversational input ("hey", questions, etc.) now routes to chat API
+//        instead of returning cold UNKNOWN rejection
 //
 // ARCHITECTURE:
-//   1. Fast-path: Pattern match common commands client-side (~0ms)
-//   2. Slow-path: Only hit /api/oracle/interpret-command for ambiguous input (~800ms)
-//   This saves ~500ms per command and reduces API costs by ~80%
-//
-// Mobile-first: All processing on-device when possible
+//   1. Fast-path: Pattern match COMMANDS client-side (~0ms)
+//   2. Conversation: Detect non-command input → route to /api/oracle/chat (~1s)
+//   3. Slow-path: Ambiguous input → /api/oracle/interpret-command (~800ms)
 
 import { NavigateFunction } from 'react-router-dom';
-import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 
 // =============================================================================
@@ -23,13 +22,14 @@ export type OracleIntent =
   | 'NAVIGATE'
   | 'VAULT_SAVE'
   | 'HELP'
+  | 'CONVERSATION'
   | 'UNKNOWN';
 
 export interface OracleCommand {
   intent: OracleIntent;
   parameters: Record<string, string | null>;
   feedback: string;
-  source: 'client' | 'api';
+  source: 'client' | 'api' | 'chat';
 }
 
 export interface OracleContext {
@@ -53,8 +53,9 @@ const NAV_ROUTES: Record<string, string> = {
   'vault': '/vault',
   'profile': '/profile',
   'settings': '/profile?tab=oracle',
-  'arena': '/arena',
+  'arena': '/arena/marketplace',
   'marketplace': '/arena/marketplace',
+  'oracle': '/oracle',
 };
 
 // Category mapping for scan commands
@@ -91,6 +92,48 @@ const SCAN_CATEGORIES: Record<string, { categoryId: string; subcategoryId: strin
   'property': { categoryId: 'real-estate', subcategoryId: 'real-estate-comps' },
 };
 
+// ── SCAN detection (word-boundary aware) ────────────────────
+// Must be an ACTION verb, not past tense or part of a question
+const SCAN_ACTION_PATTERNS = [
+  /^scan\b/,                    // "scan this", "scan my coin"
+  /\bscan (this|that|it)\b/,   // "please scan this"
+  /\bopen (the\s+)?scanner\b/, // "open scanner", "open the scanner"
+  /\bopen (the\s+)?camera\b/,  // "open camera"
+  /\bcapture\b/,               // "capture this"
+  /^what is this$/,            // exact match
+  /^what's this$/,             // exact match
+  /^what's this worth$/,       // exact match
+  /^what is this worth$/,      // exact match
+  /\bstart scan/,              // "start scanning"
+];
+
+// Words that indicate a QUESTION about scanning, not a scan command
+const SCAN_QUESTION_PATTERNS = [
+  /\bscanned\b/,               // "what have I scanned" — past tense
+  /\bscanning\b.*\?/,          // "what am I scanning?" — question about scanning
+  /\bmy scan/,                 // "show me my scans", "my scan history"
+  /\bscan history/,            // "scan history"
+  /\bhow many.*scan/,          // "how many scans"
+  /\blast scan/,               // "my last scan"
+  /\bbest scan/,               // "my best scan"
+  /\brecent scan/,             // "recent scans"
+];
+
+// ── CONVERSATION detection ──────────────────────────────────
+// These should go to the chat API, not the command router
+const CONVERSATION_PATTERNS = [
+  /^(hey|hi|hello|yo|sup|howdy|hola|what's up|whats up)\b/,
+  /^(how are you|how's it going|good morning|good evening)/,
+  /^(what|who|when|where|why|how|tell me|explain|describe|show me)\b/,
+  /\?$/,                       // Anything ending in a question mark
+  /^(thanks|thank you|thx|ty)\b/,
+  /^(I |my |me |we |our )/i,  // Personal statements: "I found...", "my collection..."
+  /\b(worth|value|valuable|expensive|cheap|price|cost)\b.*\?/,  // Value questions
+  /\b(should I|do you think|what do you|can you)\b/,
+  /\b(recommend|suggest|advice|opinion|think about)\b/,
+  /\b(trending|popular|hot|market|flip)\b/,
+];
+
 /**
  * Attempt to classify a voice command purely on-device.
  * Returns null if the command is ambiguous and needs API classification.
@@ -98,17 +141,42 @@ const SCAN_CATEGORIES: Record<string, { categoryId: string; subcategoryId: strin
 function classifyLocally(raw: string): OracleCommand | null {
   const cmd = raw.toLowerCase().trim();
 
-  // ── SCAN ──────────────────────────────────────────────────
-  if (
-    cmd.includes('scan') ||
-    cmd.includes('capture') ||
-    cmd.includes('open scanner') ||
-    cmd.includes('open camera') ||
-    cmd === 'what is this' ||
-    cmd === 'what\'s this' ||
-    cmd === 'what\'s this worth' ||
-    cmd === 'what is this worth'
-  ) {
+  // ── CONVERSATION CHECK FIRST ────────────────────────────
+  // If this looks like conversation/question, route to chat
+  for (const pattern of CONVERSATION_PATTERNS) {
+    if (pattern.test(cmd)) {
+      return {
+        intent: 'CONVERSATION',
+        parameters: { message: raw }, // Preserve original casing
+        feedback: '', // Chat API will provide the response
+        source: 'client',
+      };
+    }
+  }
+
+  // ── SCAN QUESTION CHECK ─────────────────────────────────
+  // "What have I scanned" should NOT open camera
+  for (const pattern of SCAN_QUESTION_PATTERNS) {
+    if (pattern.test(cmd)) {
+      return {
+        intent: 'CONVERSATION',
+        parameters: { message: raw },
+        feedback: '',
+        source: 'client',
+      };
+    }
+  }
+
+  // ── SCAN COMMAND ────────────────────────────────────────
+  let isScanCommand = false;
+  for (const pattern of SCAN_ACTION_PATTERNS) {
+    if (pattern.test(cmd)) {
+      isScanCommand = true;
+      break;
+    }
+  }
+
+  if (isScanCommand) {
     // Check if user specified a category
     for (const [keyword, cat] of Object.entries(SCAN_CATEGORIES)) {
       if (cmd.includes(keyword)) {
@@ -129,11 +197,11 @@ function classifyLocally(raw: string): OracleCommand | null {
   }
 
   // ── SEARCH ────────────────────────────────────────────────
-  const searchPrefixes = ['search for ', 'search the arena for ', 'find ', 'look for ', 'search '];
+  const searchPrefixes = ['search for ', 'search the arena for ', 'find me ', 'look for ', 'search '];
   for (const prefix of searchPrefixes) {
     if (cmd.startsWith(prefix)) {
       const query = cmd.slice(prefix.length).trim();
-      if (query) {
+      if (query && query.length > 1) {
         return {
           intent: 'SEARCH_ARENA',
           parameters: { query },
@@ -150,7 +218,7 @@ function classifyLocally(raw: string): OracleCommand | null {
     if (cmd.startsWith(prefix)) {
       const destination = cmd.slice(prefix.length).trim();
       for (const [keyword, route] of Object.entries(NAV_ROUTES)) {
-        if (destination.includes(keyword)) {
+        if (destination === keyword || destination === `the ${keyword}` || destination === `my ${keyword}`) {
           return {
             intent: 'NAVIGATE',
             parameters: { destination: route },
@@ -161,12 +229,12 @@ function classifyLocally(raw: string): OracleCommand | null {
       }
     }
   }
-  // Direct keyword navigation (no prefix)
-  if (cmd === 'vault' || cmd === 'open vault') {
+  // Direct keyword navigation
+  if (cmd === 'vault' || cmd === 'open vault' || cmd === 'my vault') {
     return { intent: 'NAVIGATE', parameters: { destination: '/vault' }, feedback: 'Opening your Vault.', source: 'client' };
   }
   if (cmd === 'home' || cmd === 'go home' || cmd === 'dashboard' || cmd === 'open dashboard') {
-    return { intent: 'NAVIGATE', parameters: { destination: '/' }, feedback: 'Navigating to your dashboard.', source: 'client' };
+    return { intent: 'NAVIGATE', parameters: { destination: '/' }, feedback: 'Navigating home.', source: 'client' };
   }
 
   // ── VAULT SAVE ────────────────────────────────────────────
@@ -180,65 +248,55 @@ function classifyLocally(raw: string): OracleCommand | null {
   }
 
   // ── HELP ──────────────────────────────────────────────────
-  if (cmd === 'help' || cmd.includes('what can you do') || cmd.includes('commands')) {
+  if (cmd === 'help' || cmd === 'commands' || cmd === 'what can you do') {
     return {
       intent: 'HELP',
       parameters: {},
-      feedback: 'I can scan items, search the arena, navigate the app, and save to your vault. Just tell me what you need.',
+      feedback: 'I can scan items, search the arena, navigate the app, and save to your vault. You can also just talk to me — ask about your scans, market trends, or anything resale related.',
       source: 'client',
     };
   }
 
-  // Not confident enough — fall through to API
-  return null;
+  // ── DEFAULT: Treat as conversation ────────────────────────
+  // Instead of returning UNKNOWN with a cold rejection,
+  // route EVERYTHING unrecognized to the chat API
+  return {
+    intent: 'CONVERSATION',
+    parameters: { message: raw },
+    feedback: '',
+    source: 'client',
+  };
 }
 
 // =============================================================================
-// API FALLBACK (slow path)
+// CHAT API CALL (for conversational input)
 // =============================================================================
 
-async function classifyViaAPI(command: string, language: string): Promise<OracleCommand> {
+async function chatWithOracle(message: string): Promise<string> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) throw new Error('Not authenticated');
+    if (!session) return "I need you to be logged in to chat. Try again after signing in.";
 
-    const response = await fetch('/api/oracle/interpret-command', {
+    const response = await fetch('/api/oracle/chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${session.access_token}`,
       },
-      body: JSON.stringify({ command, language }),
+      body: JSON.stringify({
+        message,
+        conversationHistory: [], // Voice chat doesn't persist history (use Oracle page for that)
+      }),
     });
 
-    if (!response.ok) {
-      throw new Error('Oracle API error');
-    }
+    if (!response.ok) throw new Error('Chat API error');
 
     const data = await response.json();
+    return data.response || "Sorry, I couldn't think of a response. Try again.";
 
-    // Map API intent names to our local intent names
-    const intentMap: Record<string, OracleIntent> = {
-      'SEARCH_ARENA': 'SEARCH_ARENA',
-      'INITIATE_SCAN': 'SCAN',
-      'NAVIGATE': 'NAVIGATE',
-      'UNKNOWN': 'UNKNOWN',
-    };
-
-    return {
-      intent: intentMap[data.intent] || 'UNKNOWN',
-      parameters: data.parameters || {},
-      feedback: data.feedback_phrase || '',
-      source: 'api',
-    };
   } catch (error) {
-    console.error('Oracle API fallback error:', error);
-    return {
-      intent: 'UNKNOWN',
-      parameters: {},
-      feedback: "Sorry, I couldn't process that command. Try saying 'help' for available commands.",
-      source: 'api',
-    };
+    console.error('Oracle chat error:', error);
+    return "I had a little trouble there. Try asking again, or open the Oracle page for a full conversation.";
   }
 }
 
@@ -246,12 +304,21 @@ async function classifyViaAPI(command: string, language: string): Promise<Oracle
 // COMMAND EXECUTION
 // =============================================================================
 
-function executeCommand(command: OracleCommand, ctx: OracleContext): void {
-  // Speak the feedback
-  ctx.speak(command.feedback, ctx.voiceURI, ctx.premiumVoiceId);
-
+async function executeCommand(command: OracleCommand, ctx: OracleContext): Promise<void> {
   switch (command.intent) {
+    case 'CONVERSATION': {
+      // Route to chat API — get a warm, contextual response
+      const message = command.parameters.message || '';
+      console.log(`💬 Routing to Oracle chat: "${message}"`);
+      const chatResponse = await chatWithOracle(message);
+      ctx.speak(chatResponse, ctx.voiceURI, ctx.premiumVoiceId);
+      // Update the command feedback for any UI that wants it
+      command.feedback = chatResponse;
+      break;
+    }
+
     case 'SCAN':
+      ctx.speak(command.feedback, ctx.voiceURI, ctx.premiumVoiceId);
       if (command.parameters.categoryId) {
         ctx.startScanWithCategory(
           command.parameters.categoryId,
@@ -263,6 +330,7 @@ function executeCommand(command: OracleCommand, ctx: OracleContext): void {
       break;
 
     case 'SEARCH_ARENA':
+      ctx.speak(command.feedback, ctx.voiceURI, ctx.premiumVoiceId);
       if (command.parameters.query) {
         ctx.setSearchArenaQuery(command.parameters.query);
         ctx.navigate('/arena/marketplace');
@@ -270,6 +338,7 @@ function executeCommand(command: OracleCommand, ctx: OracleContext): void {
       break;
 
     case 'NAVIGATE':
+      ctx.speak(command.feedback, ctx.voiceURI, ctx.premiumVoiceId);
       if (command.parameters.destination) {
         ctx.navigate(command.parameters.destination);
       }
@@ -277,6 +346,7 @@ function executeCommand(command: OracleCommand, ctx: OracleContext): void {
 
     case 'VAULT_SAVE':
       if (ctx.hasAnalysisResult) {
+        ctx.speak(command.feedback, ctx.voiceURI, ctx.premiumVoiceId);
         ctx.navigate('/vault?action=add');
       } else {
         ctx.speak('No analyzed item to save. Scan something first.', ctx.voiceURI, ctx.premiumVoiceId);
@@ -284,11 +354,14 @@ function executeCommand(command: OracleCommand, ctx: OracleContext): void {
       break;
 
     case 'HELP':
-      // Feedback already spoken above
+      ctx.speak(command.feedback, ctx.voiceURI, ctx.premiumVoiceId);
       break;
 
     case 'UNKNOWN':
-      // Feedback already spoken above
+      // This should rarely hit now — most things route to CONVERSATION
+      const fallbackResponse = await chatWithOracle(command.parameters.message || 'hello');
+      ctx.speak(fallbackResponse, ctx.voiceURI, ctx.premiumVoiceId);
+      command.feedback = fallbackResponse;
       break;
   }
 }
@@ -298,8 +371,8 @@ function executeCommand(command: OracleCommand, ctx: OracleContext): void {
 // =============================================================================
 
 /**
- * Route a voice command: try client-side first, fall back to API.
- * This is the only function the OracleVoiceButton needs to call.
+ * Route a voice command: classify client-side, execute or chat.
+ * No more cold UNKNOWN rejections — everything gets a warm response.
  */
 export async function routeCommand(
   rawCommand: string,
@@ -308,19 +381,22 @@ export async function routeCommand(
 ): Promise<OracleCommand> {
   console.log(`🔮 Oracle routing: "${rawCommand}" (${language})`);
 
-  // Try fast path first
-  const localResult = classifyLocally(rawCommand);
+  const result = classifyLocally(rawCommand);
 
-  if (localResult) {
-    console.log(`⚡ Client-side match: ${localResult.intent}`, localResult.parameters);
-    executeCommand(localResult, ctx);
-    return localResult;
+  if (result) {
+    console.log(`⚡ Classified: ${result.intent}`, result.parameters);
+    await executeCommand(result, ctx);
+    return result;
   }
 
-  // Fall back to API
-  console.log('🌐 No client match — calling Oracle API...');
-  const apiResult = await classifyViaAPI(rawCommand, language);
-  console.log(`📡 API result: ${apiResult.intent}`, apiResult.parameters);
-  executeCommand(apiResult, ctx);
-  return apiResult;
+  // This shouldn't happen since classifyLocally always returns something now,
+  // but just in case — route to conversation
+  const fallback: OracleCommand = {
+    intent: 'CONVERSATION',
+    parameters: { message: rawCommand },
+    feedback: '',
+    source: 'client',
+  };
+  await executeCommand(fallback, ctx);
+  return fallback;
 }
