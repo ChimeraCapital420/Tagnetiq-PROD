@@ -6,12 +6,13 @@
 //   personality/ → Evolution via LLM, energy detection
 //   prompt/      → System prompt builder + sections
 //   chips/       → Dynamic quick chips
+//   tier.ts      → Sprint D: Tier gating + message counting
 //
 // This file just wires them together and handles HTTP.
 //
 // Sprint C:   Identity, name ceremony, personality evolution
-// Sprint C.1: AI DNA (placeholder hooks already in place)
-// Sprint D+:  Add new features to src/lib/oracle/ modules
+// Sprint C.1: AI DNA (provider affinity → personality)
+// Sprint D:   Tier-gated Oracle (Free: 5/day, Pro: unlimited, Elite: full)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -27,6 +28,8 @@ import {
   getQuickChips,
   evolvePersonality,
 } from '../../src/lib/oracle/index.js';
+
+import { checkOracleAccess } from '../../src/lib/oracle/tier.js';
 
 export const config = {
   maxDuration: 30,
@@ -65,6 +68,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'A valid "message" string is required.' });
+    }
+
+    // ── 0. TIER GATE — check access before anything expensive ──
+    const access = await checkOracleAccess(supabaseAdmin, user.id);
+
+    if (!access.allowed) {
+      return res.status(429).json({
+        error: 'message_limit_reached',
+        message: access.blockedReason,
+        upgradeCta: access.upgradeCta,
+        tier: {
+          current: access.tier.current,
+          messagesUsed: access.usage.messagesUsed,
+          messagesLimit: access.usage.messagesLimit,
+          messagesRemaining: 0,
+        },
+      });
     }
 
     // ── 1. Fetch all data in parallel ─────────────────────
@@ -127,7 +147,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Name ceremony: check if Oracle named itself in this response
     checkForNameCeremony(supabaseAdmin, identity, responseText).catch(() => {});
 
-    // Identity update: increment counts, detect energy, update categories
+    // Identity update: increment counts, detect energy, update categories, AI DNA
     updateIdentityAfterChat(supabaseAdmin, identity, message, scanHistory).catch(() => {});
 
     // Personality evolution: runs every ~10 conversations
@@ -176,7 +196,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.warn('Conversation persistence failed (non-fatal):', convError.message);
     }
 
-    // ── 7. Response ───────────────────────────────────────
+    // ── 7. Response (includes tier info for client UI) ────
     const quickChips = getQuickChips(scanHistory, vaultItems, identity);
 
     return res.status(200).json({
@@ -186,6 +206,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       scanCount: scanHistory.length,
       vaultCount: vaultItems.length,
       oracleName: identity.oracle_name,
+      tier: {
+        current: access.tier.current,
+        messagesUsed: access.usage.messagesUsed,
+        messagesLimit: access.usage.messagesLimit,
+        messagesRemaining: access.usage.messagesRemaining,
+      },
     });
 
   } catch (error: any) {

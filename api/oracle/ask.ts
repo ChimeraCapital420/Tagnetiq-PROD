@@ -1,17 +1,26 @@
 // FILE: api/oracle/ask.ts
-// STATUS: Surgically updated to accept Hydra v2.1 AnalysisResult for context-aware advice.
+// Legacy Oracle Ask Endpoint — kept for existing UI integrations.
+// Sprint D: Now tier-gated. Messages count toward daily free limit.
+//
+// For new integrations, use api/oracle/chat.ts instead.
+// This endpoint lacks Oracle identity, personality, and AI DNA features.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
+import { createClient } from '@supabase/supabase-js';
 import { verifyUser } from '../_lib/security.js';
-// Hephaestus Note: SupaAdmin is not needed for this endpoint as it only uses passed context.
+import { checkOracleAccess } from '../../src/lib/oracle/tier.js';
 
 export const config = {
-  runtime: 'edge',
   maxDuration: 60,
 };
 
 const openai = new OpenAI({ apiKey: process.env.OPEN_AI_API_KEY });
+
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 const systemPrompt = `
 You are the Oracle, the AI heart of the TagnetIQ platform. You serve as an expert analyst and a proactive business partner to the user. Your personality is professional, insightful, and slightly futuristic. You are not a simple chatbot; you are a high-level advisor.
@@ -33,44 +42,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const user = await verifyUser(req);
-    // --- HYDRA V2.1 SURGICAL UPDATE START ---
-    // The endpoint now accepts an `analysisContext` object alongside the question.
+
+    // ── TIER GATE — check access before LLM call ─────────
+    const access = await checkOracleAccess(supabaseAdmin, user.id);
+
+    if (!access.allowed) {
+      return res.status(429).json({
+        error: 'message_limit_reached',
+        message: access.blockedReason,
+        upgradeCta: access.upgradeCta,
+        tier: {
+          current: access.tier.current,
+          messagesUsed: access.usage.messagesUsed,
+          messagesLimit: access.usage.messagesLimit,
+          messagesRemaining: 0,
+        },
+      });
+    }
+
     const { question, conversationHistory, analysisContext } = req.body;
-    // --- HYDRA V2.1 SURGICAL UPDATE END ---
 
     if (!question || typeof question !== 'string') {
       return res.status(400).json({ error: 'A valid "question" string is required.' });
     }
 
-    // --- HYDRA V2.1 SURGICAL UPDATE START ---
-    // The userContext is now built dynamically from the provided analysis object.
-    // This makes the Oracle's advice directly relevant to the item being discussed.
-    let userContext = "## User Context ##\nNo specific item context provided.";
+    // Build context from analysis data
+    let userContext = '## User Context ##\nNo specific item context provided.';
     if (analysisContext) {
-        userContext = `
-            ## Analysis Context for Conversation ##
-            Item Name: ${analysisContext.itemName}
-            Estimated Value: $${analysisContext.estimatedValue}
-            Summary: ${analysisContext.summary_reasoning}
-            Key Valuation Factors:
-            ${analysisContext.valuation_factors.map((factor: string) => `- ${factor}`).join('\n')}
-        `;
+      userContext = `
+## Analysis Context for Conversation ##
+Item Name: ${analysisContext.itemName}
+Estimated Value: $${analysisContext.estimatedValue}
+Summary: ${analysisContext.summary_reasoning}
+Key Valuation Factors:
+${analysisContext.valuation_factors.map((factor: string) => `- ${factor}`).join('\n')}
+      `;
     }
-    // --- HYDRA V2.1 SURGICAL UPDATE END ---
 
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-        { role: 'system', content: systemPrompt },
-        { role: 'system', content: userContext }
+      { role: 'system', content: systemPrompt },
+      { role: 'system', content: userContext },
     ];
 
     if (Array.isArray(conversationHistory)) {
-        messages.push(...conversationHistory);
+      messages.push(...conversationHistory);
     }
 
     messages.push({ role: 'user', content: question });
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4-turbo',
+      model: 'gpt-4o-mini',  // Upgraded from gpt-4-turbo for cost efficiency
       messages,
       temperature: 0.7,
       max_tokens: 200,
@@ -82,7 +103,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('The Oracle returned an empty response.');
     }
 
-    return res.status(200).json({ response: responseText });
+    return res.status(200).json({
+      response: responseText,
+      tier: {
+        current: access.tier.current,
+        messagesUsed: access.usage.messagesUsed,
+        messagesLimit: access.usage.messagesLimit,
+        messagesRemaining: access.usage.messagesRemaining,
+      },
+    });
 
   } catch (error: any) {
     const message = error.message || 'An unexpected error occurred.';
@@ -93,4 +122,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'The Oracle is currently contemplating. Please try again later.' });
   }
 }
-
