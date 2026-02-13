@@ -28,5 +28,11 @@
         { "key": "Cache-Control", "value": "public, s-maxage=3600, stale-while-revalidate=7200" }
       ]
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/admin/kpis?cron_secret=YOUR_CRON_SECRET_HERE",
+      "schedule": "0 6 * * *"
+    }
   ]
 }
