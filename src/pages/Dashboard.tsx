@@ -1,6 +1,6 @@
 // FILE: src/pages/Dashboard.tsx
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { useAppContext } from '@/contexts/AppContext';
 import { CATEGORIES } from '@/lib/constants';
@@ -13,6 +13,7 @@ import { subCategories } from '@/lib/subcategories';
 import SpotlightCarousel from '@/components/dashboard/SpotlightCarousel';
 import { ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
 import { useWelcomeMessage } from '@/hooks/useWelcomeMessage';
+import { useAnalytics } from '@/hooks/useAnalytics';
 
 const Dashboard: React.FC = () => {
   // Send welcome message to new users (runs once after onboarding)
@@ -23,10 +24,17 @@ const Dashboard: React.FC = () => {
   const [currentCategory, setCurrentCategory] = useState<{ id: string; name: string } | null>(null);
   const [isCategoryPanelOpen, setIsCategoryPanelOpen] = useState(false);
   const { user, profile } = useAuth();
+  const { trackEvent, trackFeature } = useAnalytics();
+
+  // Track dashboard view (Sprint E+)
+  useEffect(() => {
+    trackEvent('page_view', 'engagement', { page: 'dashboard' });
+  }, [trackEvent]);
 
   const handleCategorySelect = (category: { id: string; name: string; }) => {
     setSelectedCategory(category.id);
     toast.info(`AI mode set to ${category.name}.`);
+    trackFeature(`category_select_${category.id}`);
 
     const availableSubCategories = subCategories[category.id] || [];
     
@@ -75,9 +83,9 @@ const Dashboard: React.FC = () => {
             </div>
           </Card>
 
-          {/* Analysis Result */}
+          {/* Analysis Result — data-tour target for scan results */}
           {lastAnalysisResult && (
-            <div className="flex justify-center">
+            <div className="flex justify-center" data-tour="scan-result">
               <AnalysisResult />
             </div>
           )}
@@ -85,7 +93,10 @@ const Dashboard: React.FC = () => {
           {/* Collapsible Category Refinement Panel */}
           <div className="space-y-3">
             <button
-              onClick={() => setIsCategoryPanelOpen(!isCategoryPanelOpen)}
+              onClick={() => {
+                setIsCategoryPanelOpen(!isCategoryPanelOpen);
+                if (!isCategoryPanelOpen) trackFeature('category_panel_open');
+              }}
               className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-border/50 bg-background/50 backdrop-blur-sm hover:border-primary/50 transition-all group"
             >
               <div className="flex items-center gap-3">

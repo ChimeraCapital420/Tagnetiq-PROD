@@ -1,6 +1,6 @@
 // FILE: src/App.tsx
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -46,6 +46,12 @@ import DualScanner from '@/components/scanner';
 
 // UPDATED: Import from refactored oracle module
 import { OraclePage } from '@/components/oracle';
+
+// NEW (Sprint E): Tour overlay for guided onboarding
+import TourOverlay from '@/components/onboarding/TourOverlay';
+
+// NEW (Sprint E+): Analytics
+import { useAnalytics } from '@/hooks/useAnalytics';
 
 // NEW: Component to handle onboarding redirect logic
 const OnboardingGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -289,8 +295,26 @@ const AppRoutes: React.FC = () => {
 };
 
 const AppContent: React.FC = () => {
-  const { loading, profile, setProfile } = useAuth();
+  const { loading, user, profile, setProfile } = useAuth();
   const { isFeedbackModalOpen, setIsFeedbackModalOpen, isArenaWelcomeOpen, setIsArenaWelcomeOpen, isScannerOpen, setIsScannerOpen } = useAppContext();
+  const { trackEvent } = useAnalytics();
+
+  // ── Track session start (Sprint E+) ───────────────────
+  useEffect(() => {
+    if (user) {
+      trackEvent('session_start', 'engagement');
+    }
+  }, [user, trackEvent]);
+
+  // ── Get auth token for tour overlay ───────────────────
+  const [authToken, setAuthToken] = React.useState<string | undefined>();
+  useEffect(() => {
+    if (user) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        setAuthToken(session?.access_token);
+      });
+    }
+  }, [user]);
 
   const handleDismissWelcome = async (dontShowAgain: boolean) => {
       setIsArenaWelcomeOpen(false);
@@ -311,6 +335,10 @@ const AppContent: React.FC = () => {
       }
   };
 
+  const handleTourComplete = () => {
+    trackEvent('onboard_complete', 'onboarding', { tourId: 'first_visit' });
+  };
+
   if (loading) {
     return <div className="fixed inset-0 flex items-center justify-center bg-background"><p>Loading session...</p></div>;
   }
@@ -318,9 +346,20 @@ const AppContent: React.FC = () => {
   return (
     <AppLayout>
       <AppRoutes />
+
+      {/* Existing modals */}
       <FeedbackModal isOpen={isFeedbackModalOpen} onClose={() => setIsFeedbackModalOpen(false)} />
       <ArenaWelcomeAlert isOpen={isArenaWelcomeOpen} onDismiss={handleDismissWelcome} />
       <DualScanner isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} />
+
+      {/* NEW (Sprint E): Guided tour overlay — shows for new users after onboarding page */}
+      {user && profile?.onboarding_complete && (
+        <TourOverlay
+          tourId="first_visit"
+          authToken={authToken}
+          onComplete={handleTourComplete}
+        />
+      )}
     </AppLayout>
   );
 };

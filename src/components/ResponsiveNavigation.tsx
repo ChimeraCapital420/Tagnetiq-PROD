@@ -1,6 +1,13 @@
 // FILE: src/components/ResponsiveNavigation.tsx
 // Mobile-first responsive navigation with Oracle
 // Oracle replaces Arena in primary nav — it's the AI brain users come back to daily
+//
+// Sprint E: data-tour attributes added for guided tour targeting
+//   data-tour="dashboard-tab"   → Dashboard button
+//   data-tour="scanner-button"  → Scan button (primary action)
+//   data-tour="oracle-tab"      → Oracle button
+//   data-tour="market-tab"      → Market button
+//   data-tour="vault-tab"       → Vault button
 
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -59,6 +66,7 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                   variant={isDashboardActive ? 'secondary' : 'ghost'} 
                   size="sm"
                   className="touch-manipulation px-2 sm:px-3"
+                  data-tour="dashboard-tab"
                 >
                     <Link to="/dashboard" className="flex items-center gap-1">
                         <LayoutDashboard className="h-4 w-4" />
@@ -71,6 +79,7 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                   onClick={() => setIsScannerOpen(true)} 
                   size="sm"
                   className="touch-manipulation px-2 sm:px-3"
+                  data-tour="scanner-button"
                 >
                     <Scan className="h-4 w-4" />
                     <span className="hidden sm:inline-block sm:ml-1">Scan</span>
@@ -82,6 +91,7 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                   variant={isOracleActive ? 'secondary' : 'ghost'} 
                   size="sm"
                   className="touch-manipulation px-2 sm:px-3"
+                  data-tour="oracle-tab"
                 >
                     <Link to="/oracle" className="flex items-center gap-1">
                         <Zap className="h-4 w-4" />
@@ -95,6 +105,7 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                   variant={isMarketplaceActive ? 'secondary' : 'ghost'} 
                   size="sm"
                   className="touch-manipulation px-2 sm:px-3"
+                  data-tour="market-tab"
                 >
                     <Link to="/arena/marketplace" onClick={handleMarketClick} className="flex items-center gap-1">
                         <Store className="h-4 w-4" />
@@ -108,6 +119,7 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                   variant={isVaultActive ? 'secondary' : 'ghost'} 
                   size="sm"
                   className="touch-manipulation px-2 sm:px-3"
+                  data-tour="vault-tab"
                 >
                     <Link to="/vault" className="flex items-center gap-1">
                         <Shield className="h-4 w-4" />
