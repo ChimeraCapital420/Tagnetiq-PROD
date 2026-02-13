@@ -5,19 +5,22 @@
 //   import { getOrCreateIdentity, updateIdentityAfterChat, ... } from '../src/lib/oracle/index.js';
 //
 // Or import from submodules directly:
-//   import { buildSystemPrompt } from '../src/lib/oracle/prompt/index.js';
+//   import { routeMessage, callOracle } from '../src/lib/oracle/providers/index.js';
 //
 // Module map:
 //   identity/   → Oracle CRUD, name ceremony, AI DNA
 //   personality/ → Evolution via LLM, energy detection
 //   prompt/      → System prompt builder + sections
 //   chips/       → Dynamic quick chips
+//   tier.ts      → Tier gating + message counting (Sprint D)
+//   providers/   → Multi-provider routing + calling (Sprint F)
 
 // ── Types ───────────────────────────────────────────────
 export type {
   OracleIdentity,
   AiDnaProfile,
   ProviderStats,
+  ProviderPersonalityMap,
   QuickChip,
   OracleChatResponse,
   PersonalityEvolution,
@@ -42,3 +45,27 @@ export { buildSystemPrompt } from './prompt/index.js';
 
 // ── Chips ───────────────────────────────────────────────
 export { getQuickChips } from './chips/index.js';
+
+// ── Tier (Sprint D) ────────────────────────────────────
+export {
+  type UserTier,
+  type TierInfo,
+  type UsageInfo,
+  type AccessResult,
+  checkOracleAccess,
+  getUserTier,
+  hasFeature,
+  isVoiceAllowed,
+  isTierGatingActive,
+} from './tier.js';
+
+// ── Providers (Sprint F) ───────────────────────────────
+export {
+  type OracleProviderId,
+  type RoutingDecision,
+  type MessageIntent,
+  type CallerResult,
+  routeMessage,
+  callOracle,
+  getAvailableProviders,
+} from './providers/index.js';

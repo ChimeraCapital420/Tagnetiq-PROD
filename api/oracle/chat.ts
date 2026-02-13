@@ -7,12 +7,14 @@
 //   prompt/      → System prompt builder + sections
 //   chips/       → Dynamic quick chips
 //   tier.ts      → Sprint D: Tier gating + message counting
+//   providers/   → Sprint F: Multi-provider routing + calling
 //
 // This file just wires them together and handles HTTP.
 //
 // Sprint C:   Identity, name ceremony, personality evolution
 // Sprint C.1: AI DNA (provider affinity → personality)
 // Sprint D:   Tier-gated Oracle (Free: 5/day, Pro: unlimited, Elite: full)
+// Sprint F:   Provider registry + hot-loading (smart model routing)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -30,12 +32,16 @@ import {
 } from '../../src/lib/oracle/index.js';
 
 import { checkOracleAccess } from '../../src/lib/oracle/tier.js';
+import { routeMessage, callOracle } from '../../src/lib/oracle/providers/index.js';
+import type { OracleMessage } from '../../src/lib/oracle/providers/index.js';
 
 export const config = {
   maxDuration: 30,
 };
 
 // ── Clients ─────────────────────────────────────────────
+// OpenAI client is only used for evolvePersonality() background task.
+// All conversation routing goes through providers/caller.ts now.
 const openai = new OpenAI({ apiKey: process.env.OPEN_AI_API_KEY });
 
 const supabaseAdmin = createClient(
@@ -116,8 +122,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ── 2. Build system prompt ────────────────────────────
     const systemPrompt = buildSystemPrompt(identity, scanHistory, vaultItems, profile);
 
-    // ── 3. Assemble conversation messages ─────────────────
-    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+    // ── 3. Route to best provider (Sprint F) ──────────────
+    const routing = routeMessage(message, identity, {
+      conversationLength: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
+    });
+
+    // ── 4. Assemble conversation messages ─────────────────
+    const messages: OracleMessage[] = [
       { role: 'system', content: systemPrompt },
     ];
 
@@ -132,18 +143,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     messages.push({ role: 'user', content: message });
 
-    // ── 4. Call LLM ───────────────────────────────────────
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages,
-      temperature: 0.7,
-      max_tokens: 500,
-    });
+    // ── 5. Call LLM via provider router ───────────────────
+    const result = await callOracle(routing, messages);
 
-    const responseText = completion.choices[0].message.content;
+    const responseText = result.text;
     if (!responseText) throw new Error('Oracle returned empty response');
 
-    // ── 5. Non-blocking background tasks ──────────────────
+    // Log routing decision (useful for tuning)
+    if (result.isFallback) {
+      console.log(`Oracle routed: ${routing.reason} → FALLBACK to ${result.providerId} (${result.responseTime}ms)`);
+    }
+
+    // ── 6. Non-blocking background tasks ──────────────────
     // Name ceremony: check if Oracle named itself in this response
     checkForNameCeremony(supabaseAdmin, identity, responseText).catch(() => {});
 
@@ -153,7 +164,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Personality evolution: runs every ~10 conversations
     evolvePersonality(openai, supabaseAdmin, identity, conversationHistory || []).catch(() => {});
 
-    // ── 6. Persist conversation ───────────────────────────
+    // ── 7. Persist conversation ───────────────────────────
     const userMsg = { role: 'user', content: message, timestamp: Date.now() };
     const assistantMsg = { role: 'assistant', content: responseText, timestamp: Date.now() };
 
@@ -196,7 +207,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.warn('Conversation persistence failed (non-fatal):', convError.message);
     }
 
-    // ── 7. Response (includes tier info for client UI) ────
+    // ── 8. Response (includes tier + routing info) ────────
     const quickChips = getQuickChips(scanHistory, vaultItems, identity);
 
     return res.status(200).json({
@@ -211,6 +222,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         messagesUsed: access.usage.messagesUsed,
         messagesLimit: access.usage.messagesLimit,
         messagesRemaining: access.usage.messagesRemaining,
+      },
+      // Provider info (useful for debugging, can remove in production)
+      _provider: {
+        used: result.providerId,
+        model: result.model,
+        intent: routing.intent,
+        responseTime: result.responseTime,
+        isFallback: result.isFallback,
       },
     });
 
