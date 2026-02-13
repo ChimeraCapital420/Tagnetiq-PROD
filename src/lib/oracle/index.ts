@@ -1,21 +1,14 @@
 // FILE: src/lib/oracle/index.ts
 // Oracle Module — main exports
 //
-// Usage from api/oracle/chat.ts:
-//   import { getOrCreateIdentity, updateIdentityAfterChat, ... } from '../src/lib/oracle/index.js';
-//
-// Or import from submodules directly:
-//   import { routeMessage, callOracle } from '../src/lib/oracle/providers/index.js';
-//   import { scanVaultForAlerts, huntTriage } from '../src/lib/oracle/argos/index.js';
-//
-// Module map:
-//   identity/   → Oracle CRUD, name ceremony, AI DNA
-//   personality/ → Evolution via LLM, energy detection
-//   prompt/      → System prompt builder + sections
-//   chips/       → Dynamic quick chips
-//   tier.ts      → Tier gating + message counting (Sprint D)
-//   providers/   → Multi-provider routing + calling (Sprint F)
-//   argos/       → Proactive alerts + hunt mode (Sprint G)
+// The complete Oracle system:
+//   identity/   → Oracle CRUD, name ceremony, AI DNA (C, C.1)
+//   personality/ → Evolution via LLM, energy detection (C)
+//   prompt/      → System prompt builder + all context sections (C, G+)
+//   chips/       → Dynamic quick chips (C)
+//   tier.ts      → Tier gating + message counting (D)
+//   providers/   → Multi-provider routing + calling (F)
+//   argos/       → Alerts, hunt mode, push, watchlist (G, H, I, J)
 
 // ── Types ───────────────────────────────────────────────
 export type {
@@ -28,24 +21,24 @@ export type {
   PersonalityEvolution,
 } from './types.js';
 
-// ── Identity ────────────────────────────────────────────
+// ── Identity (Sprint C, C.1) ────────────────────────────
 export {
   getOrCreateIdentity,
   updateIdentityAfterChat,
   claimOracleName,
+  checkForNameCeremony,
+  buildAiDna,
 } from './identity/index.js';
 
-export { checkForNameCeremony } from './identity/index.js';
-export { buildAiDna } from './identity/index.js';
-
-// ── Personality ─────────────────────────────────────────
+// ── Personality (Sprint C) ──────────────────────────────
 export { evolvePersonality } from './personality/index.js';
 export { detectUserEnergy } from './personality/index.js';
 
-// ── Prompt ──────────────────────────────────────────────
+// ── Prompt (Sprint C, G+) ──────────────────────────────
 export { buildSystemPrompt } from './prompt/index.js';
+export { buildArgosBlock, fetchArgosContext, type ArgosContext } from './prompt/argos-context.js';
 
-// ── Chips ───────────────────────────────────────────────
+// ── Chips (Sprint C) ───────────────────────────────────
 export { getQuickChips } from './chips/index.js';
 
 // ── Tier (Sprint D) ────────────────────────────────────
@@ -72,8 +65,9 @@ export {
   getAvailableProviders,
 } from './providers/index.js';
 
-// ── Argos (Sprint G) ──────────────────────────────────
+// ── Argos (Sprint G, H, I, J) ─────────────────────────
 export {
+  // Engine
   type AlertType,
   type AlertPriority,
   type ArgosAlert,
@@ -87,4 +81,26 @@ export {
   getUnreadCount,
   huntTriage,
   huntBatch,
+  // Push (Sprint I)
+  type DeviceType,
+  type PushTransport,
+  type PushResult,
+  pushAlert,
+  pushAlertBatch,
+  registerDevice,
+  unregisterDevice,
+  getDevices,
+  updatePreferences,
+  cleanupDeadSubscriptions,
+  // Watchlist (Sprint J)
+  type WatchType,
+  type WatchlistItem,
+  type AddWatchParams,
+  addToWatchlist,
+  removeFromWatchlist,
+  deleteFromWatchlist,
+  getWatchlist,
+  updateWatch,
+  autoPopulateWatchlist,
+  getWatchlistSummary,
 } from './argos/index.js';
