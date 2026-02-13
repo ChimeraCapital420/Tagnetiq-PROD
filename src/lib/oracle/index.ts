@@ -6,6 +6,7 @@
 //
 // Or import from submodules directly:
 //   import { routeMessage, callOracle } from '../src/lib/oracle/providers/index.js';
+//   import { scanVaultForAlerts, huntTriage } from '../src/lib/oracle/argos/index.js';
 //
 // Module map:
 //   identity/   → Oracle CRUD, name ceremony, AI DNA
@@ -14,6 +15,7 @@
 //   chips/       → Dynamic quick chips
 //   tier.ts      → Tier gating + message counting (Sprint D)
 //   providers/   → Multi-provider routing + calling (Sprint F)
+//   argos/       → Proactive alerts + hunt mode (Sprint G)
 
 // ── Types ───────────────────────────────────────────────
 export type {
@@ -69,3 +71,20 @@ export {
   callOracle,
   getAvailableProviders,
 } from './providers/index.js';
+
+// ── Argos (Sprint G) ──────────────────────────────────
+export {
+  type AlertType,
+  type AlertPriority,
+  type ArgosAlert,
+  type VaultScanResult,
+  type HuntVerdict,
+  type HuntResult,
+  scanVaultForAlerts,
+  getAlerts,
+  markAlertsRead,
+  dismissAlerts,
+  getUnreadCount,
+  huntTriage,
+  huntBatch,
+} from './argos/index.js';
