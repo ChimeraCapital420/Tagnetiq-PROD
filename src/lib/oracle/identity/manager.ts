@@ -3,7 +3,7 @@
 //
 // Every user gets exactly ONE Oracle identity (enforced by DB constraint).
 // The identity stores personality, trust level, conversation counts,
-// and eventually AI DNA from HYDRA scan data.
+// and AI DNA from HYDRA scan data (Sprint C.1).
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { OracleIdentity } from '../types.js';
@@ -79,6 +79,7 @@ export async function getOrCreateIdentity(
 /**
  * Update Oracle identity after each conversation turn.
  * Increments counts, detects energy, updates categories, grows trust.
+ * Sprint C.1: Computes AI DNA every 5 conversations when enough scan data exists.
  * Non-blocking — caller should .catch() this.
  */
 export async function updateIdentityAfterChat(
@@ -119,15 +120,21 @@ export async function updateIdentityAfterChat(
     updates.trust_level = newTrust;
   }
 
-  // ── Sprint C.1 hook: AI DNA update every 5 conversations ──
-  // When ai-dna.ts is implemented, uncomment:
-  // if ((identity.conversation_count + 1) % 5 === 0 && scanHistory.length >= 3) {
-  //   const { buildAiDna } = await import('./ai-dna.js');
-  //   const dna = buildAiDna(scanHistory);
-  //   updates.ai_dna = dna.aiDna;
-  //   updates.dominant_provider = dna.dominantProvider;
-  //   updates.provider_affinity = dna.providerAffinity;
-  // }
+  // ── Sprint C.1: AI DNA update every 5 conversations ────
+  // Recomputes provider affinity from scan history.
+  // Only runs when there's enough data to be meaningful.
+  if ((identity.conversation_count + 1) % 5 === 0 && scanHistory.length >= 3) {
+    try {
+      const { buildAiDna } = await import('./ai-dna.js');
+      const dna = buildAiDna(scanHistory);
+      updates.ai_dna = dna.aiDna;
+      updates.dominant_provider = dna.dominantProvider;
+      updates.provider_affinity = dna.providerAffinity;
+    } catch (err: any) {
+      // AI DNA is non-critical — log and continue
+      console.warn('AI DNA computation failed (non-fatal):', err.message);
+    }
+  }
 
   try {
     await supabase
