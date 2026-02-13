@@ -1,17 +1,18 @@
 // FILE: src/lib/oracle/argos/index.ts
 // Argos Module — barrel exports
 //
-// Sprint G:  Engine (vault monitoring) + Hunt Mode
+// Sprint G:  Vault monitoring + hunt mode
+// Sprint H:  Hunt personality injection
 // Sprint I:  Push notifications
 // Sprint J:  Watchlist management
+// Sprint O:  Cron engine + inventory management
 
-// ── Engine (Passive Monitoring) ─────────────────────────
+// ── Engine (Sprint G) ───────────────────────────────────
 export {
   type AlertType,
   type AlertPriority,
   type ArgosAlert,
   type VaultScanResult,
-  type PriceChange,
   scanVaultForAlerts,
   getAlerts,
   markAlertsRead,
@@ -19,7 +20,7 @@ export {
   getUnreadCount,
 } from './engine.js';
 
-// ── Hunt Mode (Active Scanning) ─────────────────────────
+// ── Hunt Mode (Sprint G, H) ────────────────────────────
 export {
   type HuntVerdict,
   type HuntResult,
@@ -27,7 +28,7 @@ export {
   huntBatch,
 } from './hunt.js';
 
-// ── Push Notifications (Sprint I) ───────────────────────
+// ── Push Notifications (Sprint I) ──────────────────────
 export {
   type DeviceType,
   type PushTransport,
@@ -41,7 +42,7 @@ export {
   cleanupDeadSubscriptions,
 } from './push.js';
 
-// ── Watchlist (Sprint J) ────────────────────────────────
+// ── Watchlist (Sprint J) ───────────────────────────────
 export {
   type WatchType,
   type WatchlistItem,
@@ -54,3 +55,18 @@ export {
   autoPopulateWatchlist,
   getWatchlistSummary,
 } from './watchlist.js';
+
+// ── Cron Engine + Inventory (Sprint O) ─────────────────
+export {
+  type ScanType,
+  type ScanFrequency,
+  type ScanResult,
+  type InventoryAlert,
+  type ReorderSuggestion,
+  runDueScans,
+  getReorderSuggestions,
+  logInventoryChange,
+  getInventorySummary,
+  upsertScanSchedule,
+  getScanSchedules,
+} from './cron.js';

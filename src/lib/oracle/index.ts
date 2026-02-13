@@ -8,8 +8,9 @@
 //   chips/       → Dynamic quick chips (C)
 //   tier.ts      → Tier gating + message counting (D)
 //   providers/   → Multi-provider routing + calling (F)
-//   argos/       → Alerts, hunt mode, push, watchlist (G, H, I, J)
+//   argos/       → Alerts, hunt, push, watchlist, cron (G-J, O)
 //   safety/      → Privacy & safety guardian (L)
+//   sharing/     → Conversation sharing & public profiles (N)
 
 // ── Types ───────────────────────────────────────────────
 export type {
@@ -66,7 +67,7 @@ export {
   getAvailableProviders,
 } from './providers/index.js';
 
-// ── Argos (Sprint G, H, I, J) ─────────────────────────
+// ── Argos (Sprint G-J, O) ──────────────────────────────
 export {
   // Engine
   type AlertType,
@@ -104,6 +105,18 @@ export {
   updateWatch,
   autoPopulateWatchlist,
   getWatchlistSummary,
+  // Cron + Inventory (Sprint O)
+  type ScanType,
+  type ScanFrequency,
+  type ScanResult,
+  type InventoryAlert,
+  type ReorderSuggestion,
+  runDueScans,
+  getReorderSuggestions,
+  logInventoryChange,
+  getInventorySummary,
+  upsertScanSchedule,
+  getScanSchedules,
 } from './argos/index.js';
 
 // ── Safety & Privacy (Sprint L) ────────────────────────
@@ -133,3 +146,19 @@ export {
   exportUserData,
   autoCleanupConversations,
 } from './safety/index.js';
+
+// ── Sharing & Profiles (Sprint N) ──────────────────────
+export {
+  type ShareResult,
+  type PublicProfile,
+  type SharedConversationView,
+  shareConversation,
+  unshareConversation,
+  viewSharedConversation,
+  getFeaturedConversations,
+  getUserGallery,
+  getPublicProfile,
+  updatePublicProfile,
+  getProfileBySlug,
+  getShareAnalytics,
+} from './sharing/index.js';
