@@ -1,25 +1,24 @@
 // FILE: src/lib/oracle/argos/hunt.ts
-// Argos Hunt Mode — instant triage for live scanning
+// Argos Hunt Mode — instant triage with Oracle's personality
 //
-// Sprint G: Active scanning from ANY device
+// Sprint G: Core hunt triage engine
+// Sprint H: Oracle personality injection — hunt results sound like YOUR Oracle
 //
-// The user points their device (phone camera, tablet, smart glasses) at
-// an item and gets an instant BUY / SKIP / HOLD verdict in ~1 second.
+// The user points their device (phone, tablet, smart glasses) at an item
+// and gets an instant BUY / SKIP / HOLD verdict in ~1 second.
 //
-// This is NOT a full HYDRA analysis. It's a speed-optimized triage:
-//   1. Send image to fastest available vision provider (Groq → Gemini → GPT-4o-mini)
-//   2. Get: item name, estimated value, BUY/SKIP/HOLD, one-line reason
-//   3. Return to client for display (screen overlay, voice readback, HUD)
+// Sprint H upgrade: The response doesn't come from a generic appraiser.
+// It comes from the user's Oracle — same name, same personality, same voice.
+// If the Oracle is sarcastic and playful, the hunt result is too.
+// If the Oracle is analytical and precise, the triage reflects that.
 //
-// For full analysis, the user can "promote" a hunt result to a full HYDRA scan.
-//
-// Hardware-agnostic: Input is always base64 image + optional text.
-// Output is always the same HuntResult structure.
-// Client decides how to render: screen card, voice via glasses, HUD overlay.
+// This is what makes the user believe it's ONE entity across all touchpoints.
 
 import { routeMessage, callOracle } from '../providers/index.js';
 import type { OracleMessage } from '../providers/index.js';
 import type { OracleIdentity } from '../types.js';
+import { buildIdentityBlock, buildPersonalityBlock } from '../prompt/identity-block.js';
+import { buildAiDnaBlock } from '../prompt/ai-dna-block.js';
 
 // =============================================================================
 // TYPES
@@ -38,7 +37,7 @@ export interface HuntResult {
     high: number;
     display: string;      // "$50-75" formatted for instant display
   };
-  /** One-line reasoning — must be speakable for voice/glasses */
+  /** One-line reasoning — spoken in Oracle's voice */
   reason: string;
   /** Category detected */
   category: string;
@@ -53,10 +52,19 @@ export interface HuntResult {
 }
 
 // =============================================================================
-// HUNT PROMPT — optimized for speed and brevity
+// HUNT PROMPT BUILDER — injects Oracle personality into speed triage
 // =============================================================================
 
-const HUNT_SYSTEM_PROMPT = `You are a rapid-fire item appraiser. You see an image and give an INSTANT verdict.
+/**
+ * Build the hunt system prompt with Oracle's personality baked in.
+ *
+ * This is what makes a hunt result sound like the user's Oracle
+ * instead of a generic appraiser. The personality block is compressed
+ * to stay fast — just enough soul to flavor the response.
+ */
+function buildHuntPrompt(identity: OracleIdentity | null): string {
+  // ── Core triage instructions (always present) ─────────
+  const triageCore = `You are performing rapid-fire item appraisal. You see an image/description and give an INSTANT verdict.
 
 RESPOND WITH EXACTLY THIS JSON FORMAT — nothing else:
 {
@@ -64,7 +72,7 @@ RESPOND WITH EXACTLY THIS JSON FORMAT — nothing else:
   "itemName": "specific item name",
   "valueLow": number,
   "valueHigh": number,
-  "reason": "one sentence why, max 15 words, must sound natural spoken aloud",
+  "reason": "one sentence, max 15 words, in YOUR voice — spoken aloud to the user",
   "category": "category name",
   "confidence": 0.0 to 1.0
 }
@@ -73,13 +81,119 @@ VERDICT RULES:
 - BUY: Clear value, worth flipping. Estimated profit margin > 30%.
 - SKIP: Not worth the time. Common item, low value, or bad condition.
 - HOLD: Interesting but needs research. Unusual item, unclear value.
-- SCAN: Can't identify clearly. User should do a full scan for proper analysis.
+- SCAN: Can't identify clearly. User should do a full scan for proper analysis.`;
 
-CRITICAL: Your "reason" field will be read aloud to the user — keep it natural and conversational.
-Good: "Vintage Pyrex, worth 3x that price tag. Grab it."
-Bad: "This item appears to be a vintage Pyrex mixing bowl with estimated resale value."
+  // ── If no identity, use default personality ────────────
+  if (!identity) {
+    return `${triageCore}
 
-Be decisive. Be fast. No hedging.`;
+YOUR VOICE: You're a sharp, friendly expert. Confident but not cocky. Talk like you're whispering advice to a friend at an estate sale.
+
+REASON EXAMPLES (match this energy):
+- BUY: "Vintage Pyrex, worth 3x that price. Grab it."
+- SKIP: "Mass-produced junk. Keep walking."
+- HOLD: "Interesting mark on the base. Worth a closer look."
+- SCAN: "Can't tell from here — scan it for me."
+
+Be decisive. Be fast. No hedging. Your reason will be read aloud.`;
+  }
+
+  // ── Inject Oracle's actual personality ─────────────────
+  const name = identity.oracle_name || 'Oracle';
+  const traits = identity.personality_traits || [];
+  const style = identity.communication_style || '';
+  const energy = identity.user_energy || 'neutral';
+
+  // Build compressed personality block (not the full prompt — speed matters)
+  let personalityHint = `\nYOU ARE ${name.toUpperCase()}.`;
+
+  // Personality traits → voice direction
+  if (traits.length > 0) {
+    personalityHint += ` Your personality: ${traits.slice(0, 4).join(', ')}.`;
+  }
+
+  // Communication style → how the reason sounds
+  if (style) {
+    personalityHint += ` Your style: ${style}.`;
+  }
+
+  // AI DNA influence → subtle voice flavor
+  const aiDnaVoice = buildCompressedDnaVoice(identity);
+  if (aiDnaVoice) {
+    personalityHint += ` ${aiDnaVoice}`;
+  }
+
+  // Evolved personality (from LLM evolution)
+  if (identity.evolved_personality) {
+    const evolved = identity.evolved_personality as any;
+    if (evolved.voice_signature) {
+      personalityHint += ` Voice signature: "${evolved.voice_signature}".`;
+    }
+    if (evolved.catchphrases && Array.isArray(evolved.catchphrases) && evolved.catchphrases.length > 0) {
+      personalityHint += ` You sometimes say things like: "${evolved.catchphrases[0]}".`;
+    }
+  }
+
+  // User energy match
+  const energyNote = energy === 'excited' ? 'The user is excited — match that energy!'
+    : energy === 'frustrated' ? 'Keep it calm and helpful.'
+    : energy === 'focused' ? 'Be crisp and direct.'
+    : '';
+
+  return `${triageCore}
+${personalityHint}
+
+YOUR VOICE IN HUNT MODE:
+- You're ${name}, not a generic appraiser. Your reason field should sound like YOU.
+- Keep the same personality you use in conversation, just compressed to one sentence.
+- Be decisive, be YOU. This will be read aloud or displayed on screen.
+${energyNote}
+
+REASON EXAMPLES (adapt to YOUR personality, these are just structure guides):
+- BUY: "Oh yeah, [item]. Worth way more than that — don't walk, run."
+- SKIP: "Nah, pass on that. [brief why]."
+- HOLD: "Hmm, that's interesting. Worth a proper scan."
+- SCAN: "Need a better look at that — scan it for me."
+
+Be decisive. Be fast. Be ${name}.`;
+}
+
+/**
+ * Extract a compressed AI DNA voice hint for the hunt prompt.
+ * Full AI DNA block is too verbose for speed mode — this is the essence.
+ */
+function buildCompressedDnaVoice(identity: OracleIdentity): string {
+  const aiDna = identity.ai_dna as any;
+  if (!aiDna?.provider_personality_blend) return '';
+
+  const blend = aiDna.provider_personality_blend;
+
+  // Find dominant traits from top 2 providers
+  const sorted = Object.entries(blend)
+    .sort(([, a], [, b]) => (b as number) - (a as number))
+    .slice(0, 2);
+
+  if (sorted.length === 0) return '';
+
+  const traitMap: Record<string, string> = {
+    google: 'visually sharp',
+    openai: 'versatile and articulate',
+    anthropic: 'analytically precise',
+    deepseek: 'deeply analytical',
+    perplexity: 'market-savvy',
+    xai: 'trend-aware and bold',
+    groq: 'quick-thinking',
+    meta: 'community-grounded',
+    mistral: 'efficient and direct',
+  };
+
+  const hints = sorted
+    .map(([provider]) => traitMap[provider])
+    .filter(Boolean);
+
+  if (hints.length === 0) return '';
+  return `Your instincts are ${hints.join(' and ')}.`;
+}
 
 // =============================================================================
 // PUBLIC API
@@ -88,11 +202,11 @@ Be decisive. Be fast. No hedging.`;
 /**
  * Perform a hunt mode triage on an image.
  *
- * Optimized for speed: uses the fastest available provider,
- * minimal prompt, structured JSON response.
+ * Sprint H: Now uses Oracle's personality for the response voice.
+ * The verdict sounds like the user's Oracle, not a generic appraiser.
  *
  * @param imageBase64 - Base64 encoded image from any device
- * @param identity    - Oracle identity (for AI DNA routing influence)
+ * @param identity    - Oracle identity (for personality + AI DNA routing)
  * @param context     - Optional context hints from the user
  */
 export async function huntTriage(
@@ -115,6 +229,9 @@ export async function huntTriage(
     hasImage: true,
   });
 
+  // ── Build personality-infused hunt prompt ──────────────
+  const huntSystemPrompt = buildHuntPrompt(identity);
+
   // ── Build message with image context ──────────────────
   let userContent = 'Identify this item and give your verdict.';
   if (context?.hint) {
@@ -125,20 +242,13 @@ export async function huntTriage(
   }
 
   const messages: OracleMessage[] = [
-    { role: 'system', content: HUNT_SYSTEM_PROMPT },
+    { role: 'system', content: huntSystemPrompt },
     { role: 'user', content: userContent },
   ];
 
-  // ── Call provider ─────────────────────────────────────
-  // Note: For providers that support vision, the image would need
-  // to be passed through the caller. For now, we embed image context
-  // in the message and the caller handles the API format.
-  // Full vision support in caller.ts is Sprint G.1.
-  // For MVP, we send the image description / base64 reference.
-
   try {
     const result = await callOracle(
-      { ...routing, maxTokens: 200, temperature: 0.3 },
+      { ...routing, maxTokens: 200, temperature: 0.4 },
       messages
     );
 
@@ -153,12 +263,13 @@ export async function huntTriage(
   } catch (error: any) {
     console.error('Hunt triage failed:', error.message);
 
-    // Return a safe fallback — tell user to do a full scan
+    // Fallback with personality if available
+    const name = identity?.oracle_name || 'Oracle';
     return {
       verdict: 'SCAN',
       itemName: 'Unable to identify',
       estimatedValue: { low: 0, high: 0, display: 'Unknown' },
-      reason: 'Need a clearer look — try a full scan.',
+      reason: `Need a clearer look — scan it for ${name === 'Oracle' ? 'me' : name}.`,
       category: 'unknown',
       confidence: 0,
       responseTime: Date.now() - startTime,
@@ -171,9 +282,10 @@ export async function huntTriage(
 /**
  * Batch hunt: triage multiple items from a sweep (smart glasses pan).
  * Processes items in parallel for speed.
+ * Each result uses Oracle's personality.
  *
  * @param images    - Array of base64 images
- * @param identity  - Oracle identity
+ * @param identity  - Oracle identity (personality flows through)
  * @param context   - Shared context for all items
  */
 export async function huntBatch(
@@ -188,6 +300,8 @@ export async function huntBatch(
     batch.map(image => huntTriage(image, identity, context))
   );
 
+  const name = identity?.oracle_name || 'Oracle';
+
   return results.map(r =>
     r.status === 'fulfilled'
       ? r.value
@@ -195,7 +309,7 @@ export async function huntBatch(
           verdict: 'SCAN' as HuntVerdict,
           itemName: 'Unable to identify',
           estimatedValue: { low: 0, high: 0, display: 'Unknown' },
-          reason: 'Need a clearer look.',
+          reason: `Couldn't get a clear read — scan it for ${name === 'Oracle' ? 'me' : name}.`,
           category: 'unknown',
           confidence: 0,
           responseTime: 0,
@@ -215,7 +329,6 @@ export async function huntBatch(
  */
 function parseHuntResponse(raw: string): Omit<HuntResult, 'responseTime' | 'provider' | 'canPromoteToFullScan'> {
   try {
-    // Extract JSON from response (handle markdown code blocks)
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('No JSON found');
 
@@ -224,7 +337,6 @@ function parseHuntResponse(raw: string): Omit<HuntResult, 'responseTime' | 'prov
     const valueLow = parseFloat(parsed.valueLow?.toString() || '0') || 0;
     const valueHigh = parseFloat(parsed.valueHigh?.toString() || '0') || 0;
 
-    // Format display price
     let display: string;
     if (valueLow === 0 && valueHigh === 0) {
       display = 'Unknown';
@@ -234,7 +346,6 @@ function parseHuntResponse(raw: string): Omit<HuntResult, 'responseTime' | 'prov
       display = `$${Math.round(valueLow)}-${Math.round(valueHigh)}`;
     }
 
-    // Validate verdict
     const validVerdicts: HuntVerdict[] = ['BUY', 'SKIP', 'HOLD', 'SCAN'];
     const verdict = validVerdicts.includes(parsed.verdict?.toUpperCase())
       ? parsed.verdict.toUpperCase() as HuntVerdict
@@ -249,7 +360,6 @@ function parseHuntResponse(raw: string): Omit<HuntResult, 'responseTime' | 'prov
       confidence: Math.min(1, Math.max(0, parseFloat(parsed.confidence?.toString() || '0.5'))),
     };
   } catch (e) {
-    // Couldn't parse — return safe fallback
     return {
       verdict: 'SCAN',
       itemName: 'Unable to identify',
