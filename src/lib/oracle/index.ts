@@ -4,11 +4,12 @@
 // The complete Oracle system:
 //   identity/   → Oracle CRUD, name ceremony, AI DNA (C, C.1)
 //   personality/ → Evolution via LLM, energy detection (C)
-//   prompt/      → System prompt builder + all context sections (C, G+)
+//   prompt/      → System prompt builder + all context sections (C, G+, K)
 //   chips/       → Dynamic quick chips (C)
 //   tier.ts      → Tier gating + message counting (D)
 //   providers/   → Multi-provider routing + calling (F)
 //   argos/       → Alerts, hunt mode, push, watchlist (G, H, I, J)
+//   safety/      → Privacy & safety guardian (L)
 
 // ── Types ───────────────────────────────────────────────
 export type {
@@ -34,7 +35,7 @@ export {
 export { evolvePersonality } from './personality/index.js';
 export { detectUserEnergy } from './personality/index.js';
 
-// ── Prompt (Sprint C, G+) ──────────────────────────────
+// ── Prompt (Sprint C, G+, K) ───────────────────────────
 export { buildSystemPrompt } from './prompt/index.js';
 export { buildArgosBlock, fetchArgosContext, type ArgosContext } from './prompt/argos-context.js';
 
@@ -104,3 +105,31 @@ export {
   autoPopulateWatchlist,
   getWatchlistSummary,
 } from './argos/index.js';
+
+// ── Safety & Privacy (Sprint L) ────────────────────────
+export {
+  // Guardian
+  type SafetySignal,
+  type SafetyScan,
+  type CrisisResource,
+  type SafetyEvent,
+  scanMessage,
+  buildSafetyPromptBlock,
+  logSafetyEvent,
+  getRecentSafetyContext,
+  buildFollowUpBlock,
+  // Privacy
+  type PrivacyLevel,
+  type PrivacySettings,
+  type SharedConversation,
+  getPrivacySettings,
+  updatePrivacySettings,
+  setConversationPrivacy,
+  lockConversation,
+  unlockConversation,
+  deleteConversation,
+  getSharedConversation,
+  getUserSharedConversations,
+  exportUserData,
+  autoCleanupConversations,
+} from './safety/index.js';

@@ -4,19 +4,20 @@
 // All business logic lives in src/lib/oracle/:
 //   identity/   → Oracle CRUD, name ceremony, AI DNA
 //   personality/ → Evolution via LLM, energy detection
-//   prompt/      → System prompt builder + sections + Argos context
+//   prompt/      → System prompt builder + all context sections
 //   chips/       → Dynamic quick chips
 //   tier.ts      → Sprint D: Tier gating + message counting
 //   providers/   → Sprint F: Multi-provider routing + calling
-//   argos/       → Sprint G: Proactive alerts + hunt mode
-//
-// This file just wires them together and handles HTTP.
+//   argos/       → Sprint G/H/I/J: Alerts, hunt, push, watchlist
+//   safety/      → Sprint L: Privacy & safety guardian
 //
 // Sprint C:   Identity, name ceremony, personality evolution
 // Sprint C.1: AI DNA (provider affinity → personality)
-// Sprint D:   Tier-gated Oracle (Free: 5/day, Pro: unlimited, Elite: full)
-// Sprint F:   Provider registry + hot-loading (smart model routing)
-// Sprint G:   Argos integration — Oracle knows about alerts + watchlist
+// Sprint D:   Tier-gated Oracle
+// Sprint F:   Provider registry + hot-loading
+// Sprint G+:  Argos integration
+// Sprint K:   True Oracle — full-spectrum knowledge
+// Sprint L:   Privacy & safety — crisis detection, care responses
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -37,15 +38,22 @@ import { checkOracleAccess } from '../../src/lib/oracle/tier.js';
 import { routeMessage, callOracle } from '../../src/lib/oracle/providers/index.js';
 import type { OracleMessage } from '../../src/lib/oracle/providers/index.js';
 import { fetchArgosContext } from '../../src/lib/oracle/prompt/argos-context.js';
-import { getUnreadCount } from '../../src/lib/oracle/argos/index.js';
+
+// ── Safety & Privacy (Sprint L) ─────────────────────────
+import {
+  scanMessage,
+  buildSafetyPromptBlock,
+  logSafetyEvent,
+  getRecentSafetyContext,
+  buildFollowUpBlock,
+  getPrivacySettings,
+} from '../../src/lib/oracle/safety/index.js';
 
 export const config = {
   maxDuration: 30,
 };
 
 // ── Clients ─────────────────────────────────────────────
-// OpenAI client is only used for evolvePersonality() background task.
-// All conversation routing goes through providers/caller.ts now.
 const openai = new OpenAI({ apiKey: process.env.OPEN_AI_API_KEY });
 
 const supabaseAdmin = createClient(
@@ -97,9 +105,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // ── 1. Fetch ALL data in parallel (including Argos) ───
-    // Argos context runs alongside existing queries — zero extra latency
-    const [identity, scanResult, vaultResult, profileResult, argosData] = await Promise.all([
+    // ── 0.5 SAFETY SCAN — pre-scan message for crisis signals ──
+    // Runs in microseconds (regex only, no LLM call).
+    // If signal detected, safety context is injected into system prompt.
+    const safetyScan = scanMessage(message);
+
+    // ── 1. Fetch ALL data in parallel ─────────────────────
+    const [identity, scanResult, vaultResult, profileResult, argosData, privacySettings, recentSafety] = await Promise.all([
       getOrCreateIdentity(supabaseAdmin, user.id),
       supabaseAdmin
         .from('analysis_history')
@@ -119,26 +131,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .eq('id', user.id)
         .single(),
       fetchArgosContext(supabaseAdmin, user.id),
+      getPrivacySettings(supabaseAdmin, user.id).catch(() => null),
+      getRecentSafetyContext(supabaseAdmin, user.id).catch(() => ({
+        hasRecentEvents: false,
+        lastEventType: null,
+        daysSinceLastEvent: null,
+      })),
     ]);
 
     const scanHistory = scanResult.data || [];
     const vaultItems = vaultResult.data || [];
     const profile = profileResult.data;
 
-    // ── 2. Build system prompt (now includes Argos intel) ─
-    const systemPrompt = buildSystemPrompt(identity, scanHistory, vaultItems, profile, argosData);
+    // ── 2. Build system prompt ────────────────────────────
+    // Base prompt (includes Argos context from G+)
+    let systemPrompt = buildSystemPrompt(identity, scanHistory, vaultItems, profile, argosData);
 
-    // ── 3. Route to best provider (Sprint F) ──────────────
+    // Inject safety context if crisis signal detected
+    if (safetyScan.injectSafetyContext) {
+      systemPrompt += buildSafetyPromptBlock(safetyScan);
+    }
+
+    // Inject follow-up care if user had recent safety events
+    if (recentSafety.hasRecentEvents) {
+      systemPrompt += buildFollowUpBlock(recentSafety);
+    }
+
+    // ── 3. Route to best provider ─────────────────────────
     const routing = routeMessage(message, identity, {
       conversationLength: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
     });
 
     // ── 4. Assemble conversation messages ─────────────────
+    // Respect privacy: if user disabled oracle memory, don't include history
+    const includeHistory = privacySettings?.allow_oracle_memory !== false;
+
     const messages: OracleMessage[] = [
       { role: 'system', content: systemPrompt },
     ];
 
-    if (Array.isArray(conversationHistory)) {
+    if (includeHistory && Array.isArray(conversationHistory)) {
       const recentHistory = conversationHistory.slice(-20);
       for (const turn of recentHistory) {
         if (turn.role === 'user' || turn.role === 'assistant') {
@@ -155,17 +187,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const responseText = result.text;
     if (!responseText) throw new Error('Oracle returned empty response');
 
-    // Log routing decision (useful for tuning)
     if (result.isFallback) {
       console.log(`Oracle routed: ${routing.reason} → FALLBACK to ${result.providerId} (${result.responseTime}ms)`);
     }
 
-    // ── 6. Non-blocking background tasks ──────────────────
+    // ── 6. Post-call safety logging ───────────────────────
+    // Log safety event if signal was detected (does NOT store the user's message)
+    if (safetyScan.shouldLog) {
+      logSafetyEvent(supabaseAdmin, {
+        user_id: user.id,
+        conversation_id: conversationId || undefined,
+        event_type: safetyScan.signal,
+        severity: safetyScan.signal === 'crisis_signal' ? 'critical'
+          : safetyScan.signal === 'harm_to_others' ? 'high'
+          : 'moderate',
+        action_taken: safetyScan.responseGuidance,
+        resources_given: safetyScan.availableResources,
+        trigger_category: safetyScan.category,
+        oracle_response_excerpt: responseText.substring(0, 300),
+      }).catch(() => {}); // Non-blocking
+    }
+
+    // ── 7. Non-blocking background tasks ──────────────────
     checkForNameCeremony(supabaseAdmin, identity, responseText).catch(() => {});
     updateIdentityAfterChat(supabaseAdmin, identity, message, scanHistory).catch(() => {});
     evolvePersonality(openai, supabaseAdmin, identity, conversationHistory || []).catch(() => {});
 
-    // ── 7. Persist conversation ───────────────────────────
+    // ── 8. Persist conversation ───────────────────────────
     const userMsg = { role: 'user', content: message, timestamp: Date.now() };
     const assistantMsg = { role: 'assistant', content: responseText, timestamp: Date.now() };
 
@@ -188,6 +236,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .eq('id', activeConversationId);
         }
       } else {
+        // New conversation — use user's default privacy level
+        const defaultPrivacy = privacySettings?.default_privacy || 'private';
+
         const { data: newConvo } = await supabaseAdmin
           .from('oracle_conversations')
           .insert({
@@ -196,6 +247,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             messages: [userMsg, assistantMsg],
             scan_count_at_creation: scanHistory.length,
             is_active: true,
+            privacy_level: defaultPrivacy,
           })
           .select('id')
           .single();
@@ -206,7 +258,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.warn('Conversation persistence failed (non-fatal):', convError.message);
     }
 
-    // ── 8. Response (includes tier + Argos + routing) ─────
+    // ── 9. Response ───────────────────────────────────────
     const quickChips = getQuickChips(scanHistory, vaultItems, identity);
 
     return res.status(200).json({
