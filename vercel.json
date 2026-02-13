@@ -31,7 +31,7 @@
   ],
   "crons": [
     {
-      "path": "/api/admin/kpis?cron_secret=YOUR_CRON_SECRET_HERE",
+      "path": "/api/admin/kpis?cron_secret=?!madeupFORtoday204420",
       "schedule": "0 6 * * *"
     }
   ]
