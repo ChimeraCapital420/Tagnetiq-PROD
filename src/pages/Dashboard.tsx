@@ -11,9 +11,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { subCategories } from '@/lib/subcategories';
 import SpotlightCarousel from '@/components/dashboard/SpotlightCarousel';
+import CommunityMoments from '@/components/dashboard/CommunityMoments';
+import SharePromptBanner from '@/components/oracle/SharePromptBanner';
 import { ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
 import { useWelcomeMessage } from '@/hooks/useWelcomeMessage';
 import { useAnalytics } from '@/hooks/useAnalytics';
+import { useSharePrompt } from '@/hooks/useSharePrompt';
 
 const Dashboard: React.FC = () => {
   // Send welcome message to new users (runs once after onboarding)
@@ -25,11 +28,33 @@ const Dashboard: React.FC = () => {
   const [isCategoryPanelOpen, setIsCategoryPanelOpen] = useState(false);
   const { user, profile } = useAuth();
   const { trackEvent, trackFeature } = useAnalytics();
+  const { checkSharePrompt, sharePrompt, handleShare, dismissPrompt } = useSharePrompt();
 
   // Track dashboard view (Sprint E+)
   useEffect(() => {
     trackEvent('page_view', 'engagement', { page: 'dashboard' });
   }, [trackEvent]);
+
+  // Check for share prompt when a new scan result arrives
+  useEffect(() => {
+    if (lastAnalysisResult) {
+      // Determine the right trigger based on scan quality
+      const value = parseFloat(
+        String(lastAnalysisResult.estimatedValue || '0').replace(/[^0-9.]/g, '')
+      );
+      const confidence = lastAnalysisResult.confidence || 0;
+
+      if (value > 500 && confidence > 0.85) {
+        checkSharePrompt('great_scan', { category: selectedCategory, value });
+      } else if (value > 100) {
+        checkSharePrompt('great_scan', { category: selectedCategory, value });
+      }
+      // First scan check
+      else if (!profile?.has_seen_arena_intro) {
+        checkSharePrompt('first_scan', { category: selectedCategory });
+      }
+    }
+  }, [lastAnalysisResult]);
 
   const handleCategorySelect = (category: { id: string; name: string; }) => {
     setSelectedCategory(category.id);
@@ -89,6 +114,9 @@ const Dashboard: React.FC = () => {
               <AnalysisResult />
             </div>
           )}
+
+          {/* Community Moments — social proof feed (only renders if published moments exist) */}
+          <CommunityMoments />
 
           {/* Collapsible Category Refinement Panel */}
           <div className="space-y-3">
@@ -152,7 +180,7 @@ const Dashboard: React.FC = () => {
           isOpen={isSubCategoryModalOpen}
           onClose={() => {
             setIsSubCategoryModalOpen(false);
-            setIsCategoryPanelOpen(false); // Close panel after subcategory selection
+            setIsCategoryPanelOpen(false);
           }}
           categoryId={currentCategory.id}
           categoryName={currentCategory.name}
@@ -160,6 +188,15 @@ const Dashboard: React.FC = () => {
       )}
       
       <OracleVisualizer />
+
+      {/* Share Prompt — Oracle's gentle nudge (bottom banner, auto-dismisses) */}
+      {sharePrompt && (
+        <SharePromptBanner
+          message={sharePrompt.message}
+          onShare={handleShare}
+          onDismiss={dismissPrompt}
+        />
+      )}
     </>
   );
 };
