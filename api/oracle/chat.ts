@@ -4,10 +4,11 @@
 // All business logic lives in src/lib/oracle/:
 //   identity/   → Oracle CRUD, name ceremony, AI DNA
 //   personality/ → Evolution via LLM, energy detection
-//   prompt/      → System prompt builder + sections
+//   prompt/      → System prompt builder + sections + Argos context
 //   chips/       → Dynamic quick chips
 //   tier.ts      → Sprint D: Tier gating + message counting
 //   providers/   → Sprint F: Multi-provider routing + calling
+//   argos/       → Sprint G: Proactive alerts + hunt mode
 //
 // This file just wires them together and handles HTTP.
 //
@@ -15,6 +16,7 @@
 // Sprint C.1: AI DNA (provider affinity → personality)
 // Sprint D:   Tier-gated Oracle (Free: 5/day, Pro: unlimited, Elite: full)
 // Sprint F:   Provider registry + hot-loading (smart model routing)
+// Sprint G:   Argos integration — Oracle knows about alerts + watchlist
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -34,6 +36,8 @@ import {
 import { checkOracleAccess } from '../../src/lib/oracle/tier.js';
 import { routeMessage, callOracle } from '../../src/lib/oracle/providers/index.js';
 import type { OracleMessage } from '../../src/lib/oracle/providers/index.js';
+import { fetchArgosContext } from '../../src/lib/oracle/prompt/argos-context.js';
+import { getUnreadCount } from '../../src/lib/oracle/argos/index.js';
 
 export const config = {
   maxDuration: 30,
@@ -93,8 +97,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // ── 1. Fetch all data in parallel ─────────────────────
-    const [identity, scanResult, vaultResult, profileResult] = await Promise.all([
+    // ── 1. Fetch ALL data in parallel (including Argos) ───
+    // Argos context runs alongside existing queries — zero extra latency
+    const [identity, scanResult, vaultResult, profileResult, argosData] = await Promise.all([
       getOrCreateIdentity(supabaseAdmin, user.id),
       supabaseAdmin
         .from('analysis_history')
@@ -113,14 +118,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .select('display_name, settings')
         .eq('id', user.id)
         .single(),
+      fetchArgosContext(supabaseAdmin, user.id),
     ]);
 
     const scanHistory = scanResult.data || [];
     const vaultItems = vaultResult.data || [];
     const profile = profileResult.data;
 
-    // ── 2. Build system prompt ────────────────────────────
-    const systemPrompt = buildSystemPrompt(identity, scanHistory, vaultItems, profile);
+    // ── 2. Build system prompt (now includes Argos intel) ─
+    const systemPrompt = buildSystemPrompt(identity, scanHistory, vaultItems, profile, argosData);
 
     // ── 3. Route to best provider (Sprint F) ──────────────
     const routing = routeMessage(message, identity, {
@@ -155,13 +161,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ── 6. Non-blocking background tasks ──────────────────
-    // Name ceremony: check if Oracle named itself in this response
     checkForNameCeremony(supabaseAdmin, identity, responseText).catch(() => {});
-
-    // Identity update: increment counts, detect energy, update categories, AI DNA
     updateIdentityAfterChat(supabaseAdmin, identity, message, scanHistory).catch(() => {});
-
-    // Personality evolution: runs every ~10 conversations
     evolvePersonality(openai, supabaseAdmin, identity, conversationHistory || []).catch(() => {});
 
     // ── 7. Persist conversation ───────────────────────────
@@ -172,7 +173,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
       if (activeConversationId) {
-        // Append to existing conversation
         const { data: existing } = await supabaseAdmin
           .from('oracle_conversations')
           .select('messages')
@@ -188,7 +188,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .eq('id', activeConversationId);
         }
       } else {
-        // Start new conversation
         const { data: newConvo } = await supabaseAdmin
           .from('oracle_conversations')
           .insert({
@@ -207,7 +206,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.warn('Conversation persistence failed (non-fatal):', convError.message);
     }
 
-    // ── 8. Response (includes tier + routing info) ────────
+    // ── 8. Response (includes tier + Argos + routing) ─────
     const quickChips = getQuickChips(scanHistory, vaultItems, identity);
 
     return res.status(200).json({
@@ -223,7 +222,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         messagesLimit: access.usage.messagesLimit,
         messagesRemaining: access.usage.messagesRemaining,
       },
-      // Provider info (useful for debugging, can remove in production)
+      argos: {
+        unreadAlerts: argosData.unreadCount,
+        hasProactiveContent: argosData.hasProactiveContent,
+      },
       _provider: {
         used: result.providerId,
         model: result.model,
