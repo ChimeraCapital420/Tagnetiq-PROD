@@ -34,7 +34,6 @@ export interface PushSubscription {
   transport: PushTransport;
   subscription: WebPushPayload | FcmPayload | ApnsPayload | Record<string, any>;
   is_active: boolean;
-  // Notification preferences
   notify_price_drops: boolean;
   notify_price_spikes: boolean;
   notify_hunt_results: boolean;
@@ -62,13 +61,9 @@ export interface ApnsPayload {
 }
 
 export interface PushResult {
-  /** Total devices targeted */
   targeted: number;
-  /** Successfully delivered */
   delivered: number;
-  /** Failed (will retry or clean up) */
   failed: number;
-  /** Skipped due to preferences or quiet hours */
   skipped: number;
 }
 
@@ -98,7 +93,6 @@ export async function pushAlert(
 ): Promise<PushResult> {
   const result: PushResult = { targeted: 0, delivered: 0, failed: 0, skipped: 0 };
 
-  // Get all active subscriptions for this user
   const { data: subs } = await supabase
     .from('push_subscriptions')
     .select('*')
@@ -110,25 +104,21 @@ export async function pushAlert(
   result.targeted = subs.length;
 
   for (const sub of subs) {
-    // Check preference for this alert type
     const prefKey = ALERT_PREFERENCE_MAP[alert.alert_type];
     if (prefKey && sub[prefKey] === false) {
       result.skipped++;
       continue;
     }
 
-    // Check quiet hours
     if (isQuietHours(sub.quiet_hours_start, sub.quiet_hours_end)) {
       result.skipped++;
       continue;
     }
 
-    // Send based on transport
     try {
       await sendPush(sub, alert);
       result.delivered++;
 
-      // Update push stats (non-blocking)
       supabase
         .from('push_subscriptions')
         .update({
@@ -143,14 +133,12 @@ export async function pushAlert(
       result.failed++;
       console.warn(`Push failed for ${sub.device_type}/${sub.id}: ${err.message}`);
 
-      // Track errors for auto-cleanup
       const newErrorCount = (sub.error_count || 0) + 1;
       supabase
         .from('push_subscriptions')
         .update({
           error_count: newErrorCount,
           last_error: err.message,
-          // Auto-deactivate after 5 consecutive failures
           is_active: newErrorCount < 5,
         })
         .eq('id', sub.id)
@@ -164,7 +152,6 @@ export async function pushAlert(
 
 /**
  * Send push notifications for multiple alerts (batch).
- * Used after a vault scan generates several alerts at once.
  */
 export async function pushAlertBatch(
   supabase: SupabaseClient,
@@ -172,7 +159,6 @@ export async function pushAlertBatch(
 ): Promise<PushResult> {
   const totals: PushResult = { targeted: 0, delivered: 0, failed: 0, skipped: 0 };
 
-  // Group by user to avoid redundant subscription lookups
   const byUser = new Map<string, ArgosAlert[]>();
   for (const alert of alerts) {
     const existing = byUser.get(alert.user_id) || [];
@@ -181,7 +167,6 @@ export async function pushAlertBatch(
   }
 
   for (const [userId, userAlerts] of byUser) {
-    // Limit to 3 pushes per user per batch (don't spam)
     const toSend = prioritizeAlerts(userAlerts).slice(0, 3);
 
     for (const alert of toSend) {
@@ -202,7 +187,9 @@ export async function pushAlertBatch(
 
 /**
  * Register a device for push notifications.
- * Upserts by device_id to prevent duplicates.
+ * Uses manual check-then-insert pattern (not upsert) because
+ * the unique index on (user_id, device_id) is partial (WHERE device_id IS NOT NULL)
+ * and Supabase PostgREST can't use partial indexes for upsert conflict targets.
  */
 export async function registerDevice(
   supabase: SupabaseClient,
@@ -215,35 +202,41 @@ export async function registerDevice(
     subscription: Record<string, any>;
   }
 ): Promise<{ id: string } | null> {
-  // If device_id provided, upsert to prevent duplicates
+  // If device_id provided, check for existing registration first
   if (params.deviceId) {
-    const { data, error } = await supabase
+    const { data: existing } = await supabase
       .from('push_subscriptions')
-      .upsert(
-        {
-          user_id: userId,
+      .select('id')
+      .eq('user_id', userId)
+      .eq('device_id', params.deviceId)
+      .maybeSingle();
+
+    if (existing) {
+      // Update existing registration (reactivate + refresh token)
+      const { data, error } = await supabase
+        .from('push_subscriptions')
+        .update({
           device_type: params.deviceType,
           device_name: params.deviceName || null,
-          device_id: params.deviceId,
           transport: params.transport,
           subscription: params.subscription,
           is_active: true,
           error_count: 0,
           last_error: null,
-        },
-        { onConflict: 'user_id,device_id' }
-      )
-      .select('id')
-      .single();
+        })
+        .eq('id', existing.id)
+        .select('id')
+        .single();
 
-    if (error) {
-      console.warn('Push registration failed:', error.message);
-      return null;
+      if (error) {
+        console.warn('Push registration update failed:', error.message);
+        return null;
+      }
+      return data;
     }
-    return data;
   }
 
-  // No device_id — just insert
+  // Insert new registration
   const { data, error } = await supabase
     .from('push_subscriptions')
     .insert({
@@ -253,12 +246,15 @@ export async function registerDevice(
       device_id: params.deviceId || null,
       transport: params.transport,
       subscription: params.subscription,
+      is_active: true,
+      error_count: 0,
+      last_error: null,
     })
     .select('id')
     .single();
 
   if (error) {
-    console.warn('Push registration failed:', error.message);
+    console.warn('Push registration insert failed:', error.message);
     return null;
   }
   return data;
@@ -326,7 +322,6 @@ export async function updatePreferences(
 
 /**
  * Clean up dead subscriptions (5+ consecutive errors).
- * Run periodically via cron or manually.
  */
 export async function cleanupDeadSubscriptions(
   supabase: SupabaseClient
@@ -345,9 +340,6 @@ export async function cleanupDeadSubscriptions(
 // INTERNAL HELPERS
 // =============================================================================
 
-/**
- * Send a push notification via the appropriate transport.
- */
 async function sendPush(
   sub: PushSubscription,
   alert: ArgosAlert
@@ -365,7 +357,6 @@ async function sendPush(
       await sendApns(sub.subscription as ApnsPayload, payload);
       break;
     case 'custom':
-      // Future: smart glasses SDK, custom transports
       console.log(`Custom push for ${sub.device_type}: ${payload.title}`);
       break;
     default:
@@ -373,9 +364,6 @@ async function sendPush(
   }
 }
 
-/**
- * Build the notification payload from an Argos alert.
- */
 function buildPushPayload(alert: ArgosAlert): {
   title: string;
   body: string;
@@ -384,7 +372,6 @@ function buildPushPayload(alert: ArgosAlert): {
   tag: string;
   data: Record<string, any>;
 } {
-  // Icon based on alert type
   const iconMap: Record<string, string> = {
     price_drop: '📉',
     price_spike: '📈',
@@ -412,16 +399,10 @@ function buildPushPayload(alert: ArgosAlert): {
   };
 }
 
-/**
- * Send via Web Push API.
- * Requires VAPID keys in environment (VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT).
- */
 async function sendWebPush(
   subscription: WebPushPayload,
   payload: ReturnType<typeof buildPushPayload>
 ): Promise<void> {
-  // Web Push requires the `web-push` npm package
-  // Dynamic import so it doesn't break if not installed
   try {
     const webpush = await import('web-push');
 
@@ -441,10 +422,9 @@ async function sendWebPush(
         keys: subscription.keys,
       },
       JSON.stringify(payload),
-      { TTL: 86400 } // 24 hour time-to-live
+      { TTL: 86400 }
     );
   } catch (err: any) {
-    // If web-push not installed, log and continue
     if (err.code === 'MODULE_NOT_FOUND') {
       console.warn('web-push package not installed — skipping Web Push delivery');
       return;
@@ -453,10 +433,6 @@ async function sendWebPush(
   }
 }
 
-/**
- * Send via Firebase Cloud Messaging (FCM).
- * Requires FIREBASE_SERVER_KEY in environment.
- */
 async function sendFcm(
   subscription: FcmPayload,
   payload: ReturnType<typeof buildPushPayload>
@@ -488,22 +464,13 @@ async function sendFcm(
   }
 }
 
-/**
- * Send via Apple Push Notification Service (APNs).
- * Placeholder — requires APNs certificate setup.
- */
 async function sendApns(
   subscription: ApnsPayload,
   payload: ReturnType<typeof buildPushPayload>
 ): Promise<void> {
-  // APNs integration requires HTTP/2 client and certificate management.
-  // For now, log and skip — implement when iOS app is ready.
   console.log(`APNs push queued for device ${subscription.deviceToken.slice(0, 8)}...: ${payload.title}`);
 }
 
-/**
- * Check if current time is within quiet hours.
- */
 function isQuietHours(start: string | null, end: string | null): boolean {
   if (!start || !end) return false;
 
@@ -515,7 +482,6 @@ function isQuietHours(start: string | null, end: string | null): boolean {
   const startMinutes = startH * 60 + startM;
   const endMinutes = endH * 60 + endM;
 
-  // Handle overnight quiet hours (e.g., 22:00 → 08:00)
   if (startMinutes > endMinutes) {
     return currentMinutes >= startMinutes || currentMinutes < endMinutes;
   }
@@ -523,9 +489,6 @@ function isQuietHours(start: string | null, end: string | null): boolean {
   return currentMinutes >= startMinutes && currentMinutes < endMinutes;
 }
 
-/**
- * Prioritize alerts for batch push (urgent first, then high, etc.)
- */
 function prioritizeAlerts(alerts: ArgosAlert[]): ArgosAlert[] {
   const priorityOrder: Record<string, number> = {
     urgent: 0,
