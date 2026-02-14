@@ -1,6 +1,6 @@
 // FILE: src/pages/Dashboard.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { useAppContext } from '@/contexts/AppContext';
 import { CATEGORIES } from '@/lib/constants';
@@ -30,10 +30,28 @@ const Dashboard: React.FC = () => {
   const { trackEvent, trackFeature } = useAnalytics();
   const { checkSharePrompt, sharePrompt, handleShare, dismissPrompt } = useSharePrompt();
 
+  // Track whether we've dispatched the first-scan-complete event this session
+  const firstScanFiredRef = useRef(false);
+
   // Track dashboard view (Sprint E+)
   useEffect(() => {
     trackEvent('page_view', 'engagement', { page: 'dashboard' });
   }, [trackEvent]);
+
+  // ── Dispatch first-scan-complete event for tour system ──
+  // Fires once per session when the first analysis result appears.
+  // TourOverlay listens for this to trigger the first_results tour.
+  useEffect(() => {
+    if (lastAnalysisResult && !firstScanFiredRef.current) {
+      firstScanFiredRef.current = true;
+      window.dispatchEvent(new CustomEvent('tagnetiq:first-scan-complete', {
+        detail: {
+          hasAuthority: !!lastAnalysisResult.authorityData,
+          category: lastAnalysisResult.category,
+        },
+      }));
+    }
+  }, [lastAnalysisResult]);
 
   // Check for share prompt when a new scan result arrives
   useEffect(() => {

@@ -1,28 +1,52 @@
 // FILE: src/lib/onboarding/tour.ts
-// Guided Tour Engine
+// Guided Tour Engine — v2.0
 //
-// Sprint E: Oracle-guided walkthrough for new users.
+// Sprint E → F: Oracle-guided walkthrough for new users.
+// Refactored from single linear flow to event-driven chained tours.
 //
-// Tours are step-by-step guided experiences where the Oracle
-// speaks to the user and highlights UI elements. Each step has:
-//   - A voice clip (pre-recorded, not live TTS — zero latency)
-//   - A target element (CSS selector to highlight)
-//   - A text transcript (for accessibility + muted mode)
-//   - A next condition (auto-advance, user click, or timeout)
+// 3 CHAINED TOURS (event-driven):
+//   welcome_intro    — Dashboard: Oracle intro + user picks first task (choice step)
+//   first_scan       — Scanner:  Quick button overview, suggests coin from pocket
+//   first_results    — Results:  Oracle walks through first analysis
 //
-// Tour types:
-//   first_visit      — New user: welcome → scan → vault → marketplace → voice setup
+// STANDALONE TOURS (triggered from settings):
 //   control_panel    — Settings: privacy, autonomy, Oracle prefs, notifications
-//   vault_intro      — First time opening vault
-//   marketplace_intro — First time in marketplace
-//   oracle_deep      — Oracle features: history, sharing, personality
-//   scanner_pro      — Advanced: ghost mode, batch scanning, camera settings
+//
+// EVENT FLOW:
+//   Onboarding modal completes → Dashboard loads → welcome_intro starts
+//   User picks "Scan something" → scanner opens → first_scan starts
+//   User completes scan → results appear → first_results starts
+//   (Any choice in welcome_intro is valid — only scanner triggers first_scan)
 //
 // PHILOSOPHY:
 //   - Tours are conversational, not instructional
-//   - Oracle speaks AS the guide — it's not a tooltip, it's a friend showing you around
-//   - "Don't show again" is always available and respected
+//   - Oracle speaks AS the guide — it's a friend, not a tooltip
+//   - "Skip tour" + "Don't show again" always available
+//   - {{screenName}} placeholder replaced at render time
+//   - No condescension — helpful without being patronizing
 //   - Tours can be re-accessed from settings
+//
+// DATA-TOUR ATTRIBUTES NEEDED:
+//   Dashboard:
+//     data-tour="scan-result"              → AnalysisResult wrapper div (already exists)
+//
+//   AppLayout / Bottom Nav:
+//     data-tour="scanner-button"           → Scanner FAB or nav tab
+//     data-tour="vault-tab"                → Vault nav tab
+//     data-tour="oracle-tab"               → Oracle chat nav tab
+//
+//   DualScanner:
+//     data-tour="camera-trigger"           → Capture/shutter button (already exists)
+//     data-tour="scanner-mode-toggle"      → Photo/Barcode mode toggle buttons
+//     data-tour="scanner-controls-row"     → Footer controls row (flip, focus, upload, etc.)
+//     data-tour="scanner-settings-cog"     → Settings gear button in header
+//
+//   Settings/Profile:
+//     data-tour="oracle-preferences"       → Oracle prefs section
+//     data-tour="privacy-settings"         → Privacy settings section
+//     data-tour="notification-settings"    → Notifications section
+//     data-tour="autonomy-settings"        → Autonomy controls
+//     data-tour="vault-type-settings"      → Vault type selector
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -30,18 +54,29 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // TYPES
 // =============================================================================
 
+export interface TourChoice {
+  id: string;
+  label: string;
+  description: string;
+  icon: string;                  // Emoji or icon name
+  action: 'open_scanner' | 'navigate' | 'next_step';
+  navigateTo?: string;           // Route path for navigate action
+  triggersTour?: string;         // Tour ID that starts after this choice
+}
+
 export interface TourStep {
   id: string;
   title: string;
-  transcript: string;           // What Oracle says (text version)
-  voiceClipUrl?: string;        // Pre-recorded audio URL
-  targetSelector?: string;      // CSS selector to highlight
+  transcript: string;            // What Oracle says — supports {{screenName}}
+  voiceClipUrl?: string;         // Pre-recorded audio URL (zero latency)
+  targetSelector?: string;       // CSS selector to highlight (undefined = center overlay)
   targetPosition?: 'top' | 'bottom' | 'left' | 'right' | 'center';
-  spotlightPadding?: number;
-  advanceOn: 'click' | 'next_button' | 'auto' | 'scan_complete' | 'action';
-  autoAdvanceMs?: number;       // If advanceOn is 'auto'
+  spotlightPadding?: number;     // px around target element
+  advanceOn: 'click' | 'next_button' | 'auto' | 'scan_complete' | 'action' | 'choice';
+  autoAdvanceMs?: number;        // If advanceOn is 'auto'
   showSkip: boolean;
-  illustration?: string;        // Optional image/animation URL
+  illustration?: string;         // Optional image/animation URL
+  choices?: TourChoice[];        // For choice steps
 }
 
 export interface TourDefinition {
@@ -51,6 +86,8 @@ export interface TourDefinition {
   steps: TourStep[];
   estimatedDurationSec: number;
   canDismiss: boolean;
+  triggeredBy: 'auto' | 'event' | 'manual';  // How this tour starts
+  triggerEvent?: string;                       // CustomEvent name that starts this tour
 }
 
 // =============================================================================
@@ -59,90 +96,181 @@ export interface TourDefinition {
 
 export const TOURS: Record<string, TourDefinition> = {
 
-  // ── FIRST VISIT ─────────────────────────────────────────
-  first_visit: {
-    id: 'first_visit',
-    name: 'Welcome to TagnetIQ',
-    description: 'Your Oracle shows you around',
-    estimatedDurationSec: 60,
+  // ═══════════════════════════════════════════════════════════════════════════
+  // WELCOME INTRO — Dashboard, right after onboarding modal
+  // Oracle introduces itself, user picks their first task
+  // ═══════════════════════════════════════════════════════════════════════════
+  welcome_intro: {
+    id: 'welcome_intro',
+    name: 'Meet Your Oracle',
+    description: 'Your Oracle introduces itself and helps you take your first step',
+    estimatedDurationSec: 30,
     canDismiss: true,
+    triggeredBy: 'auto',
     steps: [
       {
-        id: 'welcome',
-        title: 'Welcome',
-        transcript: "Hey — welcome to TagnetIQ. I'm your Oracle, and I'm going to be your partner here. Think of me as the friend who knows what everything is worth. Let me show you around real quick.",
-        targetSelector: undefined,  // Full screen overlay
+        id: 'oracle_greeting',
+        title: 'Meet Your Oracle',
+        transcript: "Hi {{screenName}} — I'm your TagnetIQ Oracle. I'm here to be your assistant, your market expert, and honestly, your secret weapon. I can identify almost anything, tell you what it's worth, and track your collection. And that's just on this tier — wait until you see what I can really do.",
+        targetSelector: undefined,
+        targetPosition: 'center',
+        advanceOn: 'next_button',
+        showSkip: true,
+        illustration: undefined,
+      },
+      {
+        id: 'first_task_choice',
+        title: "What's First?",
+        transcript: "To get you familiar with the app, what would you like to do first? Pick one — you can explore everything else after.",
+        targetSelector: undefined,
+        targetPosition: 'center',
+        advanceOn: 'choice',
+        showSkip: true,
+        choices: [
+          {
+            id: 'choice_scan',
+            label: 'Scan an item',
+            description: 'Point your camera at anything and I\'ll identify it',
+            icon: '📷',
+            action: 'open_scanner',
+            triggersTour: 'first_scan',
+          },
+          {
+            id: 'choice_marketplace',
+            label: 'Browse the marketplace',
+            description: 'See what other collectors are buying and selling',
+            icon: '🏪',
+            action: 'navigate',
+            navigateTo: '/arena/marketplace',
+          },
+          {
+            id: 'choice_settings',
+            label: 'Set up my profile',
+            description: 'Customize your Oracle, privacy, and notifications',
+            icon: '⚙️',
+            action: 'navigate',
+            navigateTo: '/profile',
+            triggersTour: 'control_panel',
+          },
+        ],
+      },
+    ],
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIRST SCAN — Scanner, triggers when scanner opens for the first time
+  // Quick tour of all scanner buttons, suggests scanning a coin
+  // ═══════════════════════════════════════════════════════════════════════════
+  first_scan: {
+    id: 'first_scan',
+    name: 'Scanner Tour',
+    description: 'Quick overview of your scanner controls',
+    estimatedDurationSec: 25,
+    canDismiss: true,
+    triggeredBy: 'event',
+    triggerEvent: 'tagnetiq:scanner-opened',
+    steps: [
+      {
+        id: 'scanner_welcome',
+        title: 'Your Scanner',
+        transcript: "This is your scanner — it's got a lot packed in. Let me give you the quick version.",
+        targetSelector: undefined,
         targetPosition: 'center',
         advanceOn: 'next_button',
         showSkip: true,
       },
       {
-        id: 'scanner_intro',
-        title: 'The Scanner',
-        transcript: "This is your scanner. Point it at anything — a coin, a LEGO set, a vintage watch, a random thrift store find — and I'll tell you what it is, what it's worth, and whether you should buy it. Try it. Grab something near you.",
-        targetSelector: '[data-tour="scanner-button"]',
+        id: 'scanner_modes',
+        title: 'Scan Modes',
+        transcript: "These toggle between Photo mode and Barcode mode. Photo mode uses AI vision to identify anything you point at. Barcode mode reads UPC, ISBN, and QR codes for instant database lookups. Both are powerful — use whichever fits.",
+        targetSelector: '[data-tour="scanner-mode-toggle"]',
+        targetPosition: 'top',
+        advanceOn: 'next_button',
+        showSkip: true,
+      },
+      {
+        id: 'scanner_controls',
+        title: 'Camera Controls',
+        transcript: "Down here are your tools — flip the camera, tap to focus, upload from your gallery, or scan a document. Everything you need is one tap away.",
+        targetSelector: '[data-tour="scanner-controls-row"]',
+        targetPosition: 'top',
+        advanceOn: 'next_button',
+        showSkip: true,
+      },
+      {
+        id: 'scanner_settings',
+        title: 'Settings',
+        transcript: "This gear opens your scanner settings — torch, grid overlay, and more. Worth exploring once you're comfortable.",
+        targetSelector: '[data-tour="scanner-settings-cog"]',
         targetPosition: 'bottom',
         advanceOn: 'next_button',
         showSkip: true,
       },
       {
-        id: 'first_scan_prompt',
-        title: 'Your First Scan',
-        transcript: "Go ahead — scan something. Anything. I'll wait right here.",
+        id: 'scanner_capture',
+        title: 'Take the Shot',
+        transcript: "And this is your trigger. Got a coin in your pocket? A book on the shelf? Anything works — point and tap. I'll handle the rest.",
         targetSelector: '[data-tour="camera-trigger"]',
-        targetPosition: 'bottom',
-        advanceOn: 'scan_complete',
+        targetPosition: 'top',
+        advanceOn: 'next_button',
+        showSkip: false,
+      },
+    ],
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIRST RESULTS — Dashboard, triggers when first scan completes
+  // Oracle walks through the analysis card
+  // ═══════════════════════════════════════════════════════════════════════════
+  first_results: {
+    id: 'first_results',
+    name: 'Your First Scan Results',
+    description: 'Oracle explains what your scan results mean',
+    estimatedDurationSec: 25,
+    canDismiss: true,
+    triggeredBy: 'event',
+    triggerEvent: 'tagnetiq:first-scan-complete',
+    steps: [
+      {
+        id: 'results_congrats',
+        title: 'First Scan Complete!',
+        transcript: "There we go, {{screenName}} — your first scan is in! Let me break down what you're looking at.",
+        targetSelector: undefined,
+        targetPosition: 'center',
+        advanceOn: 'next_button',
         showSkip: true,
       },
       {
-        id: 'scan_reaction',
-        title: 'Nice Find',
-        transcript: "Not bad for your first scan! I pulled data from multiple sources and cross-referenced it with real market listings. Every scan teaches me more about what you're interested in.",
+        id: 'results_overview',
+        title: 'Your Analysis',
+        transcript: "This is your analysis card. Everything I found — identification, estimated value, market data — is right here. I cross-referenced multiple AI models and real listings to build this.",
         targetSelector: '[data-tour="scan-result"]',
         targetPosition: 'top',
         advanceOn: 'next_button',
         showSkip: true,
       },
       {
-        id: 'vault_intro',
-        title: 'Your Vault',
-        transcript: "This is your vault. Every item you save goes here — with photos, values, and history. Think of it as your personal collection database. Some people use it for reselling, some for insurance documentation, some just to keep track of what they own.",
-        targetSelector: '[data-tour="vault-tab"]',
+        id: 'results_authority',
+        title: 'Data Sources',
+        transcript: "When I can match your item to an authority database — like a coin catalog, book ISBN, or trading card registry — you'll see extra verified details. Not every item will match one, and that's perfectly fine. The AI identification still works.",
+        targetSelector: '[data-tour="scan-result"]',
         targetPosition: 'top',
         advanceOn: 'next_button',
         showSkip: true,
       },
       {
-        id: 'oracle_chat',
-        title: 'Talk to Me',
-        transcript: "And this is where we talk. Ask me anything — not just about items. I can help with pricing strategy, market trends, or just have a conversation. The more we talk, the better I understand what you're looking for.",
-        targetSelector: '[data-tour="oracle-tab"]',
+        id: 'results_next',
+        title: 'What Next?',
+        transcript: "From here you can save it to your vault, share it with someone, or scan something else. Every scan teaches me more about what you're interested in.",
+        targetSelector: '[data-tour="scan-result"]',
         targetPosition: 'top',
         advanceOn: 'next_button',
         showSkip: true,
       },
       {
-        id: 'voice_setup',
-        title: 'Set My Voice',
-        transcript: "One more thing — you can choose how I sound. I've got several voice options. Pick the one that feels right for us. You can always change it later in settings.",
-        targetSelector: '[data-tour="voice-settings"]',
-        targetPosition: 'bottom',
-        advanceOn: 'next_button',
-        showSkip: true,
-      },
-      {
-        id: 'share_hint',
-        title: 'Share Your Finds',
-        transcript: "When you find something cool — and you will — you can share our conversation with friends. One tap, instant link. Some of our best users got started because a friend shared a scan that blew their mind.",
-        targetSelector: '[data-tour="share-button"]',
-        targetPosition: 'bottom',
-        advanceOn: 'next_button',
-        showSkip: true,
-      },
-      {
-        id: 'tour_complete',
-        title: "You're Ready",
-        transcript: "That's the basics. You've got a scanner, a vault, a marketplace, and me. Go scan something else — every item is a story waiting to be told. I'll be right here when you need me.",
+        id: 'results_done',
+        title: "You're All Set",
+        transcript: "That's the basics! You've got a scanner, a vault, a marketplace, and me. Go explore — I'll be right here when you need me.",
         targetSelector: undefined,
         targetPosition: 'center',
         advanceOn: 'next_button',
@@ -151,13 +279,17 @@ export const TOURS: Record<string, TourDefinition> = {
     ],
   },
 
-  // ── CONTROL PANEL TOUR ──────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CONTROL PANEL — Settings/Profile page
+  // Triggered from settings or from welcome_intro choice
+  // ═══════════════════════════════════════════════════════════════════════════
   control_panel: {
     id: 'control_panel',
     name: 'Your Control Panel',
-    description: 'Customize your experience',
+    description: 'Customize your Oracle and privacy settings',
     estimatedDurationSec: 45,
     canDismiss: true,
+    triggeredBy: 'manual',
     steps: [
       {
         id: 'cp_welcome',
@@ -180,7 +312,7 @@ export const TOURS: Record<string, TourDefinition> = {
       {
         id: 'cp_privacy',
         title: 'Privacy Controls',
-        transcript: "Privacy is yours to control. Every conversation is private by default. You choose what to share, what to lock, and what to delete. I never share your data without your explicit permission.",
+        transcript: "Privacy is yours to control. Every conversation is private by default. You choose what to share, what to lock, and what to delete. I never share your data without your say-so.",
         targetSelector: '[data-tour="privacy-settings"]',
         targetPosition: 'bottom',
         advanceOn: 'next_button',
@@ -227,6 +359,17 @@ export const TOURS: Record<string, TourDefinition> = {
 };
 
 // =============================================================================
+// TOUR CHAIN — defines which tours can follow which
+// =============================================================================
+
+export const TOUR_CHAIN: Record<string, string[]> = {
+  welcome_intro: ['first_scan', 'control_panel'],  // These can be triggered after welcome
+  first_scan: ['first_results'],                     // Results tour follows scan
+  first_results: [],                                 // Terminal
+  control_panel: [],                                 // Terminal
+};
+
+// =============================================================================
 // PROGRESS TRACKING
 // =============================================================================
 
@@ -243,6 +386,7 @@ export async function getTourProgress(
   stepsCompleted: Record<string, string>;
   activeTour: string;
   toursDismissed: string[];
+  toursCompleted: string[];
   tourVoiceEnabled: boolean;
 }> {
   const { data: existing } = await supabase
@@ -252,13 +396,25 @@ export async function getTourProgress(
     .maybeSingle();
 
   if (existing) {
+    // Derive toursCompleted from steps_completed
+    const stepsCompleted = existing.steps_completed || {};
+    const toursCompleted: string[] = [];
+    for (const tourId of Object.keys(TOURS)) {
+      const tour = TOURS[tourId];
+      const lastStep = tour.steps[tour.steps.length - 1];
+      if (stepsCompleted[lastStep.id]) {
+        toursCompleted.push(tourId);
+      }
+    }
+
     return {
       tourCompleted: existing.tour_completed,
       tourDismissed: existing.tour_dismissed,
       currentStep: existing.current_step,
-      stepsCompleted: existing.steps_completed || {},
+      stepsCompleted,
       activeTour: existing.active_tour,
       toursDismissed: existing.tours_dismissed || [],
+      toursCompleted,
       tourVoiceEnabled: existing.tour_voice_enabled,
     };
   }
@@ -271,10 +427,11 @@ export async function getTourProgress(
   return {
     tourCompleted: false,
     tourDismissed: false,
-    currentStep: 'welcome',
+    currentStep: 'oracle_greeting',
     stepsCompleted: {},
-    activeTour: 'first_visit',
+    activeTour: 'welcome_intro',
     toursDismissed: [],
+    toursCompleted: [],
     tourVoiceEnabled: true,
   };
 }
@@ -286,7 +443,7 @@ export async function advanceTourStep(
   supabase: SupabaseClient,
   userId: string,
   completedStepId: string,
-  tourId: string = 'first_visit'
+  tourId: string = 'welcome_intro'
 ): Promise<{ nextStep: TourStep | null; tourComplete: boolean }> {
   const tour = TOURS[tourId];
   if (!tour) return { nextStep: null, tourComplete: true };
@@ -299,15 +456,23 @@ export async function advanceTourStep(
 
   // Update progress
   const progress = await getTourProgress(supabase, userId);
-  const stepsCompleted = { ...progress.stepsCompleted, [completedStepId]: new Date().toISOString() };
+  const stepsCompleted = {
+    ...progress.stepsCompleted,
+    [completedStepId]: new Date().toISOString(),
+  };
+
+  // Mark first_visit legacy flag if welcome_intro completes
+  const isFirstVisitComplete =
+    isComplete && (tourId === 'welcome_intro' || tourId === 'first_results');
 
   await supabase
     .from('onboarding_progress')
     .update({
       steps_completed: stepsCompleted,
       current_step: isComplete ? 'complete' : nextStep!.id,
-      tour_completed: isComplete ? true : progress.tourCompleted,
-      tour_completed_at: isComplete ? new Date().toISOString() : null,
+      active_tour: isComplete ? tourId : progress.activeTour,
+      tour_completed: isFirstVisitComplete ? true : progress.tourCompleted,
+      tour_completed_at: isFirstVisitComplete ? new Date().toISOString() : null,
     })
     .eq('user_id', userId);
 
@@ -320,15 +485,15 @@ export async function advanceTourStep(
 export async function dismissTour(
   supabase: SupabaseClient,
   userId: string,
-  tourId: string = 'first_visit'
+  tourId: string = 'welcome_intro'
 ): Promise<void> {
   const progress = await getTourProgress(supabase, userId);
-  const dismissed = [...(progress.toursDismissed || []), tourId];
+  const dismissed = [...new Set([...(progress.toursDismissed || []), tourId])];
 
   await supabase
     .from('onboarding_progress')
     .update({
-      tour_dismissed: tourId === 'first_visit' ? true : progress.tourDismissed,
+      tour_dismissed: tourId === 'welcome_intro' ? true : progress.tourDismissed,
       tours_dismissed: dismissed,
     })
     .eq('user_id', userId);
@@ -347,14 +512,19 @@ export async function shouldShowTour(
   // Already dismissed this specific tour
   if (progress.toursDismissed.includes(tourId)) return false;
 
-  // First visit tour: only if never completed
-  if (tourId === 'first_visit' && (progress.tourCompleted || progress.tourDismissed)) return false;
+  // Already completed this tour
+  if (progress.toursCompleted.includes(tourId)) return false;
+
+  // Legacy: first_visit completed means welcome_intro is done
+  if (tourId === 'welcome_intro' && (progress.tourCompleted || progress.tourDismissed)) {
+    return false;
+  }
 
   return true;
 }
 
 /**
- * Start a specific tour (e.g., control panel tour).
+ * Start a specific tour (e.g., control panel tour from settings).
  */
 export async function startTour(
   supabase: SupabaseClient,
@@ -382,7 +552,12 @@ export async function startTour(
 export async function getAvailableTours(
   supabase: SupabaseClient,
   userId: string
-): Promise<Array<{ id: string; name: string; description: string; status: 'available' | 'completed' | 'dismissed' }>> {
+): Promise<Array<{
+  id: string;
+  name: string;
+  description: string;
+  status: 'available' | 'completed' | 'dismissed';
+}>> {
   const progress = await getTourProgress(supabase, userId);
 
   return Object.values(TOURS).map(tour => ({
@@ -391,7 +566,7 @@ export async function getAvailableTours(
     description: tour.description,
     status: progress.toursDismissed.includes(tour.id)
       ? 'dismissed'
-      : (tour.id === 'first_visit' && progress.tourCompleted)
+      : progress.toursCompleted.includes(tour.id)
         ? 'completed'
         : 'available',
   }));

@@ -1,7 +1,7 @@
 // FILE: src/App.tsx
 
-import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import React, { useEffect, useRef, useCallback } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AppProvider, useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { BetaProvider } from '@/contexts/BetaContext';
@@ -47,39 +47,33 @@ import DualScanner from '@/components/scanner';
 // UPDATED: Import from refactored oracle module
 import { OraclePage } from '@/components/oracle';
 
-// NEW (Sprint E): Tour overlay for guided onboarding
+// v2.0: Tour overlay — event-driven, choice steps, chained tours
 import TourOverlay from '@/components/onboarding/TourOverlay';
 
-// NEW (Sprint E+): Analytics
+// Sprint E+: Analytics
 import { useAnalytics } from '@/hooks/useAnalytics';
 
-// NEW: Component to handle onboarding redirect logic
+// =============================================================================
+// ONBOARDING GUARD — redirects to /onboarding if profile incomplete
+// =============================================================================
+
 const OnboardingGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const { user, profile, loading } = useAuth();
     
-    // Still loading - show nothing to prevent flash
-    if (loading) {
-        return null;
-    }
-    
-    // Not logged in - let ProtectedRoute handle it
-    if (!user) {
-        return <>{children}</>;
-    }
-    
-    // Profile loaded and onboarding not complete - redirect to onboarding
+    if (loading) return null;
+    if (!user) return <>{children}</>;
     if (profile && !profile.onboarding_complete) {
         return <Navigate to="/onboarding" replace />;
     }
-    
-    // Onboarding complete or profile still loading - show content
     return <>{children}</>;
 };
 
+// =============================================================================
+// APP ROUTES
+// =============================================================================
+
 const AppRoutes: React.FC = () => {
     const { user, profile, isAdmin } = useAuth();
-    
-    // Determine if user needs onboarding (for the onboarding route itself)
     const needsOnboarding = user && profile && !profile.onboarding_complete;
     
     return (
@@ -91,7 +85,7 @@ const AppRoutes: React.FC = () => {
             <Route path="/certificate/:id" element={<CertificatePage />} />
             <Route path="/investor" element={<InvestorPortal />} />
 
-            {/* NEW: Onboarding route - accessible only if user hasn't completed onboarding */}
+            {/* Onboarding route */}
             <Route 
                 path="/onboarding" 
                 element={
@@ -101,212 +95,130 @@ const AppRoutes: React.FC = () => {
                 } 
             />
 
-            {/* Protected routes - wrapped with OnboardingGuard */}
-            <Route 
-                path="/dashboard" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <Dashboard />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/vault" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <VaultPage />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/oracle" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <OraclePage />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/beta/welcome" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <BetaWelcome />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/beta/missions" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <BetaMissions />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/beta/referrals" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <BetaReferrals />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/profile" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <ProfilePage />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-
-            {/* User Profile route (view other users) */}
-            <Route 
-                path="/user/:userId" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <UserProfilePage />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
+            {/* Protected routes — wrapped with OnboardingGuard */}
+            <Route path="/dashboard" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><Dashboard /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/vault" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><VaultPage /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/oracle" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><OraclePage /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/beta/welcome" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><BetaWelcome /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/beta/missions" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><BetaMissions /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/beta/referrals" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><BetaReferrals /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/profile" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><ProfilePage /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/user/:userId" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><UserProfilePage /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
 
             {/* Arena routes */}
-            <Route 
-                path="/arena/marketplace" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <Marketplace />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/arena/challenge/:id" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <ChallengeDetail />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/arena/leaderboard" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <Leaderboard />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/arena/messages" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <MessagesPage />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
+            <Route path="/arena/marketplace" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><Marketplace /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/arena/challenge/:id" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><ChallengeDetail /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/arena/leaderboard" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><Leaderboard /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/arena/messages" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><MessagesPage /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
 
             {/* Admin routes */}
-            <Route 
-                path="/boardroom" 
-                element={
-                    <ProtectedRoute isAllowed={!!user} to="/login">
-                        <OnboardingGuard>
-                            <BoardroomPage />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/beta-controls" 
-                element={
-                    <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
-                        <OnboardingGuard>
-                            <BetaControls />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/admin/investors" 
-                element={
-                    <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
-                        <OnboardingGuard>
-                            <InvestorSuite />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/admin/investors/manage" 
-                element={
-                    <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
-                        <OnboardingGuard>
-                            <Investor />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/admin/beta" 
-                element={
-                    <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
-                        <OnboardingGuard>
-                            <BetaConsole />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
-            <Route 
-                path="/admin/map" 
-                element={
-                    <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
-                        <OnboardingGuard>
-                            <MapConsole />
-                        </OnboardingGuard>
-                    </ProtectedRoute>
-                } 
-            />
+            <Route path="/boardroom" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><BoardroomPage /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/beta-controls" element={
+                <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
+                    <OnboardingGuard><BetaControls /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/admin/investors" element={
+                <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
+                    <OnboardingGuard><InvestorSuite /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/admin/investors/manage" element={
+                <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
+                    <OnboardingGuard><Investor /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/admin/beta" element={
+                <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
+                    <OnboardingGuard><BetaConsole /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/admin/map" element={
+                <ProtectedRoute isAllowed={!!user && isAdmin} to="/dashboard">
+                    <OnboardingGuard><MapConsole /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
 
             <Route path="*" element={<NotFound />} />
         </Routes>
     );
 };
 
+// =============================================================================
+// APP CONTENT — modals, scanner, tour overlay
+// =============================================================================
+
 const AppContent: React.FC = () => {
+  const navigate = useNavigate();
   const { loading, user, profile, setProfile } = useAuth();
-  const { isFeedbackModalOpen, setIsFeedbackModalOpen, isArenaWelcomeOpen, setIsArenaWelcomeOpen, isScannerOpen, setIsScannerOpen } = useAppContext();
+  const {
+    isFeedbackModalOpen, setIsFeedbackModalOpen,
+    isArenaWelcomeOpen, setIsArenaWelcomeOpen,
+    isScannerOpen, setIsScannerOpen,
+  } = useAppContext();
   const { trackEvent } = useAnalytics();
 
-  // ── Track session start (Sprint E+) ───────────────────
+  // Track whether scanner has been opened this session (for tour event)
+  const scannerOpenedRef = useRef(false);
+
+  // ── Track session start ───────────────────────────────
   useEffect(() => {
-    if (user) {
-      trackEvent('session_start', 'engagement');
-    }
+    if (user) trackEvent('session_start', 'engagement');
   }, [user, trackEvent]);
 
-  // ── Get auth token for tour overlay ───────────────────
+  // ── Auth token for tour API calls ─────────────────────
   const [authToken, setAuthToken] = React.useState<string | undefined>();
   useEffect(() => {
     if (user) {
@@ -315,6 +227,44 @@ const AppContent: React.FC = () => {
       });
     }
   }, [user]);
+
+  // ── Dispatch scanner-opened event ─────────────────────
+  // Fires once per session when the scanner first opens.
+  // TourOverlay listens for this to trigger the first_scan tour.
+  useEffect(() => {
+    if (isScannerOpen && !scannerOpenedRef.current) {
+      scannerOpenedRef.current = true;
+      // Small delay to let scanner DOM mount
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('tagnetiq:scanner-opened'));
+      }, 300);
+    }
+  }, [isScannerOpen]);
+
+  // ── Tour action handler ───────────────────────────────
+  // Called when user picks a choice in the welcome tour.
+  // Bridges between TourOverlay and app state/navigation.
+  const handleTourAction = useCallback((
+    action: string,
+    payload?: { navigateTo?: string; triggersTour?: string }
+  ) => {
+    switch (action) {
+      case 'open_scanner':
+        setIsScannerOpen(true);
+        break;
+      case 'navigate':
+        if (payload?.navigateTo) {
+          navigate(payload.navigateTo);
+        }
+        break;
+      default:
+        break;
+    }
+  }, [navigate, setIsScannerOpen]);
+
+  const handleTourComplete = useCallback((tourId: string) => {
+    trackEvent('onboard_complete', 'onboarding', { tourId });
+  }, [trackEvent]);
 
   const handleDismissWelcome = async (dontShowAgain: boolean) => {
       setIsArenaWelcomeOpen(false);
@@ -335,13 +285,16 @@ const AppContent: React.FC = () => {
       }
   };
 
-  const handleTourComplete = () => {
-    trackEvent('onboard_complete', 'onboarding', { tourId: 'first_visit' });
-  };
-
   if (loading) {
-    return <div className="fixed inset-0 flex items-center justify-center bg-background"><p>Loading session...</p></div>;
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-background">
+        <p>Loading session...</p>
+      </div>
+    );
   }
+
+  // Screen name for tour greeting — fallback chain
+  const screenName = profile?.screen_name || profile?.full_name || user?.email?.split('@')[0] || 'friend';
 
   return (
     <AppLayout>
@@ -352,17 +305,24 @@ const AppContent: React.FC = () => {
       <ArenaWelcomeAlert isOpen={isArenaWelcomeOpen} onDismiss={handleDismissWelcome} />
       <DualScanner isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} />
 
-      {/* NEW (Sprint E): Guided tour overlay — shows for new users after onboarding page */}
+      {/* v2.0: Tour overlay — event-driven, chained tours
+          Only mounts after onboarding is complete (inside the app, not on paywall).
+          Manages welcome_intro → first_scan → first_results chain internally. */}
       {user && profile?.onboarding_complete && (
         <TourOverlay
-          tourId="first_visit"
+          screenName={screenName}
           authToken={authToken}
-          onComplete={handleTourComplete}
+          onTourComplete={handleTourComplete}
+          onAction={handleTourAction}
         />
       )}
     </AppLayout>
   );
 };
+
+// =============================================================================
+// APP ROOT
+// =============================================================================
 
 function App() {
   return (
