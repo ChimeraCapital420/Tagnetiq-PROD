@@ -3,6 +3,10 @@
 //
 // Sprint E+: Every valuable data point, zero PII.
 //
+// v9.4 FIX: .catch(() => {}) → .then(() => {}, () => {})
+//   Supabase PostgrestBuilder has .then() but NOT .catch() as a native method.
+//   Using .catch() throws "supabase.from(...).insert(...).catch is not a function"
+//
 // ANONYMIZATION:
 //   User IDs are SHA-256 hashed with a monthly-rotating salt.
 //   This means: same user = same anon_id within a month,
@@ -87,6 +91,8 @@ export async function track(
   // Scrub properties of any PII
   const cleanProps = scrubPII(event.properties || {});
 
+  // v9.4 FIX: .then(ok, err) instead of .then().catch()
+  // PostgrestBuilder only has .then(), not .catch()
   await supabase
     .from('analytics_events')
     .insert({
@@ -97,8 +103,7 @@ export async function track(
       platform: event.platform || detectPlatform(),
       app_version: event.appVersion || process.env.APP_VERSION || '1.0.0',
     })
-    .then(() => {}) // Non-blocking
-    .catch(() => {}); // Never fail the parent operation
+    .then(() => {}, () => {}); // Non-blocking, never fail parent
 }
 
 /**
@@ -129,7 +134,8 @@ export async function trackBatch(
     }));
 
   if (rows.length > 0) {
-    await supabase.from('analytics_events').insert(rows).catch(() => {});
+    // v9.4 FIX: .then(ok, err) instead of .catch()
+    await supabase.from('analytics_events').insert(rows).then(() => {}, () => {});
   }
 }
 

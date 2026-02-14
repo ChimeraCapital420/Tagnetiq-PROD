@@ -1,5 +1,5 @@
 // FILE: api/analyze.ts
-// HYDRA v9.3 - Slim Analysis Handler
+// HYDRA v9.4 - Slim Analysis Handler
 // Evidence-based pipeline: IDENTIFY → FETCH → REASON → VALIDATE
 // Reduced from 866 lines to ~200 lines — orchestration only
 //
@@ -16,8 +16,10 @@
 // v9.0.1: Barcode passthrough wired into pipeline (was missing from v9.0)
 // v9.2: FIXED — Save BEFORE response (Vercel teardown was killing fire-and-forget saves)
 // v9.3: Sprint M — Nexus decision tree + Oracle Eyes Tier 1 piggyback
+// v9.4: FIX — require() → ESM import (was crashing Nexus with "require is not defined")
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
 
 // v9.0: Pipeline orchestrator replaces manual stage management
 import { runPipeline } from '../src/lib/hydra/pipeline/index.js';
@@ -190,15 +192,16 @@ function validateRequest(body: unknown): AnalyzeRequest {
 
 // =============================================================================
 // SUPABASE CLIENT (lazy, only created when needed for Nexus/Eyes)
+// v9.4: Uses top-level ESM import instead of require()
 // =============================================================================
 
 let _supabaseAdmin: any = null;
 function getSupabaseAdmin() {
   if (!_supabaseAdmin && process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    const { createClient } = require('@supabase/supabase-js');
     _supabaseAdmin = createClient(
       process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+      { auth: { autoRefreshToken: false, persistSession: false } }
     );
   }
   return _supabaseAdmin;
@@ -355,7 +358,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // Log the decision (non-blocking)
       if (request.userId && supaAdmin) {
-        logNexusDecision(supaAdmin, request.userId, analysisId, nexusDecision).catch(() => {});
+        logNexusDecision(supaAdmin, request.userId, analysisId, nexusDecision).then(() => {}, () => {});
       }
     } catch (nexusErr: any) {
       // Nexus is non-critical — scan still works without it
@@ -368,7 +371,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       thumbnailUrl: request.originalImageUrls?.[0] || null,
       ebayMarketData: pipelineResult.ebayData,
       marketSources: pipelineResult.marketSources,
-      pipelineVersion: '9.3',
+      pipelineVersion: '9.4',
       pipelineTiming: pipelineResult.timing,
       // Sprint M: Nexus decision included in response
       nexus: nexusDecision ? {
@@ -434,7 +437,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           stages: pipelineResult.stages,
         },
         request.originalImageUrls?.[0] || null
-      ).catch(() => {}); // Fully non-blocking
+      ).then(() => {}, () => {}); // Fully non-blocking
     }
 
     console.log(`\n  ✅ Complete in ${processingTime}ms${nexusDecision ? ` | Nexus: ${nexusDecision.nudge}` : ''}\n`);

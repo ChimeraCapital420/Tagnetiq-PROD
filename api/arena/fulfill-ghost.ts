@@ -2,6 +2,8 @@
 // Ghost Protocol - Fulfillment Completion API
 // Captures verified sale data and updates analytics for investor metrics
 // Feeds: HYDRA Accuracy, Arbitrage Spread, Platform Intelligence, Scout Economics
+//
+// v9.4 FIX: .catch() → .then(ok, err) on PostgrestBuilder calls
 
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -209,6 +211,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // =======================================================================
     // 5. Record platform intelligence
+    // v9.4 FIX: .then(ok, err) instead of .catch()
     // =======================================================================
     
     await supabase.from('platform_sales').insert({
@@ -221,12 +224,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       category: listing.category_id,
       sold_at: soldAt.toISOString(),
       fulfilled_at: now,
-    }).catch(() => {
+    }).then(() => {}, () => {
       // Table might not exist yet, non-fatal
     });
 
     // =======================================================================
     // 6. Update scout stats (for Scout Economics KPI)
+    // v9.4 FIX: .then(ok, err) instead of .catch()
     // =======================================================================
     
     await supabase.rpc('increment_scout_stats', {
@@ -234,12 +238,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       p_profit: netProfit,
       p_sale_count: 1,
       p_ghost_count: 1,
-    }).catch(() => {
+    }).then(() => {}, () => {
       // RPC might not exist yet, non-fatal
     });
 
     // =======================================================================
     // 7. Create audit log
+    // v9.4 FIX: .then(ok, err) instead of .catch()
     // =======================================================================
     
     await supabase.from('audit_logs').insert({
@@ -253,7 +258,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         net_profit: netProfit,
         hydra_accuracy: hydraAccuracyPercent,
       },
-    }).catch(() => {});
+    }).then(() => {}, () => {});
 
     // =======================================================================
     // RESPONSE
