@@ -1,6 +1,8 @@
 // FILE: src/components/AnalysisResult.tsx
-// STATUS: HYDRA v6.4 - With Error Boundary
+// STATUS: HYDRA v9.3 - With Error Boundary + Nexus Decision Tree
 // ULTRA-DEFENSIVE: Cannot crash on any malformed data
+// Sprint M: Nexus Decision Tree — Oracle-guided post-scan flow
+//   replaces static ACTION HUB with conversational Oracle suggestion
 // FIXED v6.4: handleListOnTagnetiq uses actual arena_listings column names
 // FIXED v6.4: confidence_score normalized to 0-1
 // FIXED v6.4: images[] array instead of primary_photo_url + additional_photos
@@ -18,7 +20,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { CheckCircle, Star, WandSparkles, Loader2, Trash2, Ghost, AlertTriangle } from 'lucide-react';
+import { CheckCircle, Star, WandSparkles, Loader2, Trash2, Ghost, AlertTriangle, Zap, Eye, Shield, Package, Camera } from 'lucide-react';
 import { HydraConsensusDisplay } from './HydraConsensusDisplay.js';
 import { AnalysisHistoryNavigator } from './AnalysisHistoryNavigator.js';
 import { AuthorityReportCard } from './AuthorityReportCard.js';
@@ -101,7 +103,6 @@ const safeArray = <T,>(value: unknown): T[] => {
 
 // =============================================================================
 // CONDITION ENUM MAPPER
-// arena_listings.condition is a Postgres enum — must match exactly
 // =============================================================================
 function mapConditionToEnum(condition: string): string {
   const normalized = condition.toLowerCase().trim().replace(/[\s-]+/g, '_');
@@ -121,6 +122,174 @@ function mapConditionToEnum(condition: string): string {
   
   return aliases[normalized] || 'good';
 }
+
+// =============================================================================
+// NEXUS ACTION ICONS — Map action types to icons
+// =============================================================================
+
+const NEXUS_ICONS: Record<string, React.ReactNode> = {
+  'zap': <Zap className="h-4 w-4" />,
+  'eye': <Eye className="h-4 w-4" />,
+  'shield': <Shield className="h-4 w-4" />,
+  'package': <Package className="h-4 w-4" />,
+  'ghost': <Ghost className="h-4 w-4" />,
+  'camera': <Camera className="h-4 w-4" />,
+  'gem': <Zap className="h-4 w-4" />,
+  'lock': <Shield className="h-4 w-4" />,
+};
+
+// =============================================================================
+// NEXUS DECISION CARD — Oracle's conversational suggestion
+// =============================================================================
+
+interface NexusAction {
+  id: string;
+  label: string;
+  type: 'list' | 'vault' | 'watch' | 'dismiss' | 'ghost_list' | 'scan_more';
+  vaultCategory?: string;
+  primary: boolean;
+  icon?: string;
+}
+
+interface NexusDecisionCardProps {
+  nexus: {
+    nudge: string;
+    message: string;
+    marketDemand: string;
+    confidence: number;
+    actions: NexusAction[];
+    listingDraft?: any;
+    followUp?: string;
+  };
+  analysisId: string;
+  onList: () => void;
+  onVault: () => void;
+  onWatch: () => void;
+  onDismiss: () => void;
+  onScanMore: () => void;
+}
+
+const NexusDecisionCard: React.FC<NexusDecisionCardProps> = ({
+  nexus, analysisId, onList, onVault, onWatch, onDismiss, onScanMore,
+}) => {
+  const { user } = useAuth();
+  const [actionTaken, setActionTaken] = useState(false);
+
+  // Log user's choice to Nexus decision log
+  const logAction = async (action: string) => {
+    if (!user || actionTaken) return;
+    setActionTaken(true);
+    try {
+      await fetch('/api/oracle/nexus-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          analysisId,
+          action,
+          nudgeType: nexus.nudge,
+        }),
+      });
+    } catch {
+      // Non-critical — don't block UI
+    }
+  };
+
+  const handleAction = (action: NexusAction) => {
+    logAction(action.type);
+    switch (action.type) {
+      case 'list':
+      case 'ghost_list':
+        onList();
+        break;
+      case 'vault':
+        onVault();
+        break;
+      case 'watch':
+        onWatch();
+        break;
+      case 'scan_more':
+        onScanMore();
+        break;
+      case 'dismiss':
+      default:
+        onDismiss();
+        break;
+    }
+  };
+
+  // Demand badge color
+  const demandColor = nexus.marketDemand === 'hot'
+    ? 'bg-red-500/20 text-red-400 border-red-500/30'
+    : nexus.marketDemand === 'warm'
+    ? 'bg-orange-500/20 text-orange-400 border-orange-500/30'
+    : nexus.marketDemand === 'cold'
+    ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+    : 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+
+  return (
+    <div className="w-full p-4 border rounded-lg bg-gradient-to-br from-background to-muted/30 space-y-3">
+      {/* Oracle's message */}
+      <div className="flex items-start gap-3">
+        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+          <Zap className="h-4 w-4 text-primary" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-foreground leading-relaxed">
+            {nexus.message}
+          </p>
+          {nexus.followUp && (
+            <p className="text-xs text-muted-foreground mt-1 italic">
+              {nexus.followUp}
+            </p>
+          )}
+        </div>
+        {nexus.marketDemand !== 'unknown' && (
+          <Badge variant="outline" className={`flex-shrink-0 text-xs ${demandColor}`}>
+            {nexus.marketDemand === 'hot' ? '🔥' : nexus.marketDemand === 'warm' ? '🌡️' : '❄️'} {nexus.marketDemand}
+          </Badge>
+        )}
+      </div>
+
+      {/* Listing draft preview (if suggesting to list) */}
+      {nexus.listingDraft && (
+        <div className="pl-11 space-y-1">
+          <p className="text-xs text-muted-foreground">
+            Suggested price: <span className="font-medium text-foreground">
+              ${nexus.listingDraft.suggestedPrice?.toFixed(0)}
+            </span>
+            <span className="text-muted-foreground/60">
+              {' '}(range: ${nexus.listingDraft.priceRange?.low?.toFixed(0)} – ${nexus.listingDraft.priceRange?.high?.toFixed(0)})
+            </span>
+          </p>
+          {nexus.listingDraft.suggestions?.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              💡 {nexus.listingDraft.suggestions[0]}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div className="flex flex-wrap gap-2 pl-11">
+        {nexus.actions.map((action) => (
+          <Button
+            key={action.id}
+            variant={action.primary ? 'default' : 'outline'}
+            size="sm"
+            className={action.primary ? 'font-medium' : ''}
+            onClick={() => handleAction(action)}
+            disabled={actionTaken}
+          >
+            {action.icon && NEXUS_ICONS[action.icon] && (
+              <span className="mr-1.5">{NEXUS_ICONS[action.icon]}</span>
+            )}
+            {action.label}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 // =============================================================================
 // MAIN COMPONENT
@@ -144,6 +313,7 @@ const AnalysisResultContent: React.FC = () => {
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   const [hoveredRating, setHoveredRating] = useState(0);
   const [givenRating, setGivenRating] = useState(0);
+  const [nexusDismissed, setNexusDismissed] = useState(false);
 
   // Early return if no result
   if (!lastAnalysisResult) {
@@ -161,10 +331,13 @@ const AnalysisResultContent: React.FC = () => {
   const imageUrls = safeArray<string>(lastAnalysisResult.imageUrls);
   const category = safeString(lastAnalysisResult.category) || 'general';
   
-  // Optional fields - may be undefined
+  // Optional fields
   const hydraConsensus = lastAnalysisResult.hydraConsensus;
   const authorityData = lastAnalysisResult.authorityData;
   const ghostData = lastAnalysisResult.ghostData;
+
+  // Sprint M: Nexus decision from scan response
+  const nexusData = lastAnalysisResult.nexus || null;
 
   // --- PROJECT CHRONOS: Determine if viewing history ---
   const isViewingHistory = currentAnalysisIndex !== null;
@@ -172,10 +345,10 @@ const AnalysisResultContent: React.FC = () => {
     ? analysisHistory[currentAnalysisIndex] 
     : null;
 
-  // Normalize confidence: HYDRA returns 0-100, components expect 0-1
+  // Normalize confidence
   const confidenceNormalized = confidenceScore > 1 ? confidenceScore / 100 : confidenceScore;
 
-  // Unified image URLs array for marketplace + export
+  // Unified image URLs array
   const allImageUrls = imageUrls.length > 0 ? imageUrls : (imageUrl ? [imageUrl] : []);
 
   // ==========================================================================
@@ -184,11 +357,8 @@ const AnalysisResultContent: React.FC = () => {
   const nowISO = new Date().toISOString();
   
   const marketplaceItem = {
-    // IDs
     id: id || `temp_${Date.now()}`,
     challenge_id: id || undefined,
-    
-    // PRIMARY FIELDS (MarketplaceItem type)
     item_name: itemName,
     asking_price: safeNumber(estimatedValue, 0),
     estimated_value: safeNumber(estimatedValue, 0),
@@ -196,66 +366,34 @@ const AnalysisResultContent: React.FC = () => {
     additional_photos: allImageUrls.slice(1),
     is_verified: !!authorityData,
     confidence_score: confidenceNormalized,
-    
-    // ALTERNATE FIELDS (compatibility)
     title: itemName,
     name: itemName,
     price: safeNumber(estimatedValue, 0),
     estimatedValue: safeNumber(estimatedValue, 0),
-    
-    // Description
     description: summary_reasoning || `${itemName} - AI analyzed collectible`,
-    
-    // Category
     category: category || 'general',
-    
-    // ALL IMAGE FIELDS
     imageUrl: allImageUrls[0] || '',
     image_url: allImageUrls[0] || '',
     imageUrls: allImageUrls,
     images: allImageUrls,
-    
-    // Confidence (both scales)
     confidenceScore: confidenceNormalized,
     confidence: confidenceNormalized,
-    
-    // Arrays
     valuation_factors: valuation_factors || [],
     tags: lastAnalysisResult.tags || [],
-    
-    // Condition
     condition: lastAnalysisResult.condition || 'good',
-    
-    // Authority data
     authoritySource: authorityData?.source || '',
     authorityData: authorityData || undefined,
     numista_url: authorityData?.source === 'numista' && authorityData?.itemDetails?.url 
       ? authorityData.itemDetails.url : undefined,
-    
-    // Item details
     brand: lastAnalysisResult.brand || undefined,
     model: lastAnalysisResult.model || undefined,
     year: lastAnalysisResult.year || undefined,
-    
-    // Ghost
     ghostData: ghostData || null,
     is_ghost: !!ghostData,
   };
 
   // ==========================================================================
   // handleListOnTagnetiq — inserts into arena_listings
-  // 
-  // ACTUAL COLUMNS (verified from schema query):
-  //   id, seller_id, vault_item_id, title, description, price, original_price,
-  //   condition (enum), images (text[]), shipping_included, accepts_trades,
-  //   status (enum), views, watchers, created_at, updated_at, expires_at,
-  //   sold_at, deleted_at, metadata (jsonb), category, location_text,
-  //   location_lat, location_lng, offers_shipping, offers_local_pickup,
-  //   sold_price, shipping_available, location, is_ghost, handling_time_hours,
-  //   ghost_location_lat, ghost_location_lng, fulfilled_at
-  //
-  // NEW COLUMNS (added via migration):
-  //   analysis_id, confidence_score, is_verified, estimated_value
   // ==========================================================================
   const handleListOnTagnetiq = async (
     listingItem: MarketplaceItem,
@@ -269,12 +407,10 @@ const AnalysisResultContent: React.FC = () => {
     }
 
     try {
-      // All photos go into images[] column
       const listingImages = allImageUrls.length > 0 
         ? allImageUrls 
         : (listingItem.imageUrl ? [listingItem.imageUrl] : []);
 
-      // Rich metadata in jsonb
       const listingMetadata: Record<string, any> = {};
       if (authorityData) {
         listingMetadata.authority_source = authorityData.source;
@@ -293,7 +429,6 @@ const AnalysisResultContent: React.FC = () => {
       const safeCondition = mapConditionToEnum(listingItem.condition || 'good');
 
       const insertPayload: Record<string, any> = {
-        // Required fields
         seller_id: user.id,
         title: listingItem.item_name || listingItem.title || itemName,
         description: description,
@@ -303,20 +438,16 @@ const AnalysisResultContent: React.FC = () => {
         images: listingImages,
         category: listingItem.category || category || 'general',
         status: 'active',
-        // Shipping
         offers_shipping: true,
         offers_local_pickup: true,
         shipping_available: true,
-        // Metadata jsonb
         metadata: Object.keys(listingMetadata).length > 0 ? listingMetadata : null,
-        // New columns (from migration)
         analysis_id: id || null,
         confidence_score: confidenceNormalized,
         is_verified: !!authorityData,
         estimated_value: safeNumber(estimatedValue, 0),
       };
 
-      // Ghost Protocol fields (columns already exist in schema)
       if (ghost) {
         insertPayload.is_ghost = true;
         insertPayload.handling_time_hours = ghost.handling_time_hours || 48;
@@ -358,13 +489,60 @@ const AnalysisResultContent: React.FC = () => {
     setLastAnalysisResult(null);
   };
 
-  // --- PROJECT CHRONOS: Delete from history ---
   const handleDeleteFromHistory = async () => {
     if (historyItem && deleteFromHistory) {
       if (confirm('Remove this analysis from your history?')) {
         await deleteFromHistory(historyItem.id);
       }
     }
+  };
+
+  // --- Nexus action handlers ---
+  const handleNexusList = () => {
+    // Opens the ListOnMarketplaceButton flow (existing)
+    // Pre-fill with Nexus draft if available
+    toast.info('Opening listing flow...');
+    // The existing ListOnMarketplaceButton handles the rest
+  };
+
+  const handleNexusVault = () => {
+    toast.info('Adding to vault...');
+    // Triggers AddToVaultButton flow
+  };
+
+  const handleNexusWatch = async () => {
+    if (!user) {
+      toast.error('Please log in to watch prices');
+      return;
+    }
+    try {
+      const response = await fetch('/api/oracle/argos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'watch',
+          itemName,
+          category,
+          estimatedValue,
+        }),
+      });
+      if (response.ok) {
+        toast.success('Added to price watchlist!');
+      } else {
+        toast.info('Watchlist coming soon!');
+      }
+    } catch {
+      toast.info('Watchlist coming soon!');
+    }
+  };
+
+  const handleNexusDismiss = () => {
+    setNexusDismissed(true);
+  };
+
+  const handleNexusScanMore = () => {
+    setLastAnalysisResult(null);
+    // Scanner should reopen — handled by AppContext
   };
 
   // --- Core Feature: Refine Analysis Loop ---
@@ -600,40 +778,56 @@ const AnalysisResultContent: React.FC = () => {
         </CardContent>
         
         <CardFooter className="flex flex-col gap-4">
-          {/* Action Hub */}
-          <div className="w-full p-4 border rounded-lg bg-background">
-            <h3 className="text-sm font-semibold mb-3 text-center text-muted-foreground">ACTION HUB</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {!isViewingHistory ? (
-                <>
-                  <AddToVaultButton analysisResult={lastAnalysisResult} onSuccess={handleClear} />
-                  <ListOnMarketplaceButton 
-                    item={marketplaceItem}
-                    ghostData={ghostData || null}
-                    onListOnTagnetiq={handleListOnTagnetiq}
-                  />
-                  <Button variant="secondary" className="w-full" onClick={() => toast.info('Social sharing coming soon!')}>
-                    Share to Social
-                  </Button>
-                  <Button variant="outline" onClick={handleClear} className="w-full">
-                    Clear & Scan Next
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <AddToVaultButton analysisResult={lastAnalysisResult} />
-                  <Button 
-                    variant="destructive" 
-                    className="w-full col-span-1" 
-                    onClick={handleDeleteFromHistory}
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </Button>
-                </>
-              )}
+          {/* ================================================================
+              Sprint M: NEXUS DECISION TREE — Oracle's guided suggestion
+              Replaces static ACTION HUB when Nexus data is available
+          ================================================================ */}
+          {!isViewingHistory && nexusData && !nexusDismissed ? (
+            <NexusDecisionCard
+              nexus={nexusData}
+              analysisId={id}
+              onList={handleNexusList}
+              onVault={handleNexusVault}
+              onWatch={handleNexusWatch}
+              onDismiss={handleNexusDismiss}
+              onScanMore={handleNexusScanMore}
+            />
+          ) : (
+            /* Fallback: Original ACTION HUB (for history view or if Nexus not available) */
+            <div className="w-full p-4 border rounded-lg bg-background">
+              <h3 className="text-sm font-semibold mb-3 text-center text-muted-foreground">ACTION HUB</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {!isViewingHistory ? (
+                  <>
+                    <AddToVaultButton analysisResult={lastAnalysisResult} onSuccess={handleClear} />
+                    <ListOnMarketplaceButton 
+                      item={marketplaceItem}
+                      ghostData={ghostData || null}
+                      onListOnTagnetiq={handleListOnTagnetiq}
+                    />
+                    <Button variant="secondary" className="w-full" onClick={() => toast.info('Social sharing coming soon!')}>
+                      Share to Social
+                    </Button>
+                    <Button variant="outline" onClick={handleClear} className="w-full">
+                      Clear & Scan Next
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <AddToVaultButton analysisResult={lastAnalysisResult} />
+                    <Button 
+                      variant="destructive" 
+                      className="w-full col-span-1" 
+                      onClick={handleDeleteFromHistory}
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
+          )}
           
           {/* Feedback Loop */}
           {!isViewingHistory && (

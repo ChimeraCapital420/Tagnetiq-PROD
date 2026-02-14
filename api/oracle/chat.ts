@@ -10,6 +10,8 @@
 //   providers/   → Sprint F: Multi-provider routing + calling
 //   argos/       → Sprint G/H/I/J: Alerts, hunt, push, watchlist
 //   safety/      → Sprint L: Privacy & safety guardian
+//   eyes/        → Sprint M: Visual memory capture + recall
+//   nexus/       → Sprint M: Decision tree (post-scan flow)
 //
 // Sprint C:   Identity, name ceremony, personality evolution
 // Sprint C.1: AI DNA (provider affinity → personality)
@@ -18,7 +20,7 @@
 // Sprint G+:  Argos integration
 // Sprint K:   True Oracle — full-spectrum knowledge
 // Sprint L:   Privacy & safety — crisis detection, care responses
-// Sprint M:   Oracle Eyes — visual memory recall in chat
+// Sprint M:   Oracle Eyes — visual memory recall in chat + Nexus decision tree
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -50,6 +52,9 @@ import {
   getPrivacySettings,
 } from '../../src/lib/oracle/safety/index.js';
 
+// ── Oracle Eyes (Sprint M) ──────────────────────────────
+import { recallMemories, buildRecallPromptBlock } from '../../src/lib/oracle/eyes/index.js';
+
 export const config = {
   maxDuration: 30,
 };
@@ -70,6 +75,43 @@ function generateTitle(firstMessage: string): string {
   const clean = firstMessage.trim().replace(/\n/g, ' ');
   if (clean.length <= 50) return clean;
   return clean.substring(0, 47) + '...';
+}
+
+// =============================================================================
+// RECALL DETECTION — Does this message ask about visual memory?
+// =============================================================================
+
+/**
+ * Detect if the user's message is a recall-type question.
+ * These trigger Oracle Eyes memory search before LLM call.
+ *
+ * Mobile-first: This is a fast regex check, NOT an LLM call.
+ * Runs in <1ms on server. Zero client computation.
+ */
+function isRecallQuestion(message: string): boolean {
+  const lower = message.toLowerCase();
+
+  const recallPatterns = [
+    // Spatial: "where did I..."
+    /where\s+(?:did|do|are|is|was|were)\s+(?:i|my|the)/,
+    /where\s+(?:are|is)\s+my/,
+    /where.*(?:put|leave|left|place|set|store)/,
+    // Temporal: "what did I see/scan..."
+    /what\s+(?:did|do)\s+(?:i|we)\s+(?:see|scan|capture|photograph|look at)/,
+    /what\s+(?:was|were)\s+(?:in|on|at)\s+(?:the|my|that)/,
+    // Object finding: "find my...", "have you seen my..."
+    /(?:find|seen|remember|recall)\s+my/,
+    /have\s+you\s+seen/,
+    /do\s+you\s+remember\s+(?:seeing|where|what|when)/,
+    // Content recall: "what did that receipt say"
+    /what\s+(?:did|does|was)\s+(?:that|the)\s+(?:receipt|label|tag|document|paper|article|sign)/,
+    // Room/location: "what's in my garage"
+    /what(?:'s|\s+is)\s+in\s+(?:my|the)/,
+    // Show me: "show me what you saw"
+    /show\s+me\s+(?:what|everything)\s+(?:you\s+)?(?:saw|see|remember)/,
+  ];
+
+  return recallPatterns.some(pattern => pattern.test(lower));
 }
 
 // =============================================================================
@@ -110,7 +152,6 @@ function buildVisualMemoryContext(visualMemories: any[]): string {
     }
 
     if (mem.extracted_text) {
-      // Truncate long text but keep enough for recall
       const textPreview = mem.extracted_text.length > 500
         ? mem.extracted_text.substring(0, 500) + '... [truncated]'
         : mem.extracted_text;
@@ -163,12 +204,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ── 0.5 SAFETY SCAN — pre-scan message for crisis signals ──
-    // Runs in microseconds (regex only, no LLM call).
-    // If signal detected, safety context is injected into system prompt.
     const safetyScan = scanMessage(message);
 
+    // ── 0.6 RECALL DETECTION — is this a visual memory question? ──
+    // Fast regex check (~0ms). If yes, we search memories in parallel
+    // with the other data fetches and inject results into the prompt.
+    const isRecall = isRecallQuestion(message);
+
     // ── 1. Fetch ALL data in parallel ─────────────────────
-    const [identity, scanResult, vaultResult, profileResult, argosData, privacySettings, recentSafety, visualMemoryResult] = await Promise.all([
+    const [
+      identity, scanResult, vaultResult, profileResult,
+      argosData, privacySettings, recentSafety,
+      visualMemoryResult, recallResult
+    ] = await Promise.all([
       getOrCreateIdentity(supabaseAdmin, user.id),
       supabaseAdmin
         .from('analysis_history')
@@ -194,7 +242,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         lastEventType: null,
         daysSinceLastEvent: null,
       })),
-      // ── Sprint M: Oracle Eyes — fetch visual memories for recall ──
+      // Sprint M: Fetch recent visual memories for passive context
       supabaseAdmin
         .from('oracle_visual_memory')
         .select('id, mode, description, objects, extracted_text, location_hint, source, observed_at')
@@ -203,7 +251,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .order('observed_at', { ascending: false })
         .limit(30)
         .then(res => res)
-        .catch(() => ({ data: [], error: null })),  // Graceful: table may not exist yet
+        .catch(() => ({ data: [], error: null })),
+      // Sprint M: Active recall search (only if recall question detected)
+      isRecall
+        ? recallMemories(supabaseAdmin, user.id, { question: message }).catch(() => null)
+        : Promise.resolve(null),
     ]);
 
     const scanHistory = scanResult.data || [];
@@ -212,12 +264,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const visualMemories = visualMemoryResult.data || [];
 
     // ── 2. Build system prompt ────────────────────────────
-    // Base prompt (includes Argos context from G+)
     let systemPrompt = buildSystemPrompt(identity, scanHistory, vaultItems, profile, argosData);
 
-    // Inject visual memory context (Sprint M: Oracle Eyes)
+    // Inject visual memory context (Sprint M: passive — recent memories)
     if (visualMemories.length > 0) {
       systemPrompt += buildVisualMemoryContext(visualMemories);
+    }
+
+    // Sprint M: Inject ACTIVE recall results (targeted search for this question)
+    if (recallResult && recallResult.memories.length > 0) {
+      systemPrompt += buildRecallPromptBlock(recallResult);
     }
 
     // Inject safety context if crisis signal detected
@@ -236,7 +292,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     // ── 4. Assemble conversation messages ─────────────────
-    // Respect privacy: if user disabled oracle memory, don't include history
     const includeHistory = privacySettings?.allow_oracle_memory !== false;
 
     const messages: OracleMessage[] = [
@@ -265,7 +320,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ── 6. Post-call safety logging ───────────────────────
-    // Log safety event if signal was detected (does NOT store the user's message)
     if (safetyScan.shouldLog) {
       logSafetyEvent(supabaseAdmin, {
         user_id: user.id,
@@ -278,7 +332,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         resources_given: safetyScan.availableResources,
         trigger_category: safetyScan.category,
         oracle_response_excerpt: responseText.substring(0, 300),
-      }).catch(() => {}); // Non-blocking
+      }).catch(() => {});
     }
 
     // ── 7. Non-blocking background tasks ──────────────────
@@ -309,7 +363,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .eq('id', activeConversationId);
         }
       } else {
-        // New conversation — use user's default privacy level
         const defaultPrivacy = privacySettings?.default_privacy || 'private';
 
         const { data: newConvo } = await supabaseAdmin
@@ -342,6 +395,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       vaultCount: vaultItems.length,
       memoryCount: visualMemories.length,
       oracleName: identity.oracle_name,
+      // Sprint M: Tell client if recall was used
+      recallUsed: !!(recallResult && recallResult.memories.length > 0),
+      recallCount: recallResult?.memories.length || 0,
       tier: {
         current: access.tier.current,
         messagesUsed: access.usage.messagesUsed,

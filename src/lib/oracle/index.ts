@@ -1,7 +1,7 @@
 // FILE: src/lib/oracle/index.ts
 // Oracle Module — main exports
 //
-// Complete system: C-Q
+// Complete system: C-Q + M
 
 // ── Types ───────────────────────────────────────────────
 export type {
@@ -85,3 +85,20 @@ export {
   getFeaturedConversations, getUserGallery,
   getPublicProfile, updatePublicProfile, getProfileBySlug, getShareAnalytics,
 } from './sharing/index.js';
+
+// ── Oracle Eyes (M) ────────────────────────────────────
+export {
+  type CaptureMode, type CaptureSource, type VisualMemory, type VisualObject,
+  type CaptureRequest, type CaptureResult,
+  captureFromScan, captureManual, forgetMemory, forgetByQuery,
+  type RecallQuery, type RecallResult, type RecalledMemory,
+  recallMemories, buildRecallPromptBlock,
+} from './eyes/index.js';
+
+// ── Nexus Decision Tree (M) ────────────────────────────
+export {
+  type NudgeType, type MarketDemand, type NexusDecision,
+  type ListingDraft, type NexusAction,
+  type ScanContext, type UserContext,
+  evaluateScan, logNexusDecision,
+} from './nexus/index.js';

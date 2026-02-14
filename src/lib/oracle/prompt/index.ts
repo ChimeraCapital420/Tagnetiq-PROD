@@ -1,4 +1,5 @@
 // FILE: src/lib/oracle/prompt/index.ts
+// Sprint M: Added buildRecallPromptBlock export
 export { buildSystemPrompt } from './builder.js';
 export { buildIdentityBlock, buildPersonalityBlock } from './identity-block.js';
 export { buildAiDnaBlock } from './ai-dna-block.js';

@@ -1,5 +1,5 @@
 // FILE: api/analyze.ts
-// HYDRA v9.2 - Slim Analysis Handler
+// HYDRA v9.3 - Slim Analysis Handler
 // Evidence-based pipeline: IDENTIFY → FETCH → REASON → VALIDATE
 // Reduced from 866 lines to ~200 lines — orchestration only
 //
@@ -15,6 +15,7 @@
 // v9.0: Evidence-based pipeline — AIs reason WITH market data, not blind
 // v9.0.1: Barcode passthrough wired into pipeline (was missing from v9.0)
 // v9.2: FIXED — Save BEFORE response (Vercel teardown was killing fire-and-forget saves)
+// v9.3: Sprint M — Nexus decision tree + Oracle Eyes Tier 1 piggyback
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -34,6 +35,13 @@ import {
 
 // v9.2: Use awaitable save instead of fire-and-forget
 import { saveAnalysisAwaited } from '../src/lib/hydra/storage/supabase.js';
+
+// v9.3: Sprint M — Nexus decision tree
+import { evaluateScan, logNexusDecision } from '../src/lib/oracle/nexus/index.js';
+import type { NexusDecision, ScanContext, UserContext } from '../src/lib/oracle/nexus/index.js';
+
+// v9.3: Sprint M — Oracle Eyes Tier 1 piggyback
+import { captureFromScan } from '../src/lib/oracle/eyes/index.js';
 
 // =============================================================================
 // CONFIG
@@ -56,8 +64,6 @@ interface AnalyzeRequest {
   categoryHint?: string;
   condition?: string;
   originalImageUrls?: string[];
-  // v8.1+: Raw barcodes from device scanner (react-zxing reads all 12/13 digits)
-  // These are MORE accurate than AI vision barcode reading (which truncates)
   scannedBarcodes?: string[];
 }
 
@@ -125,9 +131,7 @@ function validateRequest(body: unknown): AnalyzeRequest {
       });
     }
 
-    // ========================================================================
-    // FIXED v8.1/v9.0.1: Extract raw barcodes from device scanner
-    // ========================================================================
+    // Extract raw barcodes from device scanner
     const scannedBarcodes: string[] = [];
     items.forEach(item => {
       if (item.metadata?.barcodes && Array.isArray(item.metadata.barcodes)) {
@@ -185,6 +189,22 @@ function validateRequest(body: unknown): AnalyzeRequest {
 }
 
 // =============================================================================
+// SUPABASE CLIENT (lazy, only created when needed for Nexus/Eyes)
+// =============================================================================
+
+let _supabaseAdmin: any = null;
+function getSupabaseAdmin() {
+  if (!_supabaseAdmin && process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const { createClient } = require('@supabase/supabase-js');
+    _supabaseAdmin = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    );
+  }
+  return _supabaseAdmin;
+}
+
+// =============================================================================
 // MAIN HANDLER
 // =============================================================================
 
@@ -212,7 +232,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Either an image or item name is required');
     }
 
-    console.log(`\n🔥 === HYDRA v9.0 ANALYSIS START ===`);
+    console.log(`\n🔥 === HYDRA v9.3 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
     console.log(`🖼️ Images: ${hasImage ? 1 + (request.additionalImages?.length || 0) : 0}`);
@@ -225,9 +245,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (request.imageBase64) images.push(request.imageBase64);
     if (request.additionalImages) images.push(...request.additionalImages.slice(0, 3));
 
-    // ========================================================================
     // 3. Build additionalContext from scanner barcodes
-    // ========================================================================
     let additionalContext: string | undefined;
     if (request.scannedBarcodes && request.scannedBarcodes.length > 0) {
       additionalContext = `UPC: ${request.scannedBarcodes[0]}`;
@@ -282,14 +300,86 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       processingTime
     );
 
+    // ========================================================================
+    // 6.5 Sprint M: NEXUS DECISION TREE — Oracle evaluates the scan
+    // Pure logic, zero extra API calls. Computed server-side.
+    // ========================================================================
+    let nexusDecision: NexusDecision | null = null;
+
+    try {
+      const supaAdmin = getSupabaseAdmin();
+
+      // Build scan context for Nexus
+      const scanCtx: ScanContext = {
+        itemName: pipelineResult.itemName,
+        estimatedValue: pipelineResult.finalPrice,
+        confidence: pipelineResult.confidence,
+        category: pipelineResult.category,
+        condition: request.condition,
+        decision: pipelineResult.decision,
+        authorityData: pipelineResult.authorityData,
+        ebayData: pipelineResult.ebayData,
+        marketSources: pipelineResult.marketSources,
+        priceRange: pipelineResult.priceRange,
+      };
+
+      // Build user context (lightweight — just enough for decision)
+      let userCtx: UserContext = {
+        userId: request.userId || 'anonymous',
+        vaultItemCount: 0,
+        scanCount: 0,
+        favoriteCategories: [],
+        hasListedBefore: false,
+        tier: 'free',
+      };
+
+      // Fetch minimal user context if we have a userId + supabase
+      if (request.userId && supaAdmin) {
+        const [vaultCount, scanCount, listingCheck] = await Promise.all([
+          supaAdmin.from('vault_items').select('id', { count: 'exact', head: true }).eq('user_id', request.userId),
+          supaAdmin.from('analysis_history').select('id', { count: 'exact', head: true }).eq('user_id', request.userId),
+          supaAdmin.from('arena_listings').select('id').eq('seller_id', request.userId).limit(1),
+        ]);
+
+        userCtx = {
+          userId: request.userId,
+          vaultItemCount: vaultCount.count || 0,
+          scanCount: scanCount.count || 0,
+          favoriteCategories: [],
+          hasListedBefore: (listingCheck.data?.length || 0) > 0,
+          tier: 'free', // Tier check is expensive — skip for scan response speed
+        };
+      }
+
+      nexusDecision = evaluateScan(scanCtx, userCtx);
+
+      // Log the decision (non-blocking)
+      if (request.userId && supaAdmin) {
+        logNexusDecision(supaAdmin, request.userId, analysisId, nexusDecision).catch(() => {});
+      }
+    } catch (nexusErr: any) {
+      // Nexus is non-critical — scan still works without it
+      console.warn('Nexus decision failed (non-fatal):', nexusErr.message);
+    }
+
     const responseWithExtras = {
       ...response,
       imageUrls: request.originalImageUrls || [],
       thumbnailUrl: request.originalImageUrls?.[0] || null,
       ebayMarketData: pipelineResult.ebayData,
       marketSources: pipelineResult.marketSources,
-      pipelineVersion: '9.2',
+      pipelineVersion: '9.3',
       pipelineTiming: pipelineResult.timing,
+      // Sprint M: Nexus decision included in response
+      nexus: nexusDecision ? {
+        nudge: nexusDecision.nudge,
+        message: nexusDecision.message,
+        marketDemand: nexusDecision.marketDemand,
+        confidence: nexusDecision.confidence,
+        actions: nexusDecision.actions,
+        listingDraft: nexusDecision.listingDraft || null,
+        followUp: nexusDecision.followUp || null,
+      } : null,
       _debug: {
         ebayListings: pipelineResult.ebayData?.totalListings || 0,
         ebayMedian: pipelineResult.ebayData?.priceAnalysis?.median || null,
@@ -304,15 +394,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           validate: `${pipelineResult.timing.validate}ms`,
         },
         dynamicWeightsActive: !!dynamicWeights,
+        nexusNudge: nexusDecision?.nudge || null,
       },
     };
 
     // ========================================================================
     // 7. SAVE TO SUPABASE — AWAIT before response
-    // FIXED v9.2: Was fire-and-forget (saveAnalysisAsync) which got killed
-    //             by Vercel function teardown after response was sent.
-    //             Now we AWAIT the save (with 3s timeout) BEFORE responding.
-    //             Adds ~100-300ms to response time but guarantees data persists.
     // ========================================================================
     if (isSupabaseAvailable()) {
       const saveResult = await saveAnalysisAwaited(
@@ -330,7 +417,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    console.log(`\n  ✅ Complete in ${processingTime}ms\n`);
+    // ========================================================================
+    // 7.5 Sprint M: Oracle Eyes Tier 1 — Piggyback visual memory
+    // Non-blocking: captures environment data from the scan we already ran.
+    // Zero extra API calls.
+    // ========================================================================
+    if (request.userId && getSupabaseAdmin()) {
+      captureFromScan(
+        getSupabaseAdmin(),
+        request.userId,
+        analysisId,
+        {
+          itemName: pipelineResult.itemName,
+          category: pipelineResult.category,
+          allVotes: pipelineResult.allVotes,
+          stages: pipelineResult.stages,
+        },
+        request.originalImageUrls?.[0] || null
+      ).catch(() => {}); // Fully non-blocking
+    }
+
+    console.log(`\n  ✅ Complete in ${processingTime}ms${nexusDecision ? ` | Nexus: ${nexusDecision.nudge}` : ''}\n`);
 
     return res.status(200).json(formatAPIResponse(responseWithExtras));
 
