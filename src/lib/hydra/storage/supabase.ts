@@ -3,6 +3,8 @@
 // Handles saving analysis results and retrieving cached data
 // FIXED: Table name changed from 'analyses' to 'analysis_history'
 // UPDATED: Now includes image_urls for marketplace integration
+// FIXED v9.2: Bulletproof save — retries without processing_time if column missing
+// FIXED v9.2: saveAnalysisAwaited() for use BEFORE sending response (prevents Vercel teardown)
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { ConsensusResult, ModelVote, AuthorityData } from '../types.js';
@@ -52,11 +54,38 @@ export interface StorageConfig {
 }
 
 // =============================================================================
-// CONSTANTS - FIXED TABLE NAME
+// CONSTANTS
 // =============================================================================
 
-const DEFAULT_TABLE_NAME = 'analysis_history';  // FIXED: Was 'analyses'
+const DEFAULT_TABLE_NAME = 'analysis_history';
 const DEFAULT_CACHE_TABLE_NAME = 'analysis_cache';
+
+// =============================================================================
+// COLUMN AVAILABILITY CACHE
+// Tracks which optional columns exist in the DB to avoid repeated failures.
+// Resets every 10 minutes so new migrations are picked up.
+// =============================================================================
+
+const columnStatus: Record<string, { available: boolean; checkedAt: number }> = {};
+const COLUMN_CACHE_TTL = 600000; // 10 minutes
+
+function isColumnKnownMissing(columnName: string): boolean {
+  const status = columnStatus[columnName];
+  if (!status) return false;
+  if (Date.now() - status.checkedAt > COLUMN_CACHE_TTL) {
+    delete columnStatus[columnName];
+    return false;
+  }
+  return !status.available;
+}
+
+function markColumnMissing(columnName: string): void {
+  columnStatus[columnName] = { available: false, checkedAt: Date.now() };
+}
+
+function markColumnAvailable(columnName: string): void {
+  columnStatus[columnName] = { available: true, checkedAt: Date.now() };
+}
 
 // =============================================================================
 // SUPABASE CLIENT
@@ -99,9 +128,60 @@ export function isSupabaseAvailable(): boolean {
 // =============================================================================
 
 /**
+ * Build the analysis record, optionally excluding columns known to be missing.
+ */
+function buildAnalysisRecord(
+  analysisId: string,
+  consensus: ConsensusResult,
+  category: string,
+  userId?: string,
+  votes?: ModelVote[],
+  authorityData?: AuthorityData | null,
+  processingTime?: number,
+  imageUrls?: string[]
+): Partial<AnalysisRecord> {
+  const record: Partial<AnalysisRecord> = {
+    id: analysisId,
+    user_id: userId,
+    item_name: consensus.itemName,
+    category,
+    decision: consensus.decision,
+    estimated_value: consensus.estimatedValue,
+    confidence: consensus.confidence,
+    analysis_quality: consensus.analysisQuality,
+    total_votes: consensus.totalVotes,
+    consensus_metrics: consensus.consensusMetrics,
+    authority_data: authorityData ? {
+      source: authorityData.source,
+      catalogNumber: authorityData.catalogNumber,
+      title: authorityData.title,
+      marketValue: authorityData.marketValue,
+    } : undefined,
+    votes: votes?.map(v => ({
+      provider: v.providerName,
+      decision: v.decision,
+      value: v.estimatedValue,
+      confidence: v.confidence,
+      weight: v.weight,
+    })),
+    image_urls: imageUrls && imageUrls.length > 0 ? imageUrls : undefined,
+    thumbnail_url: imageUrls && imageUrls.length > 0 ? imageUrls[0] : undefined,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  // Only include processing_time if the column is not known to be missing
+  if (processingTime !== undefined && !isColumnKnownMissing('processing_time')) {
+    record.processing_time = processingTime;
+  }
+
+  return record;
+}
+
+/**
  * Save analysis result to Supabase
- * FIXED: Now writes to 'analysis_history' table
- * UPDATED: Now includes image_urls for marketplace integration
+ * BULLETPROOF: If processing_time column doesn't exist, retries without it.
+ * This prevents the PGRST204 error from blocking ALL saves.
  */
 export async function saveAnalysis(
   analysisId: string,
@@ -123,37 +203,10 @@ export async function saveAnalysis(
   const tableName = config?.tableName || DEFAULT_TABLE_NAME;
   
   try {
-    const record: Partial<AnalysisRecord> = {
-      id: analysisId,
-      user_id: userId,
-      item_name: consensus.itemName,
-      category,
-      decision: consensus.decision,
-      estimated_value: consensus.estimatedValue,
-      confidence: consensus.confidence,
-      analysis_quality: consensus.analysisQuality,
-      total_votes: consensus.totalVotes,
-      consensus_metrics: consensus.consensusMetrics,
-      authority_data: authorityData ? {
-        source: authorityData.source,
-        catalogNumber: authorityData.catalogNumber,
-        title: authorityData.title,
-        marketValue: authorityData.marketValue,
-      } : undefined,
-      votes: votes?.map(v => ({
-        provider: v.providerName,
-        decision: v.decision,
-        value: v.estimatedValue,
-        confidence: v.confidence,
-        weight: v.weight,
-      })),
-      processing_time: processingTime,
-      // Save image URLs for marketplace
-      image_urls: imageUrls && imageUrls.length > 0 ? imageUrls : undefined,
-      thumbnail_url: imageUrls && imageUrls.length > 0 ? imageUrls[0] : undefined,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+    const record = buildAnalysisRecord(
+      analysisId, consensus, category, userId, votes,
+      authorityData, processingTime, imageUrls
+    );
     
     console.log(`💾 Saving to ${tableName}: ${analysisId} (${imageUrls?.length || 0} images)`);
     
@@ -162,22 +215,110 @@ export async function saveAnalysis(
       .upsert(record, { onConflict: 'id' });
     
     if (error) {
+      // ====================================================================
+      // SELF-HEALING: If a column doesn't exist, retry without it
+      // Catches: PGRST204 "Could not find the 'X' column"
+      // ====================================================================
+      if (error.code === 'PGRST204' && error.message?.includes('processing_time')) {
+        console.warn(`⚠️ processing_time column missing — retrying without it`);
+        markColumnMissing('processing_time');
+        
+        // Remove the problematic field and retry
+        delete record.processing_time;
+        
+        const { error: retryError } = await client
+          .from(tableName)
+          .upsert(record, { onConflict: 'id' });
+        
+        if (retryError) {
+          console.error(`❌ Retry save also failed:`, retryError);
+          return { success: false, error: retryError.message };
+        }
+        
+        console.log(`✅ Analysis ${analysisId} saved (without processing_time)`);
+        return { success: true };
+      }
+      
+      // Handle other column-missing errors generically
+      if (error.code === 'PGRST204') {
+        const colMatch = error.message?.match(/Could not find the '(\w+)' column/);
+        if (colMatch) {
+          const missingCol = colMatch[1];
+          console.warn(`⚠️ Column '${missingCol}' missing — retrying without it`);
+          markColumnMissing(missingCol);
+          delete (record as any)[missingCol];
+          
+          const { error: retryError } = await client
+            .from(tableName)
+            .upsert(record, { onConflict: 'id' });
+          
+          if (!retryError) {
+            console.log(`✅ Analysis ${analysisId} saved (without ${missingCol})`);
+            return { success: true };
+          }
+        }
+      }
+      
       console.error(`❌ Failed to save analysis to ${tableName}:`, error);
       return { success: false, error: error.message };
+    }
+    
+    // If we got here with processing_time included, the column exists
+    if (processingTime !== undefined) {
+      markColumnAvailable('processing_time');
     }
     
     console.log(`✅ Analysis ${analysisId} saved to ${tableName}`);
     return { success: true };
     
   } catch (error: any) {
-    console.error('❌ Error saving analysis:', error);
+    console.error(`❌ Error saving analysis:`, {
+      message: error.message || 'Unknown error',
+      details: error.details || error.stack || '',
+      hint: error.hint || '',
+      code: error.code || '',
+    });
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Save analysis — AWAITABLE version for use BEFORE sending HTTP response.
+ * Use this instead of saveAnalysisAsync to prevent Vercel function teardown
+ * from killing the save mid-flight.
+ *
+ * Has a hard timeout of 3 seconds — if Supabase is slow, we don't block
+ * the user response forever.
+ */
+export async function saveAnalysisAwaited(
+  analysisId: string,
+  consensus: ConsensusResult,
+  category: string,
+  userId?: string,
+  votes?: ModelVote[],
+  authorityData?: AuthorityData | null,
+  processingTime?: number,
+  imageUrls?: string[]
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const result = await Promise.race([
+      saveAnalysis(analysisId, consensus, category, userId, votes, authorityData, processingTime, imageUrls),
+      new Promise<{ success: boolean; error: string }>((resolve) =>
+        setTimeout(() => resolve({ success: false, error: 'Save timed out (3s)' }), 3000)
+      ),
+    ]);
+    return result;
+  } catch (error: any) {
+    console.error('❌ Awaited save failed:', error.message);
     return { success: false, error: error.message };
   }
 }
 
 /**
  * Save analysis asynchronously (fire and forget)
- * UPDATED: Now includes image_urls parameter
+ * WARNING: On Vercel serverless, this may be killed after response is sent.
+ * Prefer saveAnalysisAwaited() in api/analyze.ts.
+ * This is kept for backward compatibility with non-critical callers.
  */
 export function saveAnalysisAsync(
   analysisId: string,
@@ -384,7 +525,6 @@ export async function getRecentAnalyses(
  */
 export function generateItemHash(itemName: string, category?: string): string {
   const input = `${itemName.toLowerCase().trim()}|${category || ''}`;
-  // Simple hash function
   let hash = 0;
   for (let i = 0; i < input.length; i++) {
     const char = input.charCodeAt(i);
@@ -437,7 +577,7 @@ export async function cacheAnalysis(
   if (!client) return { success: false };
   
   const cacheTableName = config?.cacheTableName || DEFAULT_CACHE_TABLE_NAME;
-  const ttl = config?.cacheTTL || 3600; // 1 hour default
+  const ttl = config?.cacheTTL || 3600;
   
   try {
     const expiresAt = new Date(Date.now() + ttl * 1000);
@@ -506,12 +646,10 @@ export async function getAnalysisStats(
   const tableName = config?.tableName || DEFAULT_TABLE_NAME;
   
   try {
-    // Get total count
     const { count: totalAnalyses } = await client
       .from(tableName)
       .select('*', { count: 'exact', head: true });
     
-    // Get aggregates
     const { data: analyses } = await client
       .from(tableName)
       .select('confidence, decision, category');
@@ -529,7 +667,6 @@ export async function getAnalysisStats(
     const buyCount = analyses.filter(a => a.decision === 'BUY').length;
     const buyPercentage = (buyCount / analyses.length) * 100;
     
-    // Count by category
     const categoryCounts: Record<string, number> = {};
     for (const a of analyses) {
       if (a.category) {
@@ -562,6 +699,7 @@ export default {
   getSupabaseClient,
   isSupabaseAvailable,
   saveAnalysis,
+  saveAnalysisAwaited,
   saveAnalysisAsync,
   updateAnalysis,
   updateAnalysisImages,

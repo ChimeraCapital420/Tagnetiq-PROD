@@ -1,10 +1,12 @@
 // FILE: src/lib/hydra/category-detection/detectors/name-patterns.ts
-// HYDRA v8.3 - Name-Based Category Detection
+// HYDRA v8.4 - Name-Based Category Detection
 // Sequential pattern matching against item name.
 // Order matters: more specific categories checked before general ones.
 // CRITICAL: vinyl checked BEFORE vehicle (vinyl contains "vin")
 // UPDATED v8.3: Added grocery/food detection before household
 //               Food items (honey, sauce, cereal, etc.) now route to upcitemdb
+// FIXED v8.4: LP pattern no longer matches "DLP" — uses word boundary check
+//             "Dell 3300MP DLP Projector" was being classified as vinyl_records
 
 /**
  * Detect category from item name using pattern matching.
@@ -33,7 +35,14 @@ export function detectCategoryFromName(nameLower: string): string | null {
   if (matchesAny(nameLower, ['panini sticker', 'sticker album', 'collectible sticker'])) return 'stickers';
 
   // === VINYL - MUST check before VIN/vehicles ===
-  if (matchesAny(nameLower, ['vinyl', 'record', ' lp', 'lp ', '33 rpm', '45 rpm', 'album'])) {
+  // FIXED v8.4: Split LP into its own word-boundary check.
+  //   Old: matchesAny with [' lp', 'lp '] matched "dlp projector" → vinyl_records ❌
+  //   New: matchesWordBoundary('lp') matches "vinyl lp" but NOT "dlp projector" ✅
+  //   All other vinyl patterns remain as substring matches (safe — no false positives).
+  if (matchesAny(nameLower, ['vinyl', 'record', '33 rpm', '45 rpm', 'album'])) {
+    return 'vinyl_records';
+  }
+  if (matchesWordBoundary(nameLower, 'lp')) {
     return 'vinyl_records';
   }
 
@@ -85,7 +94,7 @@ export function detectCategoryFromName(nameLower: string): string | null {
     if (matchesAny(nameLower, vehiclePatterns)) return 'vehicles';
   }
 
-  // === GROCERY / FOOD / BEVERAGE (NEW v8.3) - Check BEFORE household ===
+  // === GROCERY / FOOD / BEVERAGE (v8.3) - Check BEFORE household ===
   // Catches food items that AI often categorizes as "general"
   const groceryBrands = [
     'kraft', 'heinz', 'campbells', "campbell's", 'general mills', 'kelloggs',
@@ -207,6 +216,18 @@ export function detectCategoryFromName(nameLower: string): string | null {
 
 function matchesAny(text: string, patterns: string[]): boolean {
   return patterns.some(p => text.includes(p));
+}
+
+/**
+ * Word-boundary-safe matching for short patterns that cause false positives.
+ * "lp" should match " lp ", " lp,", "(lp)", "12\" lp" but NOT "dlp", "help", "alps"
+ * Uses regex \b word boundary which treats transitions between \w and \W as boundaries.
+ *
+ * ADDED v8.4: Fixes DLP projector → vinyl_records misclassification.
+ */
+function matchesWordBoundary(text: string, word: string): boolean {
+  const regex = new RegExp(`\\b${word}\\b`, 'i');
+  return regex.test(text);
 }
 
 /**

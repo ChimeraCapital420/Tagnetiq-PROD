@@ -1,11 +1,21 @@
 // FILE: src/lib/hydra/category-detection/data/overrides.ts
-// HYDRA v8.0 - Name Pattern Overrides
+// HYDRA v8.4 - Name Pattern Overrides
 // Pure data: patterns that OVERRIDE AI votes when found in item name.
 // Higher priority = checked first. Sorted at runtime by priority DESC.
 //
 // HOW TO ADD: Add a new entry with patterns[], category, and priority.
 // Priority guide: 120 = Colnect-unique, 115 = niche collectible,
 //                 110 = hype brands, 100 = general apparel, 90-95 = specific items
+//
+// PATTERN TYPES:
+//   Regular strings  → matched via nameLower.includes(pattern)
+//   "\\b" prefixed   → matched via regex word boundary (prevents false positives)
+//   Use \\b for SHORT patterns that appear inside other words:
+//     "lp" matches inside "dlp", "help", "alps" → use "\\blp\\b" instead
+//
+// FIXED v8.4: "Dell 3300MP DLP Projector" was classified as vinyl_records
+//             because " lp" / "lp " matched "dlp projector" after lowering.
+//             Now uses word-boundary pattern "\\blp\\b".
 
 import type { NamePatternOverride } from '../types.js';
 
@@ -178,9 +188,12 @@ export const NAME_PATTERN_OVERRIDES: NamePatternOverride[] = [
 
   // ==========================================================================
   // SPECIFIC ITEMS (90-95) - High-confidence patterns
+  // FIXED v8.4: "lp" now uses word-boundary matching via \\b prefix.
+  //   Old: [' lp', 'lp '] — matched "dlp projector" → vinyl_records ❌
+  //   New: ['\\blp\\b']   — matches "vinyl lp" but NOT "dlp projector" ✅
   // ==========================================================================
   {
-    patterns: ['vinyl', 'record', ' lp', 'lp ', '33 rpm', '45 rpm', 'album'],
+    patterns: ['vinyl', 'record', '\\blp\\b', '33 rpm', '45 rpm', 'album'],
     category: 'vinyl_records',
     priority: 95,
   },

@@ -1,10 +1,13 @@
 // FILE: src/lib/hydra/pipeline/orchestrator.ts
-// HYDRA v9.1 - Pipeline Orchestrator
+// HYDRA v9.2 - Pipeline Orchestrator
 // Evidence-based pipeline: IDENTIFY → FETCH → REASON → VALIDATE
 // Each stage feeds into the next. Market data informs AI reasoning.
 //
 // v9.0: Original pipeline
 // v9.1: Fixed stage timeouts — identify 20s (first-responder), reason 15s
+// v9.2: FIXED — Benchmark recording is now awaited (with timeout) to prevent
+//        Vercel teardown from killing inserts and leaking timeout logs into
+//        the next request's output.
 
 import type { ItemCategory, ModelVote } from '../types.js';
 import type {
@@ -24,14 +27,14 @@ import { recordBenchmarks, buildBenchmarkContext } from '../benchmarks/index.js'
 // =============================================================================
 
 /**
- * Run the full HYDRA v9.1 evidence-based pipeline
+ * Run the full HYDRA v9.2 evidence-based pipeline
  * 
  * Flow:
  * 1. IDENTIFY — What is this item? (vision providers, first-responder)
  * 2. FETCH — Get market evidence (APIs + web search)
  * 3. REASON — Analyze with evidence (reasoning providers)
  * 4. VALIDATE — Sanity check (Groq speed-check)
- * 5. Benchmark + Self-Heal (non-blocking)
+ * 5. Benchmark + Self-Heal (awaited with timeout)
  */
 export async function runPipeline(
   images: string[],
@@ -53,7 +56,6 @@ export async function runPipeline(
   
   // =========================================================================
   // STAGE 1: IDENTIFY
-  // v9.1: First-responder pattern — returns on first valid ID (3-5s typical)
   // =========================================================================
   const identifyResult = await runIdentifyStage(
     images,
@@ -66,7 +68,6 @@ export async function runPipeline(
   const category = identifyResult.category as ItemCategory;
   const condition = identifyResult.condition || options.condition || 'good';
   
-  // Build additional context (VIN, ISBN, etc.)
   let additionalContext = options.additionalContext || '';
   if (identifyResult.identifiers.vin) {
     additionalContext = `VIN: ${identifyResult.identifiers.vin}`;
@@ -74,7 +75,6 @@ export async function runPipeline(
   
   // =========================================================================
   // STAGE 2: FETCH EVIDENCE
-  // Starts immediately after identification resolves
   // =========================================================================
   const fetchResult = await runFetchStage(
     itemName,
@@ -85,8 +85,6 @@ export async function runPipeline(
   
   // =========================================================================
   // STAGE 3: REASON WITH EVIDENCE
-  // AIs receive market data and reason from it — no blind guessing
-  // v9.1: 15s timeout — Anthropic/DeepSeek were timing out at 8s
   // =========================================================================
   const reasonResult = await runReasonStage(
     itemName,
@@ -114,7 +112,6 @@ export async function runPipeline(
   
   // =========================================================================
   // PRICE BLENDING
-  // Blend market data with evidence-based AI consensus
   // =========================================================================
   const { finalPrice, priceMethod, priceRange } = blendFinalPrice(
     fetchResult,
@@ -122,10 +119,8 @@ export async function runPipeline(
     validateResult
   );
   
-  // Determine final decision
   const decision = finalPrice >= 2.0 ? 'BUY' as const : 'SELL' as const;
   
-  // Determine overall confidence
   const confidence = calculateOverallConfidence(
     fetchResult.evidenceSummary.marketConfidence,
     reasonResult.consensus.confidence,
@@ -133,7 +128,6 @@ export async function runPipeline(
     reasonResult.votes.length
   );
   
-  // Determine analysis quality
   const analysisQuality = confidence >= 80 ? 'EXCELLENT'
     : confidence >= 65 ? 'GOOD'
     : confidence >= 50 ? 'FAIR'
@@ -157,7 +151,12 @@ export async function runPipeline(
   ];
   
   // =========================================================================
-  // BENCHMARK + SELF-HEAL (non-blocking)
+  // BENCHMARK + SELF-HEAL
+  // v9.2: Now AWAITED with a 2s timeout. This prevents:
+  //   1. Vercel teardown killing the insert mid-flight
+  //   2. Timeout logs from this analysis bleeding into next request
+  // The 2s timeout means benchmarks won't delay response significantly
+  // but will complete reliably when Supabase is healthy.
   // =========================================================================
   if (config.enableBenchmarks) {
     try {
@@ -182,13 +181,18 @@ export async function runPipeline(
         totalVotes: allVotes.length,
       });
       
-      recordBenchmarks(
-        stageVotes.identify,
-        stageVotes.reason,  // Reasoning votes (were "text" in v8.0)
-        stageVotes.fetch,   // Fetch votes (Perplexity + xAI)
-        [],                 // No tiebreaker in v9.0 — DeepSeek is now a reasoning provider
-        benchmarkCtx
-      );
+      // v9.2: Await with timeout instead of fire-and-forget
+      // recordBenchmarks returns a promise — we await it with a 2s safety net
+      await Promise.race([
+        recordBenchmarks(
+          stageVotes.identify,
+          stageVotes.reason,
+          stageVotes.fetch,
+          [],
+          benchmarkCtx
+        ),
+        new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+      ]);
       
       console.log(`  🎯 Benchmarks: ${allVotes.length} votes queued`);
     } catch (benchErr: any) {
@@ -201,7 +205,6 @@ export async function runPipeline(
   // =========================================================================
   const totalTime = Date.now() - pipelineStart;
   
-  // Extract eBay data for response
   const ebaySource = fetchResult.marketData.sources?.find((s: any) => s.source === 'ebay');
   const ebayData = ebaySource?.available ? {
     totalListings: ebaySource.totalListings || 0,
@@ -272,11 +275,9 @@ function blendFinalPrice(
   const evidence = fetchResult.evidenceSummary;
   const aiConsensus = reasonResult.consensus.estimatedValue;
   
-  // Get market-based price
   const marketPrice = marketData.blendedPrice?.value || 0;
   
-  // Calculate market weight based on data quality
-  let marketWeight = 0.50; // Base 50/50
+  let marketWeight = 0.50;
   
   if (evidence.ebay && evidence.ebay.listings >= 10) {
     marketWeight += 0.20;
@@ -292,9 +293,6 @@ function blendFinalPrice(
     marketWeight += 0.05;
   }
   
-  // v9.0: AI reasoning is evidence-based, so trust it more than v8.0
-  // In v8.0 we needed 70-95% market weight because AI was guessing blind
-  // In v9.0 the AI has seen the market data, so 50-75% market is sufficient
   marketWeight = Math.min(marketWeight, 0.75);
   
   const aiWeight = 1 - marketWeight;
@@ -318,11 +316,9 @@ function blendFinalPrice(
   
   console.log(`\n  ⚖️ Price blend: ${Math.round(marketWeight * 100)}% market ($${marketPrice.toFixed(2)}) + ${Math.round(aiWeight * 100)}% AI ($${aiConsensus.toFixed(2)}) = $${finalPrice.toFixed(2)}`);
   
-  // Apply validation adjustments
   if (!validateResult.valid && validateResult.flags.length > 0) {
     const errorFlags = validateResult.flags.filter((f: any) => f.severity === 'error');
     if (errorFlags.length > 0) {
-      // If validation failed, lean more on market data
       if (marketPrice > 0) {
         const adjustedPrice = parseFloat((marketPrice * 0.85 + aiConsensus * 0.15).toFixed(2));
         console.log(`  ⚠️ Validation failed — adjusting to $${adjustedPrice.toFixed(2)} (85% market)`);
@@ -332,7 +328,6 @@ function blendFinalPrice(
     }
   }
   
-  // Price range
   const allPrices = [marketPrice, aiConsensus].filter(p => p > 0);
   const priceRange = allPrices.length > 0 ? {
     low: Math.min(...allPrices) * 0.8,
@@ -352,11 +347,6 @@ function calculateOverallConfidence(
   validationPassed: boolean,
   reasoningVoteCount: number
 ): number {
-  // Market confidence (0-1) contributes 40%
-  // AI confidence (0-100) contributes 40%
-  // Vote count contributes 10%
-  // Validation contributes 10%
-  
   let confidence = 0;
   
   confidence += (marketConfidence * 40);
@@ -375,17 +365,16 @@ function getDefaultConfig(): PipelineConfig {
   return {
     maxDuration: 55000,
     stageTimeouts: {
-      identify: 20000,  // v9.1: Was 8000 — first-responder returns fast, but slow providers get time
+      identify: 20000,
       fetch: 10000,
-      reason: 15000,    // v9.1: Was 8000 — Anthropic/DeepSeek were timing out at 6-8s
-      validate: 3000,   // v9.1: Was 2000 — small buffer for Groq
+      reason: 15000,
+      validate: 3000,
     },
     enableValidation: true,
     enableBenchmarks: true,
   };
 }
 
-// Re-export the type to avoid circular imports
 interface PipelineConfig {
   maxDuration: number;
   stageTimeouts: {

@@ -1,5 +1,5 @@
 // FILE: api/analyze.ts
-// HYDRA v9.0 - Slim Analysis Handler
+// HYDRA v9.2 - Slim Analysis Handler
 // Evidence-based pipeline: IDENTIFY → FETCH → REASON → VALIDATE
 // Reduced from 866 lines to ~200 lines — orchestration only
 //
@@ -14,6 +14,7 @@
 // v8.2: Barcode Spider cascade + Kroger retail pricing
 // v9.0: Evidence-based pipeline — AIs reason WITH market data, not blind
 // v9.0.1: Barcode passthrough wired into pipeline (was missing from v9.0)
+// v9.2: FIXED — Save BEFORE response (Vercel teardown was killing fire-and-forget saves)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -28,9 +29,11 @@ import {
   formatAnalysisResponse,
   formatAPIResponse,
   formatErrorResponse,
-  saveAnalysisAsync,
   isSupabaseAvailable,
 } from '../src/lib/hydra/index.js';
+
+// v9.2: Use awaitable save instead of fire-and-forget
+import { saveAnalysisAwaited } from '../src/lib/hydra/storage/supabase.js';
 
 // =============================================================================
 // CONFIG
@@ -124,9 +127,6 @@ function validateRequest(body: unknown): AnalyzeRequest {
 
     // ========================================================================
     // FIXED v8.1/v9.0.1: Extract raw barcodes from device scanner
-    // The device's barcode scanner (react-zxing) reads all 12/13 digits perfectly.
-    // AI vision often truncates barcode numbers when reading from images.
-    // DualScanner sends barcodes via: items[].metadata.barcodes[]
     // ========================================================================
     const scannedBarcodes: string[] = [];
     items.forEach(item => {
@@ -181,7 +181,6 @@ function validateRequest(body: unknown): AnalyzeRequest {
     categoryHint: typeof categoryHint === 'string' ? categoryHint : undefined,
     condition: typeof condition === 'string' ? condition : 'good',
     originalImageUrls: Array.isArray(originalImageUrls) ? originalImageUrls.filter((u): u is string => typeof u === 'string' && !u.startsWith('blob:')) : undefined,
-    // Standard format doesn't send barcodes — only DualScanner multi-modal does
   };
 }
 
@@ -228,15 +227,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ========================================================================
     // 3. Build additionalContext from scanner barcodes
-    // FIXED v9.0.1: This was MISSING in the original v9.0 file.
-    // The device scanner reads perfect 12/13-digit barcodes via react-zxing.
-    // We pass them as "UPC: <digits>" so fetchers (upcitemdb → barcode spider
-    // cascade, kroger) can use the REAL barcode instead of AI-truncated ones.
     // ========================================================================
     let additionalContext: string | undefined;
     if (request.scannedBarcodes && request.scannedBarcodes.length > 0) {
-      // Pass first barcode as primary UPC context
-      // Format: "UPC: 053538155504" — matches extractBarcodeFromContext() in upcitemdb.ts
       additionalContext = `UPC: ${request.scannedBarcodes[0]}`;
       console.log(`🔗 Barcode context for fetchers: "${additionalContext}"`);
     }
@@ -248,13 +241,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const pipelineResult = await runPipeline(images, request.itemName, {
       categoryHint: request.categoryHint,
       condition: request.condition,
-      additionalContext,  // ← v9.0.1: Scanner barcodes now reach fetchers
+      additionalContext,
       analysisId,
       hasImage,
       dynamicWeights: dynamicWeights || undefined,
     });
 
-    // 6. Format response (using existing formatter for backward compatibility)
+    // 6. Format response
     const processingTime = Date.now() - startTime;
 
     const blendedPrice = {
@@ -270,7 +263,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       authorityVerified: !!pipelineResult.authorityData,
     };
 
-    // Build consensus-compatible object for formatter
     const consensusCompat = {
       itemName: pipelineResult.itemName,
       decision: pipelineResult.decision,
@@ -296,8 +288,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       thumbnailUrl: request.originalImageUrls?.[0] || null,
       ebayMarketData: pipelineResult.ebayData,
       marketSources: pipelineResult.marketSources,
-      // v9.0: Pipeline timing data
-      pipelineVersion: '9.0',
+      pipelineVersion: '9.2',
       pipelineTiming: pipelineResult.timing,
       _debug: {
         ebayListings: pipelineResult.ebayData?.totalListings || 0,
@@ -316,9 +307,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     };
 
-    // 7. Save to Supabase (non-blocking)
+    // ========================================================================
+    // 7. SAVE TO SUPABASE — AWAIT before response
+    // FIXED v9.2: Was fire-and-forget (saveAnalysisAsync) which got killed
+    //             by Vercel function teardown after response was sent.
+    //             Now we AWAIT the save (with 3s timeout) BEFORE responding.
+    //             Adds ~100-300ms to response time but guarantees data persists.
+    // ========================================================================
     if (isSupabaseAvailable()) {
-      saveAnalysisAsync(
+      const saveResult = await saveAnalysisAwaited(
         analysisId,
         consensusCompat,
         pipelineResult.category,
@@ -328,6 +325,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         processingTime,
         request.originalImageUrls
       );
+      if (!saveResult.success) {
+        console.warn(`⚠️ Save incomplete: ${saveResult.error}`);
+      }
     }
 
     console.log(`\n  ✅ Complete in ${processingTime}ms\n`);

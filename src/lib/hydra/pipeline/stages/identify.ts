@@ -1,11 +1,15 @@
 // FILE: src/lib/hydra/pipeline/stages/identify.ts
-// HYDRA v9.1 - Stage 1: IDENTIFY
+// HYDRA v9.2 - Stage 1: IDENTIFY
 // First-responder pattern: return as soon as ONE vision model identifies
 // Don't wait for slowest provider — pipeline moves immediately
 //
 // v9.0: Waited for ALL providers (caused 13-20s Stage 1)
 // v9.1: First-responder returns in 3-5s, adds Anthropic vision
 // v9.1.1: Garbage name rejection — provider fallback names no longer accepted
+// v9.2: FIXED — Leaked timeout logs
+//   Timeout messages from abandoned providers were logging DURING the next analysis.
+//   Now: race-resolved flag suppresses all logs after first responder wins.
+//   Provider timeouts are silently ignored once the stage has resolved.
 
 import { ProviderFactory } from '../../ai/provider-factory.js';
 import { isProviderAvailable } from '../../config/providers.js';
@@ -97,8 +101,7 @@ function isGarbageName(name: string): boolean {
  * After:  First responder → 3-5s (fastest provider wins)
  * 
  * v9.1.1: Garbage name rejection
- * Provider fallback names like "Google Gemini Analysis" are now rejected.
- * Only real identifications are accepted.
+ * v9.2: Leaked timeout logs suppressed after race resolves
  */
 export async function runIdentifyStage(
   images: string[],
@@ -111,7 +114,6 @@ export async function runIdentifyStage(
   console.log(`\n  🔍 Stage 1 — IDENTIFY`);
   
   // All vision-capable providers participate in identification
-  // Anthropic added in v9.1 — strong vision, often fastest
   const identifyProviders = ['google', 'openai', 'anthropic'].filter(isProviderAvailable);
   
   if (identifyProviders.length === 0) {
@@ -129,21 +131,21 @@ export async function runIdentifyStage(
   
   // =========================================================================
   // FIRST RESPONDER PATTERN
-  // Fire all providers simultaneously, return when FIRST one identifies.
-  // Don't wait for slow providers — speed is critical for UX.
+  // v9.2: Returns { vote, abort } — abort() suppresses remaining logs
   // =========================================================================
-  const vote = await raceToFirstIdentification(
+  const raceResult = await raceToFirstIdentification(
     identifyProviders,
     images,
     prompt,
     timeout
   );
   
-  if (!vote) {
+  if (!raceResult?.vote) {
     console.log(`    ⚠️ No providers returned valid identification`);
     return buildFallbackIdentifyResult(itemNameHint, categoryHint, stageStart);
   }
   
+  const vote = raceResult.vote;
   const rawResponse = vote.rawResponse as any;
   
   // Extract identified item name
@@ -198,63 +200,73 @@ export async function runIdentifyStage(
 // FIRST RESPONDER — RACE TO FIRST VALID IDENTIFICATION
 // =============================================================================
 
+interface RaceResult {
+  vote: ModelVote | null;
+}
+
 /**
  * Race all vision providers. Return the FIRST valid identification.
  * Remaining providers are abandoned — we don't wait.
  * 
- * This is the key speed optimization:
- * - Google Flash often returns in 2-3s
- * - Anthropic often returns in 3-5s  
- * - OpenAI can take 10-15s with images
- * 
- * Instead of waiting 15s for OpenAI, we return Google's result in 3s.
- * 
- * v9.1.1: Garbage names are rejected — provider must return real identification.
+ * v9.2: Uses a shared `resolved` flag that provider runners check
+ * before logging. Once the race resolves (win or timeout), all
+ * subsequent timeout/error messages from abandoned providers are
+ * silently suppressed. This prevents "leaked" timeout logs from
+ * appearing during the NEXT analysis.
  */
 async function raceToFirstIdentification(
   providerIds: string[],
   images: string[],
   prompt: string,
   timeout: number
-): Promise<ModelVote | null> {
+): Promise<RaceResult> {
   return new Promise((resolve) => {
     let resolved = false;
     let completed = 0;
     const total = providerIds.length;
     
+    // Shared context — providers check this before logging
+    const raceContext = { resolved: false, winner: '' };
+    
     // Timeout — if nobody responds, return null
     const timeoutId = setTimeout(() => {
       if (!resolved) {
         resolved = true;
+        raceContext.resolved = true;
         console.log(`    ⏱️ All identification providers timed out (${timeout}ms)`);
-        resolve(null);
+        resolve({ vote: null });
       }
     }, timeout);
     
     // Fire all providers simultaneously
     providerIds.forEach(providerId => {
-      runIdentifyProvider(providerId, images, prompt, timeout)
+      runIdentifyProvider(providerId, images, prompt, timeout, raceContext)
         .then(vote => {
           completed++;
           
           if (vote && !resolved) {
             // FIRST valid result — resolve immediately
             resolved = true;
+            raceContext.resolved = true;
+            raceContext.winner = providerId;
             clearTimeout(timeoutId);
-            resolve(vote);
+            resolve({ vote });
           } else if (completed === total && !resolved) {
             // All done, none succeeded
             resolved = true;
+            raceContext.resolved = true;
             clearTimeout(timeoutId);
-            resolve(null);
+            resolve({ vote: null });
           }
+          // If resolved && this is a late finisher: silently ignored
         })
         .catch(() => {
           completed++;
           if (completed === total && !resolved) {
             resolved = true;
+            raceContext.resolved = true;
             clearTimeout(timeoutId);
-            resolve(null);
+            resolve({ vote: null });
           }
         });
     });
@@ -265,11 +277,16 @@ async function raceToFirstIdentification(
 // SINGLE PROVIDER RUNNER
 // =============================================================================
 
+/**
+ * v9.2: Accepts raceContext to suppress logs after race resolves.
+ * The provider's timeout and error logs only fire if raceContext.resolved is false.
+ */
 async function runIdentifyProvider(
   providerId: string,
   images: string[],
   prompt: string,
-  timeout: number
+  timeout: number,
+  raceContext: { resolved: boolean; winner: string }
 ): Promise<ModelVote | null> {
   const start = Date.now();
   
@@ -287,13 +304,25 @@ async function runIdentifyProvider(
     const result = await Promise.race([
       provider.analyze(images, prompt),
       new Promise<null>((resolve) => setTimeout(() => {
-        console.log(`    ⏱️ ${providerId} identification timed out (${providerTimeout}ms)`);
+        // v9.2: Only log timeout if race hasn't resolved yet
+        // If another provider already won, this timeout is just cleanup noise
+        if (!raceContext.resolved) {
+          console.log(`    ⏱️ ${providerId} identification timed out (${providerTimeout}ms)`);
+        }
+        // Silently resolve — no log pollution into next analysis
         resolve(null);
       }, providerTimeout))
     ]);
     
+    // v9.2: If race already resolved, don't bother processing or logging
+    if (raceContext.resolved) {
+      return null;
+    }
+    
     if (!result || !result.response) {
-      console.log(`    ✗ ${providerId}: No identification returned`);
+      if (!raceContext.resolved) {
+        console.log(`    ✗ ${providerId}: No identification returned`);
+      }
       return null;
     }
     
@@ -302,7 +331,9 @@ async function runIdentifyProvider(
     // Validate it actually identified something real
     const itemName = result.response.itemName || '';
     if (!itemName || isGarbageName(itemName)) {
-      console.log(`    ✗ ${providerId}: Rejected garbage name "${itemName}" (${responseTime}ms)`);
+      if (!raceContext.resolved) {
+        console.log(`    ✗ ${providerId}: Rejected garbage name "${itemName}" (${responseTime}ms)`);
+      }
       return null;
     }
     
@@ -314,11 +345,17 @@ async function runIdentifyProvider(
       {}
     );
     
-    console.log(`    ✓ ${providerId}: "${vote.itemName}" (${responseTime}ms)`);
+    // v9.2: Only log success if we're still in the race
+    if (!raceContext.resolved) {
+      console.log(`    ✓ ${providerId}: "${vote.itemName}" (${responseTime}ms)`);
+    }
     return vote;
     
   } catch (error: any) {
-    console.log(`    ✗ ${providerId}: ${error.message}`);
+    // v9.2: Suppress error logs from abandoned providers
+    if (!raceContext.resolved) {
+      console.log(`    ✗ ${providerId}: ${error.message}`);
+    }
     return null;
   }
 }
