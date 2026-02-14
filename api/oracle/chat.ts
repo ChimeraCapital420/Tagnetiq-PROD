@@ -18,6 +18,7 @@
 // Sprint G+:  Argos integration
 // Sprint K:   True Oracle — full-spectrum knowledge
 // Sprint L:   Privacy & safety — crisis detection, care responses
+// Sprint M:   Oracle Eyes — visual memory recall in chat
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -72,6 +73,62 @@ function generateTitle(firstMessage: string): string {
 }
 
 // =============================================================================
+// VISUAL MEMORY CONTEXT BUILDER (Sprint M: Oracle Eyes)
+// =============================================================================
+
+/**
+ * Build a system prompt section from Oracle's visual memories.
+ * Enables recall: "where did I leave my keys?", "what did that article say?"
+ * Only includes non-forgotten memories from the last 7 days by default.
+ */
+function buildVisualMemoryContext(visualMemories: any[]): string {
+  if (!visualMemories || visualMemories.length === 0) return '';
+
+  let context = '\n\n## ORACLE VISUAL MEMORY — What You Have Seen\n';
+  context += 'You have visual memories from looking through the user\'s camera/glasses. ';
+  context += 'Use these to answer questions like "where did I put X?", "what did that article say?", ';
+  context += '"what was in that room?". Reference specific details — timestamps, positions, descriptions.\n\n';
+
+  for (const mem of visualMemories) {
+    const when = new Date(mem.observed_at).toLocaleDateString('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    });
+
+    context += `---\n`;
+    context += `SEEN: ${when}\n`;
+    context += `MODE: ${mem.mode}\n`;
+    context += `DESCRIPTION: ${mem.description}\n`;
+
+    if (mem.location_hint) {
+      context += `LOCATION: ${mem.location_hint}\n`;
+    }
+
+    if (mem.objects && Array.isArray(mem.objects) && mem.objects.length > 0) {
+      context += `OBJECTS: ${mem.objects.map((o: any) =>
+        `${o.name}${o.position_hint ? ` [${o.position_hint}]` : ''}${o.estimated_value ? ` ~$${o.estimated_value}` : ''}`
+      ).join(', ')}\n`;
+    }
+
+    if (mem.extracted_text) {
+      // Truncate long text but keep enough for recall
+      const textPreview = mem.extracted_text.length > 500
+        ? mem.extracted_text.substring(0, 500) + '... [truncated]'
+        : mem.extracted_text;
+      context += `TEXT CONTENT: ${textPreview}\n`;
+    }
+
+    context += `SOURCE: ${mem.source || 'phone_camera'}\n`;
+    context += '\n';
+  }
+
+  if (visualMemories.length >= 30) {
+    context += '(Showing most recent 30 visual memories. Older ones exist but are not shown.)\n';
+  }
+
+  return context;
+}
+
+// =============================================================================
 // HANDLER
 // =============================================================================
 
@@ -111,7 +168,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const safetyScan = scanMessage(message);
 
     // ── 1. Fetch ALL data in parallel ─────────────────────
-    const [identity, scanResult, vaultResult, profileResult, argosData, privacySettings, recentSafety] = await Promise.all([
+    const [identity, scanResult, vaultResult, profileResult, argosData, privacySettings, recentSafety, visualMemoryResult] = await Promise.all([
       getOrCreateIdentity(supabaseAdmin, user.id),
       supabaseAdmin
         .from('analysis_history')
@@ -137,15 +194,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         lastEventType: null,
         daysSinceLastEvent: null,
       })),
+      // ── Sprint M: Oracle Eyes — fetch visual memories for recall ──
+      supabaseAdmin
+        .from('oracle_visual_memory')
+        .select('id, mode, description, objects, extracted_text, location_hint, source, observed_at')
+        .eq('user_id', user.id)
+        .is('forgotten_at', null)
+        .order('observed_at', { ascending: false })
+        .limit(30)
+        .then(res => res)
+        .catch(() => ({ data: [], error: null })),  // Graceful: table may not exist yet
     ]);
 
     const scanHistory = scanResult.data || [];
     const vaultItems = vaultResult.data || [];
     const profile = profileResult.data;
+    const visualMemories = visualMemoryResult.data || [];
 
     // ── 2. Build system prompt ────────────────────────────
     // Base prompt (includes Argos context from G+)
     let systemPrompt = buildSystemPrompt(identity, scanHistory, vaultItems, profile, argosData);
+
+    // Inject visual memory context (Sprint M: Oracle Eyes)
+    if (visualMemories.length > 0) {
+      systemPrompt += buildVisualMemoryContext(visualMemories);
+    }
 
     // Inject safety context if crisis signal detected
     if (safetyScan.injectSafetyContext) {
@@ -267,6 +340,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       quickChips,
       scanCount: scanHistory.length,
       vaultCount: vaultItems.length,
+      memoryCount: visualMemories.length,
       oracleName: identity.oracle_name,
       tier: {
         current: access.tier.current,
