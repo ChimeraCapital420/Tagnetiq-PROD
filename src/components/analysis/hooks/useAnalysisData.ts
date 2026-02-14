@@ -1,6 +1,12 @@
 // FILE: src/components/analysis/hooks/useAnalysisData.ts
 // Safely extracts and normalizes the raw analysis result into typed data.
 // Cannot crash on any malformed response.
+//
+// v10.1 CHANGES:
+//   - Extracts ebayMarketData from response (was ignored — user never saw eBay prices)
+//   - Extracts marketSources for display
+//   - Post-processes valuation_factors: fixes misleading "X% decision agreement"
+//     using actual consensus data from hydraConsensus
 
 import { useMemo } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
@@ -13,6 +19,8 @@ export function useAnalysisData(): {
   raw: any | null;
   data: NormalizedAnalysis | null;
   history: HistoryContext;
+  ebayData: any | null;
+  marketSources: any[];
 } {
   const {
     lastAnalysisResult,
@@ -25,6 +33,18 @@ export function useAnalysisData(): {
     ? analysisHistory[currentAnalysisIndex]
     : null;
 
+  // ── Extract eBay market data (top-level field from analyze.ts response) ──
+  const ebayData = useMemo(() => {
+    if (!lastAnalysisResult) return null;
+    return lastAnalysisResult.ebayMarketData || null;
+  }, [lastAnalysisResult]);
+
+  // ── Extract market sources ──
+  const marketSources = useMemo(() => {
+    if (!lastAnalysisResult) return [];
+    return safeArray<any>(lastAnalysisResult.marketSources);
+  }, [lastAnalysisResult]);
+
   const data = useMemo<NormalizedAnalysis | null>(() => {
     if (!lastAnalysisResult) return null;
 
@@ -35,7 +55,7 @@ export function useAnalysisData(): {
     const estimatedValue = safeNumber(r.estimatedValue);
     const confidenceScore = safeNumber(r.confidenceScore);
     const summaryReasoning = safeString(r.summary_reasoning);
-    const valuationFactors = safeArray<string>(r.valuation_factors);
+    const rawFactors = safeArray<string>(r.valuation_factors);
     const imageUrl = safeString(r.imageUrl);
     const imageUrls = safeArray<string>(r.imageUrls);
     const category = safeString(r.category) || 'general';
@@ -45,6 +65,11 @@ export function useAnalysisData(): {
     const authorityData = r.authorityData ?? null;
     const ghostData = r.ghostData ?? null;
     const nexusData = r.nexus ?? null;
+
+    // ── Fix misleading "X% decision agreement" in valuation factors ──
+    // The AI generates these as text factors but calculates them wrong.
+    // We replace with actual agreement from the consensus data.
+    const valuationFactors = fixAgreementFactors(rawFactors, hydraConsensus);
 
     // Normalize confidence (some responses return 0-100, some 0-1)
     const confidenceNormalized = confidenceScore > 1 ? confidenceScore / 100 : confidenceScore;
@@ -121,5 +146,46 @@ export function useAnalysisData(): {
     raw: lastAnalysisResult,
     data,
     history: { isViewingHistory, historyItem },
+    ebayData,
+    marketSources,
   };
+}
+
+// =============================================================================
+// FIX: Replace misleading AI-generated agreement factors with real data
+// =============================================================================
+
+function fixAgreementFactors(
+  factors: string[],
+  consensus: any | null,
+): string[] {
+  if (!factors || factors.length === 0) return factors;
+
+  // Calculate actual agreement from consensus votes if available
+  let actualAgreement: number | null = null;
+
+  if (consensus && typeof consensus === 'object') {
+    const votes = consensus.votes || consensus.allVotes;
+    if (Array.isArray(votes) && votes.length > 0) {
+      // Count how many votes have the same decision as the consensus
+      const consensusDecision = consensus.decision || 'BUY';
+      const matching = votes.filter((v: any) =>
+        (v.decision || '').toUpperCase() === consensusDecision.toUpperCase()
+      ).length;
+      actualAgreement = Math.round((matching / votes.length) * 100);
+    }
+  }
+
+  return factors.map(factor => {
+    // Fix "X% decision agreement" — the AI gets this wrong
+    const agreementMatch = factor.match(/(\d+)%\s*(decision\s+)?agreement/i);
+    if (agreementMatch) {
+      if (actualAgreement !== null) {
+        return `${actualAgreement}% decision agreement`;
+      }
+      // If we can't calculate, remove the misleading factor entirely
+      return null;
+    }
+    return factor;
+  }).filter((f): f is string => f !== null);
 }

@@ -1,13 +1,11 @@
 // FILE: src/components/analysis/AnalysisResult.tsx
-// STATUS: HYDRA v10.0 — Modular Refactor
+// STATUS: HYDRA v10.1 — Modular + eBay Display + Agreement Fix
 // Thin orchestrator that composes hooks + components.
-// All logic lives in hooks/, all UI in components/, all helpers in utils/.
 //
-// ARCHITECTURE:
-//   useAnalysisData  → safe extraction from raw API response
-//   useListingSubmit → arena_listings insert logic
-//   useFeedback      → star ratings + refinement submission
-//   Components       → NexusDecisionCard, ActionHub, ImageCarousel, etc.
+// v10.1 CHANGES:
+//   - Renders EbayMarketDisplay showing median/low/high/sample from eBay
+//   - Agreement factor post-processing in useAnalysisData
+//   - eBay price range bar with HYDRA estimate marker
 
 import React, { useState, Component, ErrorInfo, ReactNode } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
@@ -32,6 +30,7 @@ import {
   ActionHub,
   FeedbackStars,
   RefineDialog,
+  EbayMarketDisplay,
 } from './components/index.js';
 
 // =============================================================================
@@ -88,7 +87,7 @@ class AnalysisErrorBoundary extends Component<
 const AnalysisResultContent: React.FC = () => {
   const { setLastAnalysisResult, deleteFromHistory } = useAppContext();
   const { user } = useAuth();
-  const { raw, data, history } = useAnalysisData();
+  const { raw, data, history, ebayData, marketSources } = useAnalysisData();
   const handleListOnTagnetiq = useListingSubmit(data);
   const [nexusDismissed, setNexusDismissed] = useState(false);
 
@@ -178,7 +177,7 @@ const AnalysisResultContent: React.FC = () => {
         </CardHeader>
 
         {/* ── Content: Images + Valuation ── */}
-        <CardContent>
+        <CardContent className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <ImageCarousel imageUrls={data.allImageUrls} itemName={data.itemName} />
             <ValuationDetails
@@ -189,6 +188,15 @@ const AnalysisResultContent: React.FC = () => {
               onRefine={() => feedback.setIsRefineOpen(true)}
             />
           </div>
+
+          {/* ── eBay Market Data (was always fetched, now displayed) ── */}
+          {ebayData && typeof ebayData === 'object' && (
+            <EbayMarketDisplay
+              ebayData={ebayData}
+              estimatedValue={data.estimatedValue}
+              itemName={data.itemName}
+            />
+          )}
         </CardContent>
 
         {/* ── Footer: Actions + Feedback ── */}
