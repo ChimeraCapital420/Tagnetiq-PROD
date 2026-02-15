@@ -100,21 +100,36 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
   // -------------------------------------------------------------------------
   // CAMERA LIFECYCLE — start on open, stop on close
-  // v3.0 BUG: This was missing entirely → black screen
-  // useCameraStream does NOT auto-start, it requires explicit startCamera()
+  // v3.0 BUG: This was missing entirely → black screen in all modes
+  //
+  // Three modes, two camera systems:
+  //   image/video → useCameraStream (our hook) controls the <video> element
+  //   barcode     → useZxing controls its own <video> via zxingRef
+  //
+  // When switching TO barcode: stop our camera (save battery, avoid conflicts)
+  // When switching FROM barcode: start our camera
+  // When closing: stop our camera (useZxing pauses itself via its `paused` prop)
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (isOpen && scanMode !== 'barcode') {
-      // Small delay lets the DOM mount the <video> element first
-      const timer = setTimeout(() => {
-        camera.startCamera();
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-
     if (!isOpen) {
       camera.stopCamera();
+      return;
     }
+
+    // Barcode mode: useZxing manages its own stream via zxingRef
+    // Stop our camera to free the hardware + save battery
+    if (scanMode === 'barcode') {
+      camera.stopCamera();
+      return;
+    }
+
+    // Image or Video mode: we need our camera stream
+    // Small delay lets the DOM mount the <video> element first
+    const timer = setTimeout(() => {
+      camera.startCamera();
+    }, 100);
+
+    return () => clearTimeout(timer);
   }, [isOpen, scanMode]);
   // NOTE: intentionally omitting camera from deps — startCamera/stopCamera
   // are stable refs but including camera object would cause infinite loop
