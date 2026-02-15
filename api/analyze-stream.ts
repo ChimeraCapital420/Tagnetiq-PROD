@@ -1,5 +1,7 @@
-// HYDRA v5.0 STREAMING - Real-time Analysis Updates via Server-Sent Events
-// Separate file for streaming - easier to debug/update independently
+// HYDRA v5.1 STREAMING - Real-time Analysis Updates via Server-Sent Events
+// FIX: buildFinalResult now includes votes/allVotes arrays for display components
+// FIX: All consensus.consensus.* access is defensively guarded
+// PERF: Reduced streaming delays for mobile-first responsiveness
 // Usage: POST /api/analyze-stream with Accept: text/event-stream header
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -12,14 +14,26 @@ export const config = {
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
-const BASE_URL = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://tagnetiq-prod.vercel.app';
+const BASE_URL = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : 'https://tagnetiq-prod.vercel.app';
 
 // ==================== TYPES ====================
 
 interface StreamEvent {
-  type: 'init' | 'phase' | 'ai_start' | 'ai_complete' | 'ai_error' | 
-        'category' | 'price' | 'api_start' | 'api_complete' | 'consensus' | 
-        'complete' | 'error';
+  type:
+    | 'init'
+    | 'phase'
+    | 'ai_start'
+    | 'ai_complete'
+    | 'ai_error'
+    | 'category'
+    | 'price'
+    | 'api_start'
+    | 'api_complete'
+    | 'consensus'
+    | 'complete'
+    | 'error';
   timestamp: number;
   data: any;
 }
@@ -44,23 +58,28 @@ const AI_MODELS: AIModel[] = [
 
 // Category to API mapping (mirrors analyze.ts)
 const CATEGORY_API_MAP: Record<string, string[]> = {
-  'pokemon_cards': ['Pokemon TCG', 'eBay'],
-  'trading_cards': ['Pokemon TCG', 'eBay'],
-  'coins': ['Numista', 'eBay'],
-  'lego': ['Brickset', 'eBay'],
-  'video_games': ['RAWG', 'eBay'],
-  'vinyl_records': ['Discogs', 'eBay'],
-  'comics': ['Comic Vine', 'eBay'],
-  'books': ['Google Books', 'eBay'],
-  'sneakers': ['Retailed', 'eBay'],
-  'general': ['eBay'],
+  pokemon_cards: ['Pokemon TCG', 'eBay'],
+  trading_cards: ['Pokemon TCG', 'eBay'],
+  coins: ['Numista', 'eBay'],
+  lego: ['Brickset', 'eBay'],
+  video_games: ['RAWG', 'eBay'],
+  vinyl_records: ['Discogs', 'eBay'],
+  comics: ['Comic Vine', 'eBay'],
+  books: ['Google Books', 'eBay'],
+  sneakers: ['Retailed', 'eBay'],
+  general: ['eBay'],
 };
 
 // ==================== SSE HELPERS ====================
 
 function sendSSE(res: VercelResponse, event: StreamEvent) {
-  const data = JSON.stringify(event);
-  res.write(`data: ${data}\n\n`);
+  try {
+    const data = JSON.stringify(event);
+    res.write(`data: ${data}\n\n`);
+  } catch (e) {
+    // Stream may have closed — swallow write errors
+    console.warn('SSE write failed (client likely disconnected):', (e as Error).message);
+  }
 }
 
 function sendInit(res: VercelResponse) {
@@ -68,16 +87,16 @@ function sendInit(res: VercelResponse) {
     type: 'init',
     timestamp: Date.now(),
     data: {
-      message: 'Initializing Hydra Consensus Engine v5.0...',
-      models: AI_MODELS.map(m => ({
+      message: 'Initializing Hydra Consensus Engine v5.1...',
+      models: AI_MODELS.map((m) => ({
         name: m.name,
         icon: m.icon,
         color: m.color,
         weight: m.weight,
-        status: 'pending'
+        status: 'pending',
       })),
-      totalModels: AI_MODELS.length
-    }
+      totalModels: AI_MODELS.length,
+    },
   });
 }
 
@@ -88,10 +107,10 @@ async function performStreamingAnalysis(
   res: VercelResponse
 ): Promise<void> {
   const startTime = Date.now();
-  
+
   // Send initialization
   sendInit(res);
-  
+
   // Extract image data
   let imageData = '';
   if (request.scanType === 'multi-modal' && request.items?.length) {
@@ -99,23 +118,23 @@ async function performStreamingAnalysis(
   } else if (request.data) {
     imageData = request.data;
   }
-  
+
   const categoryHint = request.category_id || 'general';
-  
+
   // Phase 1: AI Analysis
   sendSSE(res, {
     type: 'phase',
     timestamp: Date.now(),
-    data: { phase: 'ai', message: 'Running AI consensus analysis...' }
+    data: { phase: 'ai', message: 'Running AI consensus analysis...' },
   });
-  
+
   // Import and initialize Hydra
   const { HydraEngine } = await import('../src/lib/hydra-engine.js');
   const hydra = new HydraEngine();
   await hydra.initialize();
-  
+
   // Build prompt (same as main analyze.ts)
-  const jsonPrompt = `You are a professional appraiser analyzing an item for resale value.
+  const jsonPrompt = `You are a professional appraiser analyzing an item for resale value. 
 
 RESPOND WITH ONLY VALID JSON:
 {
@@ -130,7 +149,7 @@ RESPOND WITH ONLY VALID JSON:
 
 CATEGORY OPTIONS: pokemon_cards, trading_cards, coins, lego, video_games, vinyl_records, comics, books, sneakers, watches, jewelry, toys, art, antiques, electronics, general`;
 
-  // Stagger AI start notifications (visual effect)
+  // Stagger AI start notifications — reduced delay for mobile responsiveness
   AI_MODELS.forEach((model, index) => {
     setTimeout(() => {
       sendSSE(res, {
@@ -140,27 +159,34 @@ CATEGORY OPTIONS: pokemon_cards, trading_cards, coins, lego, video_games, vinyl_
           model: model.name,
           icon: model.icon,
           color: model.color,
-          index
-        }
+          index,
+        },
       });
-    }, index * 150);
+    }, index * 80); // Was 150ms, reduced for faster mobile feedback
   });
-  
+
   // Run analysis
-  const consensus = await hydra.analyzeWithAuthority([imageData], jsonPrompt, categoryHint);
-  
-  // Stream the votes that came back (simulating real-time)
+  const consensus = await hydra.analyzeWithAuthority(
+    [imageData],
+    jsonPrompt,
+    categoryHint
+  );
+
+  // Safely extract votes — handle both field names from different Hydra versions
+  const votes: any[] = consensus.votes || consensus.allVotes || [];
+
+  // Stream the votes that came back
   let runningEstimate = 0;
   let totalWeight = 0;
-  
-  if (consensus.votes && consensus.votes.length > 0) {
-    for (let i = 0; i < consensus.votes.length; i++) {
-      const vote = consensus.votes[i];
+
+  if (votes.length > 0) {
+    for (let i = 0; i < votes.length; i++) {
+      const vote = votes[i];
       const modelInfo = AI_MODELS[i % AI_MODELS.length];
-      
-      // Small delay for visual effect
-      await new Promise(resolve => setTimeout(resolve, 80));
-      
+
+      // Reduced delay for mobile — was 80ms
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
       sendSSE(res, {
         type: 'ai_complete',
         timestamp: Date.now(),
@@ -169,34 +195,37 @@ CATEGORY OPTIONS: pokemon_cards, trading_cards, coins, lego, video_games, vinyl_
           icon: modelInfo.icon,
           color: modelInfo.color,
           success: vote.success,
-          responseTime: vote.responseTime || Math.floor(Math.random() * 1500) + 500,
+          responseTime:
+            vote.responseTime || Math.floor(Math.random() * 1500) + 500,
           weight: vote.weight,
           estimate: vote.rawResponse?.estimatedValue,
           category: vote.rawResponse?.category,
-          decision: vote.rawResponse?.decision
-        }
+          decision: vote.rawResponse?.decision,
+        },
       });
-      
+
       // Update running estimate
       if (vote.success && vote.rawResponse?.estimatedValue) {
         totalWeight += vote.weight;
-        runningEstimate = (runningEstimate * (totalWeight - vote.weight) + 
-                         vote.rawResponse.estimatedValue * vote.weight) / totalWeight;
-        
+        runningEstimate =
+          (runningEstimate * (totalWeight - vote.weight) +
+            vote.rawResponse.estimatedValue * vote.weight) /
+          totalWeight;
+
         sendSSE(res, {
           type: 'price',
           timestamp: Date.now(),
           data: {
             estimate: Math.round(runningEstimate * 100) / 100,
             votesIn: i + 1,
-            totalVotes: consensus.votes.length,
-            confidence: (i + 1) / consensus.votes.length
-          }
+            totalVotes: votes.length,
+            confidence: (i + 1) / votes.length,
+          },
         });
       }
     }
   }
-  
+
   // Detect category from consensus
   const detectedCategory = detectCategory(consensus, categoryHint);
   sendSSE(res, {
@@ -206,146 +235,150 @@ CATEGORY OPTIONS: pokemon_cards, trading_cards, coins, lego, video_games, vinyl_
       category: detectedCategory,
       displayName: detectedCategory.replace(/_/g, ' '),
       confidence: 0.85,
-      source: 'ai_consensus'
-    }
+      source: 'ai_consensus',
+    },
   });
-  
+
   // Phase 2: Market Data
-  const apisForCategory = CATEGORY_API_MAP[detectedCategory] || CATEGORY_API_MAP['general'];
-  
+  const apisForCategory =
+    CATEGORY_API_MAP[detectedCategory] || CATEGORY_API_MAP['general'];
+
   sendSSE(res, {
     type: 'phase',
     timestamp: Date.now(),
-    data: { 
-      phase: 'market', 
+    data: {
+      phase: 'market',
       message: `Fetching market data from ${apisForCategory.join(', ')}...`,
-      apis: apisForCategory
-    }
+      apis: apisForCategory,
+    },
   });
-  
+
+  // Safely access consensus fields with fallbacks
+  const consensusData = consensus.consensus || {};
+  const itemName = consensusData.itemName || 'Unknown Item';
+  const aiEstimatedValue = consensusData.estimatedValue || runningEstimate || 0;
+  const aiConfidence = consensusData.confidence || 0.75;
+
   // Fetch market data with streaming updates
   const marketData = await fetchMarketDataWithStreaming(
     res,
-    consensus.consensus.itemName,
+    itemName,
     detectedCategory,
-    consensus.consensus.estimatedValue,
-    consensus.consensus.confidence
+    aiEstimatedValue,
+    aiConfidence
   );
-  
+
   // Final price with market blend
   sendSSE(res, {
     type: 'price',
     timestamp: Date.now(),
     data: {
       estimate: marketData.blendedPrice,
-      votesIn: consensus.votes?.length || AI_MODELS.length,
-      totalVotes: consensus.votes?.length || AI_MODELS.length,
+      votesIn: votes.length || AI_MODELS.length,
+      totalVotes: votes.length || AI_MODELS.length,
       confidence: 1,
       source: 'market_blended',
-      marketInfluence: marketData.marketInfluence
-    }
+      marketInfluence: marketData.marketInfluence,
+    },
   });
-  
+
   // Phase 3: Finalizing
   sendSSE(res, {
     type: 'phase',
     timestamp: Date.now(),
-    data: { phase: 'finalizing', message: 'Building final analysis...' }
+    data: { phase: 'finalizing', message: 'Building final analysis...' },
   });
-  
-  // Small delay for dramatic effect
-  await new Promise(resolve => setTimeout(resolve, 300));
-  
+
+  // Reduced dramatic delay for mobile — was 300ms
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
   // Build final result (matching analyze.ts output format)
   const finalResult = buildFinalResult(
     consensus,
+    votes,
     marketData,
     detectedCategory,
     categoryHint,
     imageData,
     startTime
   );
-  
+
   // Send completion
   sendSSE(res, {
     type: 'complete',
     timestamp: Date.now(),
-    data: finalResult
+    data: finalResult,
   });
 }
 
 // ==================== HELPER FUNCTIONS ====================
 
 function detectCategory(consensus: any, hint: string): string {
-  // Check AI votes for category
   const categoryVotes = new Map<string, number>();
-  
-  if (consensus.votes) {
-    consensus.votes.forEach((vote: any) => {
-      if (vote.success && vote.rawResponse?.category) {
-        const cat = normalizeCategory(vote.rawResponse.category);
-        categoryVotes.set(cat, (categoryVotes.get(cat) || 0) + (vote.weight || 1));
-      }
-    });
-  }
-  
-  // Get highest voted category
+
+  // Handle both votes field names
+  const votes: any[] = consensus.votes || consensus.allVotes || [];
+
+  votes.forEach((vote: any) => {
+    if (vote.success && vote.rawResponse?.category) {
+      const cat = normalizeCategory(vote.rawResponse.category);
+      categoryVotes.set(
+        cat,
+        (categoryVotes.get(cat) || 0) + (vote.weight || 1)
+      );
+    }
+  });
+
   let maxVotes = 0;
   let detected = 'general';
-  
-  categoryVotes.forEach((votes, cat) => {
-    if (votes > maxVotes && cat !== 'general') {
-      maxVotes = votes;
+
+  categoryVotes.forEach((voteCount, cat) => {
+    if (voteCount > maxVotes && cat !== 'general') {
+      maxVotes = voteCount;
       detected = cat;
     }
   });
-  
-  // Fall back to hint if no AI votes and hint is specific
+
   if (detected === 'general' && hint !== 'general') {
     detected = normalizeCategory(hint);
   }
-  
+
   return detected;
 }
 
 function normalizeCategory(cat: string): string {
   const catLower = cat.toLowerCase().trim();
-  
-  // Pokemon variations
+
   if (catLower.includes('pokemon') || catLower.includes('pokémon')) {
     return 'pokemon_cards';
   }
-  
-  // Coin variations
   if (catLower.includes('coin') || catLower.includes('numismatic')) {
     return 'coins';
   }
-  
-  // LEGO variations
   if (catLower.includes('lego')) {
     return 'lego';
   }
-  
-  // Vinyl variations
-  if (catLower.includes('vinyl') || catLower.includes('record') || catLower === 'music') {
+  if (
+    catLower.includes('vinyl') ||
+    catLower.includes('record') ||
+    catLower === 'music'
+  ) {
     return 'vinyl_records';
   }
-  
-  // Comic variations
   if (catLower.includes('comic') || catLower.includes('manga')) {
     return 'comics';
   }
-  
-  // Video game variations
   if (catLower.includes('video_game') || catLower.includes('game')) {
     return 'video_games';
   }
-  
-  // Sneaker variations
-  if (catLower.includes('sneaker') || catLower.includes('shoe') || catLower.includes('jordan')) {
+  if (
+    catLower.includes('sneaker') ||
+    catLower.includes('shoe') ||
+    catLower.includes('jordan')
+  ) {
     return 'sneakers';
   }
-  
+
   return catLower;
 }
 
@@ -355,22 +388,28 @@ async function fetchMarketDataWithStreaming(
   category: string,
   aiEstimate: number,
   aiConfidence: number
-): Promise<{ blendedPrice: number; marketInfluence: string; sources: any[] }> {
-  
+): Promise<{
+  blendedPrice: number;
+  marketInfluence: string;
+  sources: any[];
+}> {
   const apisToCall = getApisForCategory(category);
   const sources: any[] = [];
-  
+
   for (const api of apisToCall) {
     sendSSE(res, {
       type: 'api_start',
       timestamp: Date.now(),
-      data: { api, message: `Checking ${api}...` }
+      data: { api, message: `Checking ${api}...` },
     });
-    
+
     try {
-      const result = await fetchApiData(api.toLowerCase().replace(/ /g, '_'), itemName);
+      const result = await fetchApiData(
+        api.toLowerCase().replace(/ /g, '_'),
+        itemName
+      );
       sources.push(result);
-      
+
       sendSSE(res, {
         type: 'api_complete',
         timestamp: Date.now(),
@@ -378,10 +417,11 @@ async function fetchMarketDataWithStreaming(
           api,
           success: result.available,
           listings: result.totalListings || 0,
-          priceRange: result.priceAnalysis ? 
-            `$${result.priceAnalysis.lowest} - $${result.priceAnalysis.highest}` : null,
-          median: result.priceAnalysis?.median
-        }
+          priceRange: result.priceAnalysis
+            ? `$${result.priceAnalysis.lowest} - $${result.priceAnalysis.highest}`
+            : null,
+          median: result.priceAnalysis?.median,
+        },
       });
     } catch (error: any) {
       sources.push({ source: api, available: false, error: error.message });
@@ -391,35 +431,41 @@ async function fetchMarketDataWithStreaming(
         data: {
           api,
           success: false,
-          error: error.message
-        }
+          error: error.message,
+        },
       });
     }
   }
-  
+
   // Calculate blended price
-  const availableSources = sources.filter(s => s.available && s.priceAnalysis);
+  const availableSources = sources.filter(
+    (s) => s.available && s.priceAnalysis
+  );
   let blendedPrice = aiEstimate;
-  
+
   if (availableSources.length > 0) {
-    let totalWeight = (aiConfidence / 100) * 0.4;
-    let weightedSum = aiEstimate * totalWeight;
-    
-    availableSources.forEach(source => {
+    let weightTotal = (aiConfidence / 100) * 0.4;
+    let weightedSum = aiEstimate * weightTotal;
+
+    availableSources.forEach((source) => {
       const weight = Math.min((source.totalListings || 1) / 50, 0.35);
       weightedSum += source.priceAnalysis.median * weight;
-      totalWeight += weight;
+      weightTotal += weight;
     });
-    
-    blendedPrice = Math.round((weightedSum / totalWeight) * 100) / 100;
+
+    blendedPrice =
+      weightTotal > 0
+        ? Math.round((weightedSum / weightTotal) * 100) / 100
+        : aiEstimate;
   }
-  
+
   return {
     blendedPrice,
-    marketInfluence: availableSources.length > 0 
-      ? availableSources.map(s => s.source).join(' + ')
-      : 'AI estimate only',
-    sources
+    marketInfluence:
+      availableSources.length > 0
+        ? availableSources.map((s) => s.source).join(' + ')
+        : 'AI estimate only',
+    sources,
   };
 }
 
@@ -428,81 +474,129 @@ function getApisForCategory(category: string): string[] {
 }
 
 async function fetchApiData(api: string, itemName: string): Promise<any> {
-  // Map API names to endpoints
   const apiEndpoints: Record<string, string> = {
-    'pokemon_tcg': '/api/pokemon/search',
-    'numista': '/api/numista/search',
-    'brickset': '/api/brickset/search',
-    'discogs': '/api/discogs/search',
-    'rawg': '/api/rawg/search',
-    'comic_vine': '/api/comicvine/search',
-    'google_books': '/api/google-books/search',
-    'retailed': '/api/retailed/search',
-    'ebay': '/api/ebay/search'
+    pokemon_tcg: '/api/pokemon/search',
+    numista: '/api/numista/search',
+    brickset: '/api/brickset/search',
+    discogs: '/api/discogs/search',
+    rawg: '/api/rawg/search',
+    comic_vine: '/api/comicvine/search',
+    google_books: '/api/google-books/search',
+    retailed: '/api/retailed/search',
+    ebay: '/api/ebay/search',
   };
-  
+
   const endpoint = apiEndpoints[api] || apiEndpoints['ebay'];
   const url = `${BASE_URL}${endpoint}?q=${encodeURIComponent(itemName)}`;
-  
+
   try {
-    const response = await fetch(url, { 
+    const response = await fetch(url, {
       headers: { 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(8000)
+      signal: AbortSignal.timeout(8000),
     });
-    
+
     if (!response.ok) {
       throw new Error(`API returned ${response.status}`);
     }
-    
+
     const data = await response.json();
     return {
       source: api,
       available: true,
-      ...data
+      ...data,
     };
   } catch (error: any) {
     return {
       source: api,
       available: false,
-      error: error.message
+      error: error.message,
     };
   }
 }
 
+// =============================================================================
+// BUILD FINAL RESULT — THIS IS THE FIX
+// Now includes votes/allVotes arrays so display components can render them
+// =============================================================================
+
 function buildFinalResult(
   consensus: any,
+  votes: any[],
   marketData: any,
   detectedCategory: string,
   requestedCategory: string,
   imageData: string,
   startTime: number
 ): any {
-  const respondedAIs = consensus.votes?.filter((v: any) => v.success).map((v: any) => v.providerName) || [];
-  const respondedAPIs = marketData.sources?.filter((s: any) => s.available).map((s: any) => s.source) || [];
-  
+  const successfulVotes = votes.filter((v: any) => v.success);
+  const respondedAIs = successfulVotes.map(
+    (v: any) => v.providerName || 'Unknown'
+  );
+  const respondedAPIs =
+    marketData.sources
+      ?.filter((s: any) => s.available)
+      .map((s: any) => s.source) || [];
+
+  // Safely extract consensus data with fallbacks
+  const consensusData = consensus.consensus || {};
+
+  // Build normalized vote objects for display components
+  // This is what HydraConsensusDisplay.tsx and NexusDecisionCard.tsx consume
+  const normalizedVotes = votes.map((v: any, i: number) => {
+    const modelInfo = AI_MODELS[i % AI_MODELS.length];
+    return {
+      providerName: v.providerName || modelInfo.name,
+      icon: modelInfo.icon,
+      color: modelInfo.color,
+      success: v.success ?? false,
+      weight: v.weight ?? modelInfo.weight,
+      responseTime:
+        v.responseTime || Math.floor(Math.random() * 1500) + 500,
+      estimatedValue: v.rawResponse?.estimatedValue ?? v.estimatedValue ?? 0,
+      decision: v.rawResponse?.decision ?? v.decision ?? 'SELL',
+      confidence: v.rawResponse?.confidence ?? v.confidence ?? 0.5,
+      category: v.rawResponse?.category ?? detectedCategory,
+      itemName: v.rawResponse?.itemName ?? consensusData.itemName ?? 'Unknown Item',
+      rawResponse: v.rawResponse || null,
+    };
+  });
+
   return {
     id: consensus.analysisId || `hydra-stream-${Date.now()}`,
-    itemName: consensus.consensus?.itemName || 'Unknown Item',
+    itemName: consensusData.itemName || 'Unknown Item',
     estimatedValue: marketData.blendedPrice,
-    decision: consensus.consensus?.decision || 'SELL',
-    confidenceScore: consensus.consensus?.confidence || 0.75,
-    summary_reasoning: consensus.consensus?.summary_reasoning || 'Analysis complete',
-    valuation_factors: consensus.consensus?.valuation_factors || [],
-    analysis_quality: consensus.consensus?.analysisQuality || 'OPTIMAL',
+    decision: consensusData.decision || 'SELL',
+    confidenceScore: consensusData.confidence || 0.75,
+    summary_reasoning:
+      consensusData.summary_reasoning || 'Analysis complete',
+    valuation_factors: consensusData.valuation_factors || [],
+    analysis_quality: consensusData.analysisQuality || 'OPTIMAL',
     capturedAt: new Date().toISOString(),
     category: detectedCategory,
     requestedCategory: requestedCategory,
     imageUrl: imageData?.substring(0, 100) + '...',
     marketComps: marketData.sources?.slice(0, 5) || [],
     processingTime: Date.now() - startTime,
+
+    // ================================================================
+    // HYDRA CONSENSUS — NOW INCLUDES votes AND allVotes
+    // HydraConsensusDisplay reads: hydraConsensus.votes
+    // NexusDecisionCard reads: hydraConsensus.votes for weight display
+    // Both field names provided for backward compatibility
+    // ================================================================
     hydraConsensus: {
       totalSources: respondedAIs.length + respondedAPIs.length,
+
+      // ★ THE FIX — votes array for display components
+      votes: normalizedVotes,
+      allVotes: normalizedVotes, // Alias for components checking either name
+
       aiModels: {
         responded: respondedAIs,
-        weights: consensus.votes?.reduce((acc: any, v: any) => {
-          if (v.success) acc[v.providerName] = v.weight;
+        weights: successfulVotes.reduce((acc: any, v: any) => {
+          if (v.providerName) acc[v.providerName] = v.weight;
           return acc;
-        }, {}) || {}
+        }, {}),
       },
       apiSources: {
         responded: respondedAPIs,
@@ -510,28 +604,33 @@ function buildFinalResult(
           if (s.available) {
             acc[s.source] = {
               confidence: 0.8,
-              dataPoints: s.totalListings || 0
+              dataPoints: s.totalListings || 0,
             };
           }
           return acc;
-        }, {}) || {}
+        }, {}) || {},
       },
       consensusMethod: 'weighted_blend_v5_streaming',
-      finalConfidence: consensus.consensus?.confidence || 0.75
+      finalConfidence: consensusData.confidence || 0.75,
     },
+
+    // Market data section
     marketData: {
       sources: marketData.sources,
       primarySource: marketData.sources?.[0]?.source || 'AI',
       blendMethod: 'multi_source_weighted',
-      marketInfluence: marketData.marketInfluence
+      marketInfluence: marketData.marketInfluence,
     },
+
+    // Resale toolkit flags
     resale_toolkit: {
       listInArena: true,
       sellOnProPlatforms: true,
       linkToMyStore: true,
-      shareToSocial: true
+      shareToSocial: true,
     },
-    tags: [detectedCategory, 'hydra-v5', 'streaming']
+
+    tags: [detectedCategory, 'hydra-v5.1', 'streaming'],
   };
 }
 
@@ -544,8 +643,11 @@ async function verifyUser(req: VercelRequest) {
   }
 
   const token = authHeader.split(' ')[1];
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser(token);
+
   if (error || !user) {
     throw new Error('Authentication failed');
   }
@@ -555,7 +657,10 @@ async function verifyUser(req: VercelRequest) {
 
 // ==================== API HANDLER ====================
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(
+  req: VercelRequest,
+  res: VercelResponse
+) {
   // Only POST allowed
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -564,25 +669,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     // Verify authentication
     await verifyUser(req);
-    
+
     const body = req.body;
-    
+
     // Validate request
     if (!body.category_id) {
       return res.status(400).json({ error: 'category_id is required' });
     }
-    
+
     if (body.scanType === 'multi-modal') {
-      if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
-        return res.status(400).json({ error: 'Multi-modal analysis requires items array' });
+      if (
+        !body.items ||
+        !Array.isArray(body.items) ||
+        body.items.length === 0
+      ) {
+        return res
+          .status(400)
+          .json({ error: 'Multi-modal analysis requires items array' });
       }
     } else if (!body.data) {
       return res.status(400).json({ error: 'Missing image data' });
     }
-    
+
     // Check if client wants streaming
     const acceptsStream = req.headers.accept?.includes('text/event-stream');
-    
+
     if (acceptsStream) {
       // Set up SSE headers
       res.setHeader('Content-Type', 'text/event-stream');
@@ -590,30 +701,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
       res.setHeader('Access-Control-Allow-Origin', '*');
-      
+
       // Run streaming analysis
       await performStreamingAnalysis(body, res);
-      
+
       // End the stream
       res.end();
     } else {
-      // Non-streaming: tell client to use streaming or redirect
-      return res.status(200).json({ 
-        message: 'For real-time updates, set Accept: text/event-stream header',
-        redirect: '/api/analyze'
+      // Non-streaming fallback — redirect to standard endpoint
+      return res.status(200).json({
+        message:
+          'For real-time updates, set Accept: text/event-stream header',
+        redirect: '/api/analyze',
       });
     }
-    
   } catch (error: any) {
     const message = error.message || 'An unknown error occurred';
     console.error('Streaming analysis error:', error);
-    
+
     // If streaming already started, send error event
     if (res.headersSent) {
       sendSSE(res, {
         type: 'error',
         timestamp: Date.now(),
-        data: { message }
+        data: { message },
       });
       res.end();
     } else {
@@ -621,7 +732,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (message.includes('Authentication')) {
         return res.status(401).json({ error: message });
       }
-      return res.status(500).json({ error: 'Analysis failed', details: message });
+      return res.status(500).json({
+        error: 'Analysis failed',
+        details: message,
+      });
     }
   }
 }

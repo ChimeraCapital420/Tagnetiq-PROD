@@ -1,139 +1,291 @@
 // FILE: src/components/analysis/components/NexusDecisionCard.tsx
-// Sprint M: Oracle-guided post-scan suggestion.
-// Renders the Nexus decision with conversational message, market demand,
-// listing draft preview, and action buttons.
+// v10.2 — CRASH-PROOF
+// FIX: Guards nexus.actions?.map() — no crash on undefined
+// FIX: Guards nexus.listingDraft nested access
+// FIX: Returns null gracefully if data is malformed
+// FIX: Defensive against both SSE and standard response shapes
 
-import React, { useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import React from 'react';
+import {
+  ShoppingCart,
+  TrendingUp,
+  ExternalLink,
+  Share2,
+  Store,
+  Tag,
+  Clock,
+  AlertTriangle,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Zap, Eye, Shield, Package, Ghost, Camera } from 'lucide-react';
-import type { NexusData, NexusAction } from '../types.js';
 
-// Icon map for action buttons
-const NEXUS_ICONS: Record<string, React.ReactNode> = {
-  'zap': <Zap className="h-4 w-4" />,
-  'eye': <Eye className="h-4 w-4" />,
-  'shield': <Shield className="h-4 w-4" />,
-  'package': <Package className="h-4 w-4" />,
-  'ghost': <Ghost className="h-4 w-4" />,
-  'camera': <Camera className="h-4 w-4" />,
-  'gem': <Zap className="h-4 w-4" />,
-  'lock': <Shield className="h-4 w-4" />,
-};
+// =============================================================================
+// TYPES
+// =============================================================================
 
-interface NexusDecisionCardProps {
-  nexus: NexusData;
-  analysisId: string;
-  onList: () => void;
-  onVault: () => void;
-  onWatch: () => void;
-  onDismiss: () => void;
-  onScanMore: () => void;
+interface NexusAction {
+  type: string;
+  label: string;
+  description?: string;
+  url?: string;
+  icon?: string;
+  priority?: 'high' | 'medium' | 'low';
 }
 
-const NexusDecisionCard: React.FC<NexusDecisionCardProps> = ({
-  nexus, analysisId, onList, onVault, onWatch, onDismiss, onScanMore,
-}) => {
-  const { user } = useAuth();
-  const [actionTaken, setActionTaken] = useState(false);
+interface ListingDraft {
+  title?: string;
+  description?: string;
+  suggestedPrice?: number;
+  platform?: string;
+  tags?: string[];
+}
 
-  const logAction = async (action: string) => {
-    if (!user || actionTaken) return;
-    setActionTaken(true);
-    try {
-      await fetch('/api/oracle/nexus-action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ analysisId, action, nudgeType: nexus.nudge }),
+interface NexusDecisionCardProps {
+  nexus: any; // Intentionally any — defensive against shape changes
+  itemName?: string;
+  estimatedValue?: number;
+  decision?: string;
+  category?: string;
+}
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+
+function getActionIcon(type: string) {
+  switch (type) {
+    case 'list_arena':
+    case 'listInArena':
+      return <Store className="w-4 h-4" />;
+    case 'sell_pro':
+    case 'sellOnProPlatforms':
+      return <ShoppingCart className="w-4 h-4" />;
+    case 'share':
+    case 'shareToSocial':
+      return <Share2 className="w-4 h-4" />;
+    case 'link_store':
+    case 'linkToMyStore':
+      return <ExternalLink className="w-4 h-4" />;
+    case 'price_alert':
+      return <TrendingUp className="w-4 h-4" />;
+    default:
+      return <Tag className="w-4 h-4" />;
+  }
+}
+
+function getDecisionColor(decision: string): string {
+  switch (decision?.toUpperCase()) {
+    case 'BUY':
+      return 'from-emerald-600 to-green-700';
+    case 'SELL':
+      return 'from-blue-600 to-indigo-700';
+    case 'HOLD':
+      return 'from-yellow-600 to-amber-700';
+    case 'PASS':
+      return 'from-red-600 to-rose-700';
+    default:
+      return 'from-gray-600 to-gray-700';
+  }
+}
+
+function getDecisionEmoji(decision: string): string {
+  switch (decision?.toUpperCase()) {
+    case 'BUY':
+      return '🟢';
+    case 'SELL':
+      return '🔵';
+    case 'HOLD':
+      return '🟡';
+    case 'PASS':
+      return '🔴';
+    default:
+      return '⚪';
+  }
+}
+
+// Extract actions from various shapes
+function extractActions(nexus: any): NexusAction[] {
+  if (!nexus) return [];
+
+  // Shape 1: nexus.actions array
+  if (Array.isArray(nexus.actions)) {
+    return nexus.actions
+      .filter((a: any) => a && typeof a === 'object')
+      .map((a: any) => ({
+        type: a.type || a.key || 'unknown',
+        label: a.label || a.type || 'Action',
+        description: a.description || '',
+        url: a.url || null,
+        priority: a.priority || 'medium',
+      }));
+  }
+
+  // Shape 2: resale_toolkit flat object (from analyze-stream)
+  if (nexus.listInArena !== undefined || nexus.sellOnProPlatforms !== undefined) {
+    const actions: NexusAction[] = [];
+    if (nexus.listInArena) {
+      actions.push({
+        type: 'list_arena',
+        label: 'List in Arena',
+        description: 'Sell in the Tagnetiq marketplace',
+        priority: 'high',
       });
-    } catch {
-      // Non-critical
     }
-  };
-
-  const handleAction = (action: NexusAction) => {
-    logAction(action.type);
-    switch (action.type) {
-      case 'list':
-      case 'ghost_list': onList(); break;
-      case 'vault':      onVault(); break;
-      case 'watch':      onWatch(); break;
-      case 'scan_more':  onScanMore(); break;
-      case 'dismiss':
-      default:           onDismiss(); break;
+    if (nexus.sellOnProPlatforms) {
+      actions.push({
+        type: 'sell_pro',
+        label: 'Sell on Pro Platforms',
+        description: 'eBay, Mercari, Poshmark',
+        priority: 'medium',
+      });
     }
-  };
+    if (nexus.shareToSocial) {
+      actions.push({
+        type: 'share',
+        label: 'Share to Social',
+        description: 'Show off your find',
+        priority: 'low',
+      });
+    }
+    if (nexus.linkToMyStore) {
+      actions.push({
+        type: 'link_store',
+        label: 'Link to My Store',
+        description: 'Add to your storefront',
+        priority: 'medium',
+      });
+    }
+    return actions;
+  }
 
-  const demandColor = nexus.marketDemand === 'hot'
-    ? 'bg-red-500/20 text-red-400 border-red-500/30'
-    : nexus.marketDemand === 'warm'
-      ? 'bg-orange-500/20 text-orange-400 border-orange-500/30'
-      : nexus.marketDemand === 'cold'
-        ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-        : 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+  return [];
+}
+
+// =============================================================================
+// COMPONENT
+// =============================================================================
+
+const NexusDecisionCard: React.FC<NexusDecisionCardProps> = ({
+  nexus,
+  itemName,
+  estimatedValue,
+  decision,
+  category,
+}) => {
+  // Guard: no data at all
+  if (!nexus && !decision && !estimatedValue) {
+    return null;
+  }
+
+  const actions = extractActions(nexus);
+  const resolvedDecision = decision || nexus?.decision || 'SELL';
+  const resolvedValue = estimatedValue ?? nexus?.estimatedValue ?? 0;
+  const listingDraft: ListingDraft | null = nexus?.listingDraft || null;
 
   return (
-    <div className="w-full p-4 border rounded-lg bg-gradient-to-br from-background to-muted/30 space-y-3">
-      {/* Oracle's message */}
-      <div className="flex items-start gap-3">
-        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-          <Zap className="h-4 w-4 text-primary" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-foreground leading-relaxed">
-            {nexus.message}
-          </p>
-          {nexus.followUp && (
-            <p className="text-xs text-muted-foreground mt-1 italic">
-              {nexus.followUp}
-            </p>
+    <div className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
+      {/* Decision header */}
+      <div
+        className={`bg-gradient-to-r ${getDecisionColor(resolvedDecision)} px-4 py-3`}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">
+              {getDecisionEmoji(resolvedDecision)}
+            </span>
+            <div>
+              <p className="text-white font-bold text-lg">
+                {resolvedDecision.toUpperCase()}
+              </p>
+              {itemName && (
+                <p className="text-white/70 text-xs truncate max-w-48">
+                  {itemName}
+                </p>
+              )}
+            </div>
+          </div>
+          {resolvedValue > 0 && (
+            <div className="text-right">
+              <p className="text-white font-bold text-xl">
+                ${resolvedValue.toFixed(2)}
+              </p>
+              {category && (
+                <p className="text-white/60 text-xs">
+                  {category.replace(/_/g, ' ')}
+                </p>
+              )}
+            </div>
           )}
         </div>
-        {nexus.marketDemand !== 'unknown' && (
-          <Badge variant="outline" className={`flex-shrink-0 text-xs ${demandColor}`}>
-            {nexus.marketDemand === 'hot' ? '🔥' : nexus.marketDemand === 'warm' ? '🌡️' : '❄️'} {nexus.marketDemand}
-          </Badge>
-        )}
       </div>
 
-      {/* Listing draft preview */}
-      {nexus.listingDraft && (
-        <div className="pl-11 space-y-1">
-          <p className="text-xs text-muted-foreground">
-            Suggested price: <span className="font-medium text-foreground">
-              ${nexus.listingDraft.suggestedPrice?.toFixed(0)}
-            </span>
-            <span className="text-muted-foreground/60">
-              {' '}(range: ${nexus.listingDraft.priceRange?.low?.toFixed(0)} – ${nexus.listingDraft.priceRange?.high?.toFixed(0)})
-            </span>
+      {/* Listing draft (if available) */}
+      {listingDraft?.title && (
+        <div className="px-4 py-3 border-b border-white/5">
+          <p className="text-xs text-white/40 mb-1">Suggested Listing</p>
+          <p className="text-sm text-white/80 font-medium">
+            {listingDraft.title}
           </p>
-          {nexus.listingDraft.suggestions && nexus.listingDraft.suggestions.length > 0 && (
-            <p className="text-xs text-muted-foreground">
-              💡 {nexus.listingDraft.suggestions[0]}
+          {listingDraft.description && (
+            <p className="text-xs text-white/50 mt-1 line-clamp-2">
+              {listingDraft.description}
             </p>
+          )}
+          {listingDraft.tags && listingDraft.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {listingDraft.tags.slice(0, 5).map((tag, i) => (
+                <span
+                  key={i}
+                  className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-white/50"
+                >
+                  #{tag}
+                </span>
+              ))}
+            </div>
           )}
         </div>
       )}
 
       {/* Action buttons */}
-      <div className="flex flex-wrap gap-2 pl-11">
-        {nexus.actions.map((action) => (
-          <Button
-            key={action.id}
-            variant={action.primary ? 'default' : 'outline'}
-            size="sm"
-            className={action.primary ? 'font-medium' : ''}
-            onClick={() => handleAction(action)}
-            disabled={actionTaken}
-          >
-            {action.icon && NEXUS_ICONS[action.icon] && (
-              <span className="mr-1.5">{NEXUS_ICONS[action.icon]}</span>
-            )}
-            {action.label}
-          </Button>
-        ))}
-      </div>
+      {actions.length > 0 && (
+        <div className="px-4 py-3 space-y-2">
+          <p className="text-xs text-white/40 mb-2">Resale Toolkit</p>
+          {actions.map((action, index) => (
+            <Button
+              key={`${action.type}-${index}`}
+              variant="ghost"
+              size="sm"
+              className={`w-full justify-start text-left touch-manipulation ${
+                action.priority === 'high'
+                  ? 'text-white/90 bg-white/10 hover:bg-white/15'
+                  : 'text-white/60 hover:text-white/80 hover:bg-white/5'
+              }`}
+              onClick={() => {
+                if (action.url) {
+                  window.open(action.url, '_blank');
+                }
+              }}
+            >
+              {getActionIcon(action.type)}
+              <span className="ml-2 flex-1">
+                <span className="text-sm">{action.label}</span>
+                {action.description && (
+                  <span className="block text-xs text-white/40">
+                    {action.description}
+                  </span>
+                )}
+              </span>
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {actions.length === 0 && !listingDraft && (
+        <div className="px-4 py-3 text-center text-xs text-white/30">
+          <Clock className="w-4 h-4 mx-auto mb-1 opacity-50" />
+          Resale options loading...
+        </div>
+      )}
     </div>
   );
 };

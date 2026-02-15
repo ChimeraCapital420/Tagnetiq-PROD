@@ -1,5 +1,15 @@
 /* FILE: src/components/analysis/OracleThinkingOverlay.css
- * STATUS: Oracle Thinking Experience v1.0
+ * STATUS: Oracle Thinking Experience v1.2 — Positive Frequency Cymatics
+ *
+ * DESIGN INTENT:
+ *   Cymatics are the BRIGHTEST, most alive element on screen.
+ *   Everything else recedes. The rings radiate warmth, healing, trust.
+ *   Color language:
+ *     Gold/Amber    → Love, warmth, care for the user's item
+ *     Rose/Pink     → Gratitude, heart energy, positive intuition
+ *     Emerald/Green → Growth, abundance, value confirmation
+ *     Violet/Purple → Intuition, trust, higher insight
+ *   The rings breathe organically — not mechanical, alive.
  *
  * PERFORMANCE NOTES:
  *   - All animations use transform + opacity only (GPU-composited)
@@ -10,13 +20,13 @@
  */
 
 /* =============================================================================
-   OVERLAY — Full-screen backdrop
+   OVERLAY — Full-screen backdrop (DIMMED to let cymatics shine)
    ============================================================================= */
 
 .oracle-thinking-overlay {
   position: fixed;
   inset: 0;
-  z-index: 900; /* Below scanner (1000) but above everything else */
+  z-index: 900;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -27,10 +37,12 @@
 .oracle-thinking-bg {
   position: absolute;
   inset: 0;
+  /* Deeper, warmer background — dims everything so cymatics pop */
   background: 
-    radial-gradient(ellipse at 30% 20%, rgba(var(--cymatic-rgb, 0, 200, 255), 0.06) 0%, transparent 50%),
-    radial-gradient(ellipse at 70% 80%, rgba(168, 85, 247, 0.05) 0%, transparent 50%),
-    linear-gradient(135deg, hsl(var(--background)) 0%, hsl(222, 20%, 8%) 50%, hsl(var(--background)) 100%);
+    radial-gradient(ellipse at 50% 40%, rgba(251, 191, 36, 0.04) 0%, transparent 45%),
+    radial-gradient(ellipse at 30% 70%, rgba(244, 114, 182, 0.03) 0%, transparent 40%),
+    radial-gradient(ellipse at 70% 20%, rgba(168, 85, 247, 0.03) 0%, transparent 40%),
+    linear-gradient(135deg, hsl(var(--background)) 0%, hsl(222, 22%, 5%) 50%, hsl(var(--background)) 100%);
   pointer-events: none;
 }
 
@@ -47,7 +59,28 @@
 }
 
 /* =============================================================================
-   CYMATIC RINGS — Pure CSS interference pattern
+   VISUAL CONTAINER — houses cymatics + progress ring
+   ============================================================================= */
+
+.oracle-thinking-visual {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+/* =============================================================================
+   CYMATIC RINGS — Positive Frequency Interference Pattern
+   
+   These are the BRIGHTEST elements on screen. Everything else defers.
+   Each ring carries a different healing frequency color:
+     Ring 0 (innermost): Gold — love, warmth
+     Ring 1: Rose — gratitude, heart
+     Ring 2: Emerald — growth, abundance
+     Ring 3: Violet — intuition, trust
+     Ring 4: Gold again — reinforcing warmth
+     Ring 5 (outermost): Rose — expansive gratitude
    ============================================================================= */
 
 .cymatic-container {
@@ -57,57 +90,136 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Warm ambient glow behind the whole container */
+  filter: drop-shadow(0 0 40px rgba(251, 191, 36, 0.08));
 }
 
+/* Base ring style — shared by all 6 rings */
 .cymatic-ring {
   position: absolute;
   width: var(--ring-size);
   height: var(--ring-size);
   border-radius: 50%;
-  border: 1px solid rgba(var(--cymatic-rgb, 0, 200, 255), calc(0.15 * var(--cymatic-intensity, 1)));
-  background: radial-gradient(
-    circle,
-    rgba(var(--cymatic-rgb, 0, 200, 255), calc(0.03 * var(--cymatic-intensity, 1))) 0%,
-    transparent 70%
-  );
   will-change: transform, opacity;
   animation: 
     cymatic-breathe var(--ring-duration, 3s) ease-in-out var(--ring-delay, 0s) infinite,
     cymatic-rotate calc(var(--ring-duration, 3s) * 4) linear var(--ring-delay, 0s) infinite;
 }
 
-/* Alternate rings rotate opposite direction */
-.cymatic-ring:nth-child(even) {
+/* ---- RING 0 (innermost): GOLD — Love, warmth ---- */
+.cymatic-ring:nth-child(1) {
+  border: 1.5px solid rgba(251, 191, 36, calc(0.65 * var(--cymatic-intensity, 1)));
+  background: radial-gradient(
+    circle,
+    rgba(251, 191, 36, calc(0.18 * var(--cymatic-intensity, 1))) 0%,
+    rgba(251, 191, 36, calc(0.04 * var(--cymatic-intensity, 1))) 50%,
+    transparent 70%
+  );
+}
+
+/* ---- RING 1: ROSE — Gratitude, heart energy ---- */
+.cymatic-ring:nth-child(2) {
+  border: 1px dashed rgba(244, 114, 182, calc(0.55 * var(--cymatic-intensity, 1)));
+  border-width: 0.5px;
+  background: radial-gradient(
+    circle,
+    rgba(244, 114, 182, calc(0.14 * var(--cymatic-intensity, 1))) 0%,
+    rgba(244, 114, 182, calc(0.03 * var(--cymatic-intensity, 1))) 50%,
+    transparent 70%
+  );
   animation: 
     cymatic-breathe var(--ring-duration, 3s) ease-in-out var(--ring-delay, 0s) infinite,
     cymatic-rotate-reverse calc(var(--ring-duration, 3s) * 4) linear var(--ring-delay, 0s) infinite;
-  border-style: dashed;
-  border-width: 0.5px;
 }
 
+/* ---- RING 2: EMERALD — Growth, abundance, value ---- */
+.cymatic-ring:nth-child(3) {
+  border: 1.5px solid rgba(16, 185, 129, calc(0.55 * var(--cymatic-intensity, 1)));
+  background: radial-gradient(
+    circle,
+    rgba(16, 185, 129, calc(0.14 * var(--cymatic-intensity, 1))) 0%,
+    rgba(16, 185, 129, calc(0.03 * var(--cymatic-intensity, 1))) 50%,
+    transparent 70%
+  );
+}
+
+/* ---- RING 3: VIOLET — Intuition, trust, higher insight ---- */
+.cymatic-ring:nth-child(4) {
+  border: 1px dashed rgba(168, 85, 247, calc(0.55 * var(--cymatic-intensity, 1)));
+  border-width: 0.5px;
+  background: radial-gradient(
+    circle,
+    rgba(168, 85, 247, calc(0.14 * var(--cymatic-intensity, 1))) 0%,
+    rgba(168, 85, 247, calc(0.03 * var(--cymatic-intensity, 1))) 50%,
+    transparent 70%
+  );
+  animation: 
+    cymatic-breathe var(--ring-duration, 3s) ease-in-out var(--ring-delay, 0s) infinite,
+    cymatic-rotate-reverse calc(var(--ring-duration, 3s) * 4) linear var(--ring-delay, 0s) infinite;
+}
+
+/* ---- RING 4: GOLD (warm reinforcement) ---- */
+.cymatic-ring:nth-child(5) {
+  border: 1px solid rgba(251, 191, 36, calc(0.45 * var(--cymatic-intensity, 1)));
+  background: radial-gradient(
+    circle,
+    rgba(251, 191, 36, calc(0.10 * var(--cymatic-intensity, 1))) 0%,
+    transparent 65%
+  );
+}
+
+/* ---- RING 5 (outermost): ROSE (expansive gratitude) ---- */
+.cymatic-ring:nth-child(6) {
+  border: 1px dashed rgba(244, 114, 182, calc(0.35 * var(--cymatic-intensity, 1)));
+  border-width: 0.5px;
+  background: radial-gradient(
+    circle,
+    rgba(244, 114, 182, calc(0.08 * var(--cymatic-intensity, 1))) 0%,
+    transparent 60%
+  );
+  animation: 
+    cymatic-breathe var(--ring-duration, 3s) ease-in-out var(--ring-delay, 0s) infinite,
+    cymatic-rotate-reverse calc(var(--ring-duration, 3s) * 4) linear var(--ring-delay, 0s) infinite;
+}
+
+/* ---- CORE GLOW — Golden heart, the warmest point ---- */
 .cymatic-core {
   position: absolute;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: radial-gradient(
     circle,
-    rgba(var(--cymatic-rgb, 0, 200, 255), calc(0.6 * var(--cymatic-intensity, 1))) 0%,
-    rgba(var(--cymatic-rgb, 0, 200, 255), calc(0.1 * var(--cymatic-intensity, 1))) 60%,
+    rgba(251, 191, 36, calc(0.95 * var(--cymatic-intensity, 1))) 0%,
+    rgba(244, 114, 182, calc(0.40 * var(--cymatic-intensity, 1))) 35%,
+    rgba(168, 85, 247, calc(0.15 * var(--cymatic-intensity, 1))) 65%,
     transparent 100%
   );
   will-change: transform;
-  animation: cymatic-core-pulse 2s ease-in-out infinite;
+  animation: cymatic-core-pulse 2.5s ease-in-out infinite;
 }
+
+/* =============================================================================
+   KEYFRAMES — Organic breathing, not mechanical
+   ============================================================================= */
 
 @keyframes cymatic-breathe {
   0%, 100% {
     transform: scale(1);
-    opacity: 0.4;
+    opacity: 0.55;
   }
-  50% {
-    transform: scale(1.08);
-    opacity: 0.8;
+  /* Asymmetric peaks feel more alive — inhale is slower than exhale */
+  38% {
+    transform: scale(1.06);
+    opacity: 0.85;
+  }
+  62% {
+    transform: scale(1.09);
+    opacity: 0.95;
+  }
+  80% {
+    transform: scale(1.03);
+    opacity: 0.7;
   }
 }
 
@@ -124,16 +236,22 @@
 @keyframes cymatic-core-pulse {
   0%, 100% {
     transform: scale(1);
-    opacity: 0.6;
+    opacity: 0.75;
   }
-  50% {
-    transform: scale(1.3);
+  /* Core breathes warmth outward */
+  40% {
+    transform: scale(1.25);
     opacity: 1;
+  }
+  70% {
+    transform: scale(1.15);
+    opacity: 0.9;
   }
 }
 
 /* =============================================================================
    PROGRESS RING — CSS conic-gradient
+   Now uses warm accent color instead of cold cyan
    ============================================================================= */
 
 .progress-ring {
@@ -142,14 +260,12 @@
   height: var(--ring-size, 140px);
   border-radius: 50%;
   background: conic-gradient(
-    rgba(var(--cymatic-rgb, 0, 200, 255), 0.8) calc(var(--progress, 0) * 1%),
-    rgba(255, 255, 255, 0.06) calc(var(--progress, 0) * 1%)
+    rgba(var(--cymatic-rgb, 251, 191, 36), 0.85) calc(var(--progress, 0) * 1%),
+    rgba(255, 255, 255, 0.08) calc(var(--progress, 0) * 1%)
   );
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: --progress 0.6s ease-out;
-  /* Fallback: transition the background directly */
   transition: background 0.6s ease-out;
 }
 
@@ -167,11 +283,12 @@
   font-family: 'JetBrains Mono', monospace;
   font-size: 22px;
   font-weight: 700;
-  color: rgba(var(--cymatic-rgb, 0, 200, 255), 0.9);
+  /* Warm gold instead of cold cyan */
+  color: rgba(251, 191, 36, 0.9);
 }
 
 /* =============================================================================
-   STAGE LABEL
+   STAGE LABEL — Slightly dimmed so cymatics stay brightest
    ============================================================================= */
 
 .oracle-thinking-stage {
@@ -180,10 +297,11 @@
   color: hsl(var(--muted-foreground));
   min-height: 22px;
   letter-spacing: 0.02em;
+  opacity: 0.85;
 }
 
 /* =============================================================================
-   PRICE DISPLAY
+   PRICE DISPLAY — Dimmed container, the number itself stays readable
    ============================================================================= */
 
 .oracle-thinking-price {
@@ -192,8 +310,8 @@
   align-items: center;
   gap: 4px;
   padding: 16px 24px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: 16px;
   width: 100%;
   max-width: 280px;
@@ -204,6 +322,7 @@
   text-transform: uppercase;
   letter-spacing: 2px;
   color: hsl(var(--muted-foreground));
+  opacity: 0.7;
 }
 
 .oracle-thinking-price-value {
@@ -218,8 +337,9 @@
   font-size: 11px;
   padding: 3px 10px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.04);
   color: hsl(var(--muted-foreground));
+  opacity: 0.7;
 }
 
 /* =============================================================================
@@ -237,7 +357,7 @@
 }
 
 /* =============================================================================
-   AI MODEL DOTS — Compact mobile grid
+   AI MODEL DOTS — Dimmed to let cymatics be the star
    ============================================================================= */
 
 .model-dots-row {
@@ -256,29 +376,29 @@
   align-items: center;
   justify-content: center;
   font-size: 16px;
-  border: 1.5px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.02);
+  border: 1.5px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.015);
   transition: all 0.3s ease;
   position: relative;
 }
 
 .model-dot--waiting {
-  opacity: 0.35;
+  opacity: 0.25;
 }
 
 .model-dot--thinking {
-  border-color: var(--dot-color, rgba(255, 255, 255, 0.3));
+  border-color: var(--dot-color, rgba(251, 191, 36, 0.4));
   animation: model-dot-think 1.2s ease-in-out infinite;
 }
 
 .model-dot--complete {
-  border-color: rgb(16, 185, 129);
-  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.6);
+  background: rgba(16, 185, 129, 0.06);
 }
 
 .model-dot--error {
-  border-color: rgba(239, 68, 68, 0.5);
-  opacity: 0.4;
+  border-color: rgba(239, 68, 68, 0.4);
+  opacity: 0.3;
 }
 
 .model-dot-icon {
@@ -286,12 +406,13 @@
 }
 
 @keyframes model-dot-think {
-  0%, 100% { transform: scale(1); opacity: 0.6; }
-  50% { transform: scale(1.15); opacity: 1; }
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.12); opacity: 0.85; }
 }
 
 /* =============================================================================
    ORACLE SPEECH BUBBLE — Conversational mode
+   Warm violet tones to match the positive frequency theme
    ============================================================================= */
 
 .oracle-thinking-speech {
@@ -304,8 +425,8 @@
   align-items: flex-start;
   gap: 10px;
   padding: 14px 16px;
-  background: rgba(168, 85, 247, 0.08);
-  border: 1px solid rgba(168, 85, 247, 0.15);
+  background: rgba(168, 85, 247, 0.06);
+  border: 1px solid rgba(168, 85, 247, 0.12);
   border-radius: 16px;
   border-top-left-radius: 4px;
   text-align: left;
@@ -320,13 +441,13 @@
 .oracle-thinking-speech-bubble p {
   font-size: 13px;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(255, 255, 255, 0.7);
   margin: 0;
   font-style: italic;
 }
 
 /* =============================================================================
-   FUN FACT
+   FUN FACT — Dimmed, secondary
    ============================================================================= */
 
 .oracle-thinking-fact {
@@ -334,8 +455,8 @@
   align-items: flex-start;
   gap: 8px;
   padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.015);
+  border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: 12px;
   width: 100%;
   max-width: 320px;
@@ -351,6 +472,7 @@
   font-size: 12px;
   line-height: 1.4;
   color: hsl(var(--muted-foreground));
+  opacity: 0.7;
 }
 
 /* =============================================================================
@@ -360,7 +482,7 @@
 .oracle-thinking-elapsed {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.2);
 }
 
 /* =============================================================================
@@ -383,9 +505,9 @@
   display: flex;
   gap: 2px;
   padding: 3px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.04);
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .engagement-toggle-btn {
@@ -403,8 +525,9 @@
 }
 
 .engagement-toggle-btn--active {
-  background: rgba(var(--cymatic-rgb, 0, 200, 255), 0.15);
-  color: rgba(var(--cymatic-rgb, 0, 200, 255), 0.9);
+  /* Warm gold active state instead of cold cyan */
+  background: rgba(251, 191, 36, 0.12);
+  color: rgba(251, 191, 36, 0.9);
 }
 
 /* =============================================================================
@@ -427,7 +550,7 @@
 }
 
 /* =============================================================================
-   REDUCED MOTION — Pause all animations, show static indicators
+   REDUCED MOTION — Pause all animations, show static warm glow
    ============================================================================= */
 
 .oracle-thinking-overlay--reduced .cymatic-ring,
@@ -437,11 +560,11 @@
 }
 
 .oracle-thinking-overlay--reduced .cymatic-ring {
-  opacity: 0.3;
+  opacity: 0.4;
 }
 
 .oracle-thinking-overlay--reduced .cymatic-core {
-  opacity: 0.5;
+  opacity: 0.6;
 }
 
 /* =============================================================================
@@ -469,7 +592,7 @@
 
   .oracle-thinking-speech,
   .oracle-thinking-fact {
-    display: none; /* Hide verbose elements on tiny screens */
+    display: none;
   }
 }
 
