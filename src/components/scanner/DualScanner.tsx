@@ -1,10 +1,15 @@
 // FILE: src/components/scanner/DualScanner.tsx
-// v3.1 — SLIM ORCHESTRATOR
-// FIX: Added camera lifecycle useEffect (v3.0 had black screen — never called startCamera)
-// ~900 lines → ~170 lines. All logic lives in hooks/, all UI in components/.
+// v3.2 — SLIM ORCHESTRATOR + HEALING HAPTICS
+//
+// v3.0: Refactored ~900 → ~160 lines (black screen bug — no startCamera call)
+// v3.1: Added camera lifecycle useEffect (fixed black screen)
+// v3.2: Healing haptics integration — tier-aware feedback on every interaction
+//
+// All logic lives in hooks/, all UI in components/.
 // Mobile-first: Full viewport camera, device-side compression, haptic feedback
 //
 // Hook responsibilities:
+//   useHealingHaptics   — Tier-aware haptic feedback (NEW)
 //   useGhostMode        — Ghost Protocol GPS + store capture
 //   useCameraStream     — Camera lifecycle, torch, zoom, flip
 //   useCapturedItems    — Item state, selection, compression
@@ -24,6 +29,7 @@ import type { ScanMode, DualScannerProps } from './types';
 
 // Hooks
 import {
+  useHealingHaptics,
   useGhostMode,
   useCameraStream,
   useCapturedItems,
@@ -65,11 +71,28 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // -------------------------------------------------------------------------
-  // HOOKS — all logic delegated
+  // HEALING HAPTICS — initialized first, passed to other hooks
+  //
+  // During BETA_MODE (tier.ts), everyone is 'elite' → gets Oracle-tier haptics.
+  // When tier gating goes live, read the real tier from AuthContext/AppContext.
+  // TODO: Wire to real user tier when BETA_MODE = false
+  // -------------------------------------------------------------------------
+  const haptics = useHealingHaptics({
+    tier: 'oracle',   // Beta: everyone gets the full experience
+    enabled: true,     // TODO: User preference toggle in settings
+  });
+
+  // -------------------------------------------------------------------------
+  // HOOKS — all logic delegated, haptics passed to hooks that need it
   // -------------------------------------------------------------------------
   const ghostMode = useGhostMode();
   const gridOverlay = useGridOverlay();
-  const camera = useCameraStream(scanMode === 'video');
+
+  const camera = useCameraStream({
+    includeAudio: scanMode === 'video',
+    haptics,
+  });
+
   const items = useCapturedItems({ maxItems: 15 });
   const video = useVideoRecording();
 
@@ -83,6 +106,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
   const analysis = useAnalysisSubmit({
     ghostMode,
+    haptics,
     onComplete: () => {
       setIsProcessing(false);
       onClose();
@@ -136,6 +160,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
   // -------------------------------------------------------------------------
   // CAPTURE HANDLER — captures frame from camera, adds to items
+  // Haptics: fires capture() instead of inline navigator.vibrate()
   // -------------------------------------------------------------------------
   const handleCapture = useCallback(async () => {
     if (!camera.videoRef.current || !canvasRef.current) return;
@@ -151,8 +176,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
 
-    // Haptic feedback
-    if ('vibrate' in navigator) navigator.vibrate(50);
+    // Haptic feedback — tier-aware via hook
+    if (ghostMode.isGhostMode) {
+      haptics.ghostCapture();
+    } else {
+      haptics.capture();
+    }
 
     await items.addItem({
       type: 'photo',
@@ -160,7 +189,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       thumbnail: dataUrl,
       name: `Photo ${items.items.filter((i) => i.type === 'photo').length + 1}`,
     });
-  }, [camera.videoRef, items]);
+  }, [camera.videoRef, items, ghostMode.isGhostMode, haptics]);
 
   // -------------------------------------------------------------------------
   // ANALYZE HANDLER — delegates to useAnalysisSubmit
@@ -187,7 +216,19 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     } else {
       video.startRecording();
     }
-  }, [video]);
+    haptics.tap();
+  }, [video, haptics]);
+
+  // -------------------------------------------------------------------------
+  // MODE SWITCH — with haptic tap
+  // -------------------------------------------------------------------------
+  const handleModeChange = useCallback(
+    (mode: ScanMode) => {
+      setScanMode(mode);
+      haptics.tap();
+    },
+    [haptics]
+  );
 
   // -------------------------------------------------------------------------
   // RENDER — no early returns, scanner is a full-screen modal
@@ -229,7 +270,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
       <ScannerFooter
         scanMode={scanMode}
-        onScanModeChange={setScanMode}
+        onScanModeChange={handleModeChange}
         onCapture={handleCapture}
         onVideoToggle={handleVideoToggle}
         onAnalyze={handleAnalyze}

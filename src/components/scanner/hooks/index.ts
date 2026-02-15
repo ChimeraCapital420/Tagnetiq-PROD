@@ -1,12 +1,16 @@
 // FILE: src/components/scanner/hooks/index.ts
 // Export all scanner hooks — existing + newly extracted
 
+// Healing haptics — tier-aware feedback synced to SSE events (NEW v3.2)
+export { useHealingHaptics } from './useHealingHaptics';
+export type { HapticTier, UseHealingHapticsOptions, UseHealingHapticsReturn } from './useHealingHaptics';
+
 // Existing hooks (already extracted)
 export { useGhostMode } from './useGhostMode';
 export type { UseGhostModeReturn } from './useGhostMode';
 
 export { useCameraStream } from './useCameraStream';
-export type { UseCameraStreamReturn } from './useCameraStream';
+export type { UseCameraStreamOptions, UseCameraStreamReturn } from './useCameraStream';
 
 export { useCapturedItems } from './useCapturedItems';
 export type { UseCapturedItemsReturn, UseCapturedItemsOptions } from './useCapturedItems';

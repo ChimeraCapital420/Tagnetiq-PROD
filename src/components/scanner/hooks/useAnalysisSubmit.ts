@@ -1,10 +1,13 @@
 // FILE: src/components/scanner/hooks/useAnalysisSubmit.ts
 // Extracted from DualScanner.tsx — handles the entire analysis submission flow
+// v3.2: Healing haptics integration — fires tier-aware feedback on every SSE event
+//
 // - SSE streaming from /api/analyze-stream with real-time progress
 // - Fallback to /api/analyze if streaming fails
 // - Data shape normalization (fixes hydraConsensus.votes crash)
 // - Ghost mode data injection
 // - Device-side payload compression before upload (mobile-first)
+// - Healing haptics synced to each SSE event (zero extra timers)
 
 import { useCallback, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
@@ -14,6 +17,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { compressImage } from '../utils/compression';
 import type { CapturedItem } from '../types';
 import type { ScanProgress } from '@/contexts/AppContext';
+import type { UseHealingHapticsReturn } from './useHealingHaptics';
 
 // =============================================================================
 // TYPES
@@ -26,6 +30,8 @@ export interface UseAnalysisSubmitOptions {
     isReady: boolean;
     buildGhostData: (estimatedValue: number) => any | null;
   };
+  /** Healing haptics hook return (optional — degrades gracefully) */
+  haptics?: UseHealingHapticsReturn;
   /** Callback after successful analysis */
   onComplete?: () => void;
   /** Callback on error */
@@ -150,7 +156,7 @@ function normalizeAnalysisResult(raw: any): any {
 export function useAnalysisSubmit(
   options: UseAnalysisSubmitOptions
 ): UseAnalysisSubmitReturn {
-  const { ghostMode, onComplete, onError } = options;
+  const { ghostMode, haptics, onComplete, onError } = options;
   const {
     setLastAnalysisResult,
     setIsAnalyzing,
@@ -162,7 +168,8 @@ export function useAnalysisSubmit(
   const isSubmittingRef = useRef(false);
 
   // ---------------------------------------------------------------------------
-  // SSE EVENT HANDLER — Maps stream events to scanProgress state
+  // SSE EVENT HANDLER — Maps stream events to scanProgress + haptics
+  // Haptics fire at the EXACT moment each visual event occurs — perfectly synced
   // ---------------------------------------------------------------------------
   const handleSSEEvent = useCallback(
     (event: SSEEvent) => {
@@ -184,6 +191,8 @@ export function useAnalysisSubmit(
             category: null,
             marketApis: [],
           });
+          // Haptic: analysis engine acknowledged
+          haptics?.analysisStart();
           break;
 
         case 'phase': {
@@ -202,6 +211,8 @@ export function useAnalysisSubmit(
                 }
               : prev
           );
+          // Haptic: phase transition — distinct rhythm per phase (Pro+)
+          haptics?.phaseTransition(event.data.phase);
           break;
         }
 
@@ -219,6 +230,8 @@ export function useAnalysisSubmit(
                 }
               : prev
           );
+          // Haptic: barely-there tick — "I see a dot light up" (Pro+)
+          haptics?.aiModelStart(event.data.index ?? 0);
           break;
 
         case 'ai_complete':
@@ -246,6 +259,8 @@ export function useAnalysisSubmit(
               ).length,
             };
           });
+          // Haptic: model reported in — different feel for success vs failure (Pro+)
+          haptics?.aiModelComplete(event.data.success ?? true);
           break;
 
         case 'price':
@@ -258,6 +273,9 @@ export function useAnalysisSubmit(
                 }
               : prev
           );
+          // Haptic: money pulse + heartbeat intensity sync (Oracle)
+          haptics?.priceUpdate(event.data.confidence ?? 0);
+          haptics?.heartbeat(event.data.confidence ?? 0);
           break;
 
         case 'category':
@@ -281,6 +299,8 @@ export function useAnalysisSubmit(
                 }
               : prev
           );
+          // Haptic: subtle tick — "checking another source" (Pro+)
+          haptics?.marketApiStart();
           break;
 
         case 'api_complete': {
@@ -290,6 +310,8 @@ export function useAnalysisSubmit(
           setScanProgress((prev) =>
             prev ? { ...prev, message: msg } : prev
           );
+          // Haptic: data arrived (Pro+)
+          haptics?.marketApiComplete(event.data.success ?? false);
           break;
         }
 
@@ -299,6 +321,8 @@ export function useAnalysisSubmit(
               ? { ...prev, stage: 'complete', message: 'Analysis complete' }
               : prev
           );
+          // Haptic: THE reward moment — decision-aware on Oracle tier
+          haptics?.analysisComplete(event.data?.decision || 'SELL');
           break;
 
         case 'error':
@@ -312,10 +336,12 @@ export function useAnalysisSubmit(
                 }
               : prev
           );
+          // Haptic: unmistakable error — all tiers
+          haptics?.analysisError();
           break;
       }
     },
-    [setScanProgress]
+    [setScanProgress, haptics]
   );
 
   // ---------------------------------------------------------------------------
@@ -502,6 +528,9 @@ export function useAnalysisSubmit(
           }
 
           analysisResult = await response.json();
+
+          // Fallback path doesn't get SSE events, so fire completion haptic here
+          haptics?.analysisComplete(analysisResult?.decision || 'SELL');
         }
 
         // =================================================================
@@ -551,6 +580,9 @@ export function useAnalysisSubmit(
         toast.error(error.message || 'Analysis failed');
         onError?.(error.message);
 
+        // Haptic: error feedback (all tiers)
+        haptics?.analysisError();
+
         setScanProgress((prev) =>
           prev
             ? {
@@ -569,6 +601,7 @@ export function useAnalysisSubmit(
     [
       session,
       ghostMode,
+      haptics,
       selectedCategory,
       setIsAnalyzing,
       setScanProgress,

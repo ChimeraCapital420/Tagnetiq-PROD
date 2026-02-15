@@ -1,11 +1,13 @@
 // FILE: src/components/scanner/hooks/useCameraStream.ts
 // Camera stream management hook
+// v3.2: Accepts optional haptics — replaces all inline navigator.vibrate() calls
 // FIXED: Module-level logging to prevent spam across component lifecycles
 // Mobile-first: Prefers rear camera, optimized constraints
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
 import type { CameraCapabilities, CameraSettings } from '../types';
+import type { UseHealingHapticsReturn } from './useHealingHaptics';
 
 // =============================================================================
 // MODULE-LEVEL LOGGING CONTROL
@@ -23,6 +25,13 @@ function getStreamId(stream: MediaStream | null): string {
 // =============================================================================
 // TYPES
 // =============================================================================
+export interface UseCameraStreamOptions {
+  /** Whether to include audio (video mode) */
+  includeAudio?: boolean;
+  /** Healing haptics hook return (optional — degrades gracefully) */
+  haptics?: UseHealingHapticsReturn;
+}
+
 export interface UseCameraStreamReturn {
   videoRef: React.RefObject<HTMLVideoElement>;
   stream: MediaStream | null;
@@ -31,7 +40,7 @@ export interface UseCameraStreamReturn {
   currentDeviceId: string | undefined;
   capabilities: CameraCapabilities;
   settings: CameraSettings;
-  
+
   // Actions
   startCamera: (deviceId?: string) => Promise<void>;
   stopCamera: () => void;
@@ -57,14 +66,21 @@ const DEFAULT_SETTINGS: CameraSettings = {
   whiteBalanceMode: 'continuous',
 };
 
-export function useCameraStream(includeAudio = false): UseCameraStreamReturn {
+export function useCameraStream(
+  options: UseCameraStreamOptions = {}
+): UseCameraStreamReturn {
+  const { includeAudio = false, haptics } = options;
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  
+
   const [isActive, setIsActive] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [currentDeviceId, setCurrentDeviceId] = useState<string | undefined>(undefined);
-  const [capabilities, setCapabilities] = useState<CameraCapabilities>(DEFAULT_CAPABILITIES);
+  const [currentDeviceId, setCurrentDeviceId] = useState<string | undefined>(
+    undefined
+  );
+  const [capabilities, setCapabilities] =
+    useState<CameraCapabilities>(DEFAULT_CAPABILITIES);
   const [settings, setSettings] = useState<CameraSettings>(DEFAULT_SETTINGS);
 
   // ==========================================================================
@@ -72,37 +88,41 @@ export function useCameraStream(includeAudio = false): UseCameraStreamReturn {
   // ==========================================================================
   const detectCapabilities = useCallback((track: MediaStreamTrack) => {
     const trackId = track.id;
-    
+
     // Already logged this track? Skip
     if (loggedCapabilityIds.has(trackId)) {
       return;
     }
-    
+
     try {
       const caps = track.getCapabilities?.() as any;
       if (!caps) return;
-      
+
       const detected: CameraCapabilities = {
         torch: !!caps.torch,
-        zoom: caps.zoom ? {
-          min: caps.zoom.min || 1,
-          max: caps.zoom.max || 1,
-          step: caps.zoom.step || 0.1,
-        } : null,
+        zoom: caps.zoom
+          ? {
+              min: caps.zoom.min || 1,
+              max: caps.zoom.max || 1,
+              step: caps.zoom.step || 0.1,
+            }
+          : null,
         focusMode: caps.focusMode || [],
         exposureMode: caps.exposureMode || [],
         whiteBalanceMode: caps.whiteBalanceMode || [],
       };
-      
+
       // Log ONCE per track - add to set FIRST
       loggedCapabilityIds.add(trackId);
       console.log('📷 [CAMERA] Capabilities detected:', {
         trackId: trackId.slice(0, 8),
         torch: detected.torch,
-        zoom: detected.zoom ? `${detected.zoom.min}-${detected.zoom.max}x` : 'No',
+        zoom: detected.zoom
+          ? `${detected.zoom.min}-${detected.zoom.max}x`
+          : 'No',
         focusModes: detected.focusMode.join(', ') || 'None',
       });
-      
+
       setCapabilities(detected);
     } catch (error) {
       console.error('[CAMERA] Error detecting capabilities:', error);
@@ -115,7 +135,7 @@ export function useCameraStream(includeAudio = false): UseCameraStreamReturn {
   const enumerateDevices = useCallback(async () => {
     try {
       const allDevices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = allDevices.filter(d => d.kind === 'videoinput');
+      const videoDevices = allDevices.filter((d) => d.kind === 'videoinput');
       setDevices(videoDevices);
       return videoDevices;
     } catch (error) {
@@ -127,85 +147,93 @@ export function useCameraStream(includeAudio = false): UseCameraStreamReturn {
   // ==========================================================================
   // START CAMERA
   // ==========================================================================
-  const startCamera = useCallback(async (deviceId?: string) => {
-    // Stop any existing stream
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-
-    try {
-      // Get available devices first
-      let videoDevices = devices;
-      if (videoDevices.length === 0) {
-        // Need initial permission to enumerate
-        await navigator.mediaDevices.getUserMedia({ video: true });
-        videoDevices = await enumerateDevices();
+  const startCamera = useCallback(
+    async (deviceId?: string) => {
+      // Stop any existing stream
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
       }
 
-      // Select device - prefer rear camera if no device specified
-      let selectedDeviceId = deviceId;
-      if (!selectedDeviceId && videoDevices.length > 0) {
-        const rearCamera = videoDevices.find(d => 
-          d.label.toLowerCase().includes('back') || 
-          d.label.toLowerCase().includes('rear') ||
-          d.label.toLowerCase().includes('environment')
-        );
-        selectedDeviceId = rearCamera?.deviceId || videoDevices[0].deviceId;
-      }
+      try {
+        // Get available devices first
+        let videoDevices = devices;
+        if (videoDevices.length === 0) {
+          // Need initial permission to enumerate
+          await navigator.mediaDevices.getUserMedia({ video: true });
+          videoDevices = await enumerateDevices();
+        }
 
-      // Request stream with optimal constraints for mobile
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          facingMode: selectedDeviceId ? undefined : 'environment',
-        },
-        audio: includeAudio ? { 
-          echoCancellation: true, 
-          noiseSuppression: true 
-        } : false,
-      });
+        // Select device - prefer rear camera if no device specified
+        let selectedDeviceId = deviceId;
+        if (!selectedDeviceId && videoDevices.length > 0) {
+          const rearCamera = videoDevices.find(
+            (d) =>
+              d.label.toLowerCase().includes('back') ||
+              d.label.toLowerCase().includes('rear') ||
+              d.label.toLowerCase().includes('environment')
+          );
+          selectedDeviceId =
+            rearCamera?.deviceId || videoDevices[0].deviceId;
+        }
 
-      streamRef.current = stream;
-      setCurrentDeviceId(selectedDeviceId);
-      setIsActive(true);
-
-      // Connect to video element
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-
-      // Detect capabilities (will only log once per track)
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        detectCapabilities(videoTrack);
-      }
-
-      // Log stream start ONCE
-      const streamId = getStreamId(stream);
-      if (!loggedStreamIds.has(streamId)) {
-        loggedStreamIds.add(streamId);
-        console.log('📷 [CAMERA] Stream started:', {
-          streamId: streamId.slice(0, 8),
-          deviceId: selectedDeviceId?.slice(0, 8),
+        // Request stream with optimal constraints for mobile
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: selectedDeviceId
+              ? { exact: selectedDeviceId }
+              : undefined,
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            facingMode: selectedDeviceId ? undefined : 'environment',
+          },
+          audio: includeAudio
+            ? {
+                echoCancellation: true,
+                noiseSuppression: true,
+              }
+            : false,
         });
-      }
 
-    } catch (error) {
-      console.error('[CAMERA] Error starting camera:', error);
-      toast.error('Camera access denied');
-      setIsActive(false);
-    }
-  }, [devices, enumerateDevices, detectCapabilities, includeAudio]);
+        streamRef.current = stream;
+        setCurrentDeviceId(selectedDeviceId);
+        setIsActive(true);
+
+        // Connect to video element
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+
+        // Detect capabilities (will only log once per track)
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) {
+          detectCapabilities(videoTrack);
+        }
+
+        // Log stream start ONCE
+        const streamId = getStreamId(stream);
+        if (!loggedStreamIds.has(streamId)) {
+          loggedStreamIds.add(streamId);
+          console.log('📷 [CAMERA] Stream started:', {
+            streamId: streamId.slice(0, 8),
+            deviceId: selectedDeviceId?.slice(0, 8),
+          });
+        }
+      } catch (error) {
+        console.error('[CAMERA] Error starting camera:', error);
+        toast.error('Camera access denied');
+        setIsActive(false);
+      }
+    },
+    [devices, enumerateDevices, detectCapabilities, includeAudio]
+  );
 
   // ==========================================================================
   // STOP CAMERA
   // ==========================================================================
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
     if (videoRef.current) {
@@ -217,7 +245,7 @@ export function useCameraStream(includeAudio = false): UseCameraStreamReturn {
   }, []);
 
   // ==========================================================================
-  // SWITCH CAMERA
+  // SWITCH CAMERA — haptics-aware
   // ==========================================================================
   const switchCamera = useCallback(() => {
     if (devices.length <= 1) {
@@ -225,92 +253,110 @@ export function useCameraStream(includeAudio = false): UseCameraStreamReturn {
       return;
     }
 
-    const currentIndex = devices.findIndex(d => d.deviceId === currentDeviceId);
+    const currentIndex = devices.findIndex(
+      (d) => d.deviceId === currentDeviceId
+    );
     const nextIndex = (currentIndex + 1) % devices.length;
     const nextDeviceId = devices[nextIndex].deviceId;
 
     startCamera(nextDeviceId);
-    
-    // Haptic feedback
-    if ('vibrate' in navigator) {
+
+    // Haptic feedback — use hook if available, fallback to inline
+    if (haptics) {
+      haptics.tap();
+    } else if ('vibrate' in navigator) {
       navigator.vibrate(30);
     }
-  }, [devices, currentDeviceId, startCamera]);
+  }, [devices, currentDeviceId, startCamera, haptics]);
 
   // ==========================================================================
-  // TORCH CONTROL
+  // TORCH CONTROL — haptics-aware
   // ==========================================================================
-  const setTorch = useCallback(async (enabled: boolean) => {
-    if (!capabilities.torch) {
-      toast.info('Flashlight not available');
-      return;
-    }
-
-    const track = streamRef.current?.getVideoTracks()[0];
-    if (!track) return;
-
-    try {
-      await track.applyConstraints({
-        advanced: [{ torch: enabled } as any]
-      });
-      setSettings(prev => ({ ...prev, torch: enabled }));
-      
-      if ('vibrate' in navigator) {
-        navigator.vibrate(30);
+  const setTorch = useCallback(
+    async (enabled: boolean) => {
+      if (!capabilities.torch) {
+        toast.info('Flashlight not available');
+        return;
       }
-    } catch (error) {
-      console.error('[CAMERA] Torch error:', error);
-      toast.error('Failed to toggle flashlight');
-    }
-  }, [capabilities.torch]);
+
+      const track = streamRef.current?.getVideoTracks()[0];
+      if (!track) return;
+
+      try {
+        await track.applyConstraints({
+          advanced: [{ torch: enabled } as any],
+        });
+        setSettings((prev) => ({ ...prev, torch: enabled }));
+
+        // Haptic feedback — use hook if available, fallback to inline
+        if (haptics) {
+          haptics.tap();
+        } else if ('vibrate' in navigator) {
+          navigator.vibrate(30);
+        }
+      } catch (error) {
+        console.error('[CAMERA] Torch error:', error);
+        toast.error('Failed to toggle flashlight');
+      }
+    },
+    [capabilities.torch, haptics]
+  );
 
   // ==========================================================================
   // ZOOM CONTROL
   // ==========================================================================
-  const setZoom = useCallback(async (level: number) => {
-    if (!capabilities.zoom) {
-      return;
-    }
+  const setZoom = useCallback(
+    async (level: number) => {
+      if (!capabilities.zoom) {
+        return;
+      }
 
-    const track = streamRef.current?.getVideoTracks()[0];
-    if (!track) return;
+      const track = streamRef.current?.getVideoTracks()[0];
+      if (!track) return;
 
-    const clampedLevel = Math.min(
-      capabilities.zoom.max,
-      Math.max(capabilities.zoom.min, level)
-    );
+      const clampedLevel = Math.min(
+        capabilities.zoom.max,
+        Math.max(capabilities.zoom.min, level)
+      );
 
-    try {
-      await track.applyConstraints({
-        advanced: [{ zoom: clampedLevel } as any]
-      });
-      setSettings(prev => ({ ...prev, zoom: clampedLevel }));
-    } catch (error) {
-      console.error('[CAMERA] Zoom error:', error);
-    }
-  }, [capabilities.zoom]);
+      try {
+        await track.applyConstraints({
+          advanced: [{ zoom: clampedLevel } as any],
+        });
+        setSettings((prev) => ({ ...prev, zoom: clampedLevel }));
+      } catch (error) {
+        console.error('[CAMERA] Zoom error:', error);
+      }
+    },
+    [capabilities.zoom]
+  );
 
   // ==========================================================================
-  // FOCUS TRIGGER
+  // FOCUS TRIGGER — haptics-aware
   // ==========================================================================
   const triggerFocus = useCallback(() => {
     const track = streamRef.current?.getVideoTracks()[0];
     if (!track) return;
 
     if (capabilities.focusMode.includes('single-shot')) {
-      track.applyConstraints({
-        advanced: [{ focusMode: 'single-shot' } as any]
-      }).catch(() => {});
-      
+      track
+        .applyConstraints({
+          advanced: [{ focusMode: 'single-shot' } as any],
+        })
+        .catch(() => {});
+
       toast.info('Focusing...');
     } else {
       toast.info('Auto-focus triggered');
     }
 
-    if ('vibrate' in navigator) {
+    // Haptic feedback — use hook if available, fallback to inline
+    if (haptics) {
+      haptics.tap();
+    } else if ('vibrate' in navigator) {
       navigator.vibrate(20);
     }
-  }, [capabilities.focusMode]);
+  }, [capabilities.focusMode, haptics]);
 
   // ==========================================================================
   // CLEANUP
@@ -318,7 +364,7 @@ export function useCameraStream(includeAudio = false): UseCameraStreamReturn {
   useEffect(() => {
     return () => {
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current.getTracks().forEach((track) => track.stop());
       }
     };
   }, []);
