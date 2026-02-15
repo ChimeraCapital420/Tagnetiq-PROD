@@ -1,305 +1,349 @@
-// FILE: src/components/scanner/DualScanner.tsx
-// v4.0 — DECLARATIVE CAMERA LIFECYCLE
-//
-// v4.0: Camera lifecycle moved INTO useCameraStream via `active` prop.
-//   Removed the camera lifecycle useEffect entirely — no more startCamera/
-//   stopCamera calls that could double-fire. The hook watches `active` with
-//   ONE internal useEffect. DualScanner just passes the boolean.
-// v3.4: Conditional modal rendering (kept)
-// v3.2: Healing haptics integration (kept)
-//
-// All logic lives in hooks/, all UI in components/.
-// Mobile-first: Full viewport camera, device-side compression, haptic feedback
+/* FILE: src/components/DualScanner.css */
+/* Scanner styles with fixed header layout */
+/* v4.0: Removed align-items/justify-content centering from overlay.
+   The refactored DualScanner.tsx no longer has a .dual-scanner-content wrapper.
+   Header, viewport, and footer sit directly in the overlay.
+   Centering was shrinking the viewport to zero width → black screen. */
 
-import React, { useState, useCallback, useRef } from 'react';
-import type { ScanMode, DualScannerProps } from './types';
+/* ============================================ */
+/* OVERLAY & CONTAINER                         */
+/* ============================================ */
 
-// Hooks
-import {
-  useHealingHaptics,
-  useGhostMode,
-  useCameraStream,
-  useCapturedItems,
-  useGridOverlay,
-  useVideoRecording,
-  useAnalysisSubmit,
-  useFileUpload,
-  useBarcodeScanner,
-} from './hooks';
+.dual-scanner-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background-color: black;
+  display: flex;
+  flex-direction: column;
+  /* NO align-items: center — children must stretch full width */
+  /* NO justify-content: center — children must fill top to bottom */
+}
 
-// Components
-import {
-  ScannerHeader,
-  ScannerViewport,
-  ScannerFooter,
-  GhostProtocolSheet,
-} from './components';
+/* .dual-scanner-content is no longer used in the refactored code.
+   Kept for backward compatibility in case any other component references it. */
+.dual-scanner-content {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-width: 100vw;
+  max-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: hsl(var(--background));
+  overflow: hidden;
+}
 
-// External components (not yet extracted into scanner module)
-import CameraSettingsModal from '../CameraSettingsModal';
-import DevicePairingModal from '../DevicePairingModal';
+/* Desktop: constrain size */
+@media (min-width: 768px) {
+  .dual-scanner-content {
+    max-width: 900px;
+    max-height: 90vh;
+    border-radius: 1rem;
+    border: 1px solid hsl(var(--border));
+  }
+}
 
-// Styles
-import '../DualScanner.css';
+/* ============================================ */
+/* HEADER - Fixed 3-column layout              */
+/* ============================================ */
 
-// =============================================================================
-// MAIN COMPONENT — Pure orchestration, no business logic
-// =============================================================================
+.dual-scanner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background-color: hsl(var(--background) / 0.95);
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+  backdrop-filter: blur(8px);
+  min-height: 56px;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
 
-const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
-  // -------------------------------------------------------------------------
-  // LOCAL UI STATE
-  // -------------------------------------------------------------------------
-  const [scanMode, setScanMode] = useState<ScanMode>('image');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isDevicePairingOpen, setIsDevicePairingOpen] = useState(false);
-  const [isGhostSheetOpen, setIsGhostSheetOpen] = useState(false);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+/* Ensure left/right groups don't squish center */
+.dual-scanner-header > div:first-child,
+.dual-scanner-header > div:last-child {
+  flex-shrink: 0;
+}
 
-  // -------------------------------------------------------------------------
-  // HEALING HAPTICS
-  // -------------------------------------------------------------------------
-  const haptics = useHealingHaptics({
-    tier: 'oracle',
-    enabled: true,
-  });
+/* Center section can shrink if needed */
+.dual-scanner-header > div:nth-child(2) {
+  flex: 1;
+  justify-content: center;
+  min-width: 0;
+}
 
-  // -------------------------------------------------------------------------
-  // HOOKS
-  //
-  // v4.0: Camera activation is now DECLARATIVE via `active` prop.
-  // true  = camera should be on  (isOpen + image/video mode)
-  // false = camera should be off (closed or barcode mode)
-  // The hook's internal useEffect handles start/stop. No external calls needed.
-  // -------------------------------------------------------------------------
-  const ghostMode = useGhostMode();
-  const gridOverlay = useGridOverlay();
+/* ============================================ */
+/* MAIN VIDEO AREA                             */
+/* ============================================ */
 
-  // Camera is active when: scanner is open AND mode is NOT barcode
-  const cameraActive = isOpen && scanMode !== 'barcode';
+.dual-scanner-main {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background-color: black;
+}
 
-  const camera = useCameraStream({
-    active: cameraActive,
-    includeAudio: scanMode === 'video',
-    haptics,
-  });
+.dual-scanner-main video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
 
-  const items = useCapturedItems({ maxItems: 15 });
-  const video = useVideoRecording();
+/* ============================================ */
+/* FOOTER                                      */
+/* ============================================ */
 
-  const barcode = useBarcodeScanner({
-    deviceId: camera.currentDeviceId,
-    enabled: scanMode === 'barcode',
-    isOpen,
-    isProcessing,
-    onDetected: () => onClose(),
-  });
+.dual-scanner-footer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  background-color: hsl(var(--background) / 0.95);
+  border-top: 1px solid hsl(var(--border) / 0.5);
+  backdrop-filter: blur(8px);
+  flex-shrink: 0;
+}
 
-  const analysis = useAnalysisSubmit({
-    ghostMode,
-    haptics,
-    onComplete: () => {
-      setIsProcessing(false);
-      onClose();
-    },
-    onError: () => {
-      setIsProcessing(false);
-    },
-  });
+/* ============================================ */
+/* SCANNER CONTROLS ROW                        */
+/* ============================================ */
 
-  const fileUpload = useFileUpload({
-    addItem: items.addItem,
-    photoCount: items.items.filter((i) => i.type === 'photo').length,
-    totalCount: items.totalCount,
-  });
+.scanner-controls {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+}
 
-  // -------------------------------------------------------------------------
-  // NO CAMERA LIFECYCLE useEffect — v4.0 removed it entirely.
-  // The camera hook now manages its own lifecycle via the `active` prop.
-  // This eliminates all double-start bugs permanently.
-  // -------------------------------------------------------------------------
+.scanner-controls button {
+  width: 2.5rem;
+  height: 2.5rem;
+}
 
-  // -------------------------------------------------------------------------
-  // CAPTURE HANDLER
-  // -------------------------------------------------------------------------
-  const handleCapture = useCallback(async () => {
-    if (!camera.videoRef.current || !canvasRef.current) return;
+/* ============================================ */
+/* CAPTURE BUTTON                              */
+/* ============================================ */
 
-    const videoEl = camera.videoRef.current;
-    const canvas = canvasRef.current;
-    canvas.width = videoEl.videoWidth;
-    canvas.height = videoEl.videoHeight;
+.capture-button {
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 50%;
+  background-color: transparent;
+  border: 4px solid white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  touch-action: manipulation;
+}
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+.capture-button:hover:not(:disabled) {
+  transform: scale(1.05);
+  border-color: hsl(var(--primary));
+}
 
-    ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+.capture-button:active:not(:disabled) {
+  transform: scale(0.95);
+}
 
-    if (ghostMode.isGhostMode) {
-      haptics.ghostCapture();
-    } else {
-      haptics.capture();
-    }
+.capture-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
-    await items.addItem({
-      type: 'photo',
-      data: dataUrl,
-      thumbnail: dataUrl,
-      name: `Photo ${items.items.filter((i) => i.type === 'photo').length + 1}`,
-    });
-  }, [camera.videoRef, items, ghostMode.isGhostMode, haptics]);
+.capture-button svg {
+  width: 3.5rem;
+  height: 3.5rem;
+}
 
-  // -------------------------------------------------------------------------
-  // ANALYZE HANDLER
-  // -------------------------------------------------------------------------
-  const handleAnalyze = useCallback(async () => {
-    const selected = items.getSelectedItems();
-    if (selected.length === 0) return;
+/* ============================================ */
+/* MODE TOGGLE                                 */
+/* ============================================ */
 
-    if (ghostMode.isGhostMode && !ghostMode.isReady) {
-      setIsGhostSheetOpen(true);
-      return;
-    }
+.mode-toggle {
+  display: flex;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background-color: hsl(var(--muted) / 0.5);
+  border-radius: 0.5rem;
+}
 
-    setIsProcessing(true);
-    await analysis.handleAnalyze(selected);
-  }, [items, ghostMode, analysis]);
+.mode-toggle button {
+  flex: 1;
+  max-width: 8rem;
+  font-size: 0.875rem;
+}
 
-  // -------------------------------------------------------------------------
-  // VIDEO TOGGLE
-  // -------------------------------------------------------------------------
-  const handleVideoToggle = useCallback(() => {
-    if (video.isRecording) {
-      video.stopRecording();
-    } else {
-      video.startRecording();
-    }
-    haptics.tap();
-  }, [video, haptics]);
+/* ============================================ */
+/* BARCODE RETICLE                             */
+/* ============================================ */
 
-  // -------------------------------------------------------------------------
-  // MODE SWITCH
-  // -------------------------------------------------------------------------
-  const handleModeChange = useCallback(
-    (mode: ScanMode) => {
-      setScanMode(mode);
-      haptics.tap();
-    },
-    [haptics]
+.barcode-reticle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 80%;
+  max-width: 300px;
+  height: 150px;
+  border: 2px solid hsl(var(--primary));
+  border-radius: 0.5rem;
+  pointer-events: none;
+}
+
+.barcode-reticle::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    hsl(var(--primary)) 20%,
+    hsl(var(--primary)) 80%,
+    transparent 100%
   );
+  animation: scan-line 2s ease-in-out infinite;
+}
 
-  // -------------------------------------------------------------------------
-  // RENDER
-  // -------------------------------------------------------------------------
-  if (!isOpen) return null;
+@keyframes scan-line {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
 
-  return (
-    <div className="dual-scanner-overlay fixed inset-0 z-50 bg-black flex flex-col">
-      <ScannerHeader
-        onClose={onClose}
-        onGhostToggle={() => setIsGhostSheetOpen(true)}
-        onSettingsOpen={() => setIsSettingsOpen(true)}
-        onBluetoothOpen={() => setIsDevicePairingOpen(true)}
-        onGridToggle={() => gridOverlay.setEnabled(!gridOverlay.isEnabled)}
-        onTorchToggle={() => camera.setTorch(!camera.settings.torch)}
-        onFlipCamera={camera.switchCamera}
-        onFocus={camera.triggerFocus}
-        isGhostMode={ghostMode.isGhostMode}
-        isGridEnabled={gridOverlay.isEnabled}
-        isTorchOn={camera.settings.torch}
-        hasTorch={camera.capabilities.torch}
-      />
+/* ============================================ */
+/* GRID OVERLAY                                */
+/* ============================================ */
 
-      <ScannerViewport
-        videoRef={camera.videoRef}
-        canvasRef={canvasRef}
-        zxingRef={barcode.zxingRef}
-        scanMode={scanMode}
-        isCameraActive={camera.isActive}
-        isRecording={video.isRecording}
-        recordingDuration={video.duration}
-        isGhostMode={ghostMode.isGhostMode}
-        gridOverlay={{
-          isEnabled: gridOverlay.isEnabled,
-          type: gridOverlay.type,
-          opacity: gridOverlay.opacity,
-        }}
-      />
+.grid-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+}
 
-      <ScannerFooter
-        scanMode={scanMode}
-        onScanModeChange={handleModeChange}
-        onCapture={handleCapture}
-        onVideoToggle={handleVideoToggle}
-        onAnalyze={handleAnalyze}
-        onImageUpload={fileUpload.openImagePicker}
-        onDocumentUpload={fileUpload.openDocumentPicker}
-        isProcessing={isProcessing}
-        isCompressing={items.isCompressing}
-        isRecording={video.isRecording}
-        isGhostMode={ghostMode.isGhostMode}
-        isGhostReady={ghostMode.isReady}
-        items={items.items}
-        selectedCount={items.selectedCount}
-        totalCount={items.totalCount}
-        onToggleSelection={items.toggleSelection}
-        onRemoveItem={items.removeItem}
-      />
+.grid-overlay > div {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
 
-      {/* Hidden file inputs */}
-      <input
-        ref={fileUpload.imageInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        className="hidden"
-        onChange={fileUpload.handleImageUpload}
-      />
-      <input
-        ref={fileUpload.documentInputRef}
-        type="file"
-        accept="image/*,.pdf,.doc,.docx"
-        multiple
-        className="hidden"
-        onChange={fileUpload.handleDocumentUpload}
-      />
+/* Center crosshair */
+.grid-overlay::before,
+.grid-overlay::after {
+  content: '';
+  position: absolute;
+  background-color: rgba(255, 255, 255, 0.4);
+}
 
-      {/* Modals — conditionally rendered (v3.4) */}
-      <GhostProtocolSheet
-        isOpen={isGhostSheetOpen}
-        onClose={() => setIsGhostSheetOpen(false)}
-        ghostMode={ghostMode}
-      />
+.grid-overlay::before {
+  top: 50%;
+  left: calc(50% - 10px);
+  width: 20px;
+  height: 1px;
+}
 
-      {isSettingsOpen && (
-        <CameraSettingsModal
-          isOpen={isSettingsOpen}
-          onClose={() => setIsSettingsOpen(false)}
-          availableDevices={camera.devices}
-          onDeviceChange={(id) => camera.startCamera(id)}
-          currentDeviceId={camera.currentDeviceId}
-          videoTrack={
-            (camera.videoRef.current?.srcObject as MediaStream)
-              ?.getVideoTracks()[0] || null
-          }
-          onSettingsChange={(s) => {
-            if (camera.videoRef.current && s.filter) {
-              camera.videoRef.current.style.filter = s.filter;
-            }
-          }}
-        />
-      )}
+.grid-overlay::after {
+  left: 50%;
+  top: calc(50% - 10px);
+  width: 1px;
+  height: 20px;
+}
 
-      {isDevicePairingOpen && (
-        <DevicePairingModal
-          isOpen={isDevicePairingOpen}
-          onClose={() => setIsDevicePairingOpen(false)}
-        />
-      )}
-    </div>
-  );
-};
+/* ============================================ */
+/* RESPONSIVE ADJUSTMENTS                      */
+/* ============================================ */
 
-export default DualScanner;
+/* Small screens */
+@media (max-width: 640px) {
+  .dual-scanner-header {
+    padding: 0.375rem 0.5rem;
+    min-height: 48px;
+  }
+
+  .dual-scanner-header button {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+
+  .dual-scanner-footer {
+    padding: 0.5rem;
+    gap: 0.5rem;
+  }
+
+  .capture-button {
+    width: 4rem;
+    height: 4rem;
+  }
+
+  .capture-button svg {
+    width: 3rem;
+    height: 3rem;
+  }
+
+  .mode-toggle button {
+    font-size: 0.75rem;
+    padding: 0.375rem 0.5rem;
+  }
+}
+
+/* Landscape orientation on mobile */
+@media (max-height: 500px) and (orientation: landscape) {
+  .dual-scanner-content {
+    flex-direction: row;
+  }
+
+  .dual-scanner-header {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    background-color: hsl(var(--background) / 0.8);
+  }
+
+  .dual-scanner-footer {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    background-color: hsl(var(--background) / 0.8);
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .dual-scanner-main {
+    padding-top: 48px;
+    padding-bottom: 80px;
+  }
+}
+
+/* ============================================ */
+/* UTILITY CLASSES                             */
+/* ============================================ */
+
+/* Hide on mobile */
+@media (max-width: 640px) {
+  .hide-mobile {
+    display: none !important;
+  }
+}
+
+/* Touch-friendly buttons */
+.dual-scanner-content button,
+.dual-scanner-overlay button {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
