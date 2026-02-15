@@ -1,5 +1,10 @@
 // FILE: src/contexts/AppContext.tsx
-// STATUS: Forged by Hephaestus v2.2 - Now with Project Chronos time-travel capabilities
+// STATUS: Forged by Hephaestus v2.3 - Oracle Thinking Experience + Project Chronos
+//
+// v2.3 CHANGES:
+//   - Added scanProgress state (real-time SSE progress from analyze-stream)
+//   - Added oracleEngagement preference (ambient | guided | conversational)
+//   - Both consumed by OracleThinkingOverlay during analysis wait
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useAuth } from './AuthContext.js';
@@ -37,8 +42,8 @@ export interface AnalysisResult {
     sales_copy: string;
     recommended_marketplaces: DataSource[];
   };
-  hydraConsensus?: any; // For Hydra multi-AI consensus
-  authorityData?: any;  // For Authority verification
+  hydraConsensus?: any;
+  authorityData?: any;
 }
 
 export interface OracleResponseType {
@@ -51,7 +56,7 @@ export interface ConversationTurn {
   content: string;
 }
 
-// --- PROJECT CHRONOS: NEW DATA STRUCTURES ---
+// --- PROJECT CHRONOS: DATA STRUCTURES ---
 export interface AnalysisHistoryItem {
   id: string;
   user_id: string;
@@ -72,10 +77,34 @@ export interface HistoryFilter {
   timeRange?: 'today' | 'week' | 'month' | 'all';
   decision?: 'BUY' | 'PASS' | 'all';
 }
-// --- END CHRONOS ---
+
+// --- ORACLE THINKING: SCAN PROGRESS ---
+export type OracleEngagement = 'ambient' | 'guided' | 'conversational';
+
+export interface ScanProgressModel {
+  name: string;
+  icon: string;
+  color: string;
+  status: 'waiting' | 'thinking' | 'complete' | 'error';
+  estimate?: number;
+}
+
+export interface ScanProgress {
+  stage: 'preparing' | 'identifying' | 'ai_consensus' | 'market_data' | 'finalizing' | 'complete' | 'error';
+  message: string;
+  aiModels: ScanProgressModel[];
+  modelsComplete: number;
+  modelsTotal: number;
+  currentEstimate: number;
+  confidence: number;
+  category: string | null;
+  marketApis: string[];
+  error?: string;
+}
+// --- END ORACLE THINKING ---
 
 interface AppContextType {
-  // Existing theme state
+  // Theme state
   theme: Theme;
   themeMode: ThemeMode;
   seasonalMode: SeasonalMode;
@@ -83,7 +112,7 @@ interface AppContextType {
   setThemeMode: (mode: ThemeMode) => void;
   setSeasonalMode: (mode: SeasonalMode) => void;
 
-  // Existing analysis state
+  // Analysis state
   lastAnalysisResult: AnalysisResult | null;
   setLastAnalysisResult: (result: AnalysisResult | null) => void;
   isScannerOpen: boolean;
@@ -93,7 +122,7 @@ interface AppContextType {
   selectedCategory: string | null;
   setSelectedCategory: (category: string | null) => void;
 
-  // Existing UI state
+  // UI state
   isFeedbackModalOpen: boolean;
   setIsFeedbackModalOpen: (isOpen: boolean) => void;
   isArenaWelcomeOpen: boolean;
@@ -103,13 +132,20 @@ interface AppContextType {
   startScanWithCategory: (categoryId: string, subcategoryId: string | null) => void;
   showArenaWelcome: (callback?: () => void) => void;
 
-  // Existing Oracle state
+  // Oracle state
   oracleResponse: OracleResponseType | null;
   setOracleResponse: (response: string) => void;
   conversationHistory: ConversationTurn[];
   addConversationTurn: (turn: ConversationTurn) => void;
 
-  // --- PROJECT CHRONOS: NEW STATE & ACTIONS ---
+  // --- ORACLE THINKING: SCAN PROGRESS ---
+  scanProgress: ScanProgress | null;
+  setScanProgress: (progress: ScanProgress | null) => void;
+  oracleEngagement: OracleEngagement;
+  setOracleEngagement: (mode: OracleEngagement) => void;
+  // --- END ORACLE THINKING ---
+
+  // --- PROJECT CHRONOS ---
   analysisHistory: AnalysisHistoryItem[];
   setAnalysisHistory: (history: AnalysisHistoryItem[]) => void;
   currentAnalysisIndex: number | null;
@@ -119,8 +155,6 @@ interface AppContextType {
   setHistoryFilter: (filter: HistoryFilter) => void;
   totalHistoryCount: number;
   hasMoreHistory: boolean;
-  
-  // Chronos Actions
   addAnalysisToHistory: (result: AnalysisResult) => Promise<void>;
   loadAnalysisHistory: (append?: boolean) => Promise<void>;
   deleteFromHistory: (id: string) => Promise<void>;
@@ -131,7 +165,6 @@ interface AppContextType {
 }
 
 const defaultAppContext: AppContextType = {
-  // ... existing defaults ...
   theme: 'darkKnight',
   themeMode: 'dark',
   seasonalMode: 'off',
@@ -158,6 +191,13 @@ const defaultAppContext: AppContextType = {
   setOracleResponse: () => {},
   conversationHistory: [],
   addConversationTurn: () => {},
+
+  // --- ORACLE THINKING DEFAULTS ---
+  scanProgress: null,
+  setScanProgress: () => {},
+  oracleEngagement: 'guided',
+  setOracleEngagement: () => {},
+  // --- END ORACLE THINKING ---
 
   // --- PROJECT CHRONOS DEFAULTS ---
   analysisHistory: [],
@@ -189,21 +229,31 @@ export const useAppContext = () => {
 };
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Existing state
+  // Theme state
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('tagnetiq-theme') as Theme) || 'darkKnight');
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => (localStorage.getItem('tagnetiq-theme-mode') as ThemeMode) || 'dark');
   const [seasonalMode, setSeasonalModeState] = useState<SeasonalMode>(() => (localStorage.getItem('tagnetiq-seasonal-mode') as SeasonalMode) || 'off');
-  
+
+  // Analysis state
   const [lastAnalysisResult, setLastAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+
+  // UI state
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [isArenaWelcomeOpen, setIsArenaWelcomeOpen] = useState(false);
   const [searchArenaQuery, setSearchArenaQuery] = useState('');
   const [oracleResponse, _setOracleResponse] = useState<OracleResponseType | null>(null);
   const [conversationHistory, setConversationHistory] = useState<ConversationTurn[]>([]);
   const [postWelcomeCallback, setPostWelcomeCallback] = useState<(() => void) | null>(null);
+
+  // --- ORACLE THINKING STATE ---
+  const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
+  const [oracleEngagement, setOracleEngagementState] = useState<OracleEngagement>(() =>
+    (localStorage.getItem('tagnetiq-oracle-engagement') as OracleEngagement) || 'guided'
+  );
+  // --- END ORACLE THINKING ---
 
   // --- PROJECT CHRONOS STATE ---
   const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistoryItem[]>([]);
@@ -219,10 +269,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const { profile, setProfile } = useAuth();
   const { data: session } = supabase.auth.getSession();
 
+  // --- ORACLE THINKING: Persist engagement preference ---
+  const setOracleEngagement = (mode: OracleEngagement) => {
+    setOracleEngagementState(mode);
+    localStorage.setItem('tagnetiq-oracle-engagement', mode);
+  };
+
+  // Clear scanProgress when analysis ends
+  useEffect(() => {
+    if (!isAnalyzing) {
+      // Small delay so the overlay can show "complete" state briefly
+      const timer = setTimeout(() => setScanProgress(null), 600);
+      return () => clearTimeout(timer);
+    }
+  }, [isAnalyzing]);
+  // --- END ORACLE THINKING ---
+
   // --- PROJECT CHRONOS: ACTIONS ---
   const addAnalysisToHistory = async (result: AnalysisResult) => {
     if (!session) return;
-    
+
     try {
       const response = await fetch('/api/analysis/history', {
         method: 'POST',
@@ -232,18 +298,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         },
         body: JSON.stringify({ analysis_result: result })
       });
-      
+
       if (!response.ok) throw new Error('Failed to save analysis.');
-      
+
       const newHistoryItem: AnalysisHistoryItem = await response.json();
-      
-      // Add to the front of the local state array
+
       setAnalysisHistory(prev => [newHistoryItem, ...prev]);
       setTotalHistoryCount(prev => prev + 1);
-      
-      // Store as live result for navigation
       setLiveAnalysisResult(result);
-      
+
       toast.success("Analysis saved to history", {
         description: "You can review it anytime from your history"
       });
@@ -256,24 +319,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const loadAnalysisHistory = async (append = false) => {
     const session = (await supabase.auth.getSession()).data.session;
     if (!session) return;
-    
+
     setIsLoadingHistory(true);
-    
+
     try {
       const params = new URLSearchParams({
         limit: '10',
         offset: append ? historyOffset.toString() : '0',
         ...(historyFilter.category && { category: historyFilter.category })
       });
-      
+
       const response = await fetch(`/api/analysis/history?${params}`, {
         headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
-      
+
       if (!response.ok) throw new Error('Failed to load history');
-      
+
       const data = await response.json();
-      
+
       if (append) {
         setAnalysisHistory(prev => [...prev, ...data.items]);
         setHistoryOffset(prev => prev + data.items.length);
@@ -281,7 +344,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setAnalysisHistory(data.items);
         setHistoryOffset(data.items.length);
       }
-      
+
       setTotalHistoryCount(data.total || 0);
       setHasMoreHistory(data.hasMore || false);
     } catch (error) {
@@ -295,24 +358,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const deleteFromHistory = async (id: string) => {
     const session = (await supabase.auth.getSession()).data.session;
     if (!session) return;
-    
+
     try {
       const response = await fetch(`/api/analysis/history?id=${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
-      
+
       if (!response.ok) throw new Error('Failed to delete');
-      
+
       setAnalysisHistory(prev => prev.filter(item => item.id !== id));
       setTotalHistoryCount(prev => Math.max(0, prev - 1));
-      
-      // If viewing this item, return to live
+
       const deletedIndex = analysisHistory.findIndex(item => item.id === id);
       if (currentAnalysisIndex === deletedIndex) {
         returnToLiveAnalysis();
       }
-      
+
       toast.success("Removed from history");
     } catch (error) {
       toast.error("Could not delete from history");
@@ -321,23 +383,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const navigateHistory = (direction: 'prev' | 'next') => {
     if (analysisHistory.length === 0) return;
-    
+
     let newIndex: number;
-    
+
     if (currentAnalysisIndex === null) {
-      // Currently viewing live analysis
       newIndex = direction === 'prev' ? 0 : -1;
     } else {
-      newIndex = direction === 'prev' 
-        ? currentAnalysisIndex - 1 
+      newIndex = direction === 'prev'
+        ? currentAnalysisIndex - 1
         : currentAnalysisIndex + 1;
     }
-    
+
     if (newIndex >= 0 && newIndex < analysisHistory.length) {
       setCurrentAnalysisIndex(newIndex);
       setLastAnalysisResult(analysisHistory[newIndex].analysis_result);
     } else if (newIndex === -1 || newIndex === analysisHistory.length) {
-      // Return to live analysis
       returnToLiveAnalysis();
     }
   };
@@ -369,7 +429,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [lastAnalysisResult]);
 
-  // Existing functions remain unchanged
+  // Arena welcome
   const showArenaWelcome = (callback?: () => void) => {
     if (profile && !profile.has_seen_arena_intro) {
       if (callback) {
@@ -402,6 +462,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  // Theme mode sync
   useEffect(() => {
     const root = window.document.documentElement;
     root.classList.remove('light', 'dark');
@@ -418,7 +479,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSeasonalModeState(mode);
     localStorage.setItem('tagnetiq-seasonal-mode', mode);
   };
-  
+
   const startScanWithCategory = (categoryId: string, subcategoryId: string | null) => {
     const categoryToSet = subcategoryId || categoryId;
     setSelectedCategory(categoryToSet);
@@ -440,14 +501,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const value = {
-    // Existing state
+    // Theme
     theme, themeMode, seasonalMode,
     setTheme: handleSetTheme,
     setThemeMode, setSeasonalMode,
+
+    // Analysis
     lastAnalysisResult, setLastAnalysisResult,
     isScannerOpen, setIsScannerOpen,
     isAnalyzing, setIsAnalyzing,
     selectedCategory, setSelectedCategory,
+
+    // UI
     isFeedbackModalOpen, setIsFeedbackModalOpen,
     isArenaWelcomeOpen, setIsArenaWelcomeOpen,
     searchArenaQuery, setSearchArenaQuery,
@@ -457,6 +522,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setOracleResponse,
     conversationHistory,
     addConversationTurn,
+
+    // --- ORACLE THINKING ---
+    scanProgress,
+    setScanProgress,
+    oracleEngagement,
+    setOracleEngagement,
+    // --- END ORACLE THINKING ---
 
     // --- PROJECT CHRONOS ---
     analysisHistory,

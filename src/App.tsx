@@ -1,4 +1,8 @@
 // FILE: src/App.tsx
+//
+// v2.1 CHANGES:
+//   - Added OracleThinkingOverlay — renders during analysis wait
+//   - Replaces the dead 15-second screen with live progress visualization
 
 import React, { useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
@@ -47,6 +51,9 @@ import DualScanner from '@/components/scanner';
 // UPDATED: Import from refactored oracle module
 import { OraclePage } from '@/components/oracle';
 
+// NEW: Oracle Thinking Overlay — replaces the dead screen during analysis
+import OracleThinkingOverlay from '@/components/analysis/OracleThinkingOverlay';
+
 // v2.0: Tour overlay — event-driven, choice steps, chained tours
 import TourOverlay from '@/components/onboarding/TourOverlay';
 
@@ -59,7 +66,7 @@ import { useAnalytics } from '@/hooks/useAnalytics';
 
 const OnboardingGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const { user, profile, loading } = useAuth();
-    
+
     if (loading) return null;
     if (!user) return <>{children}</>;
     if (profile && !profile.onboarding_complete) {
@@ -75,7 +82,7 @@ const OnboardingGuard: React.FC<{ children: React.ReactNode }> = ({ children }) 
 const AppRoutes: React.FC = () => {
     const { user, profile, isAdmin } = useAuth();
     const needsOnboarding = user && profile && !profile.onboarding_complete;
-    
+
     return (
         <Routes>
             {/* Public routes */}
@@ -86,13 +93,13 @@ const AppRoutes: React.FC = () => {
             <Route path="/investor" element={<InvestorPortal />} />
 
             {/* Onboarding route */}
-            <Route 
-                path="/onboarding" 
+            <Route
+                path="/onboarding"
                 element={
                     <ProtectedRoute isAllowed={!!user} to="/login">
                         {needsOnboarding ? <Onboarding /> : <Navigate to="/dashboard" replace />}
                     </ProtectedRoute>
-                } 
+                }
             />
 
             {/* Protected routes — wrapped with OnboardingGuard */}
@@ -197,7 +204,7 @@ const AppRoutes: React.FC = () => {
 };
 
 // =============================================================================
-// APP CONTENT — modals, scanner, tour overlay
+// APP CONTENT — modals, scanner, tour overlay, thinking overlay
 // =============================================================================
 
 const AppContent: React.FC = () => {
@@ -207,6 +214,7 @@ const AppContent: React.FC = () => {
     isFeedbackModalOpen, setIsFeedbackModalOpen,
     isArenaWelcomeOpen, setIsArenaWelcomeOpen,
     isScannerOpen, setIsScannerOpen,
+    isAnalyzing,
   } = useAppContext();
   const { trackEvent } = useAnalytics();
 
@@ -229,12 +237,9 @@ const AppContent: React.FC = () => {
   }, [user]);
 
   // ── Dispatch scanner-opened event ─────────────────────
-  // Fires once per session when the scanner first opens.
-  // TourOverlay listens for this to trigger the first_scan tour.
   useEffect(() => {
     if (isScannerOpen && !scannerOpenedRef.current) {
       scannerOpenedRef.current = true;
-      // Small delay to let scanner DOM mount
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('tagnetiq:scanner-opened'));
       }, 300);
@@ -242,8 +247,6 @@ const AppContent: React.FC = () => {
   }, [isScannerOpen]);
 
   // ── Tour action handler ───────────────────────────────
-  // Called when user picks a choice in the welcome tour.
-  // Bridges between TourOverlay and app state/navigation.
   const handleTourAction = useCallback((
     action: string,
     payload?: { navigateTo?: string; triggersTour?: string }
@@ -293,7 +296,6 @@ const AppContent: React.FC = () => {
     );
   }
 
-  // Screen name for tour greeting — fallback chain
   const screenName = profile?.screen_name || profile?.full_name || user?.email?.split('@')[0] || 'friend';
 
   return (
@@ -305,9 +307,13 @@ const AppContent: React.FC = () => {
       <ArenaWelcomeAlert isOpen={isArenaWelcomeOpen} onDismiss={handleDismissWelcome} />
       <DualScanner isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} />
 
-      {/* v2.0: Tour overlay — event-driven, chained tours
-          Only mounts after onboarding is complete (inside the app, not on paywall).
-          Manages welcome_intro → first_scan → first_results chain internally. */}
+      {/* NEW: Oracle Thinking Overlay — replaces the dead screen during analysis
+          Renders when isAnalyzing is true (set by DualScanner on submit).
+          Reads real-time SSE progress from AppContext.scanProgress.
+          Auto-hides when isAnalyzing flips to false (analysis complete or error). */}
+      <OracleThinkingOverlay />
+
+      {/* v2.0: Tour overlay */}
       {user && profile?.onboarding_complete && (
         <TourOverlay
           screenName={screenName}

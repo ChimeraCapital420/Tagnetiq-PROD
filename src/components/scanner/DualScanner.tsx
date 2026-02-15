@@ -1,9 +1,12 @@
 // FILE: src/components/scanner/DualScanner.tsx
 // REFACTORED: Thin orchestrator composing modular hooks and components
 // Mobile-first: Full viewport camera, device-side compression, haptic feedback
-// 
-// This file went from ~1200 lines monolith to ~400 lines orchestrator
-// All logic is now in hooks/ and components/ for maintainability
+//
+// v2.0 CHANGES:
+//   - handleAnalyze now uses /api/analyze-stream (SSE) instead of /api/analyze
+//   - Pipes real-time progress events to AppContext.setScanProgress
+//   - OracleThinkingOverlay reads these events and renders the thinking experience
+//   - Falls back to /api/analyze if streaming fails
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useZxing } from 'react-zxing';
@@ -28,14 +31,74 @@ import { compressImage } from './utils/compression';
 import CameraSettingsModal from '../CameraSettingsModal';
 import DevicePairingModal from '../DevicePairingModal';
 
+// Types for scan progress
+import type { ScanProgress, ScanProgressModel } from '@/contexts/AppContext';
+
 // Styles
 import '../DualScanner.css';
+
+// =============================================================================
+// SSE STREAM PARSER — Reads Server-Sent Events from analyze-stream
+// =============================================================================
+
+interface SSEEvent {
+  type: string;
+  timestamp: number;
+  data: any;
+}
+
+/**
+ * Reads the SSE response body and calls onEvent for each parsed event.
+ * Returns when the stream ends or errors.
+ */
+async function readSSEStream(
+  response: Response,
+  onEvent: (event: SSEEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!response.body) throw new Error('No response body');
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      if (signal?.aborted) break;
+
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const event: SSEEvent = JSON.parse(line.slice(6));
+            onEvent(event);
+          } catch {
+            // Skip malformed events
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 // =============================================================================
 // MAIN COMPONENT
 // =============================================================================
 const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
-  const { setLastAnalysisResult, setIsAnalyzing, selectedCategory } = useAppContext();
+  const {
+    setLastAnalysisResult,
+    setIsAnalyzing,
+    selectedCategory,
+    setScanProgress,
+  } = useAppContext();
   const { session } = useAuth();
 
   // ---------------------------------------------------------------------------
@@ -49,6 +112,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // ---------------------------------------------------------------------------
   // HOOKS
@@ -74,11 +138,11 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
   const handleBarcodeDetected = useCallback((barcode: string) => {
     setIsProcessing(true);
-    
+
     if ('vibrate' in navigator) {
       navigator.vibrate([50, 30, 50]);
     }
-    
+
     toast.success(`Barcode detected: ${barcode}`);
     setLastAnalysisResult({
       id: uuidv4(),
@@ -176,8 +240,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       reader.onload = async (e) => {
         if (e.target?.result) {
           const dataUrl = e.target.result as string;
-          
-          // Generate document thumbnail
+
           const canvas = document.createElement('canvas');
           const ctx = canvas.getContext('2d');
           canvas.width = 200;
@@ -193,7 +256,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
           }
           const thumbnail = canvas.toDataURL('image/png');
 
-          // Detect document type
           const fileName = file.name.toLowerCase();
           let documentType: 'certificate' | 'grading' | 'appraisal' | 'receipt' | 'authenticity' | 'other' = 'other';
           if (fileName.includes('certificate') || fileName.includes('cert')) documentType = 'certificate';
@@ -209,7 +271,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
             name: file.name,
             metadata: { documentType, description: `${documentType} document` }
           });
-          
+
           toast.success(`Document: ${documentType}`);
         }
       };
@@ -219,7 +281,139 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   }, [items]);
 
   // ---------------------------------------------------------------------------
-  // ANALYSIS SUBMISSION
+  // SSE EVENT HANDLER — Maps stream events to scanProgress state
+  // ---------------------------------------------------------------------------
+  const handleSSEEvent = useCallback((event: SSEEvent) => {
+    switch (event.type) {
+      case 'init':
+        setScanProgress({
+          stage: 'identifying',
+          message: 'Initializing analysis engine...',
+          aiModels: (event.data.models || []).map((m: any) => ({
+            name: m.name,
+            icon: m.icon,
+            color: m.color,
+            status: 'waiting' as const,
+          })),
+          modelsComplete: 0,
+          modelsTotal: event.data.totalModels || 7,
+          currentEstimate: 0,
+          confidence: 0,
+          category: null,
+          marketApis: [],
+        });
+        break;
+
+      case 'phase':
+        setScanProgress(prev => {
+          if (!prev) return prev;
+          const stageMap: Record<string, ScanProgress['stage']> = {
+            ai: 'ai_consensus',
+            market: 'market_data',
+            finalizing: 'finalizing',
+          };
+          return {
+            ...prev,
+            stage: stageMap[event.data.phase] || prev.stage,
+            message: event.data.message || prev.message,
+            marketApis: event.data.apis || prev.marketApis,
+          };
+        });
+        break;
+
+      case 'ai_start':
+        setScanProgress(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            stage: 'ai_consensus',
+            aiModels: prev.aiModels.map(m =>
+              m.name === event.data.model ? { ...m, status: 'thinking' as const } : m
+            ),
+          };
+        });
+        break;
+
+      case 'ai_complete':
+        setScanProgress(prev => {
+          if (!prev) return prev;
+          const modelName = event.data.model;
+          const newModels = prev.aiModels.map(m =>
+            m.name === modelName
+              ? {
+                  ...m,
+                  status: (event.data.success ? 'complete' : 'error') as 'complete' | 'error',
+                  estimate: event.data.estimate,
+                }
+              : m
+          );
+          return {
+            ...prev,
+            aiModels: newModels,
+            modelsComplete: newModels.filter(m => m.status === 'complete' || m.status === 'error').length,
+          };
+        });
+        break;
+
+      case 'price':
+        setScanProgress(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            currentEstimate: event.data.estimate || prev.currentEstimate,
+            confidence: event.data.confidence || prev.confidence,
+          };
+        });
+        break;
+
+      case 'category':
+        setScanProgress(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            category: event.data.displayName || event.data.category || null,
+          };
+        });
+        break;
+
+      case 'api_start':
+        setScanProgress(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            stage: 'market_data',
+            message: `Checking ${event.data.api}...`,
+          };
+        });
+        break;
+
+      case 'api_complete':
+        setScanProgress(prev => {
+          if (!prev) return prev;
+          const msg = event.data.success
+            ? `${event.data.api}: ${event.data.listings || 0} listings found`
+            : prev.message;
+          return { ...prev, message: msg };
+        });
+        break;
+
+      case 'complete':
+        setScanProgress(prev => prev ? { ...prev, stage: 'complete', message: 'Analysis complete' } : prev);
+        break;
+
+      case 'error':
+        setScanProgress(prev => prev ? {
+          ...prev,
+          stage: 'error',
+          message: event.data.message || 'Analysis failed',
+          error: event.data.message,
+        } : prev);
+        break;
+    }
+  }, [setScanProgress]);
+
+  // ---------------------------------------------------------------------------
+  // ANALYSIS SUBMISSION — Now uses SSE streaming with fallback
   // ---------------------------------------------------------------------------
   const handleAnalyze = useCallback(async () => {
     const selectedItems = items.getSelectedItems();
@@ -242,14 +436,30 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       return;
     }
 
+    // Abort any previous analysis
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+
     setIsProcessing(true);
     setIsAnalyzing(true);
+
+    // Initialize scan progress immediately
+    setScanProgress({
+      stage: 'preparing',
+      message: ghostMode.isGhostMode
+        ? '👻 Preparing ghost analysis...'
+        : `Preparing ${selectedItems.length} item${selectedItems.length > 1 ? 's' : ''} for analysis...`,
+      aiModels: [],
+      modelsComplete: 0,
+      modelsTotal: 7,
+      currentEstimate: 0,
+      confidence: 0,
+      category: null,
+      marketApis: [],
+    });
+
+    // Close scanner — the OracleThinkingOverlay will render in its place
     onClose();
-    
-    const toastMsg = ghostMode.isGhostMode 
-      ? `👻 Ghost analyzing ${selectedItems.length} items...`
-      : `Analyzing ${selectedItems.length} items...`;
-    toast.info(toastMsg);
 
     try {
       // Prepare items for analysis
@@ -306,35 +516,92 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         };
       }
 
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify(requestPayload)
-      });
+      // =====================================================================
+      // ATTEMPT STREAMING ANALYSIS (SSE)
+      // Falls back to standard /api/analyze if streaming fails
+      // =====================================================================
+      let analysisResult: any = null;
+      let usedStreaming = false;
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        if (response.status === 413 || errorText.includes('PAYLOAD_TOO_LARGE')) {
-          throw new Error('Image too large. Try smaller image.');
+      try {
+        const streamResponse = await fetch('/api/analyze-stream', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify(requestPayload),
+          signal: abortRef.current.signal,
+        });
+
+        if (streamResponse.ok && streamResponse.body) {
+          usedStreaming = true;
+
+          // Read the SSE stream — each event updates scanProgress
+          await readSSEStream(
+            streamResponse,
+            (event) => {
+              handleSSEEvent(event);
+
+              // Capture the final result from the 'complete' event
+              if (event.type === 'complete') {
+                analysisResult = event.data;
+              }
+            },
+            abortRef.current.signal
+          );
         }
-        throw new Error(`Analysis failed: ${response.status}`);
+      } catch (streamError: any) {
+        if (streamError.name === 'AbortError') throw streamError;
+        console.warn('Streaming failed, falling back to standard analysis:', streamError.message);
       }
 
-      const analysisResult = await response.json();
-      
+      // Fallback: If streaming didn't produce a result, use standard endpoint
+      if (!analysisResult) {
+        setScanProgress(prev => prev ? {
+          ...prev,
+          stage: 'ai_consensus',
+          message: 'Analyzing your item...',
+        } : prev);
+
+        const response = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify(requestPayload),
+          signal: abortRef.current.signal,
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          if (response.status === 413 || errorText.includes('PAYLOAD_TOO_LARGE')) {
+            throw new Error('Image too large. Try a smaller image.');
+          }
+          throw new Error(`Analysis failed: ${response.status}`);
+        }
+
+        analysisResult = await response.json();
+      }
+
       // Build ghost data for result
-      const ghostData = ghostMode.isGhostMode 
-        ? ghostMode.buildGhostData(analysisResult.estimatedValue || 0) 
+      const ghostData = ghostMode.isGhostMode
+        ? ghostMode.buildGhostData(analysisResult.estimatedValue || 0)
         : null;
+
+      // Signal completion
+      setScanProgress(prev => prev ? { ...prev, stage: 'complete', message: 'Analysis complete' } : prev);
+
+      // Small delay so user sees the "complete" state
+      await new Promise(resolve => setTimeout(resolve, 400));
 
       setLastAnalysisResult({
         ...analysisResult,
         id: analysisResult.id || uuidv4(),
-        imageUrls: requestPayload.originalImageUrls?.length 
-          ? requestPayload.originalImageUrls 
+        imageUrls: requestPayload.originalImageUrls?.length
+          ? requestPayload.originalImageUrls
           : selectedItems.map(item => item.thumbnail),
         ghostData: ghostData || undefined,
       });
@@ -344,19 +611,30 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         toast.success('👻 Ghost Analysis Complete!', {
           description: `Potential profit: $${margin.toFixed(2)} (${ghostData.kpis.velocity_score} velocity)`,
         });
-      } else {
-        toast.success('Analysis complete!');
       }
+      // No toast for regular analysis — the result appearing IS the feedback
 
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError') return; // User navigated away
+
       console.error('Analysis error:', error);
+      setScanProgress(prev => prev ? {
+        ...prev,
+        stage: 'error',
+        message: error.message || 'Analysis failed',
+        error: error.message,
+      } : prev);
+
+      // Give user time to see the error before clearing
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
       setLastAnalysisResult(null);
-      toast.error('Analysis Failed', { description: (error as Error).message });
+      toast.error('Analysis Failed', { description: error.message });
     } finally {
       setIsProcessing(false);
       setIsAnalyzing(false);
     }
-  }, [items, session, ghostMode, selectedCategory, onClose, setIsAnalyzing, setLastAnalysisResult]);
+  }, [items, session, ghostMode, selectedCategory, onClose, setIsAnalyzing, setLastAnalysisResult, setScanProgress, handleSSEEvent]);
 
   // ---------------------------------------------------------------------------
   // LIFECYCLE
@@ -372,6 +650,13 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     }
     return () => camera.stopCamera();
   }, [isOpen]);
+
+  // Abort analysis if scanner reopens or component unmounts
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   // Connect zxing ref to video element
   useEffect(() => {
@@ -409,7 +694,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                 <Ghost className={`w-5 h-5 ${ghostMode.isGhostMode ? 'animate-pulse' : ''}`} />
               </Button>
             </div>
-            
+
             <div className="flex items-center gap-2">
               {ghostMode.isGhostMode && (
                 <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/30">
@@ -419,7 +704,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               )}
               <span className="text-sm text-muted-foreground">{items.selectedCount}/{items.totalCount}</span>
             </div>
-            
+
             <div className="flex items-center gap-1">
               <button
                 onClick={() => gridOverlay.toggle()}
@@ -429,7 +714,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
               >
                 <Grid3X3 className="w-5 h-5" />
               </button>
-              
+
               {camera.capabilities.torch && (
                 <button
                   onClick={() => camera.setTorch(!camera.settings.torch)}
@@ -440,7 +725,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                   <Flashlight className="w-5 h-5" />
                 </button>
               )}
-              
+
               <Button variant="destructive" size="icon" onClick={onClose} className="touch-manipulation h-10 w-10 ml-1">
                 <X className="w-5 h-5" />
               </Button>
@@ -545,7 +830,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
                   disabled={isProcessing || items.isCompressing || (ghostMode.isGhostMode && !ghostMode.isReady)}
                   size="lg"
                   className={`touch-manipulation shadow-xl ${
-                    ghostMode.isGhostMode 
+                    ghostMode.isGhostMode
                       ? 'bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700'
                       : 'bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700'
                   }`}
@@ -598,7 +883,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         currentDeviceId={camera.currentDeviceId}
         onDeviceChange={(id) => camera.startCamera(id)}
       />
-      
+
       <DevicePairingModal
         isOpen={isDevicePairingOpen}
         onClose={() => setIsDevicePairingOpen(false)}

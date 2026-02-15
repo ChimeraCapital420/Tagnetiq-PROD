@@ -1,0 +1,489 @@
+/* FILE: src/components/analysis/OracleThinkingOverlay.css
+ * STATUS: Oracle Thinking Experience v1.0
+ *
+ * PERFORMANCE NOTES:
+ *   - All animations use transform + opacity only (GPU-composited)
+ *   - will-change hints on animated elements
+ *   - No box-shadow animations (triggers paint)
+ *   - prefers-reduced-motion: all animations pause
+ *   - Mobile-first breakpoints
+ */
+
+/* =============================================================================
+   OVERLAY — Full-screen backdrop
+   ============================================================================= */
+
+.oracle-thinking-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900; /* Below scanner (1000) but above everything else */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.oracle-thinking-bg {
+  position: absolute;
+  inset: 0;
+  background: 
+    radial-gradient(ellipse at 30% 20%, rgba(var(--cymatic-rgb, 0, 200, 255), 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(168, 85, 247, 0.05) 0%, transparent 50%),
+    linear-gradient(135deg, hsl(var(--background)) 0%, hsl(222, 20%, 8%) 50%, hsl(var(--background)) 100%);
+  pointer-events: none;
+}
+
+.oracle-thinking-content {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 24px 16px 100px;
+  text-align: center;
+}
+
+/* =============================================================================
+   CYMATIC RINGS — Pure CSS interference pattern
+   ============================================================================= */
+
+.cymatic-container {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cymatic-ring {
+  position: absolute;
+  width: var(--ring-size);
+  height: var(--ring-size);
+  border-radius: 50%;
+  border: 1px solid rgba(var(--cymatic-rgb, 0, 200, 255), calc(0.15 * var(--cymatic-intensity, 1)));
+  background: radial-gradient(
+    circle,
+    rgba(var(--cymatic-rgb, 0, 200, 255), calc(0.03 * var(--cymatic-intensity, 1))) 0%,
+    transparent 70%
+  );
+  will-change: transform, opacity;
+  animation: 
+    cymatic-breathe var(--ring-duration, 3s) ease-in-out var(--ring-delay, 0s) infinite,
+    cymatic-rotate calc(var(--ring-duration, 3s) * 4) linear var(--ring-delay, 0s) infinite;
+}
+
+/* Alternate rings rotate opposite direction */
+.cymatic-ring:nth-child(even) {
+  animation: 
+    cymatic-breathe var(--ring-duration, 3s) ease-in-out var(--ring-delay, 0s) infinite,
+    cymatic-rotate-reverse calc(var(--ring-duration, 3s) * 4) linear var(--ring-delay, 0s) infinite;
+  border-style: dashed;
+  border-width: 0.5px;
+}
+
+.cymatic-core {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(var(--cymatic-rgb, 0, 200, 255), calc(0.6 * var(--cymatic-intensity, 1))) 0%,
+    rgba(var(--cymatic-rgb, 0, 200, 255), calc(0.1 * var(--cymatic-intensity, 1))) 60%,
+    transparent 100%
+  );
+  will-change: transform;
+  animation: cymatic-core-pulse 2s ease-in-out infinite;
+}
+
+@keyframes cymatic-breathe {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.4;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.8;
+  }
+}
+
+@keyframes cymatic-rotate {
+  from { transform: scale(1) rotate(0deg); }
+  to { transform: scale(1) rotate(360deg); }
+}
+
+@keyframes cymatic-rotate-reverse {
+  from { transform: scale(1) rotate(360deg); }
+  to { transform: scale(1) rotate(0deg); }
+}
+
+@keyframes cymatic-core-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+}
+
+/* =============================================================================
+   PROGRESS RING — CSS conic-gradient
+   ============================================================================= */
+
+.progress-ring {
+  position: absolute;
+  width: var(--ring-size, 140px);
+  height: var(--ring-size, 140px);
+  border-radius: 50%;
+  background: conic-gradient(
+    rgba(var(--cymatic-rgb, 0, 200, 255), 0.8) calc(var(--progress, 0) * 1%),
+    rgba(255, 255, 255, 0.06) calc(var(--progress, 0) * 1%)
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: --progress 0.6s ease-out;
+  /* Fallback: transition the background directly */
+  transition: background 0.6s ease-out;
+}
+
+.progress-ring-inner {
+  width: calc(var(--ring-size, 140px) - 6px);
+  height: calc(var(--ring-size, 140px) - 6px);
+  border-radius: 50%;
+  background: hsl(var(--background));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.progress-ring-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 22px;
+  font-weight: 700;
+  color: rgba(var(--cymatic-rgb, 0, 200, 255), 0.9);
+}
+
+/* =============================================================================
+   STAGE LABEL
+   ============================================================================= */
+
+.oracle-thinking-stage {
+  font-size: 14px;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  min-height: 22px;
+  letter-spacing: 0.02em;
+}
+
+/* =============================================================================
+   PRICE DISPLAY
+   ============================================================================= */
+
+.oracle-thinking-price {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 24px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 280px;
+}
+
+.oracle-thinking-price-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: hsl(var(--muted-foreground));
+}
+
+.oracle-thinking-price-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 36px;
+  font-weight: 700;
+  color: rgb(16, 185, 129);
+  transition: all 0.4s ease-out;
+}
+
+.oracle-thinking-confidence {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  color: hsl(var(--muted-foreground));
+}
+
+/* =============================================================================
+   CATEGORY BADGE
+   ============================================================================= */
+
+.oracle-thinking-category {
+  font-size: 12px;
+  padding: 5px 14px;
+  border-radius: 12px;
+  background: rgba(168, 85, 247, 0.15);
+  color: rgb(167, 139, 250);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  text-transform: capitalize;
+}
+
+/* =============================================================================
+   AI MODEL DOTS — Compact mobile grid
+   ============================================================================= */
+
+.model-dots-row {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: 280px;
+}
+
+.model-dot {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  border: 1.5px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.model-dot--waiting {
+  opacity: 0.35;
+}
+
+.model-dot--thinking {
+  border-color: var(--dot-color, rgba(255, 255, 255, 0.3));
+  animation: model-dot-think 1.2s ease-in-out infinite;
+}
+
+.model-dot--complete {
+  border-color: rgb(16, 185, 129);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.model-dot--error {
+  border-color: rgba(239, 68, 68, 0.5);
+  opacity: 0.4;
+}
+
+.model-dot-icon {
+  line-height: 1;
+}
+
+@keyframes model-dot-think {
+  0%, 100% { transform: scale(1); opacity: 0.6; }
+  50% { transform: scale(1.15); opacity: 1; }
+}
+
+/* =============================================================================
+   ORACLE SPEECH BUBBLE — Conversational mode
+   ============================================================================= */
+
+.oracle-thinking-speech {
+  width: 100%;
+  max-width: 320px;
+}
+
+.oracle-thinking-speech-bubble {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px solid rgba(168, 85, 247, 0.15);
+  border-radius: 16px;
+  border-top-left-radius: 4px;
+  text-align: left;
+}
+
+.oracle-thinking-speech-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.oracle-thinking-speech-bubble p {
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0;
+  font-style: italic;
+}
+
+/* =============================================================================
+   FUN FACT
+   ============================================================================= */
+
+.oracle-thinking-fact {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 320px;
+  text-align: left;
+}
+
+.oracle-thinking-fact-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.oracle-thinking-fact-text {
+  font-size: 12px;
+  line-height: 1.4;
+  color: hsl(var(--muted-foreground));
+}
+
+/* =============================================================================
+   ELAPSED TIME
+   ============================================================================= */
+
+.oracle-thinking-elapsed {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.25);
+}
+
+/* =============================================================================
+   ENGAGEMENT TOGGLE — Bottom sticky
+   ============================================================================= */
+
+.oracle-thinking-controls {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 16px;
+  display: flex;
+  justify-content: center;
+  background: linear-gradient(to top, hsl(var(--background)) 60%, transparent);
+  z-index: 901;
+}
+
+.engagement-toggle {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.engagement-toggle-btn {
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.engagement-toggle-btn--active {
+  background: rgba(var(--cymatic-rgb, 0, 200, 255), 0.15);
+  color: rgba(var(--cymatic-rgb, 0, 200, 255), 0.9);
+}
+
+/* =============================================================================
+   ERROR STATE
+   ============================================================================= */
+
+.oracle-thinking-error {
+  padding: 16px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.oracle-thinking-error p {
+  font-size: 13px;
+  color: rgb(252, 165, 165);
+  margin: 0;
+}
+
+/* =============================================================================
+   REDUCED MOTION — Pause all animations, show static indicators
+   ============================================================================= */
+
+.oracle-thinking-overlay--reduced .cymatic-ring,
+.oracle-thinking-overlay--reduced .cymatic-core,
+.oracle-thinking-overlay--reduced .model-dot--thinking {
+  animation: none !important;
+}
+
+.oracle-thinking-overlay--reduced .cymatic-ring {
+  opacity: 0.3;
+}
+
+.oracle-thinking-overlay--reduced .cymatic-core {
+  opacity: 0.5;
+}
+
+/* =============================================================================
+   RESPONSIVE — Adjust for very small screens
+   ============================================================================= */
+
+@media (max-height: 600px) {
+  .oracle-thinking-content {
+    gap: 12px;
+    padding-top: 16px;
+  }
+
+  .cymatic-container {
+    width: 150px;
+    height: 150px;
+  }
+
+  .progress-ring {
+    --ring-size: 110px !important;
+  }
+
+  .oracle-thinking-price-value {
+    font-size: 28px;
+  }
+
+  .oracle-thinking-speech,
+  .oracle-thinking-fact {
+    display: none; /* Hide verbose elements on tiny screens */
+  }
+}
+
+@media (min-width: 768px) {
+  .cymatic-container {
+    width: 240px;
+    height: 240px;
+  }
+
+  .progress-ring {
+    --ring-size: 170px !important;
+  }
+
+  .oracle-thinking-content {
+    gap: 24px;
+  }
+}
