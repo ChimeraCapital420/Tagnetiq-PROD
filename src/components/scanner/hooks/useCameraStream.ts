@@ -1,12 +1,13 @@
 // FILE: src/components/scanner/hooks/useCameraStream.ts
 // Camera stream management hook
-// v3.4: FIX — startCamera() is now truly idempotent
-//   If a live stream already exists (and no different device requested), skip entirely.
-//   This prevents black screen regardless of how many times startCamera is called.
-// v3.3: FIX — orphaned permission stream, explicit play(), concurrent guard
-// v3.2: Accepts optional haptics — replaces all inline navigator.vibrate() calls
-// FIXED: Module-level logging to prevent spam across component lifecycles
-// Mobile-first: Prefers rear camera, optimized constraints
+// v4.0: ARCHITECTURE FIX — Declarative camera lifecycle
+//   Previous versions exposed startCamera() which could be called from
+//   anywhere, any number of times → multiple streams → black screen.
+//   Now accepts `active` boolean. ONE internal useEffect starts/stops
+//   the camera. No external imperative calls needed for lifecycle.
+//   switchCamera()/startCamera(deviceId) still available for device switching only.
+//
+// Mobile-first: Prefers rear camera, optimized constraints, explicit play()
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
@@ -14,22 +15,17 @@ import type { CameraCapabilities, CameraSettings } from '../types';
 import type { UseHealingHapticsReturn } from './useHealingHaptics';
 
 // =============================================================================
-// MODULE-LEVEL LOGGING CONTROL
-// Persists across component mounts/unmounts to prevent spam
+// MODULE-LEVEL: Ensures only ONE stream exists globally
+// Prevents multiple hook instances or double-mounts from creating parallel streams
 // =============================================================================
-const loggedStreamIds = new Set<string>();
-const loggedCapabilityIds = new Set<string>();
-
-function getStreamId(stream: MediaStream | null): string {
-  if (!stream) return 'null';
-  const tracks = stream.getVideoTracks();
-  return tracks.length > 0 ? tracks[0].id : 'no-track';
-}
+let activeStreamId: string | null = null;
 
 // =============================================================================
 // TYPES
 // =============================================================================
 export interface UseCameraStreamOptions {
+  /** Whether the camera should be active (replaces manual startCamera/stopCamera) */
+  active?: boolean;
   /** Whether to include audio (video mode) */
   includeAudio?: boolean;
   /** Healing haptics hook return (optional — degrades gracefully) */
@@ -45,7 +41,7 @@ export interface UseCameraStreamReturn {
   capabilities: CameraCapabilities;
   settings: CameraSettings;
 
-  // Actions
+  // Actions — switchCamera still needs imperative call
   startCamera: (deviceId?: string) => Promise<void>;
   stopCamera: () => void;
   switchCamera: () => void;
@@ -73,11 +69,11 @@ const DEFAULT_SETTINGS: CameraSettings = {
 export function useCameraStream(
   options: UseCameraStreamOptions = {}
 ): UseCameraStreamReturn {
-  const { includeAudio = false, haptics } = options;
+  const { active = false, includeAudio = false, haptics } = options;
 
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null!);
   const streamRef = useRef<MediaStream | null>(null);
-  const isStartingRef = useRef(false); // Prevent concurrent starts
+  const mountedRef = useRef(true);
 
   const [isActive, setIsActive] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -89,16 +85,9 @@ export function useCameraStream(
   const [settings, setSettings] = useState<CameraSettings>(DEFAULT_SETTINGS);
 
   // ==========================================================================
-  // DETECT CAMERA CAPABILITIES (with logging control)
+  // DETECT CAMERA CAPABILITIES
   // ==========================================================================
   const detectCapabilities = useCallback((track: MediaStreamTrack) => {
-    const trackId = track.id;
-
-    // Already logged this track? Skip
-    if (loggedCapabilityIds.has(trackId)) {
-      return;
-    }
-
     try {
       const caps = track.getCapabilities?.() as any;
       if (!caps) return;
@@ -117,10 +106,8 @@ export function useCameraStream(
         whiteBalanceMode: caps.whiteBalanceMode || [],
       };
 
-      // Log ONCE per track - add to set FIRST
-      loggedCapabilityIds.add(trackId);
-      console.log('📷 [CAMERA] Capabilities detected:', {
-        trackId: trackId.slice(0, 8),
+      console.log('📷 [CAMERA] Capabilities:', {
+        trackId: track.id.slice(0, 8),
         torch: detected.torch,
         zoom: detected.zoom
           ? `${detected.zoom.min}-${detected.zoom.max}x`
@@ -135,83 +122,36 @@ export function useCameraStream(
   }, []);
 
   // ==========================================================================
-  // ENUMERATE DEVICES
+  // INTERNAL: Create a camera stream and attach to video element
+  // This is the ONLY function that calls getUserMedia for the real stream.
   // ==========================================================================
-  const enumerateDevices = useCallback(async () => {
-    try {
-      const allDevices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = allDevices.filter((d) => d.kind === 'videoinput');
-      setDevices(videoDevices);
-      return videoDevices;
-    } catch (error) {
-      console.error('[CAMERA] Error enumerating devices:', error);
-      return [];
-    }
-  }, []);
-
-  // ==========================================================================
-  // START CAMERA
-  //
-  // v3.4 FIX: IDEMPOTENT — if a live stream already exists and no specific
-  //   device was requested, skip entirely. This is the nuclear fix for the
-  //   double-start problem. No matter HOW MANY times startCamera is called
-  //   (useEffect re-fires, external components, React Strict Mode, etc.),
-  //   it will only create ONE stream.
-  //
-  // v3.3 FIX: Permission stream stopped immediately after enumeration.
-  // v3.3 FIX: Explicit play() after srcObject assignment.
-  // v3.3 FIX: isStartingRef prevents truly concurrent calls.
-  // ==========================================================================
-  const startCamera = useCallback(
-    async (deviceId?: string) => {
-      // ================================================================
-      // IDEMPOTENCY CHECK — skip if already have a live stream
-      // Only create a new stream if:
-      //   (a) No stream exists at all, OR
-      //   (b) A specific different device was requested (switchCamera)
-      // ================================================================
-      if (streamRef.current && !deviceId) {
-        const existingTracks = streamRef.current.getVideoTracks();
-        if (existingTracks.length > 0 && existingTracks[0].readyState === 'live') {
-          // Stream is already live — just make sure video element is connected
-          if (videoRef.current && !videoRef.current.srcObject) {
-            videoRef.current.srcObject = streamRef.current;
-            try { await videoRef.current.play(); } catch { /* deferred */ }
-          }
-          console.log('📷 [CAMERA] Stream already live, skipping restart');
-          return;
-        }
-      }
-
-      // Prevent concurrent starts — second call is a no-op until first completes
-      if (isStartingRef.current) {
-        console.log('📷 [CAMERA] Start already in progress, skipping');
-        return;
-      }
-      isStartingRef.current = true;
-
-      // Stop any existing stream (dead or wrong device)
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-      }
-
+  const createStream = useCallback(
+    async (deviceId?: string): Promise<MediaStream | null> => {
       try {
-        // Get available devices first
-        let videoDevices = devices;
-        if (videoDevices.length === 0) {
-          // Need initial permission to enumerate — request then STOP immediately
-          // v3.3 FIX: This was the orphaned stream causing black screen
-          const permissionStream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-          });
-          // Stop IMMEDIATELY — we only needed this for permission, not the stream
-          permissionStream.getTracks().forEach((track) => track.stop());
+        // Get available devices if we don't have them
+        let videoDevices: MediaDeviceInfo[] = [];
+        try {
+          const allDevices = await navigator.mediaDevices.enumerateDevices();
+          videoDevices = allDevices.filter((d) => d.kind === 'videoinput');
 
-          videoDevices = await enumerateDevices();
+          // If labels are empty, we need permission first
+          if (videoDevices.length > 0 && !videoDevices[0].label) {
+            const permStream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+            });
+            permStream.getTracks().forEach((t) => t.stop());
+            const retry = await navigator.mediaDevices.enumerateDevices();
+            videoDevices = retry.filter((d) => d.kind === 'videoinput');
+          }
+        } catch {
+          // Can't enumerate — will use facingMode fallback
         }
 
-        // Select device - prefer rear camera if no device specified
+        if (mountedRef.current) {
+          setDevices(videoDevices);
+        }
+
+        // Select device — prefer rear camera
         let selectedDeviceId = deviceId;
         if (!selectedDeviceId && videoDevices.length > 0) {
           const rearCamera = videoDevices.find(
@@ -220,11 +160,10 @@ export function useCameraStream(
               d.label.toLowerCase().includes('rear') ||
               d.label.toLowerCase().includes('environment')
           );
-          selectedDeviceId =
-            rearCamera?.deviceId || videoDevices[0].deviceId;
+          selectedDeviceId = rearCamera?.deviceId || videoDevices[0].deviceId;
         }
 
-        // Request stream with optimal constraints for mobile
+        // Create the ONE stream
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             deviceId: selectedDeviceId
@@ -235,74 +174,200 @@ export function useCameraStream(
             facingMode: selectedDeviceId ? undefined : 'environment',
           },
           audio: includeAudio
-            ? {
-                echoCancellation: true,
-                noiseSuppression: true,
-              }
+            ? { echoCancellation: true, noiseSuppression: true }
             : false,
         });
 
-        streamRef.current = stream;
-        setCurrentDeviceId(selectedDeviceId);
-        setIsActive(true);
-
-        // Connect to video element + explicit play()
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          try {
-            await videoRef.current.play();
-          } catch (playError) {
-            // play() can reject if user hasn't interacted yet — that's fine,
-            // autoPlay attribute will take over when they tap anything
-            console.log('📷 [CAMERA] Auto-play deferred (user interaction required)');
-          }
+        if (!mountedRef.current) {
+          // Component unmounted during async — clean up
+          stream.getTracks().forEach((t) => t.stop());
+          return null;
         }
 
-        // Detect capabilities (will only log once per track)
+        // Register as the global active stream
+        const streamId = stream.getVideoTracks()[0]?.id || 'unknown';
+        activeStreamId = streamId;
+
+        if (mountedRef.current) {
+          setCurrentDeviceId(selectedDeviceId);
+        }
+
+        console.log('📷 [CAMERA] Stream started:', {
+          streamId: streamId.slice(0, 8),
+          deviceId: selectedDeviceId?.slice(0, 8),
+        });
+
+        // Detect capabilities
         const videoTrack = stream.getVideoTracks()[0];
         if (videoTrack) {
           detectCapabilities(videoTrack);
         }
 
-        // Log stream start ONCE
-        const streamId = getStreamId(stream);
-        if (!loggedStreamIds.has(streamId)) {
-          loggedStreamIds.add(streamId);
-          console.log('📷 [CAMERA] Stream started:', {
-            streamId: streamId.slice(0, 8),
-            deviceId: selectedDeviceId?.slice(0, 8),
-          });
-        }
+        return stream;
       } catch (error) {
-        console.error('[CAMERA] Error starting camera:', error);
+        console.error('[CAMERA] Error creating stream:', error);
         toast.error('Camera access denied');
-        setIsActive(false);
-      } finally {
-        // Always release the lock, even on error
-        isStartingRef.current = false;
+        return null;
       }
     },
-    [devices, enumerateDevices, detectCapabilities, includeAudio]
+    [includeAudio, detectCapabilities]
   );
 
   // ==========================================================================
-  // STOP CAMERA
+  // INTERNAL: Attach stream to video element and play
   // ==========================================================================
-  const stopCamera = useCallback(() => {
+  const attachStream = useCallback(
+    async (stream: MediaStream) => {
+      const video = videoRef.current;
+      if (!video) {
+        console.warn('📷 [CAMERA] No video element to attach to');
+        return;
+      }
+
+      video.srcObject = stream;
+
+      // Explicit play — required by Chrome incognito, some Android WebViews
+      try {
+        await video.play();
+        console.log('📷 [CAMERA] Video playing');
+      } catch {
+        console.log('📷 [CAMERA] Auto-play deferred (user interaction required)');
+      }
+    },
+    []
+  );
+
+  // ==========================================================================
+  // INTERNAL: Stop and clean up stream
+  // ==========================================================================
+  const destroyStream = useCallback(() => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
+      const trackId = streamRef.current.getVideoTracks()[0]?.id || 'unknown';
+      streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
+
+      // Clear global lock if it's ours
+      if (activeStreamId === trackId) {
+        activeStreamId = null;
+      }
+
+      console.log('📷 [CAMERA] Stream stopped:', {
+        streamId: trackId.slice(0, 8),
+      });
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-    setIsActive(false);
-    setCapabilities(DEFAULT_CAPABILITIES);
-    setSettings(DEFAULT_SETTINGS);
   }, []);
 
   // ==========================================================================
-  // SWITCH CAMERA — haptics-aware
+  // DECLARATIVE LIFECYCLE — THE SINGLE SOURCE OF TRUTH
+  //
+  // This ONE useEffect controls the entire camera lifecycle.
+  // When `active` becomes true → create stream, attach, play
+  // When `active` becomes false → stop stream, clean up
+  // Re-renders with the same `active` value → no-op
+  //
+  // This replaces ALL external startCamera/stopCamera calls from DualScanner.
+  // ==========================================================================
+  useEffect(() => {
+    // Track if THIS effect invocation is still current
+    let cancelled = false;
+
+    if (active) {
+      // Check if we already have a live stream — skip if so
+      if (
+        streamRef.current &&
+        streamRef.current.getVideoTracks().length > 0 &&
+        streamRef.current.getVideoTracks()[0].readyState === 'live'
+      ) {
+        // Stream already live — just make sure it's attached
+        if (videoRef.current && !videoRef.current.srcObject) {
+          attachStream(streamRef.current);
+        }
+        setIsActive(true);
+        return;
+      }
+
+      // Small delay to let the DOM mount the video element
+      const timer = setTimeout(async () => {
+        if (cancelled) return;
+
+        // Destroy any dead stream first
+        destroyStream();
+
+        // Create fresh stream
+        const stream = await createStream();
+        if (cancelled || !stream) return;
+
+        streamRef.current = stream;
+        await attachStream(stream);
+
+        if (!cancelled) {
+          setIsActive(true);
+        }
+      }, 150);
+
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    } else {
+      // Inactive — tear down
+      destroyStream();
+      setIsActive(false);
+      setCapabilities(DEFAULT_CAPABILITIES);
+      setSettings(DEFAULT_SETTINGS);
+    }
+  }, [active]); // ONLY depends on `active` — nothing else can trigger this
+
+  // ==========================================================================
+  // CLEANUP ON UNMOUNT
+  // ==========================================================================
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        activeStreamId = null;
+      }
+    };
+  }, []);
+
+  // ==========================================================================
+  // PUBLIC: startCamera — ONLY for explicit device switching
+  // Normal lifecycle is handled by the `active` prop above.
+  // ==========================================================================
+  const startCamera = useCallback(
+    async (deviceId?: string) => {
+      // If no deviceId, this is a lifecycle call — let the effect handle it
+      if (!deviceId) return;
+
+      destroyStream();
+      const stream = await createStream(deviceId);
+      if (stream && mountedRef.current) {
+        streamRef.current = stream;
+        await attachStream(stream);
+        setIsActive(true);
+      }
+    },
+    [createStream, attachStream, destroyStream]
+  );
+
+  // ==========================================================================
+  // PUBLIC: stopCamera — exposed for emergency manual stop
+  // ==========================================================================
+  const stopCamera = useCallback(() => {
+    destroyStream();
+    setIsActive(false);
+    setCapabilities(DEFAULT_CAPABILITIES);
+    setSettings(DEFAULT_SETTINGS);
+  }, [destroyStream]);
+
+  // ==========================================================================
+  // SWITCH CAMERA
   // ==========================================================================
   const switchCamera = useCallback(() => {
     if (devices.length <= 1) {
@@ -318,7 +383,6 @@ export function useCameraStream(
 
     startCamera(nextDeviceId);
 
-    // Haptic feedback — use hook if available, fallback to inline
     if (haptics) {
       haptics.tap();
     } else if ('vibrate' in navigator) {
@@ -327,7 +391,7 @@ export function useCameraStream(
   }, [devices, currentDeviceId, startCamera, haptics]);
 
   // ==========================================================================
-  // TORCH CONTROL — haptics-aware
+  // TORCH CONTROL
   // ==========================================================================
   const setTorch = useCallback(
     async (enabled: boolean) => {
@@ -345,7 +409,6 @@ export function useCameraStream(
         });
         setSettings((prev) => ({ ...prev, torch: enabled }));
 
-        // Haptic feedback — use hook if available, fallback to inline
         if (haptics) {
           haptics.tap();
         } else if ('vibrate' in navigator) {
@@ -364,9 +427,7 @@ export function useCameraStream(
   // ==========================================================================
   const setZoom = useCallback(
     async (level: number) => {
-      if (!capabilities.zoom) {
-        return;
-      }
+      if (!capabilities.zoom) return;
 
       const track = streamRef.current?.getVideoTracks()[0];
       if (!track) return;
@@ -389,7 +450,7 @@ export function useCameraStream(
   );
 
   // ==========================================================================
-  // FOCUS TRIGGER — haptics-aware
+  // FOCUS TRIGGER
   // ==========================================================================
   const triggerFocus = useCallback(() => {
     const track = streamRef.current?.getVideoTracks()[0];
@@ -401,30 +462,17 @@ export function useCameraStream(
           advanced: [{ focusMode: 'single-shot' } as any],
         })
         .catch(() => {});
-
       toast.info('Focusing...');
     } else {
       toast.info('Auto-focus triggered');
     }
 
-    // Haptic feedback — use hook if available, fallback to inline
     if (haptics) {
       haptics.tap();
     } else if ('vibrate' in navigator) {
       navigator.vibrate(20);
     }
   }, [capabilities.focusMode, haptics]);
-
-  // ==========================================================================
-  // CLEANUP
-  // ==========================================================================
-  useEffect(() => {
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, []);
 
   return {
     videoRef,

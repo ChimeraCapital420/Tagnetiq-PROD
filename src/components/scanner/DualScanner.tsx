@@ -1,19 +1,17 @@
 // FILE: src/components/scanner/DualScanner.tsx
-// v3.4 — ROOT CAUSE FIX: Conditional modal rendering
+// v4.0 — DECLARATIVE CAMERA LIFECYCLE
 //
-// v3.4: FIX — CameraSettingsModal was always mounted even when closed.
-//   Its useCameraControls hook created a SECOND camera stream on mount,
-//   competing with useCameraStream → black screen. Now conditionally
-//   rendered so the hook only mounts when user opens settings.
-// v3.3: cameraStartedRef guard (still present as defense-in-depth)
-// v3.2: Healing haptics integration
-// v3.1: Camera lifecycle useEffect
-// v3.0: Refactored to slim orchestrator
+// v4.0: Camera lifecycle moved INTO useCameraStream via `active` prop.
+//   Removed the camera lifecycle useEffect entirely — no more startCamera/
+//   stopCamera calls that could double-fire. The hook watches `active` with
+//   ONE internal useEffect. DualScanner just passes the boolean.
+// v3.4: Conditional modal rendering (kept)
+// v3.2: Healing haptics integration (kept)
 //
 // All logic lives in hooks/, all UI in components/.
 // Mobile-first: Full viewport camera, device-side compression, haptic feedback
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import type { ScanMode, DualScannerProps } from './types';
 
 // Hooks
@@ -50,7 +48,7 @@ import '../DualScanner.css';
 
 const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   // -------------------------------------------------------------------------
-  // LOCAL UI STATE (only what's needed for modal visibility + mode)
+  // LOCAL UI STATE
   // -------------------------------------------------------------------------
   const [scanMode, setScanMode] = useState<ScanMode>('image');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -59,11 +57,8 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const [isGhostSheetOpen, setIsGhostSheetOpen] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // v3.3: Track camera start intent to prevent double-start
-  const cameraStartedRef = useRef(false);
-
   // -------------------------------------------------------------------------
-  // HEALING HAPTICS — initialized first, passed to other hooks
+  // HEALING HAPTICS
   // -------------------------------------------------------------------------
   const haptics = useHealingHaptics({
     tier: 'oracle',
@@ -71,12 +66,21 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   });
 
   // -------------------------------------------------------------------------
-  // HOOKS — all logic delegated, haptics passed to hooks that need it
+  // HOOKS
+  //
+  // v4.0: Camera activation is now DECLARATIVE via `active` prop.
+  // true  = camera should be on  (isOpen + image/video mode)
+  // false = camera should be off (closed or barcode mode)
+  // The hook's internal useEffect handles start/stop. No external calls needed.
   // -------------------------------------------------------------------------
   const ghostMode = useGhostMode();
   const gridOverlay = useGridOverlay();
 
+  // Camera is active when: scanner is open AND mode is NOT barcode
+  const cameraActive = isOpen && scanMode !== 'barcode';
+
   const camera = useCameraStream({
+    active: cameraActive,
     includeAudio: scanMode === 'video',
     haptics,
   });
@@ -111,35 +115,10 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   });
 
   // -------------------------------------------------------------------------
-  // CAMERA LIFECYCLE — start on open, stop on close
+  // NO CAMERA LIFECYCLE useEffect — v4.0 removed it entirely.
+  // The camera hook now manages its own lifecycle via the `active` prop.
+  // This eliminates all double-start bugs permanently.
   // -------------------------------------------------------------------------
-  useEffect(() => {
-    if (!isOpen) {
-      camera.stopCamera();
-      cameraStartedRef.current = false;
-      return;
-    }
-
-    if (scanMode === 'barcode') {
-      camera.stopCamera();
-      cameraStartedRef.current = false;
-      return;
-    }
-
-    if (cameraStartedRef.current) {
-      return;
-    }
-
-    cameraStartedRef.current = true;
-
-    const timer = setTimeout(() => {
-      camera.startCamera();
-    }, 100);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [isOpen, scanMode]);
 
   // -------------------------------------------------------------------------
   // CAPTURE HANDLER
@@ -205,7 +184,6 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   // -------------------------------------------------------------------------
   const handleModeChange = useCallback(
     (mode: ScanMode) => {
-      cameraStartedRef.current = false;
       setScanMode(mode);
       haptics.tap();
     },
@@ -288,11 +266,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         onChange={fileUpload.handleDocumentUpload}
       />
 
-      {/* Modals — CONDITIONALLY RENDERED
-          v3.4 FIX: CameraSettingsModal was always mounted even when closed.
-          Its useCameraControls hook called getUserMedia on mount, creating a
-          SECOND camera stream that competed with useCameraStream → black screen.
-          Now only mounts when the user actually opens the modal. */}
+      {/* Modals — conditionally rendered (v3.4) */}
       <GhostProtocolSheet
         isOpen={isGhostSheetOpen}
         onClose={() => setIsGhostSheetOpen(false)}
@@ -304,18 +278,15 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
           isOpen={isSettingsOpen}
           onClose={() => setIsSettingsOpen(false)}
           availableDevices={camera.devices}
-          onDeviceChange={(id) => {
-            cameraStartedRef.current = false;
-            camera.startCamera(id);
-          }}
+          onDeviceChange={(id) => camera.startCamera(id)}
           currentDeviceId={camera.currentDeviceId}
           videoTrack={
             (camera.videoRef.current?.srcObject as MediaStream)
               ?.getVideoTracks()[0] || null
           }
-          onSettingsChange={(settings) => {
-            if (camera.videoRef.current && settings.filter) {
-              camera.videoRef.current.style.filter = settings.filter;
+          onSettingsChange={(s) => {
+            if (camera.videoRef.current && s.filter) {
+              camera.videoRef.current.style.filter = s.filter;
             }
           }}
         />
