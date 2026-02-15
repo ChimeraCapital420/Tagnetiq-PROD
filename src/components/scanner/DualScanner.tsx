@@ -1,9 +1,13 @@
 // FILE: src/components/scanner/DualScanner.tsx
-// v3.2 — SLIM ORCHESTRATOR + HEALING HAPTICS
+// v3.3 — CAMERA DOUBLE-START FIX
 //
 // v3.0: Refactored ~900 → ~160 lines (black screen bug — no startCamera call)
 // v3.1: Added camera lifecycle useEffect (fixed black screen)
 // v3.2: Healing haptics integration — tier-aware feedback on every interaction
+// v3.3: FIX — camera starting twice (two streams competing → black screen)
+//   Root cause: useEffect fired, startCamera() completes + sets state,
+//   state change triggers re-render, effect runs again → second stream.
+//   Fix: cameraStartedRef tracks intent, skips redundant starts.
 //
 // All logic lives in hooks/, all UI in components/.
 // Mobile-first: Full viewport camera, device-side compression, haptic feedback
@@ -70,6 +74,10 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   const [isGhostSheetOpen, setIsGhostSheetOpen] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // v3.3: Track camera start intent to prevent double-start
+  // This persists across re-renders and effect re-fires
+  const cameraStartedRef = useRef(false);
+
   // -------------------------------------------------------------------------
   // HEALING HAPTICS — initialized first, passed to other hooks
   //
@@ -124,7 +132,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
   // -------------------------------------------------------------------------
   // CAMERA LIFECYCLE — start on open, stop on close
-  // v3.0 BUG: This was missing entirely → black screen in all modes
+  //
+  // v3.3 FIX: cameraStartedRef prevents the effect from starting the camera
+  // more than once per open/mode-change cycle. Without this, state changes
+  // from startCamera() (setIsActive, setDevices, setCapabilities) could
+  // trigger re-renders that re-fire this effect → two competing streams
+  // → black screen.
   //
   // Three modes, two camera systems:
   //   image/video → useCameraStream (our hook) controls the <video> element
@@ -137,6 +150,7 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   useEffect(() => {
     if (!isOpen) {
       camera.stopCamera();
+      cameraStartedRef.current = false;
       return;
     }
 
@@ -144,8 +158,19 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     // Stop our camera to free the hardware + save battery
     if (scanMode === 'barcode') {
       camera.stopCamera();
+      cameraStartedRef.current = false;
       return;
     }
+
+    // v3.3: Already started for this mode? Skip.
+    // This prevents the double-start that causes black screen.
+    if (cameraStartedRef.current) {
+      return;
+    }
+
+    // Mark as started BEFORE the timeout fires
+    // This blocks any re-render-triggered re-fires during the 100ms wait
+    cameraStartedRef.current = true;
 
     // Image or Video mode: we need our camera stream
     // Small delay lets the DOM mount the <video> element first
@@ -153,7 +178,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
       camera.startCamera();
     }, 100);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      // Don't reset cameraStartedRef here — the cleanup fires on every
+      // re-render, which would defeat the purpose of the guard.
+      // It's only reset on close or mode switch to barcode.
+    };
   }, [isOpen, scanMode]);
   // NOTE: intentionally omitting camera from deps — startCamera/stopCamera
   // are stable refs but including camera object would cause infinite loop
@@ -221,9 +251,12 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
 
   // -------------------------------------------------------------------------
   // MODE SWITCH — with haptic tap
+  // v3.3: Reset cameraStartedRef so the effect will start camera for new mode
   // -------------------------------------------------------------------------
   const handleModeChange = useCallback(
     (mode: ScanMode) => {
+      // Reset the guard so the useEffect will fire startCamera for the new mode
+      cameraStartedRef.current = false;
       setScanMode(mode);
       haptics.tap();
     },
@@ -317,7 +350,10 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         availableDevices={camera.devices}
-        onDeviceChange={(id) => camera.startCamera(id)}
+        onDeviceChange={(id) => {
+          cameraStartedRef.current = false; // Allow restart with new device
+          camera.startCamera(id);
+        }}
         currentDeviceId={camera.currentDeviceId}
         videoTrack={
           (camera.videoRef.current?.srcObject as MediaStream)
