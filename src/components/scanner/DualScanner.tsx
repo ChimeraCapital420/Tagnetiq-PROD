@@ -1,6 +1,7 @@
 // FILE: src/components/scanner/DualScanner.tsx
-// v3.0 — SLIM ORCHESTRATOR
-// ~900 lines → ~160 lines. All logic lives in hooks/, all UI in components/.
+// v3.1 — SLIM ORCHESTRATOR
+// FIX: Added camera lifecycle useEffect (v3.0 had black screen — never called startCamera)
+// ~900 lines → ~170 lines. All logic lives in hooks/, all UI in components/.
 // Mobile-first: Full viewport camera, device-side compression, haptic feedback
 //
 // Hook responsibilities:
@@ -18,7 +19,7 @@
 //   ScannerViewport     — Video feed + overlays + recording indicator
 //   ScannerFooter       — Capture, analyze, upload, mode toggle, preview grid
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import type { ScanMode, DualScannerProps } from './types';
 
 // Hooks
@@ -96,6 +97,27 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
     photoCount: items.items.filter((i) => i.type === 'photo').length,
     totalCount: items.totalCount,
   });
+
+  // -------------------------------------------------------------------------
+  // CAMERA LIFECYCLE — start on open, stop on close
+  // v3.0 BUG: This was missing entirely → black screen
+  // useCameraStream does NOT auto-start, it requires explicit startCamera()
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (isOpen && scanMode !== 'barcode') {
+      // Small delay lets the DOM mount the <video> element first
+      const timer = setTimeout(() => {
+        camera.startCamera();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+
+    if (!isOpen) {
+      camera.stopCamera();
+    }
+  }, [isOpen, scanMode]);
+  // NOTE: intentionally omitting camera from deps — startCamera/stopCamera
+  // are stable refs but including camera object would cause infinite loop
 
   // -------------------------------------------------------------------------
   // CAPTURE HANDLER — captures frame from camera, adds to items
