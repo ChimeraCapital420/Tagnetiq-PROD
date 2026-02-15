@@ -1,5 +1,7 @@
 // FILE: src/components/HydraConsensusDisplay.tsx
-// v10.3 — CRASH-PROOF + DUAL EXPORT FIX
+// v10.4 — CRASH-PROOF + DUAL EXPORT FIX + CONFIDENCE FIX
+// FIX v10.4: finalConfidence arrives as 0-100 integer from hydra-engine, not 0-1.
+//   Display was doing 77 * 100 = 7700%. Now normalizes: if > 1, divide by 100.
 // FIX: Both named AND default export (AnalysisResult.tsx uses named import)
 // FIX: Guards all .map() calls with optional chaining
 // FIX: Handles both votes and allVotes field names
@@ -66,6 +68,26 @@ function extractVotes(consensus: any): NormalizedVote[] {
 }
 
 // =============================================================================
+// NORMALIZE CONFIDENCE — handles both 0-1 decimal and 0-100 integer formats
+// hydra-engine.ts returns confidence as 0-100 integer (e.g. 77)
+// This display expects 0-1 decimal for the (x * 100) calculation
+// =============================================================================
+
+function normalizeConfidence(raw: any): number {
+  // Try finalConfidence first, then confidence, then fallback
+  const value =
+    typeof raw?.finalConfidence === 'number'
+      ? raw.finalConfidence
+      : typeof raw?.confidence === 'number'
+        ? raw.confidence
+        : 0.75;
+
+  // If > 1, it's already a percentage (0-100) — convert to 0-1
+  // If <= 1, it's already a decimal — use as-is
+  return value > 1 ? value / 100 : value;
+}
+
+// =============================================================================
 // COMPONENT
 // =============================================================================
 
@@ -97,10 +119,10 @@ const HydraConsensusDisplay: React.FC<HydraConsensusDisplayProps> = ({
 
   const totalSources = consensus.totalSources ?? votes.length;
   const method = consensus.consensusMethod || 'weighted_blend';
-  const finalConfidence =
-    typeof consensus.finalConfidence === 'number'
-      ? consensus.finalConfidence
-      : 0.75;
+
+  // FIX v10.4: Normalize confidence to 0-1 range before displaying
+  // hydra-engine returns 77 (integer), not 0.77 (decimal)
+  const finalConfidence = normalizeConfidence(consensus);
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">

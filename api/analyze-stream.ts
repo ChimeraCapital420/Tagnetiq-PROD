@@ -1,6 +1,12 @@
-// HYDRA v5.1 STREAMING - Real-time Analysis Updates via Server-Sent Events
-// FIX: buildFinalResult now includes votes/allVotes arrays for display components
-// FIX: All consensus.consensus.* access is defensively guarded
+// HYDRA v5.2 STREAMING - Real-time Analysis Updates via Server-Sent Events
+// FIX v5.2: valuation_factors aggregated from AI vote rawResponses (was always [])
+// FIX v5.2: summary_reasoning picked from highest-weighted vote (was always 'Analysis complete')
+// FIX v5.2: finalConfidence normalized to 0-1 decimal (was 77 integer → display showed 7700%)
+// FIX v5.2: confidenceScore sent as integer percentage (was raw 77 which confused some displays)
+// FIX v5.2: aiConfidence in blended price calc handles both 0-100 and 0-1 formats
+// FIX v5.2: Added electronics, watches, jewelry, toys, art, antiques to CATEGORY_API_MAP + normalizeCategory
+// FIX v5.1: buildFinalResult includes votes/allVotes arrays for display components
+// FIX v5.1: All consensus.consensus.* access is defensively guarded
 // PERF: Reduced streaming delays for mobile-first responsiveness
 // Usage: POST /api/analyze-stream with Accept: text/event-stream header
 
@@ -57,6 +63,7 @@ const AI_MODELS: AIModel[] = [
 ];
 
 // Category to API mapping (mirrors analyze.ts)
+// FIX v5.2: Added electronics, watches, jewelry, toys, art, antiques
 const CATEGORY_API_MAP: Record<string, string[]> = {
   pokemon_cards: ['Pokemon TCG', 'eBay'],
   trading_cards: ['Pokemon TCG', 'eBay'],
@@ -67,6 +74,12 @@ const CATEGORY_API_MAP: Record<string, string[]> = {
   comics: ['Comic Vine', 'eBay'],
   books: ['Google Books', 'eBay'],
   sneakers: ['Retailed', 'eBay'],
+  electronics: ['eBay'],
+  watches: ['eBay'],
+  jewelry: ['eBay'],
+  toys: ['eBay'],
+  art: ['eBay'],
+  antiques: ['eBay'],
   general: ['eBay'],
 };
 
@@ -87,7 +100,7 @@ function sendInit(res: VercelResponse) {
     type: 'init',
     timestamp: Date.now(),
     data: {
-      message: 'Initializing Hydra Consensus Engine v5.1...',
+      message: 'Initializing Hydra Consensus Engine v5.2...',
       models: AI_MODELS.map((m) => ({
         name: m.name,
         icon: m.icon,
@@ -98,6 +111,18 @@ function sendInit(res: VercelResponse) {
       totalModels: AI_MODELS.length,
     },
   });
+}
+
+// ==================== CONFIDENCE NORMALIZER ====================
+// hydra-engine.ts returns confidence as 0-100 integer (e.g. 77)
+// All downstream consumers expect 0-1 decimal (e.g. 0.77)
+// This single function prevents every double-multiplication bug
+
+function normalizeConfidenceTo01(value: number | undefined | null): number {
+  if (value === undefined || value === null) return 0.75;
+  // If > 1, it's a percentage (0-100) → divide by 100
+  // If <= 1, it's already a decimal → use as-is
+  return value > 1 ? value / 100 : value;
 }
 
 // ==================== STREAMING ANALYSIS ====================
@@ -257,7 +282,10 @@ CATEGORY OPTIONS: pokemon_cards, trading_cards, coins, lego, video_games, vinyl_
   const consensusData = consensus.consensus || {};
   const itemName = consensusData.itemName || 'Unknown Item';
   const aiEstimatedValue = consensusData.estimatedValue || runningEstimate || 0;
-  const aiConfidence = consensusData.confidence || 0.75;
+
+  // FIX v5.2: Normalize confidence to 0-1 before passing to blended price calc
+  // hydra-engine returns 77 (integer), blended price calc needs 0.77 (decimal)
+  const aiConfidence = normalizeConfidenceTo01(consensusData.confidence);
 
   // Fetch market data with streaming updates
   const marketData = await fetchMarketDataWithStreaming(
@@ -346,6 +374,7 @@ function detectCategory(consensus: any, hint: string): string {
   return detected;
 }
 
+// FIX v5.2: Added electronics, watches, jewelry, toys, art, antiques
 function normalizeCategory(cat: string): string {
   const catLower = cat.toLowerCase().trim();
 
@@ -377,6 +406,46 @@ function normalizeCategory(cat: string): string {
     catLower.includes('jordan')
   ) {
     return 'sneakers';
+  }
+  if (
+    catLower.includes('electron') ||
+    catLower.includes('laptop') ||
+    catLower.includes('computer') ||
+    catLower.includes('phone') ||
+    catLower.includes('tablet') ||
+    catLower.includes('console')
+  ) {
+    return 'electronics';
+  }
+  if (catLower.includes('watch')) {
+    return 'watches';
+  }
+  if (
+    catLower.includes('jewel') ||
+    catLower.includes('ring') ||
+    catLower.includes('necklace') ||
+    catLower.includes('bracelet')
+  ) {
+    return 'jewelry';
+  }
+  if (
+    catLower.includes('toy') ||
+    catLower.includes('funko') ||
+    catLower.includes('action figure') ||
+    catLower.includes('plush')
+  ) {
+    return 'toys';
+  }
+  if (
+    catLower.includes('art') ||
+    catLower.includes('painting') ||
+    catLower.includes('print') ||
+    catLower.includes('sculpture')
+  ) {
+    return 'art';
+  }
+  if (catLower.includes('antique') || catLower.includes('vintage')) {
+    return 'antiques';
   }
 
   return catLower;
@@ -444,7 +513,10 @@ async function fetchMarketDataWithStreaming(
   let blendedPrice = aiEstimate;
 
   if (availableSources.length > 0) {
-    let weightTotal = (aiConfidence / 100) * 0.4;
+    // FIX v5.2: aiConfidence is now guaranteed 0-1 from normalizeConfidenceTo01()
+    // Before: was doing (77 / 100) which happened to work by accident
+    // After: aiConfidence is already 0.77, use directly
+    let weightTotal = aiConfidence * 0.4;
     let weightedSum = aiEstimate * weightTotal;
 
     availableSources.forEach((source) => {
@@ -515,8 +587,55 @@ async function fetchApiData(api: string, itemName: string): Promise<any> {
 }
 
 // =============================================================================
-// BUILD FINAL RESULT — THIS IS THE FIX
-// Now includes votes/allVotes arrays so display components can render them
+// FIX v5.2: AGGREGATE VALUATION FACTORS FROM AI VOTES
+// hydra-engine.calculateConsensus() never includes valuation_factors.
+// They only exist on individual vote rawResponse objects.
+// This collects them, deduplicates, and ranks by citation frequency.
+// =============================================================================
+
+function aggregateValuationFactors(votes: any[]): string[] {
+  const factorCounts = new Map<string, number>();
+
+  for (const vote of votes) {
+    const factors: any[] = vote.rawResponse?.valuation_factors || [];
+    for (const factor of factors) {
+      if (typeof factor === 'string' && factor.trim()) {
+        const normalized = factor.trim();
+        factorCounts.set(normalized, (factorCounts.get(normalized) || 0) + 1);
+      }
+    }
+  }
+
+  // Sort by frequency (most-cited first), take top 8
+  return [...factorCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([factor]) => factor);
+}
+
+// =============================================================================
+// FIX v5.2: AGGREGATE SUMMARY REASONING FROM AI VOTES
+// hydra-engine.calculateConsensus() never includes summary_reasoning.
+// Pick the best one from the highest-weighted successful vote.
+// =============================================================================
+
+function aggregateSummaryReasoning(votes: any[]): string {
+  const successfulVotes = votes
+    .filter((v: any) => v.success && v.rawResponse?.summary_reasoning)
+    .sort((a: any, b: any) => (b.weight || 0) - (a.weight || 0));
+
+  if (successfulVotes.length === 0) return 'Analysis complete';
+
+  return successfulVotes[0].rawResponse.summary_reasoning;
+}
+
+// =============================================================================
+// BUILD FINAL RESULT
+// FIX v5.2: valuation_factors aggregated from votes (was always [])
+// FIX v5.2: summary_reasoning from best vote (was always 'Analysis complete')
+// FIX v5.2: finalConfidence normalized to 0-1 (was 77 → 7700% in display)
+// FIX v5.2: confidenceScore as clean integer percentage
+// FIX v5.1: includes votes/allVotes arrays for display components
 // =============================================================================
 
 function buildFinalResult(
@@ -539,6 +658,18 @@ function buildFinalResult(
 
   // Safely extract consensus data with fallbacks
   const consensusData = consensus.consensus || {};
+
+  // FIX v5.2: Normalize confidence to 0-1 for all downstream consumers
+  const normalizedConfidence = normalizeConfidenceTo01(consensusData.confidence);
+
+  // FIX v5.2: Aggregate valuation_factors from all AI votes
+  // hydra-engine.calculateConsensus doesn't include these — they only exist
+  // on individual vote rawResponse objects. Was always returning [].
+  const valuationFactors = aggregateValuationFactors(votes);
+
+  // FIX v5.2: Get the best summary_reasoning from votes
+  // hydra-engine.calculateConsensus doesn't include this either.
+  const summaryReasoning = aggregateSummaryReasoning(votes);
 
   // Build normalized vote objects for display components
   // This is what HydraConsensusDisplay.tsx and NexusDecisionCard.tsx consume
@@ -566,10 +697,14 @@ function buildFinalResult(
     itemName: consensusData.itemName || 'Unknown Item',
     estimatedValue: marketData.blendedPrice,
     decision: consensusData.decision || 'SELL',
-    confidenceScore: consensusData.confidence || 0.75,
-    summary_reasoning:
-      consensusData.summary_reasoning || 'Analysis complete',
-    valuation_factors: consensusData.valuation_factors || [],
+
+    // FIX v5.2: Clean integer percentage (e.g. 77) for display as "77%"
+    confidenceScore: Math.round(normalizedConfidence * 100),
+
+    // FIX v5.2: Aggregated from vote rawResponses instead of empty defaults
+    summary_reasoning: summaryReasoning,
+    valuation_factors: valuationFactors,
+
     analysis_quality: consensusData.analysisQuality || 'OPTIMAL',
     capturedAt: new Date().toISOString(),
     category: detectedCategory,
@@ -611,7 +746,9 @@ function buildFinalResult(
         }, {}) || {},
       },
       consensusMethod: 'weighted_blend_v5_streaming',
-      finalConfidence: consensusData.confidence || 0.75,
+
+      // FIX v5.2: Always 0-1 decimal — display components do × 100
+      finalConfidence: normalizedConfidence,
     },
 
     // Market data section
@@ -630,7 +767,7 @@ function buildFinalResult(
       shareToSocial: true,
     },
 
-    tags: [detectedCategory, 'hydra-v5.1', 'streaming'],
+    tags: [detectedCategory, 'hydra-v5.2', 'streaming'],
   };
 }
 

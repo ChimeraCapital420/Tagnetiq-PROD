@@ -1,6 +1,9 @@
 // FILE: src/components/scanner/components/ScannerViewport.tsx
 // Extracted from DualScanner.tsx — main camera viewport area
 // Mobile-first: Full viewport video, CSS overlays only (no JS animation loops)
+//
+// v3.2 FIX: display:none → opacity:0 so mobile browsers autoplay the video
+//   when srcObject is assigned. display:none prevents autoplay on iOS/Android.
 
 import React from 'react';
 import { ScanLine, Video } from 'lucide-react';
@@ -53,14 +56,21 @@ export const ScannerViewport: React.FC<ScannerViewportProps> = ({
 }) => {
   return (
     <div className="dual-scanner-main relative flex-1 overflow-hidden bg-black">
-      {/* Main camera feed */}
+      {/* Main camera feed
+          FIX: opacity instead of display:none.
+          Mobile browsers won't autoplay a display:none <video> when
+          srcObject is set. opacity:0 keeps the element in DOM layout
+          so the stream attaches and plays immediately. */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
         className="absolute inset-0 w-full h-full object-cover"
-        style={{ display: isCameraActive ? 'block' : 'none' }}
+        style={{
+          opacity: isCameraActive ? 1 : 0,
+          transition: 'opacity 0.15s ease-in',
+        }}
       />
 
       {/* Hidden barcode scanner video (zxing needs its own element) */}
