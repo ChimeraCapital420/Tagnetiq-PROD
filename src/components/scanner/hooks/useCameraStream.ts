@@ -1,5 +1,8 @@
 // FILE: src/components/scanner/hooks/useCameraStream.ts
 // Camera stream management hook
+// v3.3: FIX — orphaned permission stream caused double-start → black screen
+// v3.3: FIX — explicit play() after srcObject assignment for Chrome incognito
+// v3.3: FIX — isStartingRef prevents concurrent startCamera() calls
 // v3.2: Accepts optional haptics — replaces all inline navigator.vibrate() calls
 // FIXED: Module-level logging to prevent spam across component lifecycles
 // Mobile-first: Prefers rear camera, optimized constraints
@@ -73,6 +76,7 @@ export function useCameraStream(
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const isStartingRef = useRef(false); // v3.3: Prevent concurrent starts
 
   const [isActive, setIsActive] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -146,9 +150,25 @@ export function useCameraStream(
 
   // ==========================================================================
   // START CAMERA
+  // v3.3 FIX: Stop the permission-only stream after enumeration.
+  //   Previously, getUserMedia() was called for permission but the resulting
+  //   stream was never stopped. Two concurrent streams on the same hardware
+  //   caused black screen on some devices/browsers.
+  // v3.3 FIX: Explicit play() after srcObject assignment.
+  //   Chrome incognito and some mobile browsers ignore the autoPlay attribute
+  //   when srcObject is set programmatically.
+  // v3.3 FIX: isStartingRef prevents concurrent startCamera() calls from
+  //   racing each other (e.g., React Strict Mode double-mount).
   // ==========================================================================
   const startCamera = useCallback(
     async (deviceId?: string) => {
+      // Prevent concurrent starts — second call is a no-op until first completes
+      if (isStartingRef.current) {
+        console.log('📷 [CAMERA] Start already in progress, skipping');
+        return;
+      }
+      isStartingRef.current = true;
+
       // Stop any existing stream
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
@@ -159,8 +179,14 @@ export function useCameraStream(
         // Get available devices first
         let videoDevices = devices;
         if (videoDevices.length === 0) {
-          // Need initial permission to enumerate
-          await navigator.mediaDevices.getUserMedia({ video: true });
+          // Need initial permission to enumerate — request then STOP immediately
+          // v3.3 FIX: This was the orphaned stream causing double-start + black screen
+          const permissionStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+          });
+          // Stop IMMEDIATELY — we only needed this for permission, not the stream
+          permissionStream.getTracks().forEach((track) => track.stop());
+
           videoDevices = await enumerateDevices();
         }
 
@@ -199,9 +225,19 @@ export function useCameraStream(
         setCurrentDeviceId(selectedDeviceId);
         setIsActive(true);
 
-        // Connect to video element
+        // Connect to video element + explicit play()
+        // v3.3 FIX: Some browsers (Chrome incognito, some Android WebViews)
+        // ignore the autoPlay attribute when srcObject is set programmatically.
+        // Calling play() explicitly guarantees the stream renders.
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          try {
+            await videoRef.current.play();
+          } catch (playError) {
+            // play() can reject if user hasn't interacted yet — that's fine,
+            // autoPlay attribute will take over when they tap anything
+            console.log('📷 [CAMERA] Auto-play deferred (user interaction required)');
+          }
         }
 
         // Detect capabilities (will only log once per track)
@@ -223,6 +259,9 @@ export function useCameraStream(
         console.error('[CAMERA] Error starting camera:', error);
         toast.error('Camera access denied');
         setIsActive(false);
+      } finally {
+        // Always release the lock, even on error
+        isStartingRef.current = false;
       }
     },
     [devices, enumerateDevices, detectCapabilities, includeAudio]
