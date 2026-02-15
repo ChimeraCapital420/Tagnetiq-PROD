@@ -1,6 +1,10 @@
 // FILE: src/components/AppLayout.tsx
 // Oracle Phase 1 — Cleaned up: removed dead imports, swapped JarvisVoiceInterface → OracleVoiceButton
 //
+// v4.0 FIX: REMOVED DualScanner — it was already rendered in App.tsx.
+//   Having it in BOTH files mounted TWO instances → two camera streams → black screen.
+//   DualScanner lives in App.tsx only. Do NOT re-add it here.
+//
 // Sprint E: data-tour="voice-settings" on OracleVoiceButton wrapper
 // Sprint E+: useAnalytics for scanner open tracking
 
@@ -10,7 +14,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import ResponsiveNavigation from './ResponsiveNavigation.js';
 import NewMarketingNavigation from './NewMarketingNavigation.js';
-import DualScanner from './scanner';
 import OracleVisualizer from './OracleVisualizer.js';
 import OracleResponseDisplay from './OracleResponseDisplay.js';
 import OracleVoiceButton from './oracle/OracleVoiceButton';
@@ -29,10 +32,6 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const showAppNav = user && !isHomePage;
   const showMarketingNav = !user || isHomePage;
 
-  const handleScannerClose = () => {
-    appContext.setIsScannerOpen(false);
-  };
-
   const handleScannerOpen = () => {
     trackFeature('scanner_open');
   };
@@ -49,7 +48,7 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
       {showAppNav && <ResponsiveNavigation onOpenDevicePairing={() => setIsDevicePairingOpen(true)} />}
       {showMarketingNav && <NewMarketingNavigation />}
       
-      <DualScanner isOpen={appContext.isScannerOpen} onClose={handleScannerClose} />
+      {/* DualScanner intentionally NOT here — rendered in App.tsx AppContent */}
       
       <DevicePairingModal 
         isOpen={isDevicePairingOpen} 
