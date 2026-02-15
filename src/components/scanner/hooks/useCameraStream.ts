@@ -1,8 +1,9 @@
 // FILE: src/components/scanner/hooks/useCameraStream.ts
 // Camera stream management hook
-// v3.3: FIX — orphaned permission stream caused double-start → black screen
-// v3.3: FIX — explicit play() after srcObject assignment for Chrome incognito
-// v3.3: FIX — isStartingRef prevents concurrent startCamera() calls
+// v3.4: FIX — startCamera() is now truly idempotent
+//   If a live stream already exists (and no different device requested), skip entirely.
+//   This prevents black screen regardless of how many times startCamera is called.
+// v3.3: FIX — orphaned permission stream, explicit play(), concurrent guard
 // v3.2: Accepts optional haptics — replaces all inline navigator.vibrate() calls
 // FIXED: Module-level logging to prevent spam across component lifecycles
 // Mobile-first: Prefers rear camera, optimized constraints
@@ -76,7 +77,7 @@ export function useCameraStream(
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const isStartingRef = useRef(false); // v3.3: Prevent concurrent starts
+  const isStartingRef = useRef(false); // Prevent concurrent starts
 
   const [isActive, setIsActive] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -150,18 +151,38 @@ export function useCameraStream(
 
   // ==========================================================================
   // START CAMERA
-  // v3.3 FIX: Stop the permission-only stream after enumeration.
-  //   Previously, getUserMedia() was called for permission but the resulting
-  //   stream was never stopped. Two concurrent streams on the same hardware
-  //   caused black screen on some devices/browsers.
+  //
+  // v3.4 FIX: IDEMPOTENT — if a live stream already exists and no specific
+  //   device was requested, skip entirely. This is the nuclear fix for the
+  //   double-start problem. No matter HOW MANY times startCamera is called
+  //   (useEffect re-fires, external components, React Strict Mode, etc.),
+  //   it will only create ONE stream.
+  //
+  // v3.3 FIX: Permission stream stopped immediately after enumeration.
   // v3.3 FIX: Explicit play() after srcObject assignment.
-  //   Chrome incognito and some mobile browsers ignore the autoPlay attribute
-  //   when srcObject is set programmatically.
-  // v3.3 FIX: isStartingRef prevents concurrent startCamera() calls from
-  //   racing each other (e.g., React Strict Mode double-mount).
+  // v3.3 FIX: isStartingRef prevents truly concurrent calls.
   // ==========================================================================
   const startCamera = useCallback(
     async (deviceId?: string) => {
+      // ================================================================
+      // IDEMPOTENCY CHECK — skip if already have a live stream
+      // Only create a new stream if:
+      //   (a) No stream exists at all, OR
+      //   (b) A specific different device was requested (switchCamera)
+      // ================================================================
+      if (streamRef.current && !deviceId) {
+        const existingTracks = streamRef.current.getVideoTracks();
+        if (existingTracks.length > 0 && existingTracks[0].readyState === 'live') {
+          // Stream is already live — just make sure video element is connected
+          if (videoRef.current && !videoRef.current.srcObject) {
+            videoRef.current.srcObject = streamRef.current;
+            try { await videoRef.current.play(); } catch { /* deferred */ }
+          }
+          console.log('📷 [CAMERA] Stream already live, skipping restart');
+          return;
+        }
+      }
+
       // Prevent concurrent starts — second call is a no-op until first completes
       if (isStartingRef.current) {
         console.log('📷 [CAMERA] Start already in progress, skipping');
@@ -169,7 +190,7 @@ export function useCameraStream(
       }
       isStartingRef.current = true;
 
-      // Stop any existing stream
+      // Stop any existing stream (dead or wrong device)
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
@@ -180,7 +201,7 @@ export function useCameraStream(
         let videoDevices = devices;
         if (videoDevices.length === 0) {
           // Need initial permission to enumerate — request then STOP immediately
-          // v3.3 FIX: This was the orphaned stream causing double-start + black screen
+          // v3.3 FIX: This was the orphaned stream causing black screen
           const permissionStream = await navigator.mediaDevices.getUserMedia({
             video: true,
           });
@@ -226,9 +247,6 @@ export function useCameraStream(
         setIsActive(true);
 
         // Connect to video element + explicit play()
-        // v3.3 FIX: Some browsers (Chrome incognito, some Android WebViews)
-        // ignore the autoPlay attribute when srcObject is set programmatically.
-        // Calling play() explicitly guarantees the stream renders.
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           try {
