@@ -1,5 +1,6 @@
 // FILE: src/components/HydraConsensusDisplay.tsx
-// v10.2 — CRASH-PROOF
+// v10.3 — CRASH-PROOF + DUAL EXPORT FIX
+// FIX: Both named AND default export (AnalysisResult.tsx uses named import)
 // FIX: Guards all .map() calls with optional chaining
 // FIX: Handles both votes and allVotes field names
 // FIX: Accepts any consensus shape (defensive against SSE vs standard response)
@@ -188,4 +189,8 @@ const HydraConsensusDisplay: React.FC<HydraConsensusDisplayProps> = ({
   );
 };
 
+// =============================================================================
+// DUAL EXPORT — AnalysisResult.tsx uses named import, others may use default
+// =============================================================================
+export { HydraConsensusDisplay };
 export default HydraConsensusDisplay;
