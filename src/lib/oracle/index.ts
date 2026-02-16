@@ -1,7 +1,7 @@
 // FILE: src/lib/oracle/index.ts
 // Oracle Module — main exports
 //
-// Complete system: C-Q + M
+// Complete system: C-Q + M + N
 
 // ── Types ───────────────────────────────────────────────
 export type {
@@ -18,9 +18,15 @@ export {
 // ── Personality (C) ────────────────────────────────────
 export { evolvePersonality, detectUserEnergy } from './personality/index.js';
 
-// ── Prompt (C, G+, K) ─────────────────────────────────
+// ── Prompt (C, G+, K, N) ──────────────────────────────
 export { buildSystemPrompt } from './prompt/index.js';
+export type { BuildPromptParams } from './prompt/builder.js';
 export { buildArgosBlock, fetchArgosContext, type ArgosContext } from './prompt/argos-context.js';
+export { buildMemoryContext } from './prompt/memory-context.js';
+export { buildTrustContext } from './prompt/trust-context.js';
+export { buildSeasonalContext } from './prompt/seasonal-context.js';
+export { buildListingPrompt, buildVideoScriptPrompt, buildBragCardPrompt } from './prompt/creator-context.js';
+export { buildLearningPrompt } from './prompt/learning-context.js';
 
 // ── Chips (C) ──────────────────────────────────────────
 export { getQuickChips } from './chips/index.js';
@@ -102,3 +108,34 @@ export {
   type ScanContext, type UserContext,
   evaluateScan, logNexusDecision,
 } from './nexus/index.js';
+
+// ── Memory (Sprint N) ─────────────────────────────────
+export {
+  compressConversation, shouldCompress, getUserMemories,
+  getRelevantMemories, getRecentMemories, getExpertiseLevel,
+  getUnfulfilledPromises, getAggregatedInterests,
+} from './memory/index.js';
+export type { MemorySummary } from './memory/compressor.js';
+
+// ── Trust (Sprint N) ──────────────────────────────────
+export {
+  recordTrustEvent, getTrustMetrics, detectTrustSignals,
+} from './trust/tracker.js';
+export type { TrustMetrics } from './trust/tracker.js';
+
+// ── Voice Profile (Sprint N) ──────────────────────────
+export {
+  buildVoiceProfile, getVoiceProfile,
+} from './voice-profile/index.js';
+export type { VoiceProfile } from './voice-profile/index.js';
+
+// ── Community (Sprint N) ──────────────────────────────
+export {
+  findPotentialMatches, createIntroduction,
+  respondToIntroduction, getPendingIntroductions,
+} from './community/matchmaker.js';
+
+// ── Energy (Sprint N — enhanced) ──────────────────────
+export {
+  detectEnergy, detectEnergyArc, detectExpertiseFromMessage,
+} from './personality/energy.js';

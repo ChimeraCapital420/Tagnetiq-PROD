@@ -1,8 +1,7 @@
 // FILE: api/oracle/generate-speech.ts
-// Oracle Phase 1 — Premium voice generation with ElevenLabs
+// Oracle — Premium voice generation with ElevenLabs
+// Sprint N: Accepts energy-aware voiceSettings from useTts hook
 // FIXED: VITE_PUBLIC_SUPABASE_URL → SUPABASE_URL
-// FIXED: SUPABASE_ANON_KEY_KEY → VITE_SUPABASE_ANON_KEY
-// FIXED: Proper Node.js streaming using arrayBuffer → Buffer → res.end()
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -12,9 +11,9 @@ export const config = {
   maxDuration: 15,
 };
 
-const supabase = createClient(
+const supabaseAdmin = createClient(
   process.env.SUPABASE_URL!,
-  process.env.VITE_SUPABASE_ANON_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
 // Map our voice IDs → ElevenLabs voice IDs
@@ -31,19 +30,33 @@ const VOICE_MAPPING: Record<string, string> = {
   'oracle-will-it': 'bIHbv24MWmeRgasZH58o',
 };
 
+// Default voice settings (neutral energy)
+const DEFAULT_VOICE_SETTINGS = {
+  stability: 0.5,
+  similarity_boost: 0.75,
+  style: 0.5,
+  use_speaker_boost: true,
+};
+
 const generateSpeechSchema = z.object({
   text: z.string().min(1).max(5000),
   voiceId: z.string().optional(),
+  voiceSettings: z.object({
+    stability: z.number().min(0).max(1).optional(),
+    similarity_boost: z.number().min(0).max(1).optional(),
+    style: z.number().min(0).max(1).optional(),
+    speed: z.number().min(0.7).max(1.3).optional(),
+  }).optional(),
 });
 
 async function verifyAuth(req: VercelRequest) {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return null;
 
-  const { data: { user }, error } = await supabase.auth.getUser(token);
+  const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
   if (error || !user) return null;
 
-  const { data: profile } = await supabase
+  const { data: profile } = await supabaseAdmin
     .from('profiles')
     .select('settings')
     .eq('id', user.id)
@@ -65,7 +78,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { profile } = authResult;
 
   try {
-    const { text, voiceId } = generateSpeechSchema.parse(req.body);
+    const { text, voiceId, voiceSettings } = generateSpeechSchema.parse(req.body);
 
     // Use provided voiceId or fall back to user's preference
     const selectedVoiceId = voiceId || profile?.settings?.premium_voice_id || 'oracle-nova-en';
@@ -76,10 +89,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Invalid voice ID' });
     }
 
-    // Check ElevenLabs API key
     if (!process.env.ELEVENLABS_API_KEY) {
       return res.status(503).json({ error: 'Premium voice service not configured' });
     }
+
+    // Merge energy-aware settings with defaults
+    const mergedSettings = {
+      stability: voiceSettings?.stability ?? DEFAULT_VOICE_SETTINGS.stability,
+      similarity_boost: voiceSettings?.similarity_boost ?? DEFAULT_VOICE_SETTINGS.similarity_boost,
+      style: voiceSettings?.style ?? DEFAULT_VOICE_SETTINGS.style,
+      use_speaker_boost: true,
+    };
 
     // Call ElevenLabs API
     const elevenLabsResponse = await fetch(
@@ -94,12 +114,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         body: JSON.stringify({
           text,
           model_id: 'eleven_multilingual_v2',
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-            style: 0.5,
-            use_speaker_boost: true,
-          },
+          voice_settings: mergedSettings,
         }),
       }
     );
