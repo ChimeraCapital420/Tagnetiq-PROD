@@ -7,6 +7,7 @@
 // - Vault size
 // - Favorite categories (from Oracle identity)
 // - Whether the Oracle has a name yet
+// - Sprint N: Learning, introductions, content creation, seasonal
 
 import type { OracleIdentity, QuickChip } from '../types.js';
 
@@ -80,11 +81,84 @@ function getRelationshipChip(
 }
 
 // =============================================================================
+// SPRINT N: CONTEXTUAL CHIPS
+// =============================================================================
+
+/** Learning chip — shown after 3+ conversations */
+function getLearningChip(identity: OracleIdentity): QuickChip | null {
+  if ((identity.conversation_count || 0) < 3) return null;
+
+  const favCats = identity.favorite_categories || [];
+
+  if (favCats.includes('coins') || favCats.includes('trading_cards') || favCats.includes('pokemon_cards')) {
+    return { label: '🎓 Teach me grading', message: 'Teach me how grading works and why it matters for value' };
+  }
+  if (favCats.includes('sneakers') || favCats.includes('luxury-goods')) {
+    return { label: '🔍 Authentication 101', message: 'Teach me how to spot fakes and authenticate items' };
+  }
+  if (favCats.length > 0) {
+    return { label: '📖 Teach me', message: `Teach me about the ${favCats[0].replace(/[-_]/g, ' ')} market` };
+  }
+
+  return { label: '📖 Teach me', message: 'Teach me about negotiation strategies for resale' };
+}
+
+/** Introduction chip — shown after 8+ conversations */
+function getIntroductionChip(identity: OracleIdentity): QuickChip | null {
+  if ((identity.conversation_count || 0) < 8) return null;
+
+  return { label: '🤝 Find collectors', message: 'Are there other collectors with similar interests I could connect with?' };
+}
+
+/** Content creation chip — shown when user has vault items */
+function getContentChip(vaultItems: any[]): QuickChip | null {
+  if (vaultItems.length === 0) return null;
+
+  const topItem = vaultItems[0];
+  const itemName = topItem?.item_name;
+
+  if (itemName) {
+    return { label: '📝 List it', message: `Write me an eBay listing for my ${itemName}` };
+  }
+
+  return { label: '📝 Create listing', message: 'Help me write a listing for something I want to sell' };
+}
+
+/** Seasonal chip — time-aware market nudges */
+function getSeasonalChip(): QuickChip | null {
+  const month = new Date().getMonth();
+
+  switch (month) {
+    case 0: // January
+      return { label: '💸 Tax season flips', message: 'What should I be sourcing now for tax refund season buyers?' };
+    case 1: // February
+      return { label: '💝 V-Day resale', message: 'Any Valentine\'s Day resale opportunities?' };
+    case 2: case 3: // Mar-Apr
+      return { label: '🏷️ Garage sale season', message: 'Garage sale season is starting — what should I look for?' };
+    case 4: case 5: // May-Jun
+      return { label: '🎓 Grad gifts', message: 'What graduation gift items have good resale value?' };
+    case 6: // July
+      return { label: '📦 Source for Q4', message: 'What should I be sourcing NOW to sell during the holidays?' };
+    case 7: // August
+      return { label: '🎒 Back to school', message: 'What back-to-school items are worth flipping?' };
+    case 8: case 9: // Sep-Oct
+      return { label: '🎃 Halloween prep', message: 'What seasonal items should I be listing right now?' };
+    case 10: // November
+      return { label: '🛒 Black Friday', message: 'What Black Friday deals should I jump on for resale?' };
+    case 11: // December
+      return { label: '🎁 Holiday rush', message: 'What\'s selling fastest right now during the holiday rush?' };
+    default:
+      return null;
+  }
+}
+
+// =============================================================================
 // BUILD QUICK CHIPS
 // =============================================================================
 
 /**
  * Generate 4 contextual quick chips based on user state.
+ * Sprint N: Adds learning, introductions, content, seasonal chips to the rotation.
  */
 export function getQuickChips(
   scanHistory: any[],
@@ -98,31 +172,67 @@ export function getQuickChips(
 
   const chips: QuickChip[] = [];
 
-  // 1. Last scan item
+  // ── Slot 1: Last scan (always most relevant) ──────────
   const lastScan = scanHistory[0];
   const lastItemName = lastScan?.item_name || lastScan?.analysis_result?.itemName;
   if (lastItemName) {
+    const truncated = lastItemName.length > 18 ? lastItemName.substring(0, 18) + '...' : lastItemName;
     chips.push({
-      label: `📊 ${lastItemName.substring(0, 18)}...`,
+      label: `📊 ${truncated}`,
       message: `Tell me more about the ${lastItemName} I scanned — where should I sell it and for how much?`,
     });
   }
 
-  // 2. Vault value or best finds
+  // ── Slot 2: Vault or best finds ───────────────────────
   if (vaultItems.length > 0) {
     chips.push({ label: '💎 Vault value', message: 'What\'s my collection worth right now?' });
   } else {
     chips.push({ label: '📈 My best finds', message: 'What are my most valuable scans so far?' });
   }
 
-  // 3. Category-specific
-  chips.push(getCategoryChip(identity));
+  // ── Slot 3: Rotating contextual chip ──────────────────
+  // Priority: content creation > learning > category > seasonal
+  const contentChip = getContentChip(vaultItems);
+  const learningChip = getLearningChip(identity);
+  const categoryChip = getCategoryChip(identity);
+  const seasonalChip = getSeasonalChip();
 
-  // 4. Relationship-depth or strategy
-  const relationshipChip = getRelationshipChip(identity, scanHistory.length);
-  if (relationshipChip) {
-    chips.push(relationshipChip);
+  // Use conversation count to rotate which contextual chip shows
+  const convoCount = identity.conversation_count || 0;
+  const rotation = convoCount % 4;
+
+  if (rotation === 0 && contentChip) {
+    chips.push(contentChip);
+  } else if (rotation === 1 && learningChip) {
+    chips.push(learningChip);
+  } else if (rotation === 2 && seasonalChip) {
+    chips.push(seasonalChip);
+  } else {
+    chips.push(categoryChip);
   }
 
-  return chips.slice(0, 4);
+  // ── Slot 4: Relationship / introductions ──────────────
+  const introChip = getIntroductionChip(identity);
+  const relationshipChip = getRelationshipChip(identity, scanHistory.length);
+
+  if (introChip && convoCount % 3 === 0) {
+    chips.push(introChip);
+  } else if (relationshipChip) {
+    chips.push(relationshipChip);
+  } else {
+    // Fallback: deep topic chip for engaged users
+    if (convoCount >= 10) {
+      chips.push({ label: '💭 Go deep', message: 'Let\'s talk about something interesting — surprise me with a topic' });
+    } else {
+      chips.push(categoryChip);
+    }
+  }
+
+  // Deduplicate and limit to 4
+  const seen = new Set<string>();
+  return chips.filter(chip => {
+    if (seen.has(chip.label)) return false;
+    seen.add(chip.label);
+    return true;
+  }).slice(0, 4);
 }

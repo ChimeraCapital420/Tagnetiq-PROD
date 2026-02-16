@@ -480,6 +480,12 @@ export function useOracleChat() {
     }
   }, [isLoading]);
 
+  // ── Append message (for useOracleExtras bridge) ───────
+  const appendMessage = useCallback((msg: ChatMessage) => {
+    setMessages(prev => [...prev, msg]);
+    messageCountRef.current++;
+  }, []);
+
   return {
     // State
     messages,
@@ -510,6 +516,10 @@ export function useOracleChat() {
     loadConversationHistory,
     loadConversation,
     deleteConversation,
+
+    // Bridge (for useOracleExtras)
+    appendMessage,
+    setIsLoading,
   };
 }
 

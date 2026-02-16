@@ -1,7 +1,7 @@
 // FILE: api/oracle/generate-speech.ts
 // Oracle — Premium voice generation with ElevenLabs
 // Sprint N: Accepts energy-aware voiceSettings from useTts hook
-// FIXED: VITE_PUBLIC_SUPABASE_URL → SUPABASE_URL
+// FIXED: Uses supabaseAdmin with service role key
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
