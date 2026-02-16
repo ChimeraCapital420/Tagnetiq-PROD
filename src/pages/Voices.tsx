@@ -1,4 +1,4 @@
-// FILE: src/pages/Voices.tsx
+// FILE: src/pages/Voices.tsx (unchanged from previous build)
 // Full-screen Oracle Voice Picker — the "choose your Oracle's voice" experience
 // Mobile-first: large cards, audio preview, language groups, search
 // Linked from Settings → "Choose Voice" button

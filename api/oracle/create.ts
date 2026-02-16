@@ -47,10 +47,13 @@ async function verifyUser(req: VercelRequest) {
 async function getUserTier(userId: string): Promise<string> {
   const { data } = await supabaseAdmin
     .from('profiles')
-    .select('subscription_tier')
+    .select('subscription_tier, role')
     .eq('id', userId)
     .single();
 
+  // Admin and developer roles always get elite access
+  const role = data?.role || 'user';
+  if (role === 'admin' || role === 'developer') return 'elite';
   return data?.subscription_tier || 'free';
 }
 
