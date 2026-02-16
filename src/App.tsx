@@ -3,6 +3,8 @@
 // v2.1 CHANGES:
 //   - Added OracleThinkingOverlay — renders during analysis wait
 //   - Replaces the dead 15-second screen with live progress visualization
+// v2.2 CHANGES:
+//   - Added /voices route for Oracle voice picker page
 
 import React, { useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
@@ -42,6 +44,7 @@ import ProfilePage from '@/pages/Profile';
 import UserProfilePage from '@/pages/UserProfilePage';
 import Onboarding from '@/pages/Onboarding';
 import BoardroomPage from '@/pages/Boardroom';
+import VoicesPage from '@/pages/Voices';
 import { FeedbackModal } from '@/components/beta/FeedbackModal';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
 
@@ -116,6 +119,11 @@ const AppRoutes: React.FC = () => {
             <Route path="/oracle" element={
                 <ProtectedRoute isAllowed={!!user} to="/login">
                     <OnboardingGuard><OraclePage /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+            <Route path="/voices" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><VoicesPage /></OnboardingGuard>
                 </ProtectedRoute>
             } />
             <Route path="/beta/welcome" element={

@@ -1,7 +1,8 @@
 // FILE: src/pages/Settings.tsx
-// STATUS: Surgically updated to add the PremiumVoiceSelector. No other functionality was altered.
+// v2.2: Premium voice section now links to full /voices page experience
 
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -13,21 +14,18 @@ import { useTts } from '@/hooks/useTts';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
-// --- ORACLE SURGICAL ADDITION START ---
-// This is the only new import required for this operation.
-import PremiumVoiceSelector from '@/components/PremiumVoiceSelector';
-// --- ORACLE SURGICAL ADDITION END ---
-import { Bluetooth, Camera, Wifi, WifiOff, Plus } from 'lucide-react'; // PROJECT CERULEAN: Added imports
-import { useBluetoothManager } from '@/hooks/useBluetoothManager'; // PROJECT CERULEAN: Added import
-import DevicePairingModal from '@/components/DevicePairingModal'; // PROJECT CERULEAN: Added import
+import { Bluetooth, Camera, Wifi, WifiOff, Plus, Volume2, ChevronRight } from 'lucide-react';
+import { useBluetoothManager } from '@/hooks/useBluetoothManager';
+import DevicePairingModal from '@/components/DevicePairingModal';
 
 const Settings: React.FC = () => {
+  const navigate = useNavigate();
   const { theme, setTheme, themeMode, setThemeMode } = useAppContext();
   const { profile, setProfile } = useAuth();
   const { voices } = useTts();
   const { i18n } = useTranslation();
-  const { connectedDevice, disconnect } = useBluetoothManager(); // PROJECT CERULEAN: Added hook
-  const [showPairingModal, setShowPairingModal] = useState(false); // PROJECT CERULEAN: Added state
+  const { connectedDevice, disconnect } = useBluetoothManager();
+  const [showPairingModal, setShowPairingModal] = useState(false);
 
   const handleTtsEnabledChange = async (enabled: boolean) => {
     if (!profile) return;
@@ -73,6 +71,12 @@ const Settings: React.FC = () => {
 
   const filteredVoices = voices.filter(voice => voice.lang.startsWith(i18n.language));
 
+  // Get the current premium voice name for display
+  const currentPremiumVoice = profile?.settings?.premium_voice_id;
+  const premiumVoiceLabel = currentPremiumVoice
+    ? currentPremiumVoice.replace('oracle-', '').replace(/-[a-z]{2}$/, '').replace(/^el-/, 'ElevenLabs: ').replace(/^\w/, (c: string) => c.toUpperCase())
+    : null;
+
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="max-w-2xl mx-auto space-y-6">
@@ -82,7 +86,7 @@ const Settings: React.FC = () => {
             <CardDescription>Manage your application settings and preferences.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-8">
-            {/* --- Theme Settings (Unaffected by this operation) --- */}
+            {/* --- Theme Settings --- */}
             <div className="space-y-4">
               <h3 className="text-lg font-medium">Appearance</h3>
               <div className="space-y-2">
@@ -118,7 +122,7 @@ const Settings: React.FC = () => {
               </div>
             </div>
             
-            {/* --- Voice Assistant Settings (Surgically Updated) --- */}
+            {/* --- Voice Assistant Settings --- */}
             <div className="space-y-4">
               <h3 className="text-lg font-medium">Voice Assistant (Oracle)</h3>
               <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm">
@@ -159,23 +163,43 @@ const Settings: React.FC = () => {
                     </Select>
                   </div>
 
-                  {/* --- START: ORACLE SURGICAL ADDITION --- */}
-                  {/* This block adds the premium voice selection UI without altering the standard voice selector above. */}
+                  {/* Premium Oracle Voice — links to full /voices page */}
                   <div className="space-y-2 pt-4">
-                      <Label>Premium Oracle Voice</Label>
-                      <p className="text-sm text-muted-foreground">
-                          Choose a high-quality, natural-sounding voice for your AI partner.
-                      </p>
-                      <PremiumVoiceSelector />
+                    <Label>Premium Oracle Voice</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Choose a high-quality, natural-sounding voice for your AI partner.
+                    </p>
+                    <Button
+                      variant="outline"
+                      className="w-full justify-between h-auto py-3"
+                      onClick={() => navigate('/voices')}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Volume2 className="h-5 w-5 text-muted-foreground" />
+                        <div className="text-left">
+                          {premiumVoiceLabel ? (
+                            <>
+                              <p className="text-sm font-medium">{premiumVoiceLabel}</p>
+                              <p className="text-xs text-muted-foreground">Tap to change voice</p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-sm font-medium">Choose a Voice</p>
+                              <p className="text-xs text-muted-foreground">Browse Oracle voices & ElevenLabs library</p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    </Button>
                   </div>
-                  {/* --- END: ORACLE SURGICAL ADDITION --- */}
                 </>
               )}
             </div>
           </CardContent>
         </Card>
 
-        {/* PROJECT CERULEAN: Connected Devices Section */}
+        {/* Connected Devices Section */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -266,7 +290,7 @@ const Settings: React.FC = () => {
         </Card>
       </div>
       
-      {/* PROJECT CERULEAN: Device Pairing Modal */}
+      {/* Device Pairing Modal */}
       <DevicePairingModal
         isOpen={showPairingModal}
         onClose={() => setShowPairingModal(false)}
