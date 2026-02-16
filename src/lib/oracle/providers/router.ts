@@ -1,21 +1,16 @@
 // FILE: src/lib/oracle/providers/router.ts
 // Oracle Conversation Router — picks the best model for each message
 //
-// Sprint F: Provider Registry + Hot-Loading
+// Sprint F:  Provider Registry + Hot-Loading
+// Sprint N+: Tier-aware routing — Pro/Elite/Admin get the full brain
 //
-// The router analyzes the user's message + context to select the optimal
-// AI model. This is a fast, deterministic decision — no LLM call to
-// decide which LLM to call.
+// ROUTING PHILOSOPHY:
+//   Free/Starter users → budget models (gpt-4o-mini, haiku, flash)
+//   Pro users          → premium models (gpt-4o, claude-sonnet, gemini-pro)
+//   Elite/Admin        → premium models + best provider for the intent
 //
-// Routing logic:
-//   1. Detect message intent (vision, analysis, market, casual, speed)
-//   2. Check AI DNA for provider affinity bias
-//   3. Pick best available provider for that intent
-//   4. Return provider config + fallback chain
-//
-// Hardware-agnostic: Works the same whether the message comes from
-// phone, smart glasses, or desktop. The router cares about message
-// CONTENT and CONTEXT, not input device.
+// The router analyzes the user's message + context + tier to select
+// the optimal AI model. This is a fast, deterministic decision.
 
 import type { OracleIdentity, AiDnaProfile } from '../types.js';
 import {
@@ -25,6 +20,8 @@ import {
   isProviderAvailable,
   getProvidersByStrength,
   getCheapestForStrength,
+  getBestForStrength,
+  resolveModelForTier,
 } from './registry.js';
 
 // =============================================================================
@@ -34,7 +31,7 @@ import {
 export interface RoutingDecision {
   /** Selected provider ID */
   providerId: OracleProviderId;
-  /** The provider config to use */
+  /** The actual model string to use (tier-resolved) */
   model: string;
   /** Why this provider was chosen (for logging) */
   reason: string;
@@ -99,7 +96,6 @@ const INTENT_SIGNALS: Record<MessageIntent, string[]> = {
   ],
   speed: [
     // Speed intent is detected by context flags, not keywords
-    // (e.g., smart glasses mode, live scan mode, rapid-fire questions)
   ],
 };
 
@@ -141,15 +137,21 @@ export function routeMessage(
     hasImage?: boolean;
     /** Conversation length so far (longer = more complex) */
     conversationLength?: number;
+    /** User's subscription tier — determines model quality */
+    userTier?: string;
   }
 ): RoutingDecision {
+  const tier = options?.userTier || 'free';
+  const isPremium = ['pro', 'elite', 'admin', 'developer'].includes(tier);
+
   // ── Force override ────────────────────────────────────
   if (options?.forceProvider && isProviderAvailable(options.forceProvider)) {
+    const model = resolveModelForTier(options.forceProvider, tier);
     const config = ORACLE_PROVIDERS[options.forceProvider];
     return {
       providerId: options.forceProvider,
-      model: config.model,
-      reason: `forced:${options.forceProvider}`,
+      model,
+      reason: `forced:${options.forceProvider} (${tier}→${model})`,
       fallbacks: buildFallbackChain(options.forceProvider),
       intent: 'casual',
       temperature: config.temperature,
@@ -167,8 +169,8 @@ export function routeMessage(
   // ── Map intent to provider strength ───────────────────
   const targetStrength = INTENT_TO_STRENGTH[intent];
 
-  // ── Get candidate providers ───────────────────────────
-  let providerId = selectProvider(targetStrength, identity?.ai_dna, intent);
+  // ── Select provider (tier-aware) ──────────────────────
+  let providerId = selectProvider(targetStrength, identity?.ai_dna, intent, isPremium);
 
   // ── Vision check: if image present, provider must support it ──
   if (options?.hasImage && !ORACLE_PROVIDERS[providerId].supportsVision) {
@@ -179,6 +181,8 @@ export function routeMessage(
     }
   }
 
+  // ── Resolve actual model for this tier ────────────────
+  const model = resolveModelForTier(providerId, tier);
   const config = ORACLE_PROVIDERS[providerId];
 
   // ── Adjust params by intent ───────────────────────────
@@ -187,29 +191,35 @@ export function routeMessage(
 
   // Deep analysis gets more room
   if (intent === 'deep_analysis' || intent === 'strategy') {
-    maxTokens = 800;
+    maxTokens = isPremium ? 1000 : 600;
   }
 
-  // Casual chat is shorter
+  // Casual chat — premium users get more room for personality
   if (intent === 'casual') {
-    maxTokens = 300;
+    maxTokens = isPremium ? 400 : 250;
   }
 
-  // Speed mode: tighter limits
+  // Quick answers — concise for everyone
+  if (intent === 'quick_answer') {
+    maxTokens = isPremium ? 500 : 300;
+  }
+
+  // Speed mode: tight limits regardless of tier
   if (intent === 'speed') {
     maxTokens = 250;
-    temperature = 0.5; // More deterministic for speed
+    temperature = 0.5;
   }
 
   // Creative gets more freedom
   if (intent === 'creative') {
     temperature = 0.8;
+    maxTokens = isPremium ? 600 : 400;
   }
 
   return {
     providerId,
-    model: config.model,
-    reason: `intent:${intent} → strength:${targetStrength} → provider:${providerId}`,
+    model,
+    reason: `intent:${intent} → strength:${targetStrength} → ${providerId}/${model} (tier:${tier})`,
     fallbacks: buildFallbackChain(providerId),
     intent,
     temperature,
@@ -252,23 +262,26 @@ function detectIntent(message: string): MessageIntent {
   // Short messages with ? suggest quick answers
   if (msgLower.includes('?') && msgLower.length < 50) return 'quick_answer';
 
-  // Default to general chat
+  // Default: for premium users, default to general (gets full brain)
+  // For free users, still general (gets budget brain via resolveModelForTier)
   return 'casual';
 }
 
 /**
  * Select the best provider for a given strength, with AI DNA influence.
+ * Premium users get the BEST provider. Free users get the CHEAPEST.
  */
 function selectProvider(
   strength: ProviderStrength,
   aiDna: AiDnaProfile | null | undefined,
-  intent: MessageIntent
+  intent: MessageIntent,
+  isPremium: boolean,
 ): OracleProviderId {
   const candidates = getProvidersByStrength(strength);
 
-  // No candidates for this strength? Use cheapest general provider
+  // No candidates for this strength? Fall back
   if (candidates.length === 0) {
-    return getCheapestForStrength('general');
+    return isPremium ? getBestForStrength('general') : getCheapestForStrength('general');
   }
 
   // Single candidate? Use it
@@ -276,13 +289,12 @@ function selectProvider(
     return candidates[0];
   }
 
-  // ── AI DNA influence ──────────────────────────────────
-  // If the user's Oracle has provider affinity, slightly prefer that provider
+  // ── AI DNA influence (premium users only) ─────────────
+  // If the user's Oracle has provider affinity, prefer that provider
   // This is what makes each Oracle genuinely unique
-  if (aiDna?.provider_personality_blend) {
+  if (isPremium && aiDna?.provider_personality_blend) {
     const blend = aiDna.provider_personality_blend;
 
-    // Find candidate with highest DNA affinity
     let bestCandidate = candidates[0];
     let bestAffinity = 0;
 
@@ -300,34 +312,33 @@ function selectProvider(
     }
   }
 
-  // ── Default: cheapest available for this strength ─────
+  // ── Tier-based selection ──────────────────────────────
+  if (isPremium) {
+    return getBestForStrength(strength);
+  }
+
   return getCheapestForStrength(strength);
 }
 
 /**
  * Build ordered fallback chain for a provider.
- * If the primary provider fails, try these in order.
  */
 function buildFallbackChain(primaryId: OracleProviderId): OracleProviderId[] {
-  // Always include openai as ultimate fallback (most reliable)
   const fallbacks: OracleProviderId[] = [];
 
-  // Fallback order: same strength → general → openai
   const primaryConfig = ORACLE_PROVIDERS[primaryId];
   const sameStrength = getProvidersByStrength(primaryConfig.primaryStrength)
     .filter(id => id !== primaryId);
 
   fallbacks.push(...sameStrength);
 
-  // Add openai if not already in the list
   if (!fallbacks.includes('openai') && primaryId !== 'openai') {
     fallbacks.push('openai');
   }
 
-  // Add groq as speed fallback (it's cheap and fast)
   if (!fallbacks.includes('groq') && primaryId !== 'groq' && isProviderAvailable('groq')) {
     fallbacks.push('groq');
   }
 
-  return fallbacks.slice(0, 3); // Max 3 fallbacks
+  return fallbacks.slice(0, 3);
 }

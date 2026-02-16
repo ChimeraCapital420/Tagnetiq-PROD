@@ -372,6 +372,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ── 3. Route to best provider ─────────────────────────
     const routing = routeMessage(message, identity, {
       conversationLength: historyLength,
+      userTier: access.tier.current,
     });
 
     // ── 4. Assemble conversation messages ─────────────────
