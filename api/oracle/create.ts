@@ -3,6 +3,8 @@
 // Generates listings in user's voice, videos via InVideo, images via DALL-E 3, brag cards
 // Tier-gated: listings = Pro+, video/image = Elite
 //
+// ENV VARS: OPEN_AI_API_KEY, ANTHROPIC_SECRET (matches existing Vercel config)
+//
 // POST /api/oracle/create
 // { mode, itemId?, platform?, tone?, images?, instructions?, style?, videoParams? }
 
@@ -15,6 +17,10 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
+
+// Resolve OpenAI key — match existing codebase pattern
+const OPENAI_KEY = process.env.OPEN_AI_API_KEY || process.env.OPEN_AI_TOKEN;
+const ANTHROPIC_KEY = process.env.ANTHROPIC_SECRET;
 
 export const config = {
   maxDuration: 60,
@@ -144,6 +150,43 @@ async function awardCreationPoints(userId: string, mode: string) {
 }
 
 // =============================================================================
+// OPENAI HELPER — uses correct env var
+// =============================================================================
+
+async function callOpenAI(messages: any[], options: {
+  maxTokens?: number;
+  temperature?: number;
+  jsonMode?: boolean;
+} = {}) {
+  if (!OPENAI_KEY) {
+    throw new Error('OpenAI API key not configured (OPEN_AI_API_KEY)');
+  }
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OPENAI_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages,
+      max_tokens: options.maxTokens || 1000,
+      temperature: options.temperature || 0.7,
+      ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    console.error('[OpenAI] Error:', response.status, err);
+    throw new Error(`OpenAI API error: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+// =============================================================================
 // LISTING GENERATION
 // =============================================================================
 
@@ -191,29 +234,11 @@ async function handleListing(
     images: req.body.imageCount,
   });
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: 'You are an expert marketplace listing writer. Respond ONLY with valid JSON.' },
-        { role: 'user', content: prompt },
-      ],
-      max_tokens: 1000,
-      temperature: 0.7,
-      response_format: { type: 'json_object' },
-    }),
-  });
+  const result = await callOpenAI([
+    { role: 'system', content: 'You are an expert marketplace listing writer. Respond ONLY with valid JSON.' },
+    { role: 'user', content: prompt },
+  ], { jsonMode: true });
 
-  if (!response.ok) {
-    return res.status(500).json({ error: 'Listing generation failed' });
-  }
-
-  const result = await response.json();
   const listing = JSON.parse(result.choices[0].message.content);
 
   return res.status(200).json({
@@ -247,25 +272,10 @@ ${instructions ? `Instructions: ${instructions}` : ''}
 ${voiceProfile?.messageCount >= 10 ? `Voice style: ${voiceProfile.vocabularyLevel}, ${voiceProfile.toneMarkers?.join(', ') || 'neutral'}` : ''}
 Keep it concise, honest, and optimized for the platform. Return as plain text, no JSON.`;
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 500,
-      temperature: 0.7,
-    }),
-  });
-
-  if (!response.ok) {
-    return res.status(500).json({ error: 'Description generation failed' });
-  }
-
-  const result = await response.json();
+  const result = await callOpenAI(
+    [{ role: 'user', content: prompt }],
+    { maxTokens: 500 },
+  );
 
   return res.status(200).json({
     mode: 'description',
@@ -300,37 +310,18 @@ async function handleVideo(
     voiceProfile,
   });
 
-  const scriptResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: 'You are a viral video script writer for product showcases. Respond ONLY with valid JSON with fields: hook, scenes[], callToAction, duration, music_suggestion.' },
-        { role: 'user', content: scriptPrompt },
-      ],
-      max_tokens: 800,
-      temperature: 0.8,
-      response_format: { type: 'json_object' },
-    }),
-  });
+  const scriptResult = await callOpenAI([
+    { role: 'system', content: 'You are a viral video script writer for product showcases. Respond ONLY with valid JSON with fields: hook, scenes[], callToAction, duration, music_suggestion.' },
+    { role: 'user', content: scriptPrompt },
+  ], { maxTokens: 800, temperature: 0.8, jsonMode: true });
 
-  if (!scriptResponse.ok) {
-    return res.status(500).json({ error: 'Script generation failed' });
-  }
-
-  const scriptResult = await scriptResponse.json();
   const script = JSON.parse(scriptResult.choices[0].message.content);
 
-  // Step 2: Send to InVideo for rendering
+  // Step 2: Send to InVideo for rendering via Anthropic MCP
   const autoGenerate = videoParams?.autoGenerate !== false;
 
-  if (autoGenerate) {
+  if (autoGenerate && ANTHROPIC_KEY) {
     try {
-      // Flatten script for InVideo
       const fullScript = [
         script.hook || '',
         ...(script.scenes || []).map((s: any) => s.narration || s.text || s.description || ''),
@@ -344,12 +335,11 @@ async function handleVideo(
         market_update: 'educational',
       };
 
-      // InVideo MCP call via Anthropic API (uses connected MCP)
       const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY!,
+          'x-api-key': ANTHROPIC_KEY,
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
@@ -376,7 +366,6 @@ async function handleVideo(
           .map((item: any) => item.content?.[0]?.text || '')
           .join('\n');
 
-        // Try to parse video URL from result
         let videoUrl = null;
         let videoId = null;
         try {
@@ -384,12 +373,10 @@ async function handleVideo(
           videoUrl = parsed.videoUrl || parsed.url || parsed.video_url || null;
           videoId = parsed.videoId || parsed.id || parsed.video_id || null;
         } catch {
-          // Try regex fallback for URL
           const urlMatch = toolResults.match(/https?:\/\/[^\s"']+(?:invideo|video)[^\s"']*/i);
           if (urlMatch) videoUrl = urlMatch[0];
         }
 
-        // Get text response for context
         const textContent = (mcpResult.content || [])
           .filter((item: any) => item.type === 'text')
           .map((item: any) => item.text)
@@ -453,29 +440,11 @@ async function handleBragCard(
     sourceStory,
   });
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: 'Generate social media brag card data. Respond ONLY with valid JSON.' },
-        { role: 'user', content: prompt },
-      ],
-      max_tokens: 300,
-      temperature: 0.8,
-      response_format: { type: 'json_object' },
-    }),
-  });
+  const result = await callOpenAI([
+    { role: 'system', content: 'Generate social media brag card data. Respond ONLY with valid JSON.' },
+    { role: 'user', content: prompt },
+  ], { maxTokens: 300, temperature: 0.8, jsonMode: true });
 
-  if (!response.ok) {
-    return res.status(500).json({ error: 'Brag card generation failed' });
-  }
-
-  const result = await response.json();
   const card = JSON.parse(result.choices[0].message.content);
 
   return res.status(200).json({
@@ -510,7 +479,7 @@ async function handleImage(
 
   const imagePrompt = stylePrompts[imageStyle] || stylePrompts.product_photo;
 
-  if (!process.env.OPENAI_API_KEY) {
+  if (!OPENAI_KEY) {
     return res.status(503).json({ error: 'Image generation not configured', prompt: imagePrompt });
   }
 
@@ -519,7 +488,7 @@ async function handleImage(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Authorization': `Bearer ${OPENAI_KEY}`,
       },
       body: JSON.stringify({
         model: 'dall-e-3',
