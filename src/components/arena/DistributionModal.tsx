@@ -1,6 +1,10 @@
 // FILE: src/components/arena/DistributionModal.tsx
 // Multi-platform distribution modal for listings
 // Updated: Universal communities for FULL $400B resale market
+//
+// FIXES:
+//   - Scroll: added min-h-0 to content area (flexbox overflow fix)
+//   - Links: open in new tab instead of popup (Facebook blocks popups)
 
 import { useState, useEffect } from 'react';
 import { 
@@ -288,8 +292,9 @@ export function DistributionModal({
     }
   };
 
+  // FIX: Open in new tab instead of popup — Facebook/eBay block popup windows
   const openPlatform = (url: string) => {
-    window.open(url, '_blank', 'width=600,height=700,scrollbars=yes');
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   const getPlatformsByType = (type: string) => {
@@ -355,7 +360,7 @@ export function DistributionModal({
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 p-4 border-b border-zinc-800 overflow-x-auto">
+        <div className="flex gap-2 p-4 border-b border-zinc-800 overflow-x-auto scrollbar-none">
           <button
             onClick={() => setActiveTab('recommended')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors whitespace-nowrap ${
@@ -405,8 +410,8 @@ export function DistributionModal({
           </button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4">
+        {/* Content — FIX: min-h-0 enables proper flex overflow scrolling */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-4">
           {loading && activeTab !== 'communities' ? (
             <div className="flex items-center justify-center py-12">
               <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent" />
@@ -447,7 +452,7 @@ export function DistributionModal({
                 </div>
               )}
 
-              {/* Communities Tab - NEW */}
+              {/* Communities Tab */}
               {activeTab === 'communities' && (
                 <CommunityGrid
                   communities={communities}
@@ -544,7 +549,7 @@ export function DistributionModal({
 }
 
 // ============================================================================
-// Community Grid Component - NEW
+// Community Grid Component
 // ============================================================================
 function CommunityGrid({
   communities,
@@ -572,7 +577,6 @@ function CommunityGrid({
   // Generate title for Reddit posts
   const generateRedditTitle = (community: Community): string => {
     const priceStr = price.toFixed(0);
-    // Standard format: [WTS] or [H] item [W] $price
     if (community.id.includes('swap') || community.id.includes('sale')) {
       return `[WTS] ${itemName} - $${priceStr}`;
     }
@@ -752,7 +756,7 @@ function CommunityGrid({
   );
 }
 
-// Platform Grid Component (existing)
+// Platform Grid Component
 function PlatformGrid({
   platforms,
   title,

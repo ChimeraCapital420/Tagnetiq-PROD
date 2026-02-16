@@ -123,9 +123,9 @@ const AnalysisResultContent: React.FC = () => {
           estimatedValue: data.estimatedValue,
         }),
       });
-      toast.success(res.ok ? 'Added to price watchlist!' : 'Watchlist coming soon!');
+      toast.success(res.ok ? 'Added to price watchlist!' : 'Could not add to watchlist');
     } catch {
-      toast.info('Watchlist coming soon!');
+      toast.error('Could not add to watchlist. Try again.');
     }
   };
 
