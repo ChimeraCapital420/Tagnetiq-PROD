@@ -7,7 +7,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { OracleIdentity } from '../types.js';
-import { detectUserEnergy } from '../personality/energy.js';
+import { detectEnergy } from '../personality/energy.js';
 
 // =============================================================================
 // DEFAULT IDENTITY (fallback if DB write fails)
@@ -112,7 +112,7 @@ export async function updateIdentityAfterChat(
   }
 
   // ── Detect user energy ──────────────────────────────────
-  updates.user_energy = detectUserEnergy(userMessage);
+  updates.user_energy = detectEnergy(userMessage);
 
   // ── Trust grows with usage ──────────────────────────────
   const newTrust = Math.min(10, Math.floor((identity.conversation_count + 1) / 5) + 1);
