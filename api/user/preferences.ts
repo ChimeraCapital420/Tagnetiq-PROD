@@ -1,93 +1,107 @@
 // FILE: api/user/preferences.ts
+// User preferences API — GET and PATCH settings
+// FIXED: Rewritten from Next.js (NextRequest/NextResponse/getServerSession)
+//        to Vercel serverless (VercelRequest/VercelResponse/supabaseAdmin)
+// FIXED: Removed duplicate imports
+// FIXED: Uses auth token verification like all other API routes
 
-import { NextRequest, NextResponse } from 'next/server';
-import { authOptions } from '../auth/[...nextauth]/route.js';
-import { supabase } from '../../src/lib/supabase.js';
-import { supabase } from '../../src/lib/supabase.js'; // Added .js
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
 
-export async function PATCH(req: NextRequest) {
-  try {
-    // Get session
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+);
 
-    // Get user profile
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('id, settings')
-      .eq('email', session.user.email)
-      .single();
+// =============================================================================
+// AUTH
+// =============================================================================
 
-    if (profileError || !profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
-    }
+async function verifyUser(req: VercelRequest) {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return null;
 
-    // Get updates from request
-    const updates = await req.json();
+  const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+  if (error || !user) return null;
 
-    // Merge settings
-    const currentSettings = profile.settings || {};
-    const newSettings = {
-      ...currentSettings,
-      ...updates
-    };
-
-    // Update profile
-    const { error: updateError } = await supabase
-      .from('profiles')
-      .update({ 
-        settings: newSettings,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', profile.id);
-
-    if (updateError) {
-      console.error('Error updating preferences:', updateError);
-      return NextResponse.json({ error: 'Failed to update preferences' }, { status: 500 });
-    }
-
-    return NextResponse.json({ 
-      success: true, 
-      settings: newSettings 
-    });
-
-  } catch (error) {
-    console.error('Preferences API error:', error);
-    return NextResponse.json({ 
-      error: 'Internal server error' 
-    }, { status: 500 });
-  }
+  return user;
 }
 
-export async function GET(req: NextRequest) {
+// =============================================================================
+// HANDLER
+// =============================================================================
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Auth check
+  const user = await verifyUser(req);
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   try {
-    // Get session
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // ── GET: Return user settings ──────────────────────────
+    if (req.method === 'GET') {
+      const { data: profile, error } = await supabaseAdmin
+        .from('profiles')
+        .select('settings')
+        .eq('id', user.id)
+        .single();
+
+      if (error || !profile) {
+        return res.status(404).json({ error: 'Profile not found' });
+      }
+
+      return res.status(200).json({
+        settings: profile.settings || {},
+      });
     }
 
-    // Get user profile
-    const { data: profile, error } = await supabase
-      .from('profiles')
-      .select('settings')
-      .eq('email', session.user.email)
-      .single();
+    // ── PATCH: Merge and update settings ───────────────────
+    if (req.method === 'PATCH') {
+      // Get current settings
+      const { data: profile, error: fetchError } = await supabaseAdmin
+        .from('profiles')
+        .select('settings')
+        .eq('id', user.id)
+        .single();
 
-    if (error || !profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+      if (fetchError || !profile) {
+        return res.status(404).json({ error: 'Profile not found' });
+      }
+
+      // Merge with incoming updates
+      const updates = req.body;
+      const currentSettings = profile.settings || {};
+      const newSettings = {
+        ...currentSettings,
+        ...updates,
+      };
+
+      // Update profile
+      const { error: updateError } = await supabaseAdmin
+        .from('profiles')
+        .update({
+          settings: newSettings,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+
+      if (updateError) {
+        console.error('[Preferences] Update error:', updateError);
+        return res.status(500).json({ error: 'Failed to update preferences' });
+      }
+
+      return res.status(200).json({
+        success: true,
+        settings: newSettings,
+      });
     }
 
-    return NextResponse.json({ 
-      settings: profile.settings || {} 
-    });
+    // ── Unsupported method ─────────────────────────────────
+    return res.status(405).json({ error: 'Method not allowed' });
 
   } catch (error) {
-    console.error('Get preferences error:', error);
-    return NextResponse.json({ 
-      error: 'Internal server error' 
-    }, { status: 500 });
+    console.error('[Preferences] API error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }

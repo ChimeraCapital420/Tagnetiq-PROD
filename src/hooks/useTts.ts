@@ -1,18 +1,16 @@
 // FILE: src/hooks/useTts.ts
 // Oracle TTS — Premium ElevenLabs voice with browser fallback
+// Enhanced: Energy-aware voice — matches tone to user's emotional state
 // FIXED: Gets session from supabase directly (not AuthContext)
 // FIXED: Dispatches global 'oracle-speak-start' / 'oracle-speak-end' events
-//        so OracleVisualizer (separate component) knows when speech is active
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
+import type { EnergyLevel } from '@/components/oracle/types';
 
 // =============================================================================
 // GLOBAL SPEAKING STATE
-// Each useTts() instance has its own isSpeaking, but other components
-// (like OracleVisualizer) need to know when ANY instance is speaking.
-// We use CustomEvents on window for this.
 // =============================================================================
 
 function emitSpeakingState(speaking: boolean) {
@@ -22,7 +20,6 @@ function emitSpeakingState(speaking: boolean) {
 
 /**
  * Hook for components that just need to know if Oracle is speaking.
- * Lighter than importing full useTts — no speech capabilities, just state.
  */
 export function useOracleSpeakingState() {
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -41,6 +38,70 @@ export function useOracleSpeakingState() {
 }
 
 // =============================================================================
+// ENERGY → VOICE SETTINGS MAP
+// =============================================================================
+
+interface VoiceSettings {
+  stability: number;         // 0-1: lower = more expressive
+  similarity_boost: number;  // 0-1: voice consistency
+  style: number;             // 0-1: style exaggeration (Eleven v2 only)
+  speed: number;             // 0.7-1.3: speaking speed
+}
+
+function getEnergyVoiceSettings(energy?: EnergyLevel): VoiceSettings {
+  switch (energy) {
+    case 'excited':
+      return { stability: 0.35, similarity_boost: 0.7, style: 0.6, speed: 1.1 };
+    case 'frustrated':
+      return { stability: 0.7, similarity_boost: 0.8, style: 0.2, speed: 0.9 };
+    case 'focused':
+      return { stability: 0.6, similarity_boost: 0.8, style: 0.3, speed: 1.0 };
+    case 'curious':
+      return { stability: 0.45, similarity_boost: 0.75, style: 0.4, speed: 1.0 };
+    case 'casual':
+      return { stability: 0.5, similarity_boost: 0.7, style: 0.5, speed: 1.0 };
+    case 'neutral':
+    default:
+      return { stability: 0.5, similarity_boost: 0.75, style: 0.3, speed: 1.0 };
+  }
+}
+
+// =============================================================================
+// BROWSER TTS ENERGY MAPPING
+// =============================================================================
+
+function applyEnergyToUtterance(
+  utterance: SpeechSynthesisUtterance,
+  energy?: EnergyLevel,
+): void {
+  switch (energy) {
+    case 'excited':
+      utterance.rate = 1.1;
+      utterance.pitch = 1.15;
+      break;
+    case 'frustrated':
+      utterance.rate = 0.9;
+      utterance.pitch = 0.95;
+      break;
+    case 'focused':
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      break;
+    case 'curious':
+      utterance.rate = 1.0;
+      utterance.pitch = 1.05;
+      break;
+    case 'casual':
+      utterance.rate = 0.95;
+      utterance.pitch = 1.0;
+      break;
+    default:
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+  }
+}
+
+// =============================================================================
 // MAIN TTS HOOK
 // =============================================================================
 
@@ -51,7 +112,6 @@ export const useTts = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Helper to set speaking state locally AND globally
   const setSpeaking = useCallback((value: boolean) => {
     setIsSpeaking(value);
     emitSpeakingState(value);
@@ -76,9 +136,9 @@ export const useTts = () => {
   const speak = useCallback(async (
     text: string,
     voiceURI?: string | null,
-    premiumVoiceId?: string | null
+    premiumVoiceId?: string | null,
+    energy?: EnergyLevel,
   ) => {
-    // Cancel any ongoing speech first
     cancel();
 
     if (!text || text.trim().length === 0) return;
@@ -92,11 +152,14 @@ export const useTts = () => {
 
         if (!session) {
           console.warn('No session for premium voice — falling back to browser TTS');
-          speakWithBrowser(text, voiceURI);
+          speakWithBrowser(text, voiceURI, energy);
           return;
         }
 
-        console.log(`🔊 ElevenLabs: "${text.substring(0, 40)}..." → ${premiumVoiceId}`);
+        // Get energy-aware voice settings
+        const voiceSettings = getEnergyVoiceSettings(energy);
+
+        console.log(`🔊 ElevenLabs: "${text.substring(0, 40)}..." → ${premiumVoiceId} [${energy || 'neutral'}]`);
 
         const response = await fetch('/api/oracle/generate-speech', {
           method: 'POST',
@@ -104,7 +167,11 @@ export const useTts = () => {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${session.access_token}`,
           },
-          body: JSON.stringify({ text, voiceId: premiumVoiceId }),
+          body: JSON.stringify({
+            text,
+            voiceId: premiumVoiceId,
+            voiceSettings, // Pass energy-aware settings to API
+          }),
         });
 
         if (!response.ok) {
@@ -135,21 +202,26 @@ export const useTts = () => {
       } catch (error) {
         console.error('Premium voice error, falling back to browser TTS:', error);
         setSpeaking(false);
-        speakWithBrowser(text, voiceURI);
+        speakWithBrowser(text, voiceURI, energy);
       }
 
       return;
     }
 
     // ── Browser TTS fallback ──────────────────────────────
-    speakWithBrowser(text, voiceURI);
+    speakWithBrowser(text, voiceURI, energy);
 
   }, [voices, preferredVoice, i18n.language, setSpeaking]);
 
   /**
    * Browser SpeechSynthesis — the free robotic fallback.
+   * Now energy-aware: adjusts rate and pitch based on conversation energy.
    */
-  const speakWithBrowser = useCallback((text: string, voiceURI?: string | null) => {
+  const speakWithBrowser = useCallback((
+    text: string,
+    voiceURI?: string | null,
+    energy?: EnergyLevel,
+  ) => {
     if (typeof window === 'undefined' || !window.speechSynthesis) {
       console.warn('Speech Synthesis not supported');
       return;
@@ -166,6 +238,9 @@ export const useTts = () => {
     if (voiceToUse) {
       utterance.voice = voiceToUse;
     }
+
+    // Apply energy-based voice modulation
+    applyEnergyToUtterance(utterance, energy);
 
     utterance.onstart = () => setSpeaking(true);
     utterance.onend = () => setSpeaking(false);

@@ -32,6 +32,12 @@
       "description": "Scan and identify collectibles"
     },
     {
+      "name": "Oracle",
+      "short_name": "Oracle",
+      "url": "/oracle",
+      "description": "Talk to your AI partner"
+    },
+    {
       "name": "My Collection",
       "short_name": "Collection",
       "url": "/collection",

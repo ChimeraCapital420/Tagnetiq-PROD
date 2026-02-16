@@ -1,6 +1,7 @@
 // FILE: src/components/oracle/OraclePage.tsx
 // Thin orchestrator — wires hooks to components
 // All logic lives in hooks/, all UI lives in components/
+// Enhanced: camera/vision, content creation, energy tracking
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTts, useOracleSpeakingState } from '@/hooks/useTts';
@@ -13,7 +14,7 @@ import {
   OracleHistoryPanel,
   ConversationBanner,
 } from './components';
-import type { ChatMessage } from './types';
+import type { ChatMessage, VisionMode, CameraCapture } from './types';
 
 export default function OraclePage() {
   const [autoSpeak, setAutoSpeak] = useState(true);
@@ -36,10 +37,9 @@ export default function OraclePage() {
     onTranscript: async (text) => {
       const response = await chat.sendMessage(text);
       if (response && autoSpeak) {
-        speak(response, voiceURI, premiumVoiceId);
+        speak(response, voiceURI, premiumVoiceId, chat.currentEnergy);
         convo.queueAutoListen();
       } else if (response && convo.conversationMode) {
-        // Auto-speak off but conversation mode on — still auto-listen
         convo.queueAutoListen();
       }
     },
@@ -64,16 +64,42 @@ export default function OraclePage() {
     if (convo.conversationMode) setAutoSpeak(true);
   }, [convo.conversationMode]);
 
-  // ── Handlers ──────────────────────────────────────────
+  // ── Text send handler ─────────────────────────────────
   const handleSend = useCallback(async () => {
     if (!chat.inputValue.trim()) return;
     const response = await chat.sendMessage(chat.inputValue);
     if (response && autoSpeak) {
-      speak(response, voiceURI, premiumVoiceId);
+      speak(response, voiceURI, premiumVoiceId, chat.currentEnergy);
       convo.queueAutoListen();
     }
-  }, [chat.inputValue, autoSpeak, speak, voiceURI, premiumVoiceId]);
+  }, [chat.inputValue, autoSpeak, speak, voiceURI, premiumVoiceId, chat.currentEnergy]);
 
+  // ── Image/Vision send handler ─────────────────────────
+  const handleSendImage = useCallback(async (
+    capture: CameraCapture,
+    mode: VisionMode,
+    question?: string,
+  ) => {
+    if (!chat.sendImage) return;
+    const response = await chat.sendImage(capture, mode, question);
+    if (response && autoSpeak) {
+      speak(response, voiceURI, premiumVoiceId, chat.currentEnergy);
+    }
+  }, [chat.sendImage, autoSpeak, speak, voiceURI, premiumVoiceId, chat.currentEnergy]);
+
+  // ── Hunt triage handler ───────────────────────────────
+  const handleSendHunt = useCallback(async (
+    capture: CameraCapture,
+    askingPrice?: number,
+  ) => {
+    if (!chat.sendHunt) return;
+    const response = await chat.sendHunt(capture, askingPrice);
+    if (response && autoSpeak) {
+      speak(response, voiceURI, premiumVoiceId, chat.currentEnergy);
+    }
+  }, [chat.sendHunt, autoSpeak, speak, voiceURI, premiumVoiceId, chat.currentEnergy]);
+
+  // ── Quick chip handler ────────────────────────────────
   const handleChipClick = useCallback(async (message: string) => {
     const response = await chat.sendMessage(message);
     if (response && autoSpeak) {
@@ -81,6 +107,7 @@ export default function OraclePage() {
     }
   }, [autoSpeak, speak, voiceURI, premiumVoiceId]);
 
+  // ── Play/stop individual messages ─────────────────────
   const handlePlay = useCallback((msg: ChatMessage, idx: number) => {
     if (playingIdx === idx && isSpeaking) {
       cancelSpeech();
@@ -92,6 +119,7 @@ export default function OraclePage() {
     speak(msg.content, voiceURI, premiumVoiceId);
   }, [playingIdx, isSpeaking, cancelSpeech, speak, voiceURI, premiumVoiceId]);
 
+  // ── History panel ─────────────────────────────────────
   const handleToggleHistory = useCallback(() => {
     setShowHistory(prev => {
       if (!prev) chat.loadConversationHistory();
@@ -104,6 +132,7 @@ export default function OraclePage() {
     if (ok) setShowHistory(false);
   }, []);
 
+  // ── Auto-speak toggle ────────────────────────────────
   const handleToggleAutoSpeak = useCallback(() => {
     setAutoSpeak(prev => {
       if (isSpeaking) cancelSpeech();
@@ -166,6 +195,8 @@ export default function OraclePage() {
         onSend={handleSend}
         onVoice={convo.listen}
         onEndConversation={convo.toggleConversationMode}
+        onSendImage={handleSendImage}
+        onSendHunt={handleSendHunt}
       />
     </div>
   );
