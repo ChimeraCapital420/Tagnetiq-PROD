@@ -1,6 +1,6 @@
 // FILE: api/oracle/create.ts
 // Unified content creation endpoint for Oracle
-// Generates listings in user's voice, videos via InVideo, images, brag cards
+// Generates listings in user's voice, videos via InVideo, images via DALL-E 3, brag cards
 // Tier-gated: listings = Pro+, video/image = Elite
 //
 // POST /api/oracle/create
@@ -12,9 +12,13 @@ import { buildListingPrompt, buildVideoScriptPrompt, buildBragCardPrompt } from 
 import { getVoiceProfile, buildVoiceProfile } from '../../src/lib/oracle/voice-profile/index.js';
 
 const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL!,
+  process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
+
+export const config = {
+  maxDuration: 60,
+};
 
 // =============================================================================
 // AUTH HELPER
@@ -87,7 +91,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Get or build voice profile
     let voiceProfile = await getVoiceProfile(user.id);
     if (!voiceProfile) {
-      // Try to build from recent conversations
       const { data: recentConvos } = await supabaseAdmin
         .from('oracle_conversations')
         .select('messages')
@@ -101,23 +104,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Route to appropriate handler
+    // Award gamification points (non-blocking)
+    awardCreationPoints(user.id, mode).catch(() => {});
+
     switch (mode) {
       case 'listing':
         return await handleListing(req, res, user.id, platform, itemId, instructions, voiceProfile);
-
       case 'description':
         return await handleDescription(req, res, user.id, platform, itemId, instructions, voiceProfile);
-
       case 'video':
         return await handleVideo(req, res, user.id, itemId, style, videoParams, voiceProfile);
-
       case 'brag_card':
         return await handleBragCard(req, res, user.id, itemId);
-
       case 'image':
         return await handleImage(req, res, user.id, itemId, instructions);
-
       default:
         return res.status(400).json({ error: `Unknown mode: ${mode}` });
     }
@@ -125,6 +125,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (err: any) {
     console.error('[Oracle/Create] Error:', err);
     return res.status(500).json({ error: 'Content creation failed' });
+  }
+}
+
+// =============================================================================
+// GAMIFICATION BRIDGE
+// =============================================================================
+
+async function awardCreationPoints(userId: string, mode: string) {
+  try {
+    const { awardPoints } = await import('../../src/lib/oracle/gamification/index.js');
+    if (mode === 'listing' || mode === 'description') {
+      await awardPoints(supabaseAdmin, userId, 'listing_created');
+    }
+  } catch {
+    // Non-critical
   }
 }
 
@@ -141,7 +156,6 @@ async function handleListing(
   instructions: string | undefined,
   voiceProfile: any,
 ) {
-  // Pull item data from vault if itemId provided
   let itemData: any = {};
   if (itemId) {
     const { data } = await supabaseAdmin
@@ -164,7 +178,6 @@ async function handleListing(
     }
   }
 
-  // Use item name from request body if not from vault
   const itemName = itemData.name || req.body.itemName || 'Item';
 
   const prompt = buildListingPrompt({
@@ -178,7 +191,6 @@ async function handleListing(
     images: req.body.imageCount,
   });
 
-  // Generate listing via OpenAI
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -263,7 +275,7 @@ Keep it concise, honest, and optimized for the platform. Return as plain text, n
 }
 
 // =============================================================================
-// VIDEO GENERATION (InVideo MCP)
+// VIDEO GENERATION — InVideo MCP
 // =============================================================================
 
 async function handleVideo(
@@ -278,7 +290,7 @@ async function handleVideo(
   const itemName = req.body.itemName || 'Item';
   const videoPlatform = videoParams?.platform || 'tiktok';
 
-  // Generate script first
+  // Step 1: Generate script via OpenAI
   const scriptPrompt = buildVideoScriptPrompt({
     itemName,
     itemCategory: req.body.category,
@@ -297,7 +309,7 @@ async function handleVideo(
     body: JSON.stringify({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: 'You are a viral video script writer for product showcases. Respond ONLY with valid JSON.' },
+        { role: 'system', content: 'You are a viral video script writer for product showcases. Respond ONLY with valid JSON with fields: hook, scenes[], callToAction, duration, music_suggestion.' },
         { role: 'user', content: scriptPrompt },
       ],
       max_tokens: 800,
@@ -313,8 +325,97 @@ async function handleVideo(
   const scriptResult = await scriptResponse.json();
   const script = JSON.parse(scriptResult.choices[0].message.content);
 
-  // Return script for now — InVideo generation can be triggered separately
-  // This keeps the initial response fast and the video generates async
+  // Step 2: Send to InVideo for rendering
+  const autoGenerate = videoParams?.autoGenerate !== false;
+
+  if (autoGenerate) {
+    try {
+      // Flatten script for InVideo
+      const fullScript = [
+        script.hook || '',
+        ...(script.scenes || []).map((s: any) => s.narration || s.text || s.description || ''),
+        script.callToAction || '',
+      ].filter(Boolean).join('\n\n');
+
+      const vibeMap: Record<string, string> = {
+        showcase: 'professional',
+        unboxing: 'exciting',
+        flip_story: 'storytelling',
+        market_update: 'educational',
+      };
+
+      // InVideo MCP call via Anthropic API (uses connected MCP)
+      const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY!,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          messages: [{
+            role: 'user',
+            content: `Generate a ${videoPlatform} video using InVideo with this script:\n\n${fullScript}\n\nTopic: ${itemName} ${style}\nVibe: ${vibeMap[style] || 'professional'}\nTarget audience: resellers and collectors`,
+          }],
+          mcp_servers: [{
+            type: 'url',
+            url: 'https://mcp.invideo.io/sse',
+            name: 'invideo-mcp',
+          }],
+        }),
+      });
+
+      if (anthropicResponse.ok) {
+        const mcpResult = await anthropicResponse.json();
+
+        // Extract video URL from MCP tool results
+        const toolResults = (mcpResult.content || [])
+          .filter((item: any) => item.type === 'mcp_tool_result')
+          .map((item: any) => item.content?.[0]?.text || '')
+          .join('\n');
+
+        // Try to parse video URL from result
+        let videoUrl = null;
+        let videoId = null;
+        try {
+          const parsed = JSON.parse(toolResults);
+          videoUrl = parsed.videoUrl || parsed.url || parsed.video_url || null;
+          videoId = parsed.videoId || parsed.id || parsed.video_id || null;
+        } catch {
+          // Try regex fallback for URL
+          const urlMatch = toolResults.match(/https?:\/\/[^\s"']+(?:invideo|video)[^\s"']*/i);
+          if (urlMatch) videoUrl = urlMatch[0];
+        }
+
+        // Get text response for context
+        const textContent = (mcpResult.content || [])
+          .filter((item: any) => item.type === 'text')
+          .map((item: any) => item.text)
+          .join('\n');
+
+        return res.status(200).json({
+          mode: 'video',
+          script,
+          videoUrl,
+          videoId,
+          videoStatus: videoUrl ? 'ready' : 'processing',
+          mcpMessage: textContent || null,
+          editable: true,
+          message: videoUrl
+            ? 'Video generated! Review and share.'
+            : 'Video is being rendered. Check back shortly.',
+        });
+      }
+
+      console.warn('[InVideo MCP] Response not ok:', anthropicResponse.status);
+    } catch (err) {
+      console.warn('[InVideo MCP] Error (falling back to script):', err);
+    }
+  }
+
+  // Fallback: return script only
   return res.status(200).json({
     mode: 'video',
     script,
@@ -386,7 +487,7 @@ async function handleBragCard(
 }
 
 // =============================================================================
-// IMAGE GENERATION
+// IMAGE GENERATION — DALL-E 3
 // =============================================================================
 
 async function handleImage(
@@ -396,17 +497,73 @@ async function handleImage(
   itemId: string | undefined,
   instructions: string | undefined,
 ) {
-  // Placeholder — can integrate with DALL-E, Flux, or other image gen
-  // For now, return a structured prompt that could be used client-side
   const itemName = req.body.itemName || 'Item';
+  const imageStyle = req.body.imageStyle || 'product_photo';
 
-  const imagePrompt = `Professional product photo: ${itemName}. ${instructions || 'Clean white background, studio lighting, high detail.'}`;
+  const stylePrompts: Record<string, string> = {
+    product_photo: `Professional product photography of ${itemName}. Clean white background, studio lighting, high detail, commercial quality. ${instructions || ''}`,
+    lifestyle: `Lifestyle product photography of ${itemName} in a natural setting. Warm lighting, aspirational composition. ${instructions || ''}`,
+    social_media: `Eye-catching social media image featuring ${itemName}. Bold, vibrant, designed for engagement. Modern aesthetic. ${instructions || ''}`,
+    thumbnail: `YouTube/TikTok thumbnail featuring ${itemName}. Bold text-friendly composition, high contrast, exciting energy. ${instructions || ''}`,
+    vintage: `Vintage aesthetic product shot of ${itemName}. Film grain, warm tones, collectible presentation. ${instructions || ''}`,
+  };
 
-  return res.status(200).json({
-    mode: 'image',
-    prompt: imagePrompt,
-    imageUrl: null,
-    message: 'Image generation coming soon. Prompt generated for manual use.',
-    editable: true,
-  });
+  const imagePrompt = stylePrompts[imageStyle] || stylePrompts.product_photo;
+
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ error: 'Image generation not configured', prompt: imagePrompt });
+  }
+
+  try {
+    const dalleResponse = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'dall-e-3',
+        prompt: imagePrompt,
+        n: 1,
+        size: req.body.size || '1024x1024',
+        quality: 'standard',
+        response_format: 'url',
+      }),
+    });
+
+    if (!dalleResponse.ok) {
+      const err = await dalleResponse.text();
+      console.error('[DALL-E] Error:', dalleResponse.status, err);
+      return res.status(200).json({
+        mode: 'image',
+        prompt: imagePrompt,
+        imageUrl: null,
+        message: 'Image generation temporarily unavailable. Prompt saved.',
+        editable: true,
+      });
+    }
+
+    const dalleResult = await dalleResponse.json();
+    const imageUrl = dalleResult.data?.[0]?.url || null;
+    const revisedPrompt = dalleResult.data?.[0]?.revised_prompt || null;
+
+    return res.status(200).json({
+      mode: 'image',
+      imageUrl,
+      prompt: imagePrompt,
+      revisedPrompt,
+      editable: true,
+      message: imageUrl ? 'Image generated!' : 'Generation complete but no image returned.',
+    });
+
+  } catch (err) {
+    console.error('[DALL-E] Exception:', err);
+    return res.status(200).json({
+      mode: 'image',
+      prompt: imagePrompt,
+      imageUrl: null,
+      message: 'Image generation failed. Prompt saved.',
+      editable: true,
+    });
+  }
 }

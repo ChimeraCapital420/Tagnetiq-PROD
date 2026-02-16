@@ -40,15 +40,10 @@ function createDefaultIdentity(userId: string): OracleIdentity {
 // GET OR CREATE
 // =============================================================================
 
-/**
- * Fetch the user's Oracle identity, or create one if none exists.
- * DB constraint ensures one Oracle per user.
- */
 export async function getOrCreateIdentity(
   supabase: SupabaseClient,
   userId: string
 ): Promise<OracleIdentity> {
-  // Try to fetch existing
   const { data: existing } = await supabase
     .from('oracle_identity')
     .select('*')
@@ -57,7 +52,6 @@ export async function getOrCreateIdentity(
 
   if (existing) return existing as OracleIdentity;
 
-  // Create new identity
   const { data: created, error } = await supabase
     .from('oracle_identity')
     .insert({ user_id: userId })
@@ -76,27 +70,20 @@ export async function getOrCreateIdentity(
 // UPDATE AFTER CHAT
 // =============================================================================
 
-/**
- * Update Oracle identity after each conversation turn.
- * Increments counts, detects energy, updates categories, grows trust.
- * Sprint C.1: Computes AI DNA every 5 conversations when enough scan data exists.
- * Non-blocking — caller should .catch() this.
- */
 export async function updateIdentityAfterChat(
   supabase: SupabaseClient,
   identity: OracleIdentity,
   userMessage: string,
   scanHistory: any[]
 ): Promise<void> {
-  if (!identity.id) return; // Skip if fallback identity
+  if (!identity.id) return;
 
   const updates: Record<string, any> = {
     conversation_count: identity.conversation_count + 1,
-    total_messages: identity.total_messages + 2, // user + oracle
+    total_messages: identity.total_messages + 2,
     last_interaction_at: new Date().toISOString(),
   };
 
-  // ── Update favorite categories from scan history ────────
   if (scanHistory.length > 0) {
     const categoryCounts: Record<string, number> = {};
     for (const scan of scanHistory) {
@@ -111,18 +98,13 @@ export async function updateIdentityAfterChat(
     updates.expertise_areas = topCategories;
   }
 
-  // ── Detect user energy ──────────────────────────────────
   updates.user_energy = detectEnergy(userMessage);
 
-  // ── Trust grows with usage ──────────────────────────────
   const newTrust = Math.min(10, Math.floor((identity.conversation_count + 1) / 5) + 1);
   if (newTrust > identity.trust_level) {
     updates.trust_level = newTrust;
   }
 
-  // ── Sprint C.1: AI DNA update every 5 conversations ────
-  // Recomputes provider affinity from scan history.
-  // Only runs when there's enough data to be meaningful.
   if ((identity.conversation_count + 1) % 5 === 0 && scanHistory.length >= 3) {
     try {
       const { buildAiDna } = await import('./ai-dna.js');
@@ -131,7 +113,6 @@ export async function updateIdentityAfterChat(
       updates.dominant_provider = dna.dominantProvider;
       updates.provider_affinity = dna.providerAffinity;
     } catch (err: any) {
-      // AI DNA is non-critical — log and continue
       console.warn('AI DNA computation failed (non-fatal):', err.message);
     }
   }
@@ -150,11 +131,6 @@ export async function updateIdentityAfterChat(
 // CLAIM NAME
 // =============================================================================
 
-/**
- * Attempt to claim a globally unique name for an Oracle.
- * Returns true if successful, false if name is taken or reserved.
- * The UNIQUE constraint on oracle_name handles race conditions.
- */
 export async function claimOracleName(
   supabase: SupabaseClient,
   identityId: string,
@@ -163,7 +139,6 @@ export async function claimOracleName(
 ): Promise<boolean> {
   const cleanName = name.trim();
 
-  // Check reserved names
   const { data: reserved } = await supabase
     .from('oracle_reserved_names')
     .select('name')
@@ -172,7 +147,6 @@ export async function claimOracleName(
 
   if (reserved) return false;
 
-  // Try to claim (UNIQUE constraint handles race conditions)
   const { error } = await supabase
     .from('oracle_identity')
     .update({
@@ -183,7 +157,6 @@ export async function claimOracleName(
     .eq('id', identityId);
 
   if (error) {
-    // Unique constraint violation = name already taken
     if (error.code === '23505') return false;
     console.error('Name claim error:', error.message);
     return false;

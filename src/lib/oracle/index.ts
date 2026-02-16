@@ -139,3 +139,10 @@ export {
 export {
   detectEnergy, detectEnergyArc, detectExpertiseFromMessage,
 } from './personality/energy.js';
+
+// ── Gamification (Sprint N final) ─────────────────────
+export {
+  awardPoints, getGamificationStats, getLeaderboard,
+  getLevelFromPoints, BADGES, POINT_ACTIONS,
+} from './gamification/index.js';
+export type { Badge, PointAction } from './gamification/index.js';
