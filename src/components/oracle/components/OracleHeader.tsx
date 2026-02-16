@@ -1,10 +1,12 @@
 // FILE: src/components/oracle/components/OracleHeader.tsx
 // Header bar — speaking ring, status, toggles
+// Sprint N+: Display mode toggle (full/voice/silent)
 
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ChevronLeft, Zap, Plus, History, Volume2, VolumeX, Radio
+  ChevronLeft, Zap, Plus, History, Volume2, VolumeX, Radio,
+  MessageSquare, Headphones, VolumeOff,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
@@ -47,6 +49,31 @@ function SpeakingRing({ active }: { active: boolean }) {
 }
 
 // =============================================================================
+// DISPLAY MODE ICON — shows current mode
+// =============================================================================
+
+type DisplayMode = 'full' | 'voice' | 'silent';
+
+function DisplayModeIcon({ mode }: { mode: DisplayMode }) {
+  switch (mode) {
+    case 'full':
+      return <MessageSquare className="w-4 h-4" />;
+    case 'voice':
+      return <Headphones className="w-4 h-4" />;
+    case 'silent':
+      return <VolumeOff className="w-4 h-4" />;
+  }
+}
+
+function getDisplayModeLabel(mode: DisplayMode): string {
+  switch (mode) {
+    case 'full': return 'Full';
+    case 'voice': return 'Voice';
+    case 'silent': return 'Silent';
+  }
+}
+
+// =============================================================================
 // HEADER
 // =============================================================================
 
@@ -59,16 +86,20 @@ interface Props {
   vaultCount: number;
   showHistory: boolean;
   micSupported: boolean;
+  displayMode?: DisplayMode;
   onToggleConversationMode: () => void;
   onToggleHistory: () => void;
   onNewConversation: () => void;
   onToggleAutoSpeak: () => void;
+  onCycleDisplayMode?: () => void;
 }
 
 export function OracleHeader({
   isSpeaking, isListening, conversationMode, autoSpeak,
   scanCount, vaultCount, showHistory, micSupported,
-  onToggleConversationMode, onToggleHistory, onNewConversation, onToggleAutoSpeak,
+  displayMode = 'full',
+  onToggleConversationMode, onToggleHistory, onNewConversation,
+  onToggleAutoSpeak, onCycleDisplayMode,
 }: Props) {
   const navigate = useNavigate();
 
@@ -78,9 +109,13 @@ export function OracleHeader({
     ? 'Listening...'
     : conversationMode
     ? '🔴 Conversation mode'
+    : displayMode === 'voice'
+    ? '🎧 Voice mode'
+    : displayMode === 'silent'
+    ? '🔇 Silent mode'
     : scanCount > 0
     ? `${scanCount} scans${vaultCount > 0 ? ` · ${vaultCount} in vault` : ''}`
-    : 'Your resale partner';
+    : 'Your Oracle partner';
 
   return (
     <div className="flex-none border-b border-border/50 bg-background/80 backdrop-blur-sm">
@@ -104,6 +139,25 @@ export function OracleHeader({
 
         {/* Right: toggles */}
         <div className="flex items-center gap-1">
+          {/* Display mode toggle — cycles full → voice → silent */}
+          {onCycleDisplayMode && (
+            <button
+              onClick={onCycleDisplayMode}
+              className={cn(
+                'p-2 rounded-lg transition-all',
+                displayMode === 'voice'
+                  ? 'bg-cyan-500/20 text-cyan-400'
+                  : displayMode === 'silent'
+                  ? 'bg-muted text-muted-foreground'
+                  : 'text-muted-foreground hover:bg-accent/50'
+              )}
+              aria-label={`Display mode: ${getDisplayModeLabel(displayMode)}`}
+              title={`Mode: ${getDisplayModeLabel(displayMode)} — tap to cycle`}
+            >
+              <DisplayModeIcon mode={displayMode} />
+            </button>
+          )}
+
           {micSupported && (
             <button
               onClick={onToggleConversationMode}

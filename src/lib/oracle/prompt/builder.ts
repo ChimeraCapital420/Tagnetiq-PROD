@@ -24,6 +24,7 @@ import { buildArgosBlock, type ArgosContext } from './argos-context.js';
 import { buildMemoryContext } from './memory-context.js';
 import { buildTrustContext } from './trust-context.js';
 import { buildSeasonalContext } from './seasonal-context.js';
+import { buildCharacterContext } from './character-context.js';
 import type { MemorySummary } from '../memory/compressor.js';
 import type { TrustMetrics } from '../trust/tracker.js';
 import type { EnergyArc, ExpertiseLevel } from '../../../components/oracle/types.js';
@@ -393,9 +394,11 @@ export function buildSystemPrompt(
 
   const trustContext = params.trustMetrics ? buildTrustContext(params.trustMetrics) : '';
   const seasonalContext = buildSeasonalContext();
+  const characterContext = buildCharacterContext((params.identity as any).voice_character);
 
   return [
     basePrompt,
+    characterContext,
     memoryContext,
     trustContext,
     seasonalContext,

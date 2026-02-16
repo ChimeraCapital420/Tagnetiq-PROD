@@ -3,7 +3,7 @@
 //
 // All business logic lives in src/lib/oracle/:
 //   identity/   → Oracle CRUD, name ceremony, AI DNA
-//   personality/ → Evolution via LLM, energy detection
+//   personality/ → Evolution via LLM, energy detection, character
 //   prompt/      → System prompt builder + all context sections
 //   chips/       → Dynamic quick chips
 //   tier.ts      → Tier gating + message counting
@@ -25,6 +25,7 @@
 // Sprint L:   Privacy & safety — crisis detection, care responses
 // Sprint M:   Oracle Eyes — visual memory recall in chat + Nexus decision tree
 // Sprint N:   Memory, trust, energy, seasonal, content creation
+// Sprint N+:  Persistent voice character (catchphrases, running jokes, callbacks)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -72,6 +73,9 @@ import {
 
 import { getTrustMetrics, detectTrustSignals, recordTrustEvent } from '../../src/lib/oracle/trust/tracker.js';
 import { detectEnergy, detectEnergyArc, detectExpertiseFromMessage } from '../../src/lib/oracle/personality/energy.js';
+
+// ── Persistent Voice Character (Sprint N+) ──────────────
+import { evolveCharacter } from '../../src/lib/oracle/personality/character.js';
 
 export const config = {
   maxDuration: 30,
@@ -423,6 +427,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     checkForNameCeremony(supabaseAdmin, identity, responseText).catch(() => {});
     updateIdentityAfterChat(supabaseAdmin, identity, message, scanHistory).catch(() => {});
     evolvePersonality(openai, supabaseAdmin, identity, conversationHistory || []).catch(() => {});
+
+    // Sprint N+: Evolve voice character (catchphrases, running jokes, callbacks)
+    evolveCharacter(process.env.OPEN_AI_API_KEY!, supabaseAdmin, identity, conversationHistory || []).catch(() => {});
 
     // ── 8. Persist conversation ───────────────────────────
     const userMsg = { role: 'user', content: message, timestamp: Date.now() };

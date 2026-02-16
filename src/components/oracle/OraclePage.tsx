@@ -3,6 +3,7 @@
 // All logic lives in hooks/, all UI lives in components/
 // Enhanced: camera/vision, content creation, energy tracking
 // Sprint N gaps: learning, introductions, push prompt, smart chip routing
+// Sprint N+: Voice-only mode — cymatics only, no text bubbles
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTts, useOracleSpeakingState } from '@/hooks/useTts';
@@ -18,6 +19,15 @@ import {
   ConversationBanner,
 } from './components';
 import type { ChatMessage, VisionMode, CameraCapture } from './types';
+
+// =============================================================================
+// DISPLAY MODE — controls what the user sees
+// =============================================================================
+
+// 'full'   = text bubbles + voice + cymatics (default)
+// 'voice'  = cymatics visualization only, no text. Tap to peek last message
+// 'silent' = text only, no voice, no cymatics
+type DisplayMode = 'full' | 'voice' | 'silent';
 
 // =============================================================================
 // SMART CHIP DETECTION — routes special chips to the right handler
@@ -57,6 +67,8 @@ export default function OraclePage() {
   const [showHistory, setShowHistory] = useState(false);
   const [playingIdx, setPlayingIdx] = useState<number | null>(null);
   const [pushPromptDismissed, setPushPromptDismissed] = useState(false);
+  const [displayMode, setDisplayMode] = useState<DisplayMode>('full');
+  const [peekMessage, setPeekMessage] = useState(false);
 
   const { profile } = useAuth();
   const { speak, isSpeaking, cancel: cancelSpeech } = useTts();
@@ -120,6 +132,27 @@ export default function OraclePage() {
   useEffect(() => {
     if (convo.conversationMode) setAutoSpeak(true);
   }, [convo.conversationMode]);
+
+  // ── Display mode sync ─────────────────────────────────
+  // When switching to voice mode, enable auto-speak
+  // When switching to silent, disable auto-speak
+  useEffect(() => {
+    if (displayMode === 'voice') {
+      setAutoSpeak(true);
+    } else if (displayMode === 'silent') {
+      setAutoSpeak(false);
+      cancelSpeech();
+    }
+  }, [displayMode]);
+
+  // ── Hide peek overlay when speaking ends ──────────────
+  useEffect(() => {
+    if (!globalSpeaking && peekMessage) {
+      // Keep peek visible for 3s after speech ends, then fade
+      const timer = setTimeout(() => setPeekMessage(false), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [globalSpeaking, peekMessage]);
 
   // ── Text send handler ─────────────────────────────────
   const handleSend = useCallback(async () => {
@@ -232,6 +265,15 @@ export default function OraclePage() {
     });
   }, [isSpeaking, cancelSpeech]);
 
+  // ── Display mode cycle ────────────────────────────────
+  const handleCycleDisplayMode = useCallback(() => {
+    setDisplayMode(prev => {
+      if (prev === 'full') return 'voice';
+      if (prev === 'voice') return 'silent';
+      return 'full';
+    });
+  }, []);
+
   // ── Push notification helpers ─────────────────────────
   const handleEnablePush = useCallback(async () => {
     const success = await push.subscribe();
@@ -270,6 +312,14 @@ export default function OraclePage() {
     await handleChipClick(message);
   }, [handleChipClick, handleEnablePush]);
 
+  // ── Get last assistant message for voice-only peek ────
+  const lastAssistantMessage = React.useMemo(() => {
+    for (let i = chat.messages.length - 1; i >= 0; i--) {
+      if (chat.messages[i].role === 'assistant') return chat.messages[i].content;
+    }
+    return null;
+  }, [chat.messages]);
+
   // ── Render ────────────────────────────────────────────
   return (
     <div className="flex flex-col h-[calc(100dvh-3.5rem)] bg-background">
@@ -282,10 +332,12 @@ export default function OraclePage() {
         vaultCount={chat.vaultCount}
         showHistory={showHistory}
         micSupported={convo.micSupported}
+        displayMode={displayMode}
         onToggleConversationMode={convo.toggleConversationMode}
         onToggleHistory={handleToggleHistory}
         onNewConversation={() => chat.startNewConversation()}
         onToggleAutoSpeak={handleToggleAutoSpeak}
+        onCycleDisplayMode={handleCycleDisplayMode}
       />
 
       <ConversationBanner
@@ -305,15 +357,65 @@ export default function OraclePage() {
         onDelete={chat.deleteConversation}
       />
 
-      <OracleChatMessages
-        messages={chat.messages}
-        isLoading={chat.isLoading}
-        quickChips={augmentedChips}
-        playingIdx={playingIdx}
-        isSpeaking={globalSpeaking}
-        onPlay={handlePlay}
-        onChipClick={handleAugmentedChipClick}
-      />
+      {/* ── Voice-Only Mode: Cymatics + tap-to-peek ────── */}
+      {displayMode === 'voice' ? (
+        <div
+          className="flex-1 flex flex-col items-center justify-center relative overflow-hidden"
+          onClick={() => setPeekMessage(prev => !prev)}
+        >
+          {/* Cymatic visualization area — takes full space */}
+          <div className="flex-1 flex items-center justify-center w-full">
+            {globalSpeaking ? (
+              <div className="relative">
+                {/* Animated cymatics rings */}
+                <div className="w-48 h-48 rounded-full border-2 border-primary/30 animate-ping absolute inset-0" />
+                <div className="w-48 h-48 rounded-full border border-primary/20 animate-pulse" />
+                <div className="w-36 h-36 rounded-full border-2 border-primary/50 animate-pulse absolute top-6 left-6" />
+                <div className="w-24 h-24 rounded-full bg-primary/10 animate-pulse absolute top-12 left-12" />
+                <div className="w-12 h-12 rounded-full bg-primary/30 absolute top-[4.5rem] left-[4.5rem] animate-bounce" />
+              </div>
+            ) : chat.isLoading ? (
+              <div className="relative">
+                <div className="w-32 h-32 rounded-full border-2 border-muted-foreground/20 animate-pulse" />
+                <div className="w-20 h-20 rounded-full border border-muted-foreground/10 animate-pulse absolute top-6 left-6" />
+                <p className="absolute -bottom-8 left-1/2 -translate-x-1/2 text-xs text-muted-foreground">
+                  Thinking...
+                </p>
+              </div>
+            ) : (
+              <div className="text-center space-y-3">
+                <div className="w-32 h-32 rounded-full border border-muted-foreground/10 mx-auto flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-full bg-primary/20" />
+                </div>
+                <p className="text-xs text-muted-foreground">Tap to show text</p>
+              </div>
+            )}
+          </div>
+
+          {/* Peek overlay — shows last message on tap */}
+          {peekMessage && lastAssistantMessage && (
+            <div className="absolute inset-x-0 bottom-0 bg-background/95 backdrop-blur border-t p-4 max-h-[40vh] overflow-y-auto animate-in slide-in-from-bottom-4 duration-200">
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                {lastAssistantMessage}
+              </p>
+              <p className="text-xs text-muted-foreground mt-2 text-center">
+                Tap anywhere to dismiss
+              </p>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* ── Full/Silent Mode: Normal chat messages ────── */
+        <OracleChatMessages
+          messages={chat.messages}
+          isLoading={chat.isLoading}
+          quickChips={augmentedChips}
+          playingIdx={playingIdx}
+          isSpeaking={globalSpeaking}
+          onPlay={handlePlay}
+          onChipClick={handleAugmentedChipClick}
+        />
+      )}
 
       <OracleInputBar
         inputValue={chat.inputValue}
