@@ -4,6 +4,7 @@
 // API Docs: https://comicvine.gamespot.com/api/documentation
 // ENHANCED v7.0: Now fetches full issue details after search for richer authority data
 // FIXED v7.5: Better issue number matching, warns when exact issue not found
+// FIXED v7.6: Year-aware matching — 1978 Star Wars #18 no longer matches 2015 reboot
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
@@ -87,8 +88,9 @@ export async function fetchComicVineData(itemName: string): Promise<MarketDataSo
   
   try {
     // Clean up search query - remove common words, extract issue number
-    const { searchQuery, issueNumber } = parseComicSearchQuery(itemName);
-    console.log(`🔍 Comic Vine search: "${searchQuery}"${issueNumber ? ` (issue #${issueNumber})` : ''}`);
+    // FIXED v7.6: Now also extracts coverYear for era-matching
+    const { searchQuery, issueNumber, coverYear } = parseComicSearchQuery(itemName);
+    console.log(`🔍 Comic Vine search: "${searchQuery}"${issueNumber ? ` (issue #${issueNumber})` : ''}${coverYear ? ` (year ${coverYear})` : ''}`);
     
     // Search for the issue - FIXED v7.5: Get more results to find exact match
     const params = new URLSearchParams({
@@ -129,8 +131,9 @@ export async function fetchComicVineData(itemName: string): Promise<MarketDataSo
     }
     
     // Get best matching result - FIXED v7.5: Now returns exactIssueMatch flag
+    // FIXED v7.6: Now passes coverYear for era-aware matching
     const results = Array.isArray(data.results) ? data.results : [data.results];
-    const { bestMatch, exactIssueMatch } = findBestMatch(results, itemName, issueNumber);
+    const { bestMatch, exactIssueMatch } = findBestMatch(results, itemName, issueNumber, coverYear);
     
     // FIXED v7.5: Warn if we couldn't find exact issue
     if (issueNumber && !exactIssueMatch) {
@@ -233,9 +236,10 @@ async function fetchIssueDetails(issueId: number): Promise<ComicVineSearchResult
 // ==================== HELPER FUNCTIONS ====================
 
 /**
- * Parse search query and extract issue number
+ * Parse search query and extract issue number + year
+ * FIXED v7.6: Now extracts coverYear for era-matching
  */
-function parseComicSearchQuery(itemName: string): { searchQuery: string; issueNumber: string | null } {
+function parseComicSearchQuery(itemName: string): { searchQuery: string; issueNumber: string | null; coverYear: string | null } {
   const nameLower = itemName.toLowerCase();
   
   // Extract issue number patterns: #18, #1, issue 18, no. 18, etc.
@@ -278,33 +282,60 @@ function parseComicSearchQuery(itemName: string): { searchQuery: string; issueNu
     searchQuery = `${searchQuery} ${issueNumber}`.trim();
   }
   
-  return { searchQuery, issueNumber };
+  // FIXED v7.6: Extract year for era-matching (1978 Marvel vs 2015 Marvel Star Wars)
+  let coverYear: string | null = null;
+  const yearMatch = itemName.match(/\b(19[4-9]\d|20[0-2]\d)\b/);
+  if (yearMatch) {
+    coverYear = yearMatch[1];
+  }
+  
+  return { searchQuery, issueNumber, coverYear };
 }
 
 /**
  * Find best matching result from search results
  * FIXED v7.5: Now returns exactIssueMatch flag to track match quality
+ * FIXED v7.6: Year-aware matching — prefers results from the correct era
  */
 function findBestMatch(
   results: ComicVineSearchResult[], 
   itemName: string, 
-  targetIssue: string | null
+  targetIssue: string | null,
+  targetYear: string | null = null
 ): { bestMatch: ComicVineSearchResult; exactIssueMatch: boolean } {
   const nameLower = itemName.toLowerCase();
   
   // If we have a target issue number, prioritize exact matches
   if (targetIssue) {
-    // First try exact string match
-    for (const result of results) {
-      if (result.issue_number === targetIssue) {
-        return { bestMatch: result, exactIssueMatch: true };
+    // FIXED v7.6: Collect ALL issue number matches, then pick best by year/era
+    const issueMatches = results.filter(r => 
+      r.issue_number === targetIssue || 
+      (r.issue_number && parseInt(r.issue_number) === parseInt(targetIssue))
+    );
+    
+    if (issueMatches.length > 0) {
+      // If we have a target year, prefer the match from that era
+      if (targetYear) {
+        // Exact year match (e.g. cover_date "1978-12-01" starts with "1978")
+        const yearMatch = issueMatches.find(r => 
+          r.cover_date && r.cover_date.startsWith(targetYear)
+        );
+        if (yearMatch) {
+          console.log(`✅ Comic Vine: Matched #${targetIssue} from ${targetYear} (${yearMatch.volume?.name})`);
+          return { bestMatch: yearMatch, exactIssueMatch: true };
+        }
+        // Decade match (1978 → prefer 197x over 201x)
+        const targetDecade = targetYear.substring(0, 3);
+        const decadeMatch = issueMatches.find(r =>
+          r.cover_date && r.cover_date.substring(0, 3) === targetDecade
+        );
+        if (decadeMatch) {
+          console.log(`✅ Comic Vine: Matched #${targetIssue} from ${targetDecade}0s decade (${decadeMatch.volume?.name})`);
+          return { bestMatch: decadeMatch, exactIssueMatch: true };
+        }
       }
-    }
-    // Then try numeric match (handles "18" vs "018")
-    for (const result of results) {
-      if (result.issue_number && parseInt(result.issue_number) === parseInt(targetIssue)) {
-        return { bestMatch: result, exactIssueMatch: true };
-      }
+      // No year hint or no year match found — return first issue match
+      return { bestMatch: issueMatches[0], exactIssueMatch: true };
     }
   }
   

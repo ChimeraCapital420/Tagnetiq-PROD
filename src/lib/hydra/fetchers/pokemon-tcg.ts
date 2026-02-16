@@ -3,6 +3,7 @@
 // FIXED v6.3: Retry now uses DIFFERENT query strategies, not identical query
 // FIXED v7.0: Timeout bumped from 10s → 30s (API is slow on cold starts)
 // FIXED v7.5: Added missing Pokemon names (mamoswine, etc), fixed query building
+// FIXED v7.6: Sort pokemonNames by length descending so "klinklang" matches before "klink"
 
 import type { MarketDataSource, AuthorityData } from '../types.js';
 
@@ -563,7 +564,7 @@ function extractPokemonName(itemName: string): string | null {
     'scraggy', 'sigilyph', 'yamask', 'tirtouga', 'archen', 'trubbish',
     'zorua', 'zoroark', 'minccino', 'gothita', 'solosis', 'ducklett',
     'vanillite', 'deerling', 'emolga', 'karrablast', 'foongus', 'frillish',
-    'alomomola', 'joltik', 'ferroseed', 'klink', 'tynamo', 'elgyem',
+    'alomomola', 'joltik', 'ferroseed', 'klink', 'klinklang', 'tynamo', 'elgyem',
     'litwick', 'axew', 'cubchoo', 'cryogonal', 'shelmet', 'stunfisk',
     'mienfoo', 'druddigon', 'golett', 'pawniard', 'bouffalant', 'rufflet',
     'vullaby', 'heatmor', 'durant', 'deino', 'larvesta', 'cobalion',
@@ -617,7 +618,10 @@ function extractPokemonName(itemName: string): string | null {
     'cetitan', 'meowscarada', 'skeledirge', 'quaquaval',
   ];
   
-  for (const pokemon of pokemonNames) {
+  // FIXED v7.6: Sort by length descending so "klinklang" matches before "klink",
+  // "mamoswine" before "mamo", "charizard" before "char", etc.
+  const sorted = [...pokemonNames].sort((a, b) => b.length - a.length);
+  for (const pokemon of sorted) {
     if (nameLower.includes(pokemon)) {
       return pokemon.charAt(0).toUpperCase() + pokemon.slice(1);
     }
