@@ -1,6 +1,7 @@
 // FILE: api/oracle/generate-speech.ts
 // Oracle — Premium voice generation with ElevenLabs
-// Sprint N: Accepts energy-aware voiceSettings from useTts hook
+// Accepts curated aliases (oracle-nova-en) AND direct ElevenLabs IDs (el-xxx)
+// Sprint N: Energy-aware voiceSettings from useTts hook
 // FIXED: Uses supabaseAdmin with service role key
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -16,7 +17,7 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
-// Map our voice IDs → ElevenLabs voice IDs
+// Curated alias → ElevenLabs voice ID mapping
 const VOICE_MAPPING: Record<string, string> = {
   'oracle-nova-en': '21m00Tcm4TlvDq8ikWAM',
   'oracle-will-en': 'bIHbv24MWmeRgasZH58o',
@@ -29,6 +30,31 @@ const VOICE_MAPPING: Record<string, string> = {
   'oracle-marco-it': 'onwK4e9ZLuTAKqWW03F9',
   'oracle-will-it': 'bIHbv24MWmeRgasZH58o',
 };
+
+/**
+ * Resolve any voice ID format to an ElevenLabs voice ID:
+ * - Curated alias: "oracle-nova-en" → lookup in VOICE_MAPPING
+ * - Direct ElevenLabs: "el-abc123" → strip "el-" prefix
+ * - Raw ElevenLabs ID: "21m00Tcm4TlvDq8ikWAM" → pass through
+ */
+function resolveVoiceId(voiceId: string): string | null {
+  // 1. Curated alias
+  if (VOICE_MAPPING[voiceId]) {
+    return VOICE_MAPPING[voiceId];
+  }
+
+  // 2. Prefixed ElevenLabs ID from voice picker (el-xxx)
+  if (voiceId.startsWith('el-')) {
+    return voiceId.slice(3);
+  }
+
+  // 3. Raw ElevenLabs ID (alphanumeric, 20+ chars)
+  if (/^[a-zA-Z0-9]{15,}$/.test(voiceId)) {
+    return voiceId;
+  }
+
+  return null;
+}
 
 // Default voice settings (neutral energy)
 const DEFAULT_VOICE_SETTINGS = {
@@ -80,13 +106,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const { text, voiceId, voiceSettings } = generateSpeechSchema.parse(req.body);
 
-    // Use provided voiceId or fall back to user's preference
-    const selectedVoiceId = voiceId || profile?.settings?.premium_voice_id || 'oracle-nova-en';
+    // Resolve voice: request → user preference → default
+    const requestedId = voiceId || profile?.settings?.premium_voice_id || 'oracle-nova-en';
+    const elevenlabsVoiceId = resolveVoiceId(requestedId);
 
-    // Validate voice ID
-    const elevenlabsVoiceId = VOICE_MAPPING[selectedVoiceId];
     if (!elevenlabsVoiceId) {
-      return res.status(400).json({ error: 'Invalid voice ID' });
+      return res.status(400).json({ error: `Invalid voice ID: ${requestedId}` });
     }
 
     if (!process.env.ELEVENLABS_API_KEY) {
