@@ -1,13 +1,28 @@
 // FILE: src/lib/oracle/command-router.ts
 // Oracle Phase 2 — Client-side command routing with chat fallback
-// FIXED: "what have I scanned" no longer opens camera (was: cmd.includes('scan'))
-// FIXED: Conversational input ("hey", questions, etc.) now routes to chat API
-//        instead of returning cold UNKNOWN rejection
 //
 // ARCHITECTURE:
 //   1. Fast-path: Pattern match COMMANDS client-side (~0ms)
-//   2. Conversation: Detect non-command input → route to /api/oracle/chat (~1s)
-//   3. Slow-path: Ambiguous input → /api/oracle/interpret-command (~800ms)
+//   2. Conversation: Non-command input → /api/oracle/chat (lightweight) (~800ms)
+//   3. Every conversational input gets the REAL Oracle pipeline —
+//      identity, memory, personality, tier-routed models. No lobotomy.
+//
+// ═══════════════════════════════════════════════════════════════════════
+// KILL THE FOSSIL — Liberation 1
+// ═══════════════════════════════════════════════════════════════════════
+// Voice commands now go through /api/oracle/chat with lightweight: true.
+// The old /api/oracle/ask endpoint (hardcoded gpt-4o-mini, 200 tokens,
+// generic prompt) is dead. The fossil forwarded here anyway.
+//
+// Lightweight mode means: identity + memory + trust + personality,
+// but skips heavy context (full vault scan, argos alerts, visual memory).
+// The Oracle still knows WHO it is and WHO the user is.
+// ═══════════════════════════════════════════════════════════════════════
+//
+// CLIENT-SIDE INTELLIGENCE (Liberation 2 prep):
+//   The classifyLocally() function is pure keyword matching — zero server cost.
+//   Future: detectIntent + detectEnergy will also run client-side and
+//   send hints to the server via clientContext field.
 
 import { NavigateFunction } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
@@ -22,8 +37,7 @@ export type OracleIntent =
   | 'NAVIGATE'
   | 'VAULT_SAVE'
   | 'HELP'
-  | 'CONVERSATION'
-  | 'UNKNOWN';
+  | 'CONVERSATION';
 
 export interface OracleCommand {
   intent: OracleIntent;
@@ -44,7 +58,7 @@ export interface OracleContext {
 }
 
 // =============================================================================
-// CLIENT-SIDE PATTERN MATCHING (fast path)
+// CLIENT-SIDE PATTERN MATCHING (fast path — zero server cost)
 // =============================================================================
 
 const NAV_ROUTES: Record<string, string> = {
@@ -135,27 +149,26 @@ const CONVERSATION_PATTERNS = [
 ];
 
 /**
- * Attempt to classify a voice command purely on-device.
- * Returns null if the command is ambiguous and needs API classification.
+ * Classify a voice command purely on-device. Zero server cost.
+ * Everything either maps to a UI action or routes to CONVERSATION.
+ * There is no UNKNOWN — the Oracle always has something to say.
  */
-function classifyLocally(raw: string): OracleCommand | null {
+function classifyLocally(raw: string): OracleCommand {
   const cmd = raw.toLowerCase().trim();
 
   // ── CONVERSATION CHECK FIRST ────────────────────────────
-  // If this looks like conversation/question, route to chat
   for (const pattern of CONVERSATION_PATTERNS) {
     if (pattern.test(cmd)) {
       return {
         intent: 'CONVERSATION',
-        parameters: { message: raw }, // Preserve original casing
-        feedback: '', // Chat API will provide the response
+        parameters: { message: raw },
+        feedback: '',
         source: 'client',
       };
     }
   }
 
   // ── SCAN QUESTION CHECK ─────────────────────────────────
-  // "What have I scanned" should NOT open camera
   for (const pattern of SCAN_QUESTION_PATTERNS) {
     if (pattern.test(cmd)) {
       return {
@@ -177,7 +190,6 @@ function classifyLocally(raw: string): OracleCommand | null {
   }
 
   if (isScanCommand) {
-    // Check if user specified a category
     for (const [keyword, cat] of Object.entries(SCAN_CATEGORIES)) {
       if (cmd.includes(keyword)) {
         return {
@@ -229,6 +241,7 @@ function classifyLocally(raw: string): OracleCommand | null {
       }
     }
   }
+
   // Direct keyword navigation
   if (cmd === 'vault' || cmd === 'open vault' || cmd === 'my vault') {
     return { intent: 'NAVIGATE', parameters: { destination: '/vault' }, feedback: 'Opening your Vault.', source: 'client' };
@@ -252,14 +265,14 @@ function classifyLocally(raw: string): OracleCommand | null {
     return {
       intent: 'HELP',
       parameters: {},
-      feedback: 'I can scan items, search the arena, navigate the app, and save to your vault. You can also just talk to me — ask about your scans, market trends, or anything resale related.',
+      feedback: 'I can scan items, search the arena, navigate the app, and save to your vault. You can also just talk to me — ask about your scans, market trends, or anything at all.',
       source: 'client',
     };
   }
 
-  // ── DEFAULT: Treat as conversation ────────────────────────
-  // Instead of returning UNKNOWN with a cold rejection,
-  // route EVERYTHING unrecognized to the chat API
+  // ── DEFAULT: Everything unrecognized → CONVERSATION ───────
+  // No more UNKNOWN. No more cold rejections.
+  // The Oracle always has something to say.
   return {
     intent: 'CONVERSATION',
     parameters: { message: raw },
@@ -269,7 +282,7 @@ function classifyLocally(raw: string): OracleCommand | null {
 }
 
 // =============================================================================
-// CHAT API CALL (for conversational input)
+// CHAT API CALL — routes to the REAL Oracle pipeline (lightweight mode)
 // =============================================================================
 
 async function chatWithOracle(message: string): Promise<string> {
@@ -285,11 +298,21 @@ async function chatWithOracle(message: string): Promise<string> {
       },
       body: JSON.stringify({
         message,
-        conversationHistory: [], // Voice chat doesn't persist history (use Oracle page for that)
+        conversationHistory: [],
+        lightweight: true,
       }),
     });
 
-    if (!response.ok) throw new Error('Chat API error');
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+
+      // Handle tier limit gracefully
+      if (response.status === 429 && errorData?.error === 'message_limit_reached') {
+        return errorData.message || "You've hit your daily message limit. We can pick this up tomorrow.";
+      }
+
+      throw new Error('Chat API error');
+    }
 
     const data = await response.json();
     return data.response || "Sorry, I couldn't think of a response. Try again.";
@@ -307,12 +330,10 @@ async function chatWithOracle(message: string): Promise<string> {
 async function executeCommand(command: OracleCommand, ctx: OracleContext): Promise<void> {
   switch (command.intent) {
     case 'CONVERSATION': {
-      // Route to chat API — get a warm, contextual response
       const message = command.parameters.message || '';
-      console.log(`💬 Routing to Oracle chat: "${message}"`);
+      console.log(`💬 Routing to Oracle chat (lightweight): "${message}"`);
       const chatResponse = await chatWithOracle(message);
       ctx.speak(chatResponse, ctx.voiceURI, ctx.premiumVoiceId);
-      // Update the command feedback for any UI that wants it
       command.feedback = chatResponse;
       break;
     }
@@ -356,13 +377,6 @@ async function executeCommand(command: OracleCommand, ctx: OracleContext): Promi
     case 'HELP':
       ctx.speak(command.feedback, ctx.voiceURI, ctx.premiumVoiceId);
       break;
-
-    case 'UNKNOWN':
-      // This should rarely hit now — most things route to CONVERSATION
-      const fallbackResponse = await chatWithOracle(command.parameters.message || 'hello');
-      ctx.speak(fallbackResponse, ctx.voiceURI, ctx.premiumVoiceId);
-      command.feedback = fallbackResponse;
-      break;
   }
 }
 
@@ -372,7 +386,9 @@ async function executeCommand(command: OracleCommand, ctx: OracleContext): Promi
 
 /**
  * Route a voice command: classify client-side, execute or chat.
- * No more cold UNKNOWN rejections — everything gets a warm response.
+ * Classification is instant (regex matching, zero server cost).
+ * Conversation routes to /api/oracle/chat with lightweight: true.
+ * No more cold UNKNOWN rejections — every input gets a warm response.
  */
 export async function routeCommand(
   rawCommand: string,
@@ -382,21 +398,8 @@ export async function routeCommand(
   console.log(`🔮 Oracle routing: "${rawCommand}" (${language})`);
 
   const result = classifyLocally(rawCommand);
+  console.log(`⚡ Classified: ${result.intent}`, result.parameters);
 
-  if (result) {
-    console.log(`⚡ Classified: ${result.intent}`, result.parameters);
-    await executeCommand(result, ctx);
-    return result;
-  }
-
-  // This shouldn't happen since classifyLocally always returns something now,
-  // but just in case — route to conversation
-  const fallback: OracleCommand = {
-    intent: 'CONVERSATION',
-    parameters: { message: rawCommand },
-    feedback: '',
-    source: 'client',
-  };
-  await executeCommand(fallback, ctx);
-  return fallback;
+  await executeCommand(result, ctx);
+  return result;
 }

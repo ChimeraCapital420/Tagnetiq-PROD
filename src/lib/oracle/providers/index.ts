@@ -12,6 +12,9 @@ export {
   getAvailableProviders,
   getProvidersByStrength,
   getCheapestForStrength,
+  getBestForStrength,
+  resolveModelForTier,
+  getBackgroundModel,
 } from './registry.js';
 
 export {

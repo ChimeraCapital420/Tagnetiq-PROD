@@ -2,7 +2,7 @@
 // Oracle Conversation Provider Registry
 //
 // Sprint F:  Provider Registry + Hot-Loading
-// Sprint N+: Tier-aware model selection — best brain for paying users
+// Sprint N+: Tier-aware model selection
 //
 // This is Oracle's own provider roster — separate from HYDRA's scan providers.
 // HYDRA blends models for ACCURACY. Oracle blends models for SOUL.
@@ -11,12 +11,25 @@
 // preferences, strengths, and cost tiers. The router uses this to pick
 // the best model for each message.
 //
-// MODEL PHILOSOPHY:
-//   - gpt-4o / claude-sonnet / gemini-pro = The real brain. Deep knowledge,
-//     bold opinions, genuine personality. This is Dash at full power.
-//   - gpt-4o-mini / haiku / flash = Budget brain. Follows instructions but
-//     shallow knowledge, generic responses. Good enough for free tier.
-//   - Background tasks (evolution, compression) always use mini — user never sees those.
+// ═══════════════════════════════════════════════════════════════════════
+// MODEL PHILOSOPHY — LIBERATION 1: ONE BRAIN, ALL TIERS
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Every user talks to the SAME Oracle. Same model. Same depth. Same soul.
+//
+//   model           = The Oracle's brain. Used for ALL user-facing
+//                     conversations. Free, Pro, Elite — everyone.
+//   backgroundModel = Invisible tasks the user never sees directly.
+//                     Memory compression, personality evolution,
+//                     character evolution, personal detail extraction.
+//                     Cheap model. No soul needed.
+//   fallbackModel   = Last-resort when primary fails on same provider.
+//
+// Cost control is through message caps in tier.ts (15/day free),
+// NOT through model degradation. A user who bonds with Dash, names
+// Dash, tells Dash their kid's birthday — they get THAT Dash whether
+// they pay or not.
+// ═══════════════════════════════════════════════════════════════════════
 //
 // Adding a new provider:
 //   1. Add its config to ORACLE_PROVIDERS below
@@ -51,11 +64,11 @@ export interface OracleProviderConfig {
   id: OracleProviderId;
   /** Display name (for logging, never shown to user) */
   name: string;
-  /** Premium model — full brain for Pro/Elite/Admin users */
+  /** The Oracle's brain — ALL user-facing conversations, ALL tiers */
   model: string;
-  /** Budget model — lighter brain for free/starter users */
-  budgetModel: string;
-  /** Fallback model if both primary and budget fail */
+  /** Cheap model for background tasks (compression, evolution). User never sees this. */
+  backgroundModel: string;
+  /** Last-resort fallback if primary model fails on this provider */
   fallbackModel?: string;
   /** Environment variable names to check for API key */
   envKeys: string[];
@@ -88,8 +101,8 @@ export const ORACLE_PROVIDERS: Record<OracleProviderId, OracleProviderConfig> = 
   openai: {
     id: 'openai',
     name: 'OpenAI',
-    model: 'gpt-4o',                    // Full brain — deep knowledge, real opinions
-    budgetModel: 'gpt-4o-mini',         // Budget brain — follows prompts but shallow
+    model: 'gpt-4o',                    // Full brain — ALL tiers
+    backgroundModel: 'gpt-4o-mini',     // Background only — compression, evolution
     fallbackModel: 'gpt-4o-mini',
     envKeys: ['OPEN_AI_API_KEY', 'OPENAI_API_KEY'],
     strengths: ['general', 'creative'],
@@ -106,8 +119,8 @@ export const ORACLE_PROVIDERS: Record<OracleProviderId, OracleProviderConfig> = 
   anthropic: {
     id: 'anthropic',
     name: 'Anthropic',
-    model: 'claude-sonnet-4-20250514',   // Full reasoning power
-    budgetModel: 'claude-3-haiku-20240307',
+    model: 'claude-sonnet-4-20250514',   // Full reasoning — ALL tiers
+    backgroundModel: 'claude-3-haiku-20240307',
     fallbackModel: 'claude-3-haiku-20240307',
     envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_SECRET'],
     strengths: ['reasoning', 'creative'],
@@ -124,8 +137,8 @@ export const ORACLE_PROVIDERS: Record<OracleProviderId, OracleProviderConfig> = 
   google: {
     id: 'google',
     name: 'Google',
-    model: 'gemini-2.0-flash',
-    budgetModel: 'gemini-2.0-flash',     // Flash is already budget-friendly
+    model: 'gemini-2.0-flash',          // Fast + capable — ALL tiers
+    backgroundModel: 'gemini-2.0-flash', // Already cheap
     fallbackModel: 'gemini-1.5-flash',
     envKeys: ['GOOGLE_AI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY'],
     strengths: ['vision', 'speed', 'general'],
@@ -142,8 +155,8 @@ export const ORACLE_PROVIDERS: Record<OracleProviderId, OracleProviderConfig> = 
   deepseek: {
     id: 'deepseek',
     name: 'DeepSeek',
-    model: 'deepseek-chat',
-    budgetModel: 'deepseek-chat',        // Same model, already cheap
+    model: 'deepseek-chat',             // Already cheap — ALL tiers
+    backgroundModel: 'deepseek-chat',
     envKeys: ['DEEPSEEK_API_KEY'],
     strengths: ['reasoning'],
     primaryStrength: 'reasoning',
@@ -160,8 +173,8 @@ export const ORACLE_PROVIDERS: Record<OracleProviderId, OracleProviderConfig> = 
   groq: {
     id: 'groq',
     name: 'Groq',
-    model: 'llama-3.3-70b-versatile',
-    budgetModel: 'llama-3.1-8b-instant', // Tiny but blazing fast
+    model: 'llama-3.3-70b-versatile',   // Full 70B — ALL tiers
+    backgroundModel: 'llama-3.1-8b-instant',
     fallbackModel: 'llama-3.1-8b-instant',
     envKeys: ['GROQ_API_KEY'],
     strengths: ['speed', 'general'],
@@ -179,8 +192,8 @@ export const ORACLE_PROVIDERS: Record<OracleProviderId, OracleProviderConfig> = 
   xai: {
     id: 'xai',
     name: 'xAI',
-    model: 'grok-2-latest',
-    budgetModel: 'grok-2-latest',        // Same model
+    model: 'grok-2-latest',             // ALL tiers
+    backgroundModel: 'grok-2-latest',
     envKeys: ['XAI_API_KEY', 'GROK_API_KEY'],
     strengths: ['web', 'creative'],
     primaryStrength: 'web',
@@ -197,8 +210,8 @@ export const ORACLE_PROVIDERS: Record<OracleProviderId, OracleProviderConfig> = 
   perplexity: {
     id: 'perplexity',
     name: 'Perplexity',
-    model: 'sonar-pro',
-    budgetModel: 'sonar',                // Lighter search model
+    model: 'sonar-pro',                 // Full search — ALL tiers
+    backgroundModel: 'sonar',
     fallbackModel: 'sonar',
     envKeys: ['PERPLEXITY_API_KEY'],
     strengths: ['web'],
@@ -292,22 +305,34 @@ export function getBestForStrength(strength: ProviderStrength): OracleProviderId
 }
 
 /**
- * Resolve the actual model string for a provider based on user tier.
- * Pro/Elite/Admin get the premium model. Free/Starter get the budget model.
+ * Resolve the model string for user-facing conversations.
+ *
+ * ALL tiers get the premium model. The Oracle's soul is never paywalled.
+ * Cost control is through message caps in tier.ts, not model degradation.
+ *
+ * @param providerId - Which provider
+ * @param _userTier  - Kept for API compatibility. Does NOT affect model selection.
  */
 export function resolveModelForTier(
   providerId: OracleProviderId,
-  userTier: string,
+  _userTier: string,
 ): string {
   const config = ORACLE_PROVIDERS[providerId];
+  if (!config) return 'gpt-4o';
+
+  // Everyone gets the full brain.
+  return config.model;
+}
+
+/**
+ * Get the background model for non-user-facing tasks.
+ *
+ * Used by: memory compression, personality evolution, character evolution,
+ * personal detail extraction, push notification voice generation.
+ * The user never sees output from this model directly.
+ */
+export function getBackgroundModel(providerId: OracleProviderId = 'openai'): string {
+  const config = ORACLE_PROVIDERS[providerId];
   if (!config) return 'gpt-4o-mini';
-
-  // Premium tiers get the full brain
-  const premiumTiers = ['pro', 'elite', 'admin', 'developer'];
-  if (premiumTiers.includes(userTier)) {
-    return config.model;
-  }
-
-  // Free/starter get the budget brain
-  return config.budgetModel;
+  return config.backgroundModel;
 }

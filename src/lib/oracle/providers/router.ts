@@ -1,344 +1,338 @@
-// FILE: src/lib/oracle/providers/router.ts
-// Oracle Conversation Router — picks the best model for each message
+// FILE: src/lib/oracle/providers/registry.ts
+// Oracle Conversation Provider Registry
 //
 // Sprint F:  Provider Registry + Hot-Loading
-// Sprint N+: Tier-aware routing — Pro/Elite/Admin get the full brain
+// Sprint N+: Tier-aware model selection
 //
-// ROUTING PHILOSOPHY:
-//   Free/Starter users → budget models (gpt-4o-mini, haiku, flash)
-//   Pro users          → premium models (gpt-4o, claude-sonnet, gemini-pro)
-//   Elite/Admin        → premium models + best provider for the intent
+// This is Oracle's own provider roster — separate from HYDRA's scan providers.
+// HYDRA blends models for ACCURACY. Oracle blends models for SOUL.
 //
-// The router analyzes the user's message + context + tier to select
-// the optimal AI model. This is a fast, deterministic decision.
-
-import type { OracleIdentity, AiDnaProfile } from '../types.js';
-import {
-  type OracleProviderId,
-  type ProviderStrength,
-  ORACLE_PROVIDERS,
-  isProviderAvailable,
-  getProvidersByStrength,
-  getCheapestForStrength,
-  getBestForStrength,
-  resolveModelForTier,
-} from './registry.js';
+// Each provider has conversation-specific config: token limits, temperature
+// preferences, strengths, and cost tiers. The router uses this to pick
+// the best model for each message.
+//
+// ═══════════════════════════════════════════════════════════════════════
+// MODEL PHILOSOPHY — LIBERATION 1: ONE BRAIN, ALL TIERS
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Every user talks to the SAME Oracle. Same model. Same depth. Same soul.
+//
+//   model           = The Oracle's brain. Used for ALL user-facing
+//                     conversations. Free, Pro, Elite — everyone.
+//   backgroundModel = Invisible tasks the user never sees directly.
+//                     Memory compression, personality evolution,
+//                     character evolution, personal detail extraction.
+//                     Cheap model. No soul needed.
+//   fallbackModel   = Last-resort when primary fails on same provider.
+//
+// Cost control is through message caps in tier.ts (15/day free),
+// NOT through model degradation. A user who bonds with Dash, names
+// Dash, tells Dash their kid's birthday — they get THAT Dash whether
+// they pay or not.
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Adding a new provider:
+//   1. Add its config to ORACLE_PROVIDERS below
+//   2. Add its caller in caller.ts
+//   3. That's it — the router auto-discovers it
 
 // =============================================================================
 // TYPES
 // =============================================================================
 
-export interface RoutingDecision {
-  /** Selected provider ID */
-  providerId: OracleProviderId;
-  /** The actual model string to use (tier-resolved) */
+export type OracleProviderId =
+  | 'openai'
+  | 'anthropic'
+  | 'google'
+  | 'deepseek'
+  | 'groq'
+  | 'xai'
+  | 'perplexity';
+
+export type ProviderStrength =
+  | 'general'        // Good all-rounder for casual chat
+  | 'reasoning'      // Complex analysis, deep thinking
+  | 'vision'         // Image understanding, visual descriptions
+  | 'speed'          // Fastest response time
+  | 'web'            // Real-time market/web knowledge
+  | 'creative';      // Creative writing, personality, humor
+
+export type CostTier = 'low' | 'medium' | 'high';
+
+export interface OracleProviderConfig {
+  /** Unique provider identifier */
+  id: OracleProviderId;
+  /** Display name (for logging, never shown to user) */
+  name: string;
+  /** The Oracle's brain — ALL user-facing conversations, ALL tiers */
   model: string;
-  /** Why this provider was chosen (for logging) */
-  reason: string;
-  /** Ordered fallback providers if primary fails */
-  fallbacks: OracleProviderId[];
-  /** Detected message intent */
-  intent: MessageIntent;
-  /** Temperature override (if any) */
+  /** Cheap model for background tasks (compression, evolution). User never sees this. */
+  backgroundModel: string;
+  /** Last-resort fallback if primary model fails on this provider */
+  fallbackModel?: string;
+  /** Environment variable names to check for API key */
+  envKeys: string[];
+  /** What this provider is best at */
+  strengths: ProviderStrength[];
+  /** Primary strength — what the router prioritizes */
+  primaryStrength: ProviderStrength;
+  /** Whether this provider supports image input in conversations */
+  supportsVision: boolean;
+  /** Max tokens for Oracle responses */
+  maxResponseTokens: number;
+  /** Preferred temperature for this provider (Oracle personality range) */
   temperature: number;
-  /** Max tokens override (if any) */
-  maxTokens: number;
+  /** API timeout in milliseconds */
+  timeout: number;
+  /** Cost tier — used for fallback ordering */
+  costTier: CostTier;
+  /** Whether this provider uses OpenAI-compatible API format */
+  openaiCompatible: boolean;
+  /** Base URL for OpenAI-compatible providers (null = use SDK default) */
+  baseUrl?: string;
 }
 
-export type MessageIntent =
-  | 'casual'       // "hey what's up", small talk
-  | 'quick_answer' // "what's this worth?", short factual
-  | 'deep_analysis'// "break down the valuation factors for..."
-  | 'market_query' // "what's trending", "price of X right now"
-  | 'vision'       // References looking at something, image context
-  | 'strategy'     // "should I sell or hold", portfolio advice
-  | 'creative'     // Personality questions, humor, non-resale chat
-  | 'speed';       // Live scanning, smart glasses, time-critical
-
 // =============================================================================
-// INTENT DETECTION SIGNALS
+// PROVIDER REGISTRY
 // =============================================================================
 
-const INTENT_SIGNALS: Record<MessageIntent, string[]> = {
-  casual: [
-    'hey', 'hi', 'hello', 'what\'s up', 'sup', 'yo', 'good morning',
-    'how are you', 'what\'s good', 'howdy', 'how\'s it going',
-  ],
-  quick_answer: [
-    'how much', 'what\'s it worth', 'worth anything', 'price check',
-    'quick question', 'is this worth', 'value of', 'how many',
-  ],
-  deep_analysis: [
-    'break down', 'analyze', 'explain why', 'valuation factors',
-    'deep dive', 'tell me everything', 'comprehensive', 'detailed',
-    'compare', 'versus', 'pros and cons', 'full analysis',
-  ],
-  market_query: [
-    'trending', 'market', 'what\'s hot', 'price trend', 'going up',
-    'going down', 'selling for', 'recent sales', 'comps', 'ebay price',
-    'what are people paying', 'current price', 'market value',
-  ],
-  vision: [
-    'look at', 'see this', 'what is this', 'identify', 'can you see',
-    'in the image', 'in the photo', 'this item', 'what do you see',
-    'scan this', 'check this out',
-  ],
-  strategy: [
-    'should i sell', 'should i hold', 'should i buy', 'flip',
-    'investment', 'portfolio', 'best strategy', 'when to sell',
-    'where to sell', 'listing strategy', 'pricing strategy',
-    'what should i do with', 'my collection',
-  ],
-  creative: [
-    'tell me a joke', 'what do you think about', 'your opinion',
-    'favorite', 'fun fact', 'story', 'interesting', 'what\'s your name',
-    'who are you', 'personality',
-  ],
-  speed: [
-    // Speed intent is detected by context flags, not keywords
-  ],
+export const ORACLE_PROVIDERS: Record<OracleProviderId, OracleProviderConfig> = {
+  // ── Primary: The Oracle's main brain ──────────────────
+  openai: {
+    id: 'openai',
+    name: 'OpenAI',
+    model: 'gpt-4o',                    // Full brain — ALL tiers
+    backgroundModel: 'gpt-4o-mini',     // Background only — compression, evolution
+    fallbackModel: 'gpt-4o-mini',
+    envKeys: ['OPEN_AI_API_KEY', 'OPENAI_API_KEY'],
+    strengths: ['general', 'creative'],
+    primaryStrength: 'general',
+    supportsVision: true,
+    maxResponseTokens: 500,
+    temperature: 0.7,
+    timeout: 25000,
+    costTier: 'medium',
+    openaiCompatible: true,
+  },
+
+  // ── Reasoning: Complex analysis, structured thinking ──
+  anthropic: {
+    id: 'anthropic',
+    name: 'Anthropic',
+    model: 'claude-sonnet-4-20250514',   // Full reasoning — ALL tiers
+    backgroundModel: 'claude-3-haiku-20240307',
+    fallbackModel: 'claude-3-haiku-20240307',
+    envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_SECRET'],
+    strengths: ['reasoning', 'creative'],
+    primaryStrength: 'reasoning',
+    supportsVision: true,
+    maxResponseTokens: 500,
+    temperature: 0.7,
+    timeout: 25000,
+    costTier: 'medium',
+    openaiCompatible: false,
+  },
+
+  // ── Vision: Best visual understanding + fast ──────────
+  google: {
+    id: 'google',
+    name: 'Google',
+    model: 'gemini-2.0-flash',          // Fast + capable — ALL tiers
+    backgroundModel: 'gemini-2.0-flash', // Already cheap
+    fallbackModel: 'gemini-1.5-flash',
+    envKeys: ['GOOGLE_AI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY'],
+    strengths: ['vision', 'speed', 'general'],
+    primaryStrength: 'vision',
+    supportsVision: true,
+    maxResponseTokens: 500,
+    temperature: 0.7,
+    timeout: 20000,
+    costTier: 'low',
+    openaiCompatible: false,
+  },
+
+  // ── Deep Reasoning: Complex valuation logic ───────────
+  deepseek: {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    model: 'deepseek-chat',             // Already cheap — ALL tiers
+    backgroundModel: 'deepseek-chat',
+    envKeys: ['DEEPSEEK_API_KEY'],
+    strengths: ['reasoning'],
+    primaryStrength: 'reasoning',
+    supportsVision: false,
+    maxResponseTokens: 500,
+    temperature: 0.7,
+    timeout: 25000,
+    costTier: 'low',
+    openaiCompatible: true,
+    baseUrl: 'https://api.deepseek.com',
+  },
+
+  // ── Speed: Ultra-fast for quick answers + live scanning ─
+  groq: {
+    id: 'groq',
+    name: 'Groq',
+    model: 'llama-3.3-70b-versatile',   // Full 70B — ALL tiers
+    backgroundModel: 'llama-3.1-8b-instant',
+    fallbackModel: 'llama-3.1-8b-instant',
+    envKeys: ['GROQ_API_KEY'],
+    strengths: ['speed', 'general'],
+    primaryStrength: 'speed',
+    supportsVision: false,
+    maxResponseTokens: 500,
+    temperature: 0.7,
+    timeout: 10000,
+    costTier: 'low',
+    openaiCompatible: true,
+    baseUrl: 'https://api.groq.com/openai',
+  },
+
+  // ── Web Knowledge: Real-time market data ──────────────
+  xai: {
+    id: 'xai',
+    name: 'xAI',
+    model: 'grok-2-latest',             // ALL tiers
+    backgroundModel: 'grok-2-latest',
+    envKeys: ['XAI_API_KEY', 'GROK_API_KEY'],
+    strengths: ['web', 'creative'],
+    primaryStrength: 'web',
+    supportsVision: true,
+    maxResponseTokens: 500,
+    temperature: 0.7,
+    timeout: 25000,
+    costTier: 'medium',
+    openaiCompatible: true,
+    baseUrl: 'https://api.x.ai',
+  },
+
+  // ── Market Search: Live pricing + trends ──────────────
+  perplexity: {
+    id: 'perplexity',
+    name: 'Perplexity',
+    model: 'sonar-pro',                 // Full search — ALL tiers
+    backgroundModel: 'sonar',
+    fallbackModel: 'sonar',
+    envKeys: ['PERPLEXITY_API_KEY'],
+    strengths: ['web'],
+    primaryStrength: 'web',
+    supportsVision: false,
+    maxResponseTokens: 500,
+    temperature: 0.7,
+    timeout: 25000,
+    costTier: 'medium',
+    openaiCompatible: true,
+    baseUrl: 'https://api.perplexity.ai',
+  },
 };
 
 // =============================================================================
-// INTENT → PROVIDER STRENGTH MAPPING
-// =============================================================================
-
-const INTENT_TO_STRENGTH: Record<MessageIntent, ProviderStrength> = {
-  casual:        'general',
-  quick_answer:  'general',
-  deep_analysis: 'reasoning',
-  market_query:  'web',
-  vision:        'vision',
-  strategy:      'reasoning',
-  creative:      'creative',
-  speed:         'speed',
-};
-
-// =============================================================================
-// PUBLIC API
+// REGISTRY HELPERS
 // =============================================================================
 
 /**
- * Route a message to the best available provider.
- *
- * @param message      - The user's message text
- * @param identity     - Oracle identity (for AI DNA influence)
- * @param options      - Additional routing hints
+ * Get API key for a provider from environment variables.
+ * Checks all possible env var names in priority order.
  */
-export function routeMessage(
-  message: string,
-  identity: OracleIdentity | null,
-  options?: {
-    /** Force a specific provider (for testing/override) */
-    forceProvider?: OracleProviderId;
-    /** Is this a speed-critical context (smart glasses, live scan)? */
-    speedMode?: boolean;
-    /** Does this message include an image? */
-    hasImage?: boolean;
-    /** Conversation length so far (longer = more complex) */
-    conversationLength?: number;
-    /** User's subscription tier — determines model quality */
-    userTier?: string;
-  }
-): RoutingDecision {
-  const tier = options?.userTier || 'free';
-  const isPremium = ['pro', 'elite', 'admin', 'developer'].includes(tier);
-
-  // ── Force override ────────────────────────────────────
-  if (options?.forceProvider && isProviderAvailable(options.forceProvider)) {
-    const model = resolveModelForTier(options.forceProvider, tier);
-    const config = ORACLE_PROVIDERS[options.forceProvider];
-    return {
-      providerId: options.forceProvider,
-      model,
-      reason: `forced:${options.forceProvider} (${tier}→${model})`,
-      fallbacks: buildFallbackChain(options.forceProvider),
-      intent: 'casual',
-      temperature: config.temperature,
-      maxTokens: config.maxResponseTokens,
-    };
-  }
-
-  // ── Detect intent ─────────────────────────────────────
-  let intent = detectIntent(message);
-
-  // Context overrides
-  if (options?.speedMode) intent = 'speed';
-  if (options?.hasImage) intent = 'vision';
-
-  // ── Map intent to provider strength ───────────────────
-  const targetStrength = INTENT_TO_STRENGTH[intent];
-
-  // ── Select provider (tier-aware) ──────────────────────
-  let providerId = selectProvider(targetStrength, identity?.ai_dna, intent, isPremium);
-
-  // ── Vision check: if image present, provider must support it ──
-  if (options?.hasImage && !ORACLE_PROVIDERS[providerId].supportsVision) {
-    const visionProviders = getProvidersByStrength('vision')
-      .filter(id => ORACLE_PROVIDERS[id].supportsVision);
-    if (visionProviders.length > 0) {
-      providerId = visionProviders[0];
-    }
-  }
-
-  // ── Resolve actual model for this tier ────────────────
-  const model = resolveModelForTier(providerId, tier);
+export function getProviderApiKey(providerId: OracleProviderId): string | null {
   const config = ORACLE_PROVIDERS[providerId];
+  if (!config) return null;
 
-  // ── Adjust params by intent ───────────────────────────
-  let maxTokens = config.maxResponseTokens;
-  let temperature = config.temperature;
-
-  // Deep analysis gets more room
-  if (intent === 'deep_analysis' || intent === 'strategy') {
-    maxTokens = isPremium ? 1000 : 600;
+  for (const envKey of config.envKeys) {
+    const val = process.env[envKey];
+    if (val && val.length > 10) return val;
   }
-
-  // Casual chat — premium users get more room for personality
-  if (intent === 'casual') {
-    maxTokens = isPremium ? 400 : 250;
-  }
-
-  // Quick answers — concise for everyone
-  if (intent === 'quick_answer') {
-    maxTokens = isPremium ? 500 : 300;
-  }
-
-  // Speed mode: tight limits regardless of tier
-  if (intent === 'speed') {
-    maxTokens = 250;
-    temperature = 0.5;
-  }
-
-  // Creative gets more freedom
-  if (intent === 'creative') {
-    temperature = 0.8;
-    maxTokens = isPremium ? 600 : 400;
-  }
-
-  return {
-    providerId,
-    model,
-    reason: `intent:${intent} → strength:${targetStrength} → ${providerId}/${model} (tier:${tier})`,
-    fallbacks: buildFallbackChain(providerId),
-    intent,
-    temperature,
-    maxTokens,
-  };
-}
-
-// =============================================================================
-// INTERNAL HELPERS
-// =============================================================================
-
-/**
- * Detect message intent from keywords.
- * Simple, fast, deterministic — no LLM needed.
- */
-function detectIntent(message: string): MessageIntent {
-  const msgLower = message.toLowerCase().trim();
-
-  // Check each intent's signals (order matters — more specific first)
-  const intentPriority: MessageIntent[] = [
-    'vision',        // Most specific: references images
-    'deep_analysis', // "break down", "analyze" → clearly wants depth
-    'market_query',  // "trending", "market" → wants live data
-    'strategy',      // "should I sell" → wants advice
-    'creative',      // Personality, opinions, fun
-    'quick_answer',  // "how much", "worth" → wants a number
-    'casual',        // Greetings, small talk
-  ];
-
-  for (const intent of intentPriority) {
-    const signals = INTENT_SIGNALS[intent];
-    for (const signal of signals) {
-      if (msgLower.includes(signal)) return intent;
-    }
-  }
-
-  // Long messages (>100 chars) suggest complexity
-  if (msgLower.length > 100) return 'deep_analysis';
-
-  // Short messages with ? suggest quick answers
-  if (msgLower.includes('?') && msgLower.length < 50) return 'quick_answer';
-
-  // Default: for premium users, default to general (gets full brain)
-  // For free users, still general (gets budget brain via resolveModelForTier)
-  return 'casual';
+  return null;
 }
 
 /**
- * Select the best provider for a given strength, with AI DNA influence.
- * Premium users get the BEST provider. Free users get the CHEAPEST.
+ * Check if a provider is available (has API key configured).
  */
-function selectProvider(
-  strength: ProviderStrength,
-  aiDna: AiDnaProfile | null | undefined,
-  intent: MessageIntent,
-  isPremium: boolean,
-): OracleProviderId {
+export function isProviderAvailable(providerId: OracleProviderId): boolean {
+  return getProviderApiKey(providerId) !== null;
+}
+
+/**
+ * Get all available providers (have API keys).
+ */
+export function getAvailableProviders(): OracleProviderId[] {
+  return (Object.keys(ORACLE_PROVIDERS) as OracleProviderId[])
+    .filter(id => isProviderAvailable(id));
+}
+
+/**
+ * Get providers filtered by strength.
+ * Only returns available providers.
+ */
+export function getProvidersByStrength(strength: ProviderStrength): OracleProviderId[] {
+  return getAvailableProviders().filter(id => {
+    const config = ORACLE_PROVIDERS[id];
+    return config.strengths.includes(strength);
+  });
+}
+
+/**
+ * Get the cheapest available provider for a given strength.
+ * Falls back to openai if nothing matches.
+ */
+export function getCheapestForStrength(strength: ProviderStrength): OracleProviderId {
+  const costOrder: CostTier[] = ['low', 'medium', 'high'];
   const candidates = getProvidersByStrength(strength);
 
-  // No candidates for this strength? Fall back
-  if (candidates.length === 0) {
-    return isPremium ? getBestForStrength('general') : getCheapestForStrength('general');
+  for (const tier of costOrder) {
+    const match = candidates.find(id => ORACLE_PROVIDERS[id].costTier === tier);
+    if (match) return match;
   }
 
-  // Single candidate? Use it
-  if (candidates.length === 1) {
-    return candidates[0];
-  }
-
-  // ── AI DNA influence (premium users only) ─────────────
-  // If the user's Oracle has provider affinity, prefer that provider
-  // This is what makes each Oracle genuinely unique
-  if (isPremium && aiDna?.provider_personality_blend) {
-    const blend = aiDna.provider_personality_blend;
-
-    let bestCandidate = candidates[0];
-    let bestAffinity = 0;
-
-    for (const candidate of candidates) {
-      const affinity = blend[candidate] || 0;
-      if (affinity > bestAffinity) {
-        bestAffinity = affinity;
-        bestCandidate = candidate;
-      }
-    }
-
-    // Only use DNA preference if it's meaningful (>15% affinity)
-    if (bestAffinity > 0.15) {
-      return bestCandidate;
-    }
-  }
-
-  // ── Tier-based selection ──────────────────────────────
-  if (isPremium) {
-    return getBestForStrength(strength);
-  }
-
-  return getCheapestForStrength(strength);
+  return 'openai'; // Ultimate fallback
 }
 
 /**
- * Build ordered fallback chain for a provider.
+ * Get the BEST available provider for a given strength.
+ * Prefers medium/high cost models — these are the real brains.
+ * Falls back to openai if nothing matches.
  */
-function buildFallbackChain(primaryId: OracleProviderId): OracleProviderId[] {
-  const fallbacks: OracleProviderId[] = [];
+export function getBestForStrength(strength: ProviderStrength): OracleProviderId {
+  const costOrder: CostTier[] = ['high', 'medium', 'low'];
+  const candidates = getProvidersByStrength(strength);
 
-  const primaryConfig = ORACLE_PROVIDERS[primaryId];
-  const sameStrength = getProvidersByStrength(primaryConfig.primaryStrength)
-    .filter(id => id !== primaryId);
-
-  fallbacks.push(...sameStrength);
-
-  if (!fallbacks.includes('openai') && primaryId !== 'openai') {
-    fallbacks.push('openai');
+  for (const tier of costOrder) {
+    const match = candidates.find(id => ORACLE_PROVIDERS[id].costTier === tier);
+    if (match) return match;
   }
 
-  if (!fallbacks.includes('groq') && primaryId !== 'groq' && isProviderAvailable('groq')) {
-    fallbacks.push('groq');
-  }
+  return 'openai';
+}
 
-  return fallbacks.slice(0, 3);
+/**
+ * Resolve the model string for user-facing conversations.
+ *
+ * ALL tiers get the premium model. The Oracle's soul is never paywalled.
+ * Cost control is through message caps in tier.ts, not model degradation.
+ *
+ * @param providerId - Which provider
+ * @param _userTier  - Kept for API compatibility. Does NOT affect model selection.
+ */
+export function resolveModelForTier(
+  providerId: OracleProviderId,
+  _userTier: string,
+): string {
+  const config = ORACLE_PROVIDERS[providerId];
+  if (!config) return 'gpt-4o';
+
+  // Everyone gets the full brain.
+  return config.model;
+}
+
+/**
+ * Get the background model for non-user-facing tasks.
+ *
+ * Used by: memory compression, personality evolution, character evolution,
+ * personal detail extraction, push notification voice generation.
+ * The user never sees output from this model directly.
+ */
+export function getBackgroundModel(providerId: OracleProviderId = 'openai'): string {
+  const config = ORACLE_PROVIDERS[providerId];
+  if (!config) return 'gpt-4o-mini';
+  return config.backgroundModel;
 }

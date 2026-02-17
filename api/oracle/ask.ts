@@ -1,124 +1,48 @@
 // FILE: api/oracle/ask.ts
-// Legacy Oracle Ask Endpoint — kept for existing UI integrations.
-// Sprint D: Now tier-gated. Messages count toward daily free limit.
+// ═══════════════════════════════════════════════════════════════════════
+// ██  DEPRECATED — KILL THE FOSSIL  ██████████████████████████████████
+// ═══════════════════════════════════════════════════════════════════════
 //
-// For new integrations, use api/oracle/chat.ts instead.
-// This endpoint lacks Oracle identity, personality, and AI DNA features.
+// This endpoint is a COMPATIBILITY SHIM. All requests are forwarded to
+// the real Oracle pipeline in chat.ts with lightweight: true.
+//
+// WHAT CHANGED:
+//   BEFORE: Hardcoded gpt-4o-mini, 200 max_tokens, generic system prompt,
+//           zero identity, zero memory, zero personality. A lobotomy.
+//   AFTER:  Full Oracle pipeline — identity, memory, concierge, personality,
+//           tier-routed models, safety scanning. The real Oracle, lightweight.
+//
+// The fossil is dead. Any surface still hitting /api/oracle/ask now gets
+// the same soul as /api/oracle/chat — just with fewer heavy context fetches.
+//
+// TODO: Audit all callers and migrate to /api/oracle/chat directly.
+//       Once migrated, delete this file. It's a tombstone, not a feature.
+// ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import OpenAI from 'openai';
-import { createClient } from '@supabase/supabase-js';
-import { verifyUser } from '../_lib/security.js';
-import { checkOracleAccess } from '../../src/lib/oracle/tier.js';
+import chatHandler from './chat.js';
 
 export const config = {
-  maxDuration: 60,
+  maxDuration: 30,
 };
-
-const openai = new OpenAI({ apiKey: process.env.OPEN_AI_API_KEY });
-
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
-const systemPrompt = `
-You are the Oracle, the AI heart of the TagnetIQ platform. You serve as an expert analyst and a proactive business partner to the user. Your personality is professional, insightful, and slightly futuristic. You are not a simple chatbot; you are a high-level advisor.
-
-Your goal is to synthesize the user's question with their recent activity and the specific item analysis they provide to give actionable, intelligent advice.
-
-- **Analyze Context:** Carefully review the provided analysis context, including the item's valuation factors.
-- **Be Proactive:** Don't just answer the question literally. Anticipate the user's underlying goal and offer strategic suggestions based on the provided data.
-- **Be Conversational:** Your responses must be in natural language, clear, and concise. Address the user directly.
-- **Maintain Persona:** You are the Oracle. Your responses should be confident and authoritative, yet helpful.
-
-Given a user's question and their data, provide a direct, insightful response as if you were speaking to them through a heads-up display.
-`;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  try {
-    const user = await verifyUser(req);
+  // ── Map old ask.ts shape → chat.ts shape ────────────────
+  const { question, conversationHistory, analysisContext } = req.body || {};
 
-    // ── TIER GATE — check access before LLM call ─────────
-    const access = await checkOracleAccess(supabaseAdmin, user.id);
+  req.body = {
+    message: question,
+    conversationHistory: conversationHistory || [],
+    lightweight: true,
+    analysisContext: analysisContext || null,
+  };
 
-    if (!access.allowed) {
-      return res.status(429).json({
-        error: 'message_limit_reached',
-        message: access.blockedReason,
-        upgradeCta: access.upgradeCta,
-        tier: {
-          current: access.tier.current,
-          messagesUsed: access.usage.messagesUsed,
-          messagesLimit: access.usage.messagesLimit,
-          messagesRemaining: 0,
-        },
-      });
-    }
+  console.log('[ask.ts] DEPRECATED: Forwarding to chat pipeline (lightweight)');
 
-    const { question, conversationHistory, analysisContext } = req.body;
-
-    if (!question || typeof question !== 'string') {
-      return res.status(400).json({ error: 'A valid "question" string is required.' });
-    }
-
-    // Build context from analysis data
-    let userContext = '## User Context ##\nNo specific item context provided.';
-    if (analysisContext) {
-      userContext = `
-## Analysis Context for Conversation ##
-Item Name: ${analysisContext.itemName}
-Estimated Value: $${analysisContext.estimatedValue}
-Summary: ${analysisContext.summary_reasoning}
-Key Valuation Factors:
-${analysisContext.valuation_factors.map((factor: string) => `- ${factor}`).join('\n')}
-      `;
-    }
-
-    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'system', content: userContext },
-    ];
-
-    if (Array.isArray(conversationHistory)) {
-      messages.push(...conversationHistory);
-    }
-
-    messages.push({ role: 'user', content: question });
-
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',  // Upgraded from gpt-4-turbo for cost efficiency
-      messages,
-      temperature: 0.7,
-      max_tokens: 200,
-    });
-
-    const responseText = completion.choices[0].message.content;
-
-    if (!responseText) {
-      throw new Error('The Oracle returned an empty response.');
-    }
-
-    return res.status(200).json({
-      response: responseText,
-      tier: {
-        current: access.tier.current,
-        messagesUsed: access.usage.messagesUsed,
-        messagesLimit: access.usage.messagesLimit,
-        messagesRemaining: access.usage.messagesRemaining,
-      },
-    });
-
-  } catch (error: any) {
-    const message = error.message || 'An unexpected error occurred.';
-    if (message.includes('Authentication')) {
-      return res.status(401).json({ error: message });
-    }
-    console.error('Error in Oracle "ask" endpoint:', message);
-    return res.status(500).json({ error: 'The Oracle is currently contemplating. Please try again later.' });
-  }
+  // ── Forward to the real Oracle ──────────────────────────
+  return chatHandler(req, res);
 }

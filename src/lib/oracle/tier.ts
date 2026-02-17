@@ -1,10 +1,24 @@
 // FILE: src/lib/oracle/tier.ts
 // Oracle Tier Gating — server-side tier checks + daily message counting
 //
-// Sprint D: Tier-Gated Oracle
-//   Free:  5 messages/day, default voice only
-//   Pro:   Unlimited messages, premium voices, priority
-//   Elite: Everything + proactive Argos alerts
+// ═══════════════════════════════════════════════════════════════════════
+// LIBERATION 1 — THE ORACLE IS NEVER PAYWALLED
+// ═══════════════════════════════════════════════════════════════════════
+//
+// The Oracle's SOUL is the same at every tier:
+//   - Same AI model (gpt-4o / claude-sonnet / gemini-pro)
+//   - Same personality, memory, concierge, identity
+//   - Same voice options (all 6 OpenAI voices)
+//   - Same response depth
+//
+// What changes across tiers is CAPABILITY and VOLUME:
+//   Free:  15 messages/day, basic features, daily digest
+//   Pro:   Unlimited, live market, proactive alerts, content creation
+//   Elite: Everything + multi-model synthesis, hunt mode, autonomy
+//
+// A user who downgrades from Pro to Free doesn't lose their Oracle.
+// They lose capabilities. The Oracle knows this and adapts naturally.
+// ═══════════════════════════════════════════════════════════════════════
 //
 // ┌─────────────────────────────────────────────────────────────────┐
 // │ BETA MODE: Set BETA_MODE = true to bypass ALL tier restrictions │
@@ -41,7 +55,7 @@ export type UserTier = 'free' | 'pro' | 'elite';
 export interface TierConfig {
   /** Maximum Oracle messages per day (Infinity = unlimited) */
   dailyMessageLimit: number;
-  /** Available voice IDs for this tier */
+  /** Available base voice IDs for this tier (OpenAI TTS) */
   voices: string[];
   /** Feature flags unlocked at this tier */
   features: TierFeature[];
@@ -52,12 +66,30 @@ export interface TierConfig {
 }
 
 export type TierFeature =
-  | 'unlimited_messages'
-  | 'premium_voices'
-  | 'proactive_alerts'
-  | 'priority_response'
-  | 'argos_engine'
-  | 'hunt_mode';
+  // ── Available to ALL tiers (including free) ───────────
+  | 'identity'             // Oracle names itself, personality, AI DNA
+  | 'memory'               // Compressed conversation memory
+  | 'concierge'            // Remembers birthdays, family, preferences
+  | 'daily_digest'         // Daily summary email/push
+  | 'basic_vision'         // Camera glances (capped for free)
+  | 'basic_scans'          // HYDRA scans (capped for free)
+  // ── Pro tier ──────────────────────────────────────────
+  | 'unlimited_messages'   // No daily message cap
+  | 'premium_voices'       // Curated ElevenLabs voices
+  | 'priority_response'    // Faster queue priority
+  | 'live_market'          // Mid-conversation market data fetches
+  | 'proactive_alerts'     // Real-time push from Argos in Oracle's voice
+  | 'emotional_memory'     // Remembers moments, not just facts
+  | 'content_creation'     // Listings, video scripts, brag cards
+  | 'unlimited_vision'     // Unlimited camera usage
+  | 'unlimited_scans'      // Unlimited HYDRA scans
+  // ── Elite tier ────────────────────────────────────────
+  | 'conversational_hydra' // Multi-model synthesis on deep questions
+  | 'hunt_mode'            // Real-time camera triage with personality
+  | 'argos_engine'         // Full Argos watchlist + alert engine
+  | 'community_matchmaking'// Oracle-powered buyer/seller matching
+  | 'autonomy'             // Inventory management with guardrails
+  | 'elevenlabs_full';     // Full ElevenLabs voice library
 
 export interface TierInfo {
   /** Current active tier */
@@ -97,30 +129,79 @@ export interface AccessResult {
 // =============================================================================
 
 export const TIER_CONFIG: Record<UserTier, TierConfig> = {
+  // ── FREE — The Apprentice Oracle ──────────────────────
+  // Same brain. Same soul. Same voice quality. Limited volume + features.
+  // 15 messages = enough for a real conversation where the bond forms.
   free: {
-    dailyMessageLimit: 5,
-    voices: ['alloy'],                          // OpenAI default voice only
-    features: [],
+    dailyMessageLimit: 15,
+    voices: ['alloy', 'echo', 'fable', 'nova', 'onyx', 'shimmer'],
+    features: [
+      'identity',
+      'memory',
+      'concierge',
+      'daily_digest',
+      'basic_vision',
+      'basic_scans',
+    ],
     priceUsd: 0,
     displayName: 'Free',
   },
+
+  // ── PRO — The Full Oracle ─────────────────────────────
+  // Unlimited conversations + live market + proactive alerts +
+  // content creation. This is where Oracle becomes a business partner.
   pro: {
     dailyMessageLimit: Infinity,
     voices: ['alloy', 'echo', 'fable', 'nova', 'onyx', 'shimmer'],
-    features: ['unlimited_messages', 'premium_voices', 'priority_response'],
+    features: [
+      'identity',
+      'memory',
+      'concierge',
+      'daily_digest',
+      'basic_vision',
+      'basic_scans',
+      'unlimited_messages',
+      'premium_voices',
+      'priority_response',
+      'live_market',
+      'proactive_alerts',
+      'emotional_memory',
+      'content_creation',
+      'unlimited_vision',
+      'unlimited_scans',
+    ],
     priceUsd: 9.99,
     displayName: 'Pro',
   },
+
+  // ── ELITE — The Oracle Unleashed ──────────────────────
+  // Multi-model synthesis, hunt mode, full Argos, autonomy.
+  // For serious resellers, dealers, and businesses.
   elite: {
     dailyMessageLimit: Infinity,
     voices: ['alloy', 'echo', 'fable', 'nova', 'onyx', 'shimmer'],
     features: [
+      'identity',
+      'memory',
+      'concierge',
+      'daily_digest',
+      'basic_vision',
+      'basic_scans',
       'unlimited_messages',
       'premium_voices',
       'priority_response',
+      'live_market',
       'proactive_alerts',
-      'argos_engine',
+      'emotional_memory',
+      'content_creation',
+      'unlimited_vision',
+      'unlimited_scans',
+      'conversational_hydra',
       'hunt_mode',
+      'argos_engine',
+      'community_matchmaking',
+      'autonomy',
+      'elevenlabs_full',
     ],
     priceUsd: 19.99,
     displayName: 'Elite',
@@ -197,8 +278,14 @@ export async function checkOracleAccess(
         messagesLimit: config.dailyMessageLimit,
         messagesRemaining: 0,
       },
-      blockedReason: `You've used all ${config.dailyMessageLimit} Oracle messages for today. Your limit resets at midnight.`,
-      upgradeCta: 'Upgrade to Pro for unlimited Oracle conversations — $9.99/month.',
+      // Warm, Oracle-voiced — not corporate, not salesy
+      blockedReason:
+        `That's all ${config.dailyMessageLimit} messages for today. ` +
+        `I'm still here — your limit resets at midnight and I'll remember ` +
+        `everything we talked about. Pick it up with me tomorrow.`,
+      upgradeCta:
+        `Want unlimited conversations? Pro is $${config.priceUsd}/month — same me, ` +
+        `no daily cap, plus I can pull live market data for you.`,
     };
   }
 
@@ -292,6 +379,12 @@ export function hasFeature(tier: UserTier, feature: TierFeature): boolean {
 /**
  * Check if a voice ID is available for a given tier.
  * In BETA_MODE: All voices allowed.
+ *
+ * Note: All 6 OpenAI voices are available to ALL tiers post-Liberation 1.
+ * Premium curated voices (ElevenLabs) require Pro ('premium_voices' feature).
+ * Full ElevenLabs library requires Elite ('elevenlabs_full' feature).
+ * This check covers the base OpenAI voices in TIER_CONFIG.
+ * Premium voice access is handled separately in api/oracle/voices.ts.
  */
 export function isVoiceAllowed(tier: UserTier, voiceId: string): boolean {
   if (BETA_MODE) return true;

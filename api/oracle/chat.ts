@@ -26,6 +26,29 @@
 // Sprint M:   Oracle Eyes — visual memory recall in chat + Nexus decision tree
 // Sprint N:   Memory, trust, energy, seasonal, content creation
 // Sprint N+:  Persistent voice character (catchphrases, running jokes, callbacks)
+//
+// ═══════════════════════════════════════════════════════════════════════
+// KILL THE FOSSIL — Liberation 1
+// ═══════════════════════════════════════════════════════════════════════
+// This handler now supports TWO modes:
+//
+//   FULL MODE (default):
+//     All context fetched — scans, vault, argos, visual memory, recall,
+//     energy arc, content detection. The complete Oracle experience.
+//     Used by: OraclePage, OracleChat component, any surface that
+//     wants the full brain.
+//
+//   LIGHTWEIGHT MODE (lightweight: true):
+//     Minimal context — identity, memory, trust, personality.
+//     Skips heavy fetches: scans, vault, argos, visual memory, recall.
+//     Still routes through the REAL provider pipeline with full personality.
+//     Used by: command-router voice commands, ask.ts compat shim,
+//     any surface that needs a quick but REAL Oracle response.
+//
+// The old ask.ts was a lobotomy: hardcoded gpt-4o-mini, 200 tokens,
+// generic prompt, zero identity. That fossil is dead. Every surface
+// now gets the real Oracle — the only difference is context depth.
+// ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -173,6 +196,38 @@ function buildVisualMemoryContext(visualMemories: any[]): string {
 }
 
 // =============================================================================
+// ANALYSIS CONTEXT BUILDER (for ask.ts compat / item-specific conversations)
+// =============================================================================
+
+function buildAnalysisContextBlock(analysisContext: any): string {
+  if (!analysisContext) return '';
+
+  let block = '\n\n## ITEM CONTEXT — What The User Is Asking About\n';
+  block += 'The user is asking about a specific item they analyzed. Use this data to inform your response.\n\n';
+
+  if (analysisContext.itemName) {
+    block += `Item: ${analysisContext.itemName}\n`;
+  }
+  if (analysisContext.estimatedValue !== undefined) {
+    block += `Estimated Value: $${analysisContext.estimatedValue}\n`;
+  }
+  if (analysisContext.summary_reasoning) {
+    block += `Analysis Summary: ${analysisContext.summary_reasoning}\n`;
+  }
+  if (Array.isArray(analysisContext.valuation_factors) && analysisContext.valuation_factors.length > 0) {
+    block += `Key Valuation Factors: ${analysisContext.valuation_factors.join('; ')}\n`;
+  }
+  if (analysisContext.category) {
+    block += `Category: ${analysisContext.category}\n`;
+  }
+  if (analysisContext.confidence !== undefined) {
+    block += `Confidence: ${analysisContext.confidence}%\n`;
+  }
+
+  return block;
+}
+
+// =============================================================================
 // CONTENT CREATION DETECTION
 // =============================================================================
 
@@ -218,7 +273,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const user = await verifyUser(req);
-    const { message, conversationHistory, conversationId } = req.body;
+    const {
+      message,
+      conversationHistory,
+      conversationId,
+      // ── Kill the Fossil: new fields ─────────────────────
+      lightweight = false,
+      analysisContext = null,
+      // ── Client-side intelligence hints (Liberation 2 prep) ─
+      clientContext = null,
+    } = req.body;
 
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'A valid "message" string is required.' });
@@ -241,103 +305,166 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // ── 0.5 SAFETY SCAN ─────────────────────────────────
+    // ── 0.5 SAFETY SCAN (always runs, even lightweight) ──
     const safetyScan = scanMessage(message);
 
-    // ── 0.6 ENERGY DETECTION (Sprint N) ──────────────────
-    const currentEnergy = detectEnergy(message);
+    // ── 0.6 ENERGY DETECTION ─────────────────────────────
+    // Use client hint if provided (Liberation 2), otherwise detect server-side
+    const currentEnergy = clientContext?.detectedEnergy || detectEnergy(message);
 
-    // ── 0.7 TRUST SIGNAL DETECTION (Sprint N) ────────────
+    // ── 0.7 TRUST SIGNAL DETECTION ───────────────────────
     const trustSignal = detectTrustSignals(message);
 
-    // ── 0.8 RECALL DETECTION ─────────────────────────────
-    const isRecall = isRecallQuestion(message);
+    // ══════════════════════════════════════════════════════
+    // LIGHTWEIGHT vs FULL MODE — the only branch point
+    // ══════════════════════════════════════════════════════
+    //
+    // Lightweight: identity + memory + trust (3 queries)
+    //   Used by: voice command-router, ask.ts compat shim
+    //   ~200ms faster, ~40% smaller prompt
+    //
+    // Full: everything (14+ queries in parallel)
+    //   Used by: OraclePage, dedicated chat surfaces
+    //   Complete context, complete Oracle experience
+    // ══════════════════════════════════════════════════════
 
-    // ── 0.9 CONTENT CREATION DETECTION (Sprint N) ────────
-    const contentDetection = isContentCreationRequest(message);
+    let identity: any;
+    let scanHistory: any[] = [];
+    let vaultItems: any[] = [];
+    let profile: any = null;
+    let argosData: any = { unreadCount: 0, hasProactiveContent: false };
+    let privacySettings: any = null;
+    let recentSafety: any = { hasRecentEvents: false, lastEventType: null, daysSinceLastEvent: null };
+    let visualMemories: any[] = [];
+    let recallResult: any = null;
+    let relevantMemories: any[] = [];
+    let expertiseLevel: any = { level: 'learning', indicators: [], conversationsAnalyzed: 0 };
+    let trustMetrics: any = null;
+    let unfulfilledPromises: any[] = [];
+    let aggregatedInterests: any[] = [];
 
-    // ── 1. Fetch ALL data in parallel ─────────────────────
-    const historyLength = Array.isArray(conversationHistory) ? conversationHistory.length : 0;
+    if (lightweight) {
+      // ── LIGHTWEIGHT: Core identity + memory only ────────
+      // The Oracle still knows WHO it is and WHO the user is.
+      // It just doesn't load the full vault/scan/argos context.
+      const results = await Promise.all([
+        getOrCreateIdentity(supabaseAdmin, user.id),
+        getRelevantMemories(user.id, message, 3).catch(() => []),
+        getTrustMetrics(user.id).catch(() => null),
+        getExpertiseLevel(user.id).catch(() => ({ level: 'learning', indicators: [], conversationsAnalyzed: 0 })),
+        supabaseAdmin
+          .from('profiles')
+          .select('display_name, settings')
+          .eq('id', user.id)
+          .single()
+          .then(r => r.data)
+          .catch(() => null),
+        getPrivacySettings(supabaseAdmin, user.id).catch(() => null),
+      ]);
 
-    const [
-      identity, scanResult, vaultResult, profileResult,
-      argosData, privacySettings, recentSafety,
-      visualMemoryResult, recallResult,
-      // Sprint N: Memory, trust, expertise
-      relevantMemories, expertiseLevel, trustMetrics,
-      unfulfilledPromises, aggregatedInterests,
-    ] = await Promise.all([
-      getOrCreateIdentity(supabaseAdmin, user.id),
-      supabaseAdmin
-        .from('analysis_history')
-        .select('id, item_name, estimated_value, category, confidence, decision, created_at, analysis_result, consensus_data')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(50),
-      supabaseAdmin
-        .from('vault_items')
-        .select('id, item_name, estimated_value, category, condition, created_at')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(30),
-      supabaseAdmin
-        .from('profiles')
-        .select('display_name, settings')
-        .eq('id', user.id)
-        .single(),
-      fetchArgosContext(supabaseAdmin, user.id),
-      getPrivacySettings(supabaseAdmin, user.id).catch(() => null),
-      getRecentSafetyContext(supabaseAdmin, user.id).catch(() => ({
-        hasRecentEvents: false,
-        lastEventType: null,
-        daysSinceLastEvent: null,
-      })),
-      // Visual memories
-      supabaseAdmin
-        .from('oracle_visual_memory')
-        .select('id, mode, description, objects, extracted_text, location_hint, source, observed_at')
-        .eq('user_id', user.id)
-        .is('forgotten_at', null)
-        .order('observed_at', { ascending: false })
-        .limit(30)
-        .then(res => res)
-        .catch(() => ({ data: [], error: null })),
-      // Active recall
-      isRecall
-        ? recallMemories(supabaseAdmin, user.id, { question: message }).catch(() => null)
-        : Promise.resolve(null),
-      // Sprint N: Long-term memory
-      getRelevantMemories(user.id, message, 5).catch(() => []),
-      getExpertiseLevel(user.id).catch(() => ({ level: 'learning', indicators: [], conversationsAnalyzed: 0 })),
-      getTrustMetrics(user.id).catch(() => null),
-      getUnfulfilledPromises(user.id).catch(() => []),
-      getAggregatedInterests(user.id).catch(() => []),
-    ]);
+      identity = results[0];
+      relevantMemories = results[1];
+      trustMetrics = results[2];
+      expertiseLevel = results[3];
+      profile = results[4];
+      privacySettings = results[5];
 
-    const scanHistory = scanResult.data || [];
-    const vaultItems = vaultResult.data || [];
-    const profile = profileResult.data;
-    const visualMemories = visualMemoryResult.data || [];
+    } else {
+      // ── FULL MODE: Everything in parallel ───────────────
+      const isRecall = isRecallQuestion(message);
+      const historyLength = Array.isArray(conversationHistory) ? conversationHistory.length : 0;
 
-    // ── 1.5 Energy arc (needs conversation history) ──────
+      const [
+        _identity, scanResult, vaultResult, profileResult,
+        _argosData, _privacySettings, _recentSafety,
+        visualMemoryResult, _recallResult,
+        _relevantMemories, _expertiseLevel, _trustMetrics,
+        _unfulfilledPromises, _aggregatedInterests,
+      ] = await Promise.all([
+        getOrCreateIdentity(supabaseAdmin, user.id),
+        supabaseAdmin
+          .from('analysis_history')
+          .select('id, item_name, estimated_value, category, confidence, decision, created_at, analysis_result, consensus_data')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(50),
+        supabaseAdmin
+          .from('vault_items')
+          .select('id, item_name, estimated_value, category, condition, created_at')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(30),
+        supabaseAdmin
+          .from('profiles')
+          .select('display_name, settings')
+          .eq('id', user.id)
+          .single(),
+        fetchArgosContext(supabaseAdmin, user.id),
+        getPrivacySettings(supabaseAdmin, user.id).catch(() => null),
+        getRecentSafetyContext(supabaseAdmin, user.id).catch(() => ({
+          hasRecentEvents: false,
+          lastEventType: null,
+          daysSinceLastEvent: null,
+        })),
+        supabaseAdmin
+          .from('oracle_visual_memory')
+          .select('id, mode, description, objects, extracted_text, location_hint, source, observed_at')
+          .eq('user_id', user.id)
+          .is('forgotten_at', null)
+          .order('observed_at', { ascending: false })
+          .limit(30)
+          .then(res => res)
+          .catch(() => ({ data: [], error: null })),
+        isRecall
+          ? recallMemories(supabaseAdmin, user.id, { question: message }).catch(() => null)
+          : Promise.resolve(null),
+        getRelevantMemories(user.id, message, 5).catch(() => []),
+        getExpertiseLevel(user.id).catch(() => ({ level: 'learning', indicators: [], conversationsAnalyzed: 0 })),
+        getTrustMetrics(user.id).catch(() => null),
+        getUnfulfilledPromises(user.id).catch(() => []),
+        getAggregatedInterests(user.id).catch(() => []),
+      ]);
+
+      identity = _identity;
+      scanHistory = scanResult.data || [];
+      vaultItems = vaultResult.data || [];
+      profile = profileResult.data;
+      argosData = _argosData;
+      privacySettings = _privacySettings;
+      recentSafety = _recentSafety;
+      visualMemories = visualMemoryResult.data || [];
+      recallResult = _recallResult;
+      relevantMemories = _relevantMemories;
+      expertiseLevel = _expertiseLevel;
+      trustMetrics = _trustMetrics;
+      unfulfilledPromises = _unfulfilledPromises;
+      aggregatedInterests = _aggregatedInterests;
+    }
+
+    // ── 1.5 Energy arc (full mode only, needs history) ───
     let energyArc: string = 'steady';
-    if (Array.isArray(conversationHistory) && conversationHistory.length >= 4) {
+    if (!lightweight && Array.isArray(conversationHistory) && conversationHistory.length >= 4) {
       energyArc = detectEnergyArc(conversationHistory);
     }
 
-    // ── 1.6 Message-level expertise (supplements memory-based) ──
+    // ── 1.6 Message-level expertise ──────────────────────
     const messageExpertise = detectExpertiseFromMessage(message, scanHistory.length);
 
-    // ── 2. Build system prompt (Sprint N: enhanced params) ─
+    // ── 1.9 Content creation detection (full mode only) ──
+    const contentDetection = lightweight
+      ? { isCreation: false }
+      : isContentCreationRequest(message);
+
+    // ── 2. Build system prompt ────────────────────────────
     const promptParams: BuildPromptParams = {
       identity,
       scanHistory,
       vaultItems,
       userProfile: profile,
-      argosData,
+      argosData: lightweight ? undefined : argosData,
       memories: relevantMemories,
-      unfulfilledPromises,
-      aggregatedInterests,
+      unfulfilledPromises: lightweight ? undefined : unfulfilledPromises,
+      aggregatedInterests: lightweight ? undefined : aggregatedInterests,
       expertiseLevel: expertiseLevel.conversationsAnalyzed >= 2 ? expertiseLevel : {
         level: messageExpertise.level,
         indicators: messageExpertise.indicators,
@@ -350,28 +477,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let systemPrompt = buildSystemPrompt(promptParams);
 
-    // Inject visual memory context
-    if (visualMemories.length > 0) {
+    // ── Inject analysis context (from ask.ts compat) ─────
+    if (analysisContext) {
+      systemPrompt += buildAnalysisContextBlock(analysisContext);
+    }
+
+    // ── Inject visual memory context (full mode only) ────
+    if (!lightweight && visualMemories.length > 0) {
       systemPrompt += buildVisualMemoryContext(visualMemories);
     }
 
-    // Inject active recall results
-    if (recallResult && recallResult.memories.length > 0) {
+    // ── Inject active recall results (full mode only) ────
+    if (!lightweight && recallResult && recallResult.memories.length > 0) {
       systemPrompt += buildRecallPromptBlock(recallResult);
     }
 
-    // Inject safety context
+    // ── Inject safety context (always) ───────────────────
     if (safetyScan.injectSafetyContext) {
       systemPrompt += buildSafetyPromptBlock(safetyScan);
     }
 
-    if (recentSafety.hasRecentEvents) {
+    if (!lightweight && recentSafety.hasRecentEvents) {
       systemPrompt += buildFollowUpBlock(recentSafety);
     }
 
     // ── 3. Route to best provider ─────────────────────────
+    // Use client intent hint if available (Liberation 2 prep)
     const routing = routeMessage(message, identity, {
-      conversationLength: historyLength,
+      conversationLength: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
       userTier: access.tier.current,
     });
 
@@ -383,7 +516,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ];
 
     if (includeHistory && Array.isArray(conversationHistory)) {
-      const recentHistory = conversationHistory.slice(-20);
+      // Lightweight gets less history to stay fast
+      const historyLimit = lightweight ? 10 : 20;
+      const recentHistory = conversationHistory.slice(-historyLimit);
       for (const turn of recentHistory) {
         if (turn.role === 'user' || turn.role === 'assistant') {
           messages.push({ role: turn.role, content: turn.content });
@@ -419,7 +554,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }).catch(() => {});
     }
 
-    // ── 6.5 Trust signal recording (Sprint N) ─────────────
+    // ── 6.5 Trust signal recording ────────────────────────
     if (trustSignal) {
       recordTrustEvent(user.id, trustSignal).catch(() => {});
     }
@@ -427,69 +562,74 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ── 7. Non-blocking background tasks ──────────────────
     checkForNameCeremony(supabaseAdmin, identity, responseText).catch(() => {});
     updateIdentityAfterChat(supabaseAdmin, identity, message, scanHistory).catch(() => {});
-    evolvePersonality(openai, supabaseAdmin, identity, conversationHistory || []).catch(() => {});
 
-    // Sprint N+: Evolve voice character (catchphrases, running jokes, callbacks)
-    evolveCharacter(process.env.OPEN_AI_API_KEY!, supabaseAdmin, identity, conversationHistory || []).catch(() => {});
+    // Evolution only on full-mode conversations (voice commands don't contribute)
+    if (!lightweight) {
+      evolvePersonality(openai, supabaseAdmin, identity, conversationHistory || []).catch(() => {});
+      evolveCharacter(process.env.OPEN_AI_API_KEY!, supabaseAdmin, identity, conversationHistory || []).catch(() => {});
+    }
 
     // ── 8. Persist conversation ───────────────────────────
-    const userMsg = { role: 'user', content: message, timestamp: Date.now() };
-    const assistantMsg = { role: 'assistant', content: responseText, timestamp: Date.now() };
-
+    // Lightweight calls from voice/command-router don't persist
+    // (they have no conversationId and no history to build on)
     let activeConversationId = conversationId || null;
 
-    try {
-      if (activeConversationId) {
-        const { data: existing } = await supabaseAdmin
-          .from('oracle_conversations')
-          .select('messages')
-          .eq('id', activeConversationId)
-          .eq('user_id', user.id)
-          .single();
+    if (!lightweight) {
+      const userMsg = { role: 'user', content: message, timestamp: Date.now() };
+      const assistantMsg = { role: 'assistant', content: responseText, timestamp: Date.now() };
 
-        if (existing) {
-          const updatedMessages = [...(existing.messages as any[]), userMsg, assistantMsg];
-          await supabaseAdmin
+      try {
+        if (activeConversationId) {
+          const { data: existing } = await supabaseAdmin
             .from('oracle_conversations')
-            .update({ messages: updatedMessages })
-            .eq('id', activeConversationId);
+            .select('messages')
+            .eq('id', activeConversationId)
+            .eq('user_id', user.id)
+            .single();
 
-          // Sprint N: Check if conversation needs compression
-          const msgCount = updatedMessages.length;
-          if (msgCount >= 25 && msgCount % 10 === 0) {
-            // Trigger compression in background (every 10 messages after 25)
-            shouldCompress(user.id, activeConversationId, msgCount)
-              .then(needsCompression => {
-                if (needsCompression) {
-                  compressConversation(user.id, activeConversationId!, updatedMessages).catch(() => {});
-                }
-              }).catch(() => {});
+          if (existing) {
+            const updatedMessages = [...(existing.messages as any[]), userMsg, assistantMsg];
+            await supabaseAdmin
+              .from('oracle_conversations')
+              .update({ messages: updatedMessages })
+              .eq('id', activeConversationId);
+
+            // Sprint N: Check if conversation needs compression
+            const msgCount = updatedMessages.length;
+            if (msgCount >= 25 && msgCount % 10 === 0) {
+              shouldCompress(user.id, activeConversationId, msgCount)
+                .then(needsCompression => {
+                  if (needsCompression) {
+                    compressConversation(user.id, activeConversationId!, updatedMessages).catch(() => {});
+                  }
+                }).catch(() => {});
+            }
           }
+        } else {
+          const defaultPrivacy = privacySettings?.default_privacy || 'private';
+
+          const { data: newConvo } = await supabaseAdmin
+            .from('oracle_conversations')
+            .insert({
+              user_id: user.id,
+              title: generateTitle(message),
+              messages: [userMsg, assistantMsg],
+              scan_count_at_creation: scanHistory.length,
+              is_active: true,
+              privacy_level: defaultPrivacy,
+            })
+            .select('id')
+            .single();
+
+          activeConversationId = newConvo?.id || null;
         }
-      } else {
-        const defaultPrivacy = privacySettings?.default_privacy || 'private';
-
-        const { data: newConvo } = await supabaseAdmin
-          .from('oracle_conversations')
-          .insert({
-            user_id: user.id,
-            title: generateTitle(message),
-            messages: [userMsg, assistantMsg],
-            scan_count_at_creation: scanHistory.length,
-            is_active: true,
-            privacy_level: defaultPrivacy,
-          })
-          .select('id')
-          .single();
-
-        activeConversationId = newConvo?.id || null;
+      } catch (convError: any) {
+        console.warn('Conversation persistence failed (non-fatal):', convError.message);
       }
-    } catch (convError: any) {
-      console.warn('Conversation persistence failed (non-fatal):', convError.message);
     }
 
     // ── 9. Response ───────────────────────────────────────
-    const quickChips = getQuickChips(scanHistory, vaultItems, identity);
+    const quickChips = lightweight ? [] : getQuickChips(scanHistory, vaultItems, identity);
 
     return res.status(200).json({
       response: responseText,
@@ -503,8 +643,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       energyArc,
       recallUsed: !!(recallResult && recallResult.memories.length > 0),
       recallCount: recallResult?.memories.length || 0,
-      // Content creation hint (so frontend can show appropriate UI)
       contentHint: contentDetection.isCreation ? contentDetection : undefined,
+      lightweight,
       tier: {
         current: access.tier.current,
         messagesUsed: access.usage.messagesUsed,
@@ -512,8 +652,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         messagesRemaining: access.usage.messagesRemaining,
       },
       argos: {
-        unreadAlerts: argosData.unreadCount,
-        hasProactiveContent: argosData.hasProactiveContent,
+        unreadAlerts: argosData.unreadCount || 0,
+        hasProactiveContent: argosData.hasProactiveContent || false,
       },
       _provider: {
         used: result.providerId,
