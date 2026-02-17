@@ -1,0 +1,13 @@
+// FILE: src/lib/oracle/market/index.ts
+// Oracle Market Module — barrel exports
+//
+// Liberation 7: Market-Aware Conversation
+// Connects HYDRA fetchers to chat for mid-conversation market lookups.
+
+export {
+  type QuickMarketResult,
+  type QuickFetchOptions,
+  quickMarketFetch,
+  buildMarketDataBlock,
+  extractItemReference,
+} from './quick-fetch.js';

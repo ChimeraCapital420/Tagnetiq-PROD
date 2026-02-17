@@ -7,58 +7,29 @@
 //   prompt/      → System prompt builder + all context sections
 //   chips/       → Dynamic quick chips
 //   tier.ts      → Tier gating + message counting
-//   providers/   → Multi-provider routing + calling
+//   providers/   → Multi-provider routing + calling + multi-call synthesis
 //   argos/       → Alerts, hunt, push, watchlist
 //   safety/      → Privacy & safety guardian
 //   eyes/        → Visual memory capture + recall
 //   nexus/       → Decision tree (post-scan flow)
-//   memory/      → Long-term memory compression + retrieval (Sprint N)
-//   trust/       → Trust score tracking (Sprint N)
-//   voice-profile/ → User writing style analysis (Sprint N)
-//
-// Sprint C:   Identity, name ceremony, personality evolution
-// Sprint C.1: AI DNA (provider affinity → personality)
-// Sprint D:   Tier-gated Oracle
-// Sprint F:   Provider registry + hot-loading
-// Sprint G+:  Argos integration
-// Sprint K:   True Oracle — full-spectrum knowledge
-// Sprint L:   Privacy & safety — crisis detection, care responses
-// Sprint M:   Oracle Eyes — visual memory recall in chat + Nexus decision tree
-// Sprint N:   Memory, trust, energy, seasonal, content creation
-// Sprint N+:  Persistent voice character (catchphrases, running jokes, callbacks)
+//   memory/      → Long-term memory compression + retrieval
+//   trust/       → Trust score tracking
+//   voice-profile/ → User writing style analysis
+//   market/      → Quick market data fetching (Liberation 7)
 //
 // ═══════════════════════════════════════════════════════════════════════
-// KILL THE FOSSIL — Liberation 1
+// THE NINE LIBERATIONS — FULLY WIRED
 // ═══════════════════════════════════════════════════════════════════════
-// Two modes: FULL (default) and LIGHTWEIGHT (lightweight: true).
-// Full = all context. Lightweight = identity + memory + trust.
-// Both get the real Oracle. No lobotomies.
 //
-// ═══════════════════════════════════════════════════════════════════════
-// LIBERATION 2 — CLIENT-SIDE INTELLIGENCE
-// ═══════════════════════════════════════════════════════════════════════
-// Client sends clientContext: { detectedIntent, detectedEnergy, localContext,
-// deviceType, timestamp }. Server validates and uses hints to skip work.
-//
-// ═══════════════════════════════════════════════════════════════════════
-// LIBERATION 3 — EMOTIONAL MEMORY
-// ═══════════════════════════════════════════════════════════════════════
-// Emotional moments fetched in BOTH modes. Available at ALL tiers.
-// ~150 tokens. Injected as SHARED MOMENTS.
-//
-// ═══════════════════════════════════════════════════════════════════════
-// LIBERATION 4 — PERSONAL CONCIERGE
-// ═══════════════════════════════════════════════════════════════════════
-// Personal details (names, dates, preferences) fetched in BOTH modes.
-// Available at ALL tiers. Extraction runs as background task after
-// conversation persistence. Injected as PERSONAL KNOWLEDGE.
-//
-// ═══════════════════════════════════════════════════════════════════════
-// LIBERATION 5 — SELF-AWARE ORACLE
-// ═══════════════════════════════════════════════════════════════════════
-// Capabilities block built from tier features + live stats.
-// Full mode only (needs vault/scan/argos counts).
-// Oracle knows its tools and offers them naturally.
+// L1: Kill the Fossil — ask.ts tombstoned, lightweight mode
+// L2: Client-Side Intelligence — clientContext hints, validated
+// L3: Emotional Memory — shared moments injected
+// L4: Personal Concierge — names, dates, preferences extracted + injected
+// L5: Self-Aware Oracle — capabilities block from tier + stats
+// L6: Oracle-Voiced Push — push-voice.ts (called by Argos cron, not here)
+// L7: Market-Aware Chat — quick-fetch mid-conversation for Pro/Elite
+// L8: Conversational HYDRA — multi-model synthesis for Elite deep questions
+// L9: Adaptive Token Depth — auto-continuation on truncation
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -77,9 +48,9 @@ import {
 } from '../../src/lib/oracle/index.js';
 
 import type { BuildPromptParams } from '../../src/lib/oracle/prompt/builder.js';
-import { checkOracleAccess } from '../../src/lib/oracle/tier.js';
+import { checkOracleAccess, hasFeature } from '../../src/lib/oracle/tier.js';
 import { routeMessage, callOracle } from '../../src/lib/oracle/providers/index.js';
-import type { OracleMessage } from '../../src/lib/oracle/providers/index.js';
+import type { OracleMessage, RoutingResult } from '../../src/lib/oracle/providers/index.js';
 import { fetchArgosContext } from '../../src/lib/oracle/prompt/argos-context.js';
 
 // ── Safety & Privacy (Sprint L) ─────────────────────────
@@ -116,6 +87,19 @@ import { detectEnergy, detectEnergyArc, detectExpertiseFromMessage } from '../..
 
 // ── Persistent Voice Character (Sprint N+) ──────────────
 import { evolveCharacter } from '../../src/lib/oracle/personality/character.js';
+
+// ── Liberation 7: Market-Aware Conversation ─────────────
+import {
+  quickMarketFetch,
+  buildMarketDataBlock,
+  extractItemReference,
+} from '../../src/lib/oracle/market/quick-fetch.js';
+
+// ── Liberation 8: Conversational HYDRA ──────────────────
+import {
+  multiPerspectiveCall,
+  isComplexEnoughForMulti,
+} from '../../src/lib/oracle/providers/multi-call.js';
 
 export const config = {
   maxDuration: 30,
@@ -235,24 +219,14 @@ function buildAnalysisContextBlock(analysisContext: any): string {
   let block = '\n\n## ITEM CONTEXT — What The User Is Asking About\n';
   block += 'The user is asking about a specific item they analyzed. Use this data to inform your response.\n\n';
 
-  if (analysisContext.itemName) {
-    block += `Item: ${analysisContext.itemName}\n`;
-  }
-  if (analysisContext.estimatedValue !== undefined) {
-    block += `Estimated Value: $${analysisContext.estimatedValue}\n`;
-  }
-  if (analysisContext.summary_reasoning) {
-    block += `Analysis Summary: ${analysisContext.summary_reasoning}\n`;
-  }
+  if (analysisContext.itemName) block += `Item: ${analysisContext.itemName}\n`;
+  if (analysisContext.estimatedValue !== undefined) block += `Estimated Value: $${analysisContext.estimatedValue}\n`;
+  if (analysisContext.summary_reasoning) block += `Analysis Summary: ${analysisContext.summary_reasoning}\n`;
   if (Array.isArray(analysisContext.valuation_factors) && analysisContext.valuation_factors.length > 0) {
     block += `Key Valuation Factors: ${analysisContext.valuation_factors.join('; ')}\n`;
   }
-  if (analysisContext.category) {
-    block += `Category: ${analysisContext.category}\n`;
-  }
-  if (analysisContext.confidence !== undefined) {
-    block += `Confidence: ${analysisContext.confidence}%\n`;
-  }
+  if (analysisContext.category) block += `Category: ${analysisContext.category}\n`;
+  if (analysisContext.confidence !== undefined) block += `Confidence: ${analysisContext.confidence}%\n`;
 
   return block;
 }
@@ -264,7 +238,6 @@ function buildAnalysisContextBlock(analysisContext: any): string {
 function isContentCreationRequest(message: string): { isCreation: boolean; mode?: string; platform?: string } {
   const lower = message.toLowerCase();
 
-  // Listing detection
   const listingPatterns = [
     /(?:list|sell|post)\s+(?:this|my|that|the)\s+(?:on|to)\s+(ebay|mercari|poshmark|facebook|amazon|whatnot)/i,
     /(?:write|create|make|generate)\s+(?:a|me|my)?\s*(?:listing|description)/i,
@@ -274,22 +247,39 @@ function isContentCreationRequest(message: string): { isCreation: boolean; mode?
   for (const pattern of listingPatterns) {
     const match = message.match(pattern);
     if (match) {
-      const platform = match[1]?.toLowerCase() || 'ebay';
-      return { isCreation: true, mode: 'listing', platform };
+      return { isCreation: true, mode: 'listing', platform: match[1]?.toLowerCase() || 'ebay' };
     }
   }
 
-  // Video detection
   if (/(?:make|create|generate)\s+(?:a|me)?\s*video/i.test(lower)) {
     return { isCreation: true, mode: 'video' };
   }
 
-  // Brag card detection
   if (/(?:brag|flex)\s*card/i.test(lower) || /(?:celebrate|show off)\s+(?:this|my)\s+(?:flip|sale|win)/i.test(lower)) {
     return { isCreation: true, mode: 'brag_card' };
   }
 
   return { isCreation: false };
+}
+
+// =============================================================================
+// MARKET QUERY DETECTION (Liberation 7)
+// =============================================================================
+
+function isMarketQuery(message: string, intent: string): boolean {
+  if (intent === 'market_query') return true;
+
+  const lower = message.toLowerCase();
+  const marketPatterns = [
+    /(?:what(?:'s|\s+is|\s+are))\s+(?:it|they|those|this|that|these)\s+(?:worth|going for|selling for)/i,
+    /(?:how much)\s+(?:is|are|does|do|could|should)/i,
+    /(?:check|pull|look up|search)\s+(?:the\s+)?(?:price|market|ebay|value)/i,
+    /(?:current|live|recent)\s+(?:price|value|market|listing)/i,
+    /what(?:'s|\s+is)\s+(?:the\s+)?(?:market|going rate|average price)/i,
+    /(?:price\s+check|comp\s+check)/i,
+  ];
+
+  return marketPatterns.some(p => p.test(lower));
 }
 
 // =============================================================================
@@ -310,6 +300,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       lightweight = false,
       analysisContext = null,
       clientContext = null,
+      cachedMarketData = null,       // Liberation 7: client-cached market data
     } = req.body;
 
     if (!message || typeof message !== 'string') {
@@ -333,16 +324,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    const userTier = access.tier.current;
+
     // ── 0.5 SAFETY SCAN (always runs, even lightweight) ──
     const safetyScan = scanMessage(message);
 
-    // ── 0.6 ENERGY (Liberation 2: use client hint if valid) ─
+    // ── 0.6 ENERGY (L2: use client hint if valid) ────────
     const clientEnergy = clientContext?.detectedEnergy;
     const currentEnergy = (clientEnergy && VALID_ENERGIES.has(clientEnergy))
       ? clientEnergy
       : detectEnergy(message);
 
-    // ── 0.65 INTENT HINT (Liberation 2: validate for router) ─
+    // ── 0.65 INTENT HINT (L2: validate for router) ──────
     const clientIntent = clientContext?.detectedIntent;
     const validatedIntentHint = (clientIntent && VALID_INTENTS.has(clientIntent))
       ? clientIntent
@@ -351,7 +344,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ── 0.7 TRUST SIGNAL DETECTION ───────────────────────
     const trustSignal = detectTrustSignals(message);
 
-    // Device type (Liberation 2: for logging/analytics)
+    // Device type (L2: for logging/analytics)
     const deviceType = clientContext?.deviceType || 'unknown';
 
     // ══════════════════════════════════════════════════════
@@ -377,9 +370,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (lightweight) {
       // ── LIGHTWEIGHT: Core identity + memory + concierge ──
-      // Liberation 3: emotional moments (all tiers, ~150 tokens)
-      // Liberation 4: personal details (all tiers, ~200 tokens)
-      // Both cheap, both essential for relationship depth.
       const results = await Promise.all([
         getOrCreateIdentity(supabaseAdmin, user.id),
         getRelevantMemories(user.id, message, 3).catch(() => []),
@@ -393,8 +383,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .then(r => r.data)
           .catch(() => null),
         getPrivacySettings(supabaseAdmin, user.id).catch(() => null),
-        getEmotionalMoments(user.id, 5).catch(() => []),          // Liberation 3
-        getPersonalDetails(user.id, 20).catch(() => []),           // Liberation 4
+        getEmotionalMoments(user.id, 5).catch(() => []),          // L3
+        getPersonalDetails(user.id, 20).catch(() => []),           // L4
       ]);
 
       identity = results[0];
@@ -403,8 +393,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       expertiseLevel = results[3];
       profile = results[4];
       privacySettings = results[5];
-      emotionalMoments = results[6];     // Liberation 3
-      personalDetails = results[7];      // Liberation 4
+      emotionalMoments = results[6];
+      personalDetails = results[7];
 
     } else {
       // ── FULL MODE: Everything in parallel ───────────────
@@ -416,8 +406,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         visualMemoryResult, _recallResult,
         _relevantMemories, _expertiseLevel, _trustMetrics,
         _unfulfilledPromises, _aggregatedInterests,
-        _emotionalMoments,                                   // Liberation 3
-        _personalDetails,                                    // Liberation 4
+        _emotionalMoments, _personalDetails,
       ] = await Promise.all([
         getOrCreateIdentity(supabaseAdmin, user.id),
         supabaseAdmin
@@ -440,9 +429,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         fetchArgosContext(supabaseAdmin, user.id),
         getPrivacySettings(supabaseAdmin, user.id).catch(() => null),
         getRecentSafetyContext(supabaseAdmin, user.id).catch(() => ({
-          hasRecentEvents: false,
-          lastEventType: null,
-          daysSinceLastEvent: null,
+          hasRecentEvents: false, lastEventType: null, daysSinceLastEvent: null,
         })),
         supabaseAdmin
           .from('oracle_visual_memory')
@@ -461,8 +448,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         getTrustMetrics(user.id).catch(() => null),
         getUnfulfilledPromises(user.id).catch(() => []),
         getAggregatedInterests(user.id).catch(() => []),
-        getEmotionalMoments(user.id, 5).catch(() => []),         // Liberation 3
-        getPersonalDetails(user.id, 30).catch(() => []),          // Liberation 4
+        getEmotionalMoments(user.id, 5).catch(() => []),
+        getPersonalDetails(user.id, 30).catch(() => []),
       ]);
 
       identity = _identity;
@@ -479,8 +466,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       trustMetrics = _trustMetrics;
       unfulfilledPromises = _unfulfilledPromises;
       aggregatedInterests = _aggregatedInterests;
-      emotionalMoments = _emotionalMoments;                      // Liberation 3
-      personalDetails = _personalDetails;                        // Liberation 4
+      emotionalMoments = _emotionalMoments;
+      personalDetails = _personalDetails;
     }
 
     // ── 1.5 Energy arc (full mode only, needs history) ───
@@ -515,11 +502,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       trustMetrics,
       energyArc: energyArc as any,
       currentEnergy,
-      emotionalMoments,          // Liberation 3: ALL tiers, both modes
-      personalDetails,           // Liberation 4: ALL tiers, both modes
-
-      // Liberation 5: Capabilities — full mode only (needs live stats)
-      userTier: access.tier.current as any,
+      emotionalMoments,          // L3
+      personalDetails,           // L4
+      userTier: userTier as any, // L5
       capabilitiesStats: !lightweight ? {
         vaultItemCount: vaultItems.length,
         scanCount: scanHistory.length,
@@ -527,7 +512,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         watchlistCount: argosData?.watchlistCount || 0,
         conversationCount: relevantMemories.length,
         visualMemoryCount: visualMemories.length,
-      } : undefined,
+      } : undefined,             // L5
     };
 
     let systemPrompt = buildSystemPrompt(promptParams);
@@ -556,12 +541,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       systemPrompt += buildFollowUpBlock(recentSafety);
     }
 
-    // ── 3. Route to best provider (Liberation 2: intentHint) ─
+    // ── 3. Route to best provider (L2: intentHint) ───────
     const routing = routeMessage(message, identity, {
       conversationLength: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
-      userTier: access.tier.current,
+      userTier,
       intentHint: validatedIntentHint || undefined,
     });
+
+    // ══════════════════════════════════════════════════════
+    // LIBERATION 7: MARKET-AWARE CONVERSATION
+    // ══════════════════════════════════════════════════════
+    // If this is a market query AND the user has live_market access,
+    // fetch real-time pricing data and inject it into the prompt.
+
+    let marketData: any = null;
+    let marketItemRef: any = null;
+
+    if (
+      !lightweight &&
+      hasFeature(userTier as any, 'live_market') &&
+      isMarketQuery(message, routing.intent)
+    ) {
+      // Try to identify which item they're asking about
+      marketItemRef = extractItemReference(message, vaultItems, scanHistory);
+
+      if (marketItemRef) {
+        try {
+          marketData = await quickMarketFetch(
+            marketItemRef.itemName,
+            marketItemRef.category,
+            {
+              timeoutMs: 3000,
+              cachedData: cachedMarketData || undefined,
+            },
+          );
+
+          if (marketData) {
+            systemPrompt += buildMarketDataBlock(marketItemRef.itemName, marketData);
+            console.log(
+              `[L7] Live market data injected: ${marketData.sources.join(',')} ` +
+              `${marketData.activeListings} listings, ${marketData.fetchTimeMs}ms`
+            );
+          }
+        } catch (err) {
+          console.error('[L7] Quick market fetch failed (non-fatal):', err);
+        }
+      }
+    }
 
     // ── 4. Assemble conversation messages ─────────────────
     const includeHistory = privacySettings?.allow_oracle_memory !== false;
@@ -582,11 +608,83 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     messages.push({ role: 'user', content: message });
 
-    // ── 5. Call LLM via provider router ───────────────────
-    const result = await callOracle(routing, messages);
+    // ══════════════════════════════════════════════════════
+    // LIBERATION 8: CONVERSATIONAL HYDRA
+    // ══════════════════════════════════════════════════════
+    // For Elite users with complex strategic/analytical questions,
+    // fire multiple providers and synthesize perspectives.
 
-    const responseText = result.text;
+    let result: any;
+    let usedMultiCall = false;
+
+    if (
+      !lightweight &&
+      hasFeature(userTier as any, 'conversational_hydra') &&
+      isComplexEnoughForMulti(message, routing.intent)
+    ) {
+      console.log('[L8] Triggering multi-perspective synthesis');
+      const multiResult = await multiPerspectiveCall(messages, identity, routing);
+      result = {
+        text: multiResult.text,
+        providerId: multiResult.providers.join('+'),
+        model: 'multi-perspective',
+        responseTime: multiResult.totalTimeMs,
+        isFallback: multiResult.isFallback,
+      };
+      usedMultiCall = !multiResult.isFallback;
+    } else {
+      // ── 5. Standard single-model call ───────────────────
+      result = await callOracle(routing, messages);
+    }
+
+    let responseText = result.text;
     if (!responseText) throw new Error('Oracle returned empty response');
+
+    // ══════════════════════════════════════════════════════
+    // LIBERATION 9: ADAPTIVE TOKEN DEPTH
+    // ══════════════════════════════════════════════════════
+    // If the response looks truncated (hit token limit, doesn't end
+    // with sentence-ending punctuation), auto-continue.
+    // Only runs once. Max 500 additional tokens.
+
+    let didContinue = false;
+
+    if (!lightweight && !usedMultiCall) {
+      const estimatedTokens = responseText.length / 4;
+      const maxTokens = routing.maxTokens || 500;
+      const utilizationRatio = estimatedTokens / maxTokens;
+
+      // Response hit >92% of token limit AND doesn't end with punctuation
+      if (utilizationRatio > 0.92 && !responseText.match(/[.!?…"')\]]\s*$/)) {
+        console.log(`[L9] Response appears truncated (${Math.floor(utilizationRatio * 100)}% utilization), continuing`);
+
+        try {
+          const continuationMessages: OracleMessage[] = [
+            ...messages,
+            { role: 'assistant', content: responseText },
+            { role: 'user', content: 'Continue your thought.' },
+          ];
+
+          const continuationRouting: RoutingResult = {
+            ...routing,
+            maxTokens: Math.min(maxTokens, 500),
+            reason: `${routing.reason}→continuation`,
+          };
+
+          const continuation = await callOracle(continuationRouting, continuationMessages);
+
+          if (continuation.text && continuation.text.trim().length > 10) {
+            // Stitch together with natural join
+            const needsSpace = !responseText.endsWith(' ') && !continuation.text.startsWith(' ');
+            responseText = responseText + (needsSpace ? ' ' : '') + continuation.text;
+            didContinue = true;
+            console.log(`[L9] Continuation added: +${continuation.text.length} chars`);
+          }
+        } catch (err) {
+          console.error('[L9] Continuation failed (non-fatal):', err);
+        }
+      }
+    }
 
     if (result.isFallback) {
       console.log(`Oracle routed: ${routing.reason} → FALLBACK to ${result.providerId} (${result.responseTime}ms)`);
@@ -647,7 +745,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             const msgCount = updatedMessages.length;
 
-            // Sprint N: Memory compression
+            // Memory compression (every 10 messages after 25)
             if (msgCount >= 25 && msgCount % 10 === 0) {
               shouldCompress(user.id, activeConversationId, msgCount)
                 .then(needsCompression => {
@@ -657,9 +755,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }).catch(() => {});
             }
 
-            // Liberation 4: Extract personal details from conversation
-            // Runs every 10 messages (same cadence as compression)
-            // Background task — doesn't block the response
+            // L4: Extract personal details (every 10 messages after 8)
             if (msgCount >= 8 && msgCount % 10 === 0) {
               extractPersonalDetails(user.id, updatedMessages).catch(() => {});
             }
@@ -705,7 +801,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       contentHint: contentDetection.isCreation ? contentDetection : undefined,
       lightweight,
       tier: {
-        current: access.tier.current,
+        current: userTier,
         messagesUsed: access.usage.messagesUsed,
         messagesLimit: access.usage.messagesLimit,
         messagesRemaining: access.usage.messagesRemaining,
@@ -714,6 +810,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         unreadAlerts: argosData.unreadCount || 0,
         hasProactiveContent: argosData.hasProactiveContent || false,
       },
+      // Liberation 7: market data in response for client caching
+      marketData: marketData ? {
+        result: marketData,
+        itemName: marketItemRef?.itemName,
+        cachedAt: marketData.fetchedAt,
+      } : undefined,
       _provider: {
         used: result.providerId,
         model: result.model,
@@ -721,6 +823,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         responseTime: result.responseTime,
         isFallback: result.isFallback,
         deviceType,
+        multiPerspective: usedMultiCall,     // L8
+        continued: didContinue,              // L9
       },
     });
 
