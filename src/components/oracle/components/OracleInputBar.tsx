@@ -2,8 +2,11 @@
 // Input field + camera + mic + send + conversation mode
 // Mobile-first: camera uses device camera directly via capture="environment"
 // Image compression done client-side to reduce server load
+//
+// FIX: capture="environment" only on mobile (breaks desktop file picker)
+// FIX: Better error handling so failures aren't silent
 
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { Send, Mic, MicOff, Loader2, X, Camera, Image, Eye, Crosshair, BookOpen, Brain, ScanLine } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { VisionMode, CameraCapture } from '../types';
@@ -18,21 +21,25 @@ interface Props {
   onSend: () => void;
   onVoice: () => void;
   onEndConversation: () => void;
-  /** NEW: Send image for vision analysis */
+  /** Send image for vision analysis */
   onSendImage?: (capture: CameraCapture, mode: VisionMode, question?: string) => void;
-  /** NEW: Quick hunt triage (camera shortcut) */
+  /** Quick hunt triage (camera shortcut) */
   onSendHunt?: (capture: CameraCapture, askingPrice?: number) => void;
 }
 
 // Vision mode config
 const VISION_MODES: Array<{ mode: VisionMode; icon: React.ReactNode; label: string; description: string }> = [
-  { mode: 'glance',    icon: <Eye className="w-4 h-4" />,       label: 'Glance',   description: 'Quick — what is this?' },
+  { mode: 'glance',    icon: <Eye className="w-4 h-4" />,       label: 'Glance',    description: 'Quick — what is this?' },
   { mode: 'identify',  icon: <Crosshair className="w-4 h-4" />, label: 'Identify',  description: 'Deep ID + value estimate' },
   { mode: 'hunt_scan', icon: <ScanLine className="w-4 h-4" />,  label: 'Hunt',      description: 'BUY/SKIP instant triage' },
   { mode: 'read',      icon: <BookOpen className="w-4 h-4" />,  label: 'Read',      description: 'Read text from image' },
   { mode: 'remember',  icon: <Brain className="w-4 h-4" />,     label: 'Remember',  description: 'Store to visual memory' },
   { mode: 'room_scan', icon: <ScanLine className="w-4 h-4" />,  label: 'Room Scan', description: 'Scan whole room for items' },
 ];
+
+// Detect mobile — capture="environment" only works properly on mobile
+const isMobile = typeof navigator !== 'undefined' &&
+  /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
 export function OracleInputBar({
   inputValue, isLoading, isListening, conversationMode, micSupported,
@@ -47,34 +54,46 @@ export function OracleInputBar({
   // ── Handle camera/gallery capture ──────────────────────
   const handleCameraClick = useCallback(() => {
     if (selectedImage) {
-      // Clear current image
       clearImage();
       return;
     }
-    // Show mode selector, or directly open camera for speed
     setShowModes(prev => !prev);
   }, [selectedImage]);
 
   const triggerCapture = useCallback((mode: VisionMode) => {
     setSelectedMode(mode);
     setShowModes(false);
-    fileInputRef.current?.click();
+    // Small delay ensures state is set before file picker opens
+    // (mobile camera can suspend the page)
+    setTimeout(() => {
+      fileInputRef.current?.click();
+    }, 50);
   }, []);
 
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file) {
+      console.warn('[OracleInput] No file selected');
+      return;
+    }
+
+    console.log('[OracleInput] File selected:', file.name, file.type, `${(file.size / 1024).toFixed(0)}KB`);
 
     try {
       const capture = await compressImage(file);
+      console.log('[OracleInput] Compressed:', `${capture.width}×${capture.height}`, `${(capture.sizeBytes / 1024).toFixed(0)}KB`);
       setSelectedImage(capture);
       setImagePreviewUrl(URL.createObjectURL(file));
     } catch (err) {
       console.error('[OracleInput] Image processing failed:', err);
+      // Show visible feedback instead of silent failure
+      alert('Could not process image. Try a different photo.');
     }
 
     // Reset input so same file can be selected again
-    e.target.value = '';
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   }, []);
 
   const clearImage = useCallback(() => {
@@ -86,7 +105,6 @@ export function OracleInputBar({
   // ── Send handler (text or image) ──────────────────────
   const handleSend = useCallback(() => {
     if (selectedImage && onSendImage) {
-      // Send image with optional text question
       if (selectedMode === 'hunt_scan' && onSendHunt) {
         const askingPrice = extractPrice(inputValue);
         onSendHunt(selectedImage, askingPrice);
@@ -114,13 +132,13 @@ export function OracleInputBar({
 
   return (
     <div className="flex-none border-t border-border/50 bg-background/80 backdrop-blur-sm px-3 py-2 pb-[env(safe-area-inset-bottom,8px)]">
-      {/* Hidden file input — uses device camera on mobile */}
+      {/* Hidden file input — capture="environment" only on mobile */}
       {hasImageCapability && (
         <input
           ref={fileInputRef}
           type="file"
           accept="image/*"
-          capture="environment"
+          {...(isMobile ? { capture: 'environment' } : {})}
           onChange={handleFileChange}
           className="hidden"
           aria-hidden="true"
@@ -288,36 +306,40 @@ async function compressImage(file: File, maxDim = 1024, quality = 0.8): Promise<
     const url = URL.createObjectURL(file);
 
     img.onload = () => {
-      URL.revokeObjectURL(url);
+      try {
+        URL.revokeObjectURL(url);
 
-      // Calculate dimensions maintaining aspect ratio
-      let { width, height } = img;
-      if (width > maxDim || height > maxDim) {
-        const ratio = Math.min(maxDim / width, maxDim / height);
-        width = Math.round(width * ratio);
-        height = Math.round(height * ratio);
+        // Calculate dimensions maintaining aspect ratio
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const ratio = Math.min(maxDim / width, maxDim / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+
+        // Draw to canvas for compression
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { reject(new Error('Canvas not supported')); return; }
+
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Convert to base64 JPEG (smaller than PNG for photos)
+        const base64 = canvas.toDataURL('image/jpeg', quality);
+        const sizeBytes = Math.round((base64.length - 'data:image/jpeg;base64,'.length) * 0.75);
+
+        resolve({
+          base64: base64.split(',')[1], // strip data URI prefix
+          mimeType: 'image/jpeg',
+          width,
+          height,
+          sizeBytes,
+        });
+      } catch (err) {
+        reject(err);
       }
-
-      // Draw to canvas for compression
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) { reject(new Error('Canvas not supported')); return; }
-
-      ctx.drawImage(img, 0, 0, width, height);
-
-      // Convert to base64 JPEG (smaller than PNG for photos)
-      const base64 = canvas.toDataURL('image/jpeg', quality);
-      const sizeBytes = Math.round((base64.length - 'data:image/jpeg;base64,'.length) * 0.75);
-
-      resolve({
-        base64: base64.split(',')[1], // strip data URI prefix
-        mimeType: 'image/jpeg',
-        width,
-        height,
-        sizeBytes,
-      });
     };
 
     img.onerror = () => {
