@@ -30,24 +30,35 @@
 // ═══════════════════════════════════════════════════════════════════════
 // KILL THE FOSSIL — Liberation 1
 // ═══════════════════════════════════════════════════════════════════════
-// This handler now supports TWO modes:
+// Two modes: FULL (default) and LIGHTWEIGHT (lightweight: true).
+// Full = all context. Lightweight = identity + memory + trust.
+// Both get the real Oracle. No lobotomies.
 //
-//   FULL MODE (default):
-//     All context fetched — scans, vault, argos, visual memory, recall,
-//     energy arc, content detection. The complete Oracle experience.
-//     Used by: OraclePage, OracleChat component, any surface that
-//     wants the full brain.
+// ═══════════════════════════════════════════════════════════════════════
+// LIBERATION 2 — CLIENT-SIDE INTELLIGENCE
+// ═══════════════════════════════════════════════════════════════════════
+// Client sends clientContext: { detectedIntent, detectedEnergy, localContext,
+// deviceType, timestamp }. Server validates and uses hints to skip work.
 //
-//   LIGHTWEIGHT MODE (lightweight: true):
-//     Minimal context — identity, memory, trust, personality.
-//     Skips heavy fetches: scans, vault, argos, visual memory, recall.
-//     Still routes through the REAL provider pipeline with full personality.
-//     Used by: command-router voice commands, ask.ts compat shim,
-//     any surface that needs a quick but REAL Oracle response.
+// ═══════════════════════════════════════════════════════════════════════
+// LIBERATION 3 — EMOTIONAL MEMORY
+// ═══════════════════════════════════════════════════════════════════════
+// Emotional moments fetched in BOTH modes. Available at ALL tiers.
+// ~150 tokens. Injected as SHARED MOMENTS.
 //
-// The old ask.ts was a lobotomy: hardcoded gpt-4o-mini, 200 tokens,
-// generic prompt, zero identity. That fossil is dead. Every surface
-// now gets the real Oracle — the only difference is context depth.
+// ═══════════════════════════════════════════════════════════════════════
+// LIBERATION 4 — PERSONAL CONCIERGE
+// ═══════════════════════════════════════════════════════════════════════
+// Personal details (names, dates, preferences) fetched in BOTH modes.
+// Available at ALL tiers. Extraction runs as background task after
+// conversation persistence. Injected as PERSONAL KNOWLEDGE.
+//
+// ═══════════════════════════════════════════════════════════════════════
+// LIBERATION 5 — SELF-AWARE ORACLE
+// ═══════════════════════════════════════════════════════════════════════
+// Capabilities block built from tier features + live stats.
+// Full mode only (needs vault/scan/argos counts).
+// Oracle knows its tools and offers them naturally.
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -92,7 +103,13 @@ import {
   getAggregatedInterests,
   shouldCompress,
   compressConversation,
+  getEmotionalMoments,                                // Liberation 3
 } from '../../src/lib/oracle/memory/index.js';
+
+import {
+  getPersonalDetails,                                  // Liberation 4
+  extractPersonalDetails,                              // Liberation 4
+} from '../../src/lib/oracle/memory/personal-details.js';
 
 import { getTrustMetrics, detectTrustSignals, recordTrustEvent } from '../../src/lib/oracle/trust/tracker.js';
 import { detectEnergy, detectEnergyArc, detectExpertiseFromMessage } from '../../src/lib/oracle/personality/energy.js';
@@ -111,6 +128,19 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+// =============================================================================
+// VALIDATION — Liberation 2 client hint whitelists
+// =============================================================================
+
+const VALID_INTENTS = new Set([
+  'casual', 'quick_answer', 'deep_analysis', 'market_query',
+  'vision', 'strategy', 'creative', 'speed',
+]);
+
+const VALID_ENERGIES = new Set([
+  'neutral', 'excited', 'frustrated', 'focused', 'curious', 'casual',
+]);
 
 // =============================================================================
 // TITLE GENERATOR
@@ -277,10 +307,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       message,
       conversationHistory,
       conversationId,
-      // ── Kill the Fossil: new fields ─────────────────────
       lightweight = false,
       analysisContext = null,
-      // ── Client-side intelligence hints (Liberation 2 prep) ─
       clientContext = null,
     } = req.body;
 
@@ -308,24 +336,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ── 0.5 SAFETY SCAN (always runs, even lightweight) ──
     const safetyScan = scanMessage(message);
 
-    // ── 0.6 ENERGY DETECTION ─────────────────────────────
-    // Use client hint if provided (Liberation 2), otherwise detect server-side
-    const currentEnergy = clientContext?.detectedEnergy || detectEnergy(message);
+    // ── 0.6 ENERGY (Liberation 2: use client hint if valid) ─
+    const clientEnergy = clientContext?.detectedEnergy;
+    const currentEnergy = (clientEnergy && VALID_ENERGIES.has(clientEnergy))
+      ? clientEnergy
+      : detectEnergy(message);
+
+    // ── 0.65 INTENT HINT (Liberation 2: validate for router) ─
+    const clientIntent = clientContext?.detectedIntent;
+    const validatedIntentHint = (clientIntent && VALID_INTENTS.has(clientIntent))
+      ? clientIntent
+      : null;
 
     // ── 0.7 TRUST SIGNAL DETECTION ───────────────────────
     const trustSignal = detectTrustSignals(message);
 
+    // Device type (Liberation 2: for logging/analytics)
+    const deviceType = clientContext?.deviceType || 'unknown';
+
     // ══════════════════════════════════════════════════════
     // LIGHTWEIGHT vs FULL MODE — the only branch point
-    // ══════════════════════════════════════════════════════
-    //
-    // Lightweight: identity + memory + trust (3 queries)
-    //   Used by: voice command-router, ask.ts compat shim
-    //   ~200ms faster, ~40% smaller prompt
-    //
-    // Full: everything (14+ queries in parallel)
-    //   Used by: OraclePage, dedicated chat surfaces
-    //   Complete context, complete Oracle experience
     // ══════════════════════════════════════════════════════
 
     let identity: any;
@@ -342,11 +372,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let trustMetrics: any = null;
     let unfulfilledPromises: any[] = [];
     let aggregatedInterests: any[] = [];
+    let emotionalMoments: any[] = [];     // Liberation 3
+    let personalDetails: any[] = [];      // Liberation 4
 
     if (lightweight) {
-      // ── LIGHTWEIGHT: Core identity + memory only ────────
-      // The Oracle still knows WHO it is and WHO the user is.
-      // It just doesn't load the full vault/scan/argos context.
+      // ── LIGHTWEIGHT: Core identity + memory + concierge ──
+      // Liberation 3: emotional moments (all tiers, ~150 tokens)
+      // Liberation 4: personal details (all tiers, ~200 tokens)
+      // Both cheap, both essential for relationship depth.
       const results = await Promise.all([
         getOrCreateIdentity(supabaseAdmin, user.id),
         getRelevantMemories(user.id, message, 3).catch(() => []),
@@ -360,6 +393,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .then(r => r.data)
           .catch(() => null),
         getPrivacySettings(supabaseAdmin, user.id).catch(() => null),
+        getEmotionalMoments(user.id, 5).catch(() => []),          // Liberation 3
+        getPersonalDetails(user.id, 20).catch(() => []),           // Liberation 4
       ]);
 
       identity = results[0];
@@ -368,11 +403,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       expertiseLevel = results[3];
       profile = results[4];
       privacySettings = results[5];
+      emotionalMoments = results[6];     // Liberation 3
+      personalDetails = results[7];      // Liberation 4
 
     } else {
       // ── FULL MODE: Everything in parallel ───────────────
       const isRecall = isRecallQuestion(message);
-      const historyLength = Array.isArray(conversationHistory) ? conversationHistory.length : 0;
 
       const [
         _identity, scanResult, vaultResult, profileResult,
@@ -380,6 +416,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         visualMemoryResult, _recallResult,
         _relevantMemories, _expertiseLevel, _trustMetrics,
         _unfulfilledPromises, _aggregatedInterests,
+        _emotionalMoments,                                   // Liberation 3
+        _personalDetails,                                    // Liberation 4
       ] = await Promise.all([
         getOrCreateIdentity(supabaseAdmin, user.id),
         supabaseAdmin
@@ -423,6 +461,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         getTrustMetrics(user.id).catch(() => null),
         getUnfulfilledPromises(user.id).catch(() => []),
         getAggregatedInterests(user.id).catch(() => []),
+        getEmotionalMoments(user.id, 5).catch(() => []),         // Liberation 3
+        getPersonalDetails(user.id, 30).catch(() => []),          // Liberation 4
       ]);
 
       identity = _identity;
@@ -439,6 +479,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       trustMetrics = _trustMetrics;
       unfulfilledPromises = _unfulfilledPromises;
       aggregatedInterests = _aggregatedInterests;
+      emotionalMoments = _emotionalMoments;                      // Liberation 3
+      personalDetails = _personalDetails;                        // Liberation 4
     }
 
     // ── 1.5 Energy arc (full mode only, needs history) ───
@@ -473,6 +515,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       trustMetrics,
       energyArc: energyArc as any,
       currentEnergy,
+      emotionalMoments,          // Liberation 3: ALL tiers, both modes
+      personalDetails,           // Liberation 4: ALL tiers, both modes
+
+      // Liberation 5: Capabilities — full mode only (needs live stats)
+      userTier: access.tier.current as any,
+      capabilitiesStats: !lightweight ? {
+        vaultItemCount: vaultItems.length,
+        scanCount: scanHistory.length,
+        argosAlertCount: argosData?.unreadCount || 0,
+        watchlistCount: argosData?.watchlistCount || 0,
+        conversationCount: relevantMemories.length,
+        visualMemoryCount: visualMemories.length,
+      } : undefined,
     };
 
     let systemPrompt = buildSystemPrompt(promptParams);
@@ -501,11 +556,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       systemPrompt += buildFollowUpBlock(recentSafety);
     }
 
-    // ── 3. Route to best provider ─────────────────────────
-    // Use client intent hint if available (Liberation 2 prep)
+    // ── 3. Route to best provider (Liberation 2: intentHint) ─
     const routing = routeMessage(message, identity, {
       conversationLength: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
       userTier: access.tier.current,
+      intentHint: validatedIntentHint || undefined,
     });
 
     // ── 4. Assemble conversation messages ─────────────────
@@ -516,7 +571,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ];
 
     if (includeHistory && Array.isArray(conversationHistory)) {
-      // Lightweight gets less history to stay fast
       const historyLimit = lightweight ? 10 : 20;
       const recentHistory = conversationHistory.slice(-historyLimit);
       for (const turn of recentHistory) {
@@ -563,15 +617,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     checkForNameCeremony(supabaseAdmin, identity, responseText).catch(() => {});
     updateIdentityAfterChat(supabaseAdmin, identity, message, scanHistory).catch(() => {});
 
-    // Evolution only on full-mode conversations (voice commands don't contribute)
     if (!lightweight) {
       evolvePersonality(openai, supabaseAdmin, identity, conversationHistory || []).catch(() => {});
       evolveCharacter(process.env.OPEN_AI_API_KEY!, supabaseAdmin, identity, conversationHistory || []).catch(() => {});
     }
 
     // ── 8. Persist conversation ───────────────────────────
-    // Lightweight calls from voice/command-router don't persist
-    // (they have no conversationId and no history to build on)
     let activeConversationId = conversationId || null;
 
     if (!lightweight) {
@@ -594,8 +645,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               .update({ messages: updatedMessages })
               .eq('id', activeConversationId);
 
-            // Sprint N: Check if conversation needs compression
             const msgCount = updatedMessages.length;
+
+            // Sprint N: Memory compression
             if (msgCount >= 25 && msgCount % 10 === 0) {
               shouldCompress(user.id, activeConversationId, msgCount)
                 .then(needsCompression => {
@@ -603,6 +655,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     compressConversation(user.id, activeConversationId!, updatedMessages).catch(() => {});
                   }
                 }).catch(() => {});
+            }
+
+            // Liberation 4: Extract personal details from conversation
+            // Runs every 10 messages (same cadence as compression)
+            // Background task — doesn't block the response
+            if (msgCount >= 8 && msgCount % 10 === 0) {
+              extractPersonalDetails(user.id, updatedMessages).catch(() => {});
             }
           }
         } else {
@@ -661,6 +720,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         intent: routing.intent,
         responseTime: result.responseTime,
         isFallback: result.isFallback,
+        deviceType,
       },
     });
 

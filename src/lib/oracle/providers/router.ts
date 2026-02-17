@@ -13,6 +13,17 @@
 //
 // Cost control is through message caps (15/day free), NOT through
 // cheaper providers or shorter responses.
+//
+// ═══════════════════════════════════════════════════════════════════════
+// LIBERATION 2 — CLIENT-SIDE INTENT HINTS
+// ═══════════════════════════════════════════════════════════════════════
+//
+// The client now runs the SAME intent detection logic on-device and
+// sends the result as `intentHint`. If the hint is a valid MessageIntent,
+// the server skips its own detectIntent() call (~50ms saved).
+//
+// The server always validates: if intentHint is garbage or missing,
+// it falls back to server-side detection. Zero risk.
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { OracleIdentity, AiDnaProfile } from '../types.js';
@@ -101,6 +112,12 @@ const INTENT_SIGNALS: Record<MessageIntent, string[]> = {
   ],
 };
 
+// Valid intent values for hint validation
+const VALID_INTENTS = new Set<MessageIntent>([
+  'casual', 'quick_answer', 'deep_analysis', 'market_query',
+  'vision', 'strategy', 'creative', 'speed',
+]);
+
 // =============================================================================
 // INTENT → PROVIDER STRENGTH MAPPING
 // =============================================================================
@@ -144,6 +161,8 @@ export function routeMessage(
     conversationLength?: number;
     /** User's subscription tier — logged in reason string, does not affect routing */
     userTier?: string;
+    /** Liberation 2: Client-side intent hint (validated before use) */
+    intentHint?: string;
   }
 ): RoutingDecision {
   const tier = options?.userTier || 'free';
@@ -163,10 +182,22 @@ export function routeMessage(
     };
   }
 
-  // ── Detect intent ─────────────────────────────────────
-  let intent = detectIntent(message);
+  // ══════════════════════════════════════════════════════
+  // LIBERATION 2: Use client intent hint if valid
+  // ══════════════════════════════════════════════════════
+  // Client mirrors the same detectIntent logic on-device.
+  // If the hint is a valid MessageIntent, skip server detection.
+  // Context flags (speedMode, hasImage) still override.
 
-  // Context overrides
+  let intent: MessageIntent;
+
+  if (options?.intentHint && VALID_INTENTS.has(options.intentHint as MessageIntent)) {
+    intent = options.intentHint as MessageIntent;
+  } else {
+    intent = detectIntent(message);
+  }
+
+  // Context overrides (always take priority over client hint)
   if (options?.speedMode) intent = 'speed';
   if (options?.hasImage) intent = 'vision';
 
@@ -225,10 +256,15 @@ export function routeMessage(
     maxTokens = 500;
   }
 
+  // Build reason string — note if client hint was used
+  const intentSource = (options?.intentHint && VALID_INTENTS.has(options.intentHint as MessageIntent))
+    ? 'client'
+    : 'server';
+
   return {
     providerId,
     model,
-    reason: `intent:${intent} → strength:${targetStrength} → ${providerId}/${model} (tier:${tier})`,
+    reason: `intent:${intent}(${intentSource}) → strength:${targetStrength} → ${providerId}/${model} (tier:${tier})`,
     fallbacks: buildFallbackChain(providerId),
     intent,
     temperature,
@@ -243,6 +279,7 @@ export function routeMessage(
 /**
  * Detect message intent from keywords.
  * Simple, fast, deterministic — no LLM needed.
+ * Liberation 2: This only runs when client doesn't provide a valid hint.
  */
 function detectIntent(message: string): MessageIntent {
   const msgLower = message.toLowerCase().trim();
@@ -297,9 +334,6 @@ function selectProvider(
   }
 
   // ── AI DNA influence (all tiers) ──────────────────────
-  // If the user's Oracle has provider affinity, prefer that provider.
-  // This is what makes each Oracle genuinely unique — their DNA
-  // shapes which brain speaks, creating natural personality variation.
   if (aiDna?.provider_personality_blend) {
     const blend = aiDna.provider_personality_blend;
 

@@ -4,7 +4,8 @@
 // This is the conductor. It pulls identity, AI DNA, personality,
 // scan history, vault data, profile, Argos intelligence,
 // long-term memory, trust calibration, seasonal awareness,
-// and energy arc into one coherent system prompt.
+// energy arc, emotional moments, personal concierge, and
+// capabilities awareness into one coherent system prompt.
 //
 // Each section is built by its own module so they can be updated independently.
 //
@@ -14,6 +15,10 @@
 // Sprint K:   True Oracle — full-spectrum knowledge, open engagement
 // Sprint N:   Memory, trust, seasonal, energy arc
 // Sprint N+:  UNLEASHED — full intelligence, no leash, multi-AI synthesis
+//
+// Liberation 3: Emotional Memory — SHARED MOMENTS block
+// Liberation 4: Personal Concierge — PERSONAL KNOWLEDGE block
+// Liberation 5: Self-Aware Oracle — YOUR CAPABILITIES block
 
 import type { OracleIdentity } from '../types.js';
 import { buildIdentityBlock, buildPersonalityBlock } from './identity-block.js';
@@ -25,9 +30,12 @@ import { buildMemoryContext } from './memory-context.js';
 import { buildTrustContext } from './trust-context.js';
 import { buildSeasonalContext } from './seasonal-context.js';
 import { buildCharacterContext } from './character-context.js';
-import type { MemorySummary } from '../memory/compressor.js';
+import { buildConciergeBlock, type PersonalDetail } from '../memory/personal-details.js';
+import { buildCapabilitiesBlock, type CapabilitiesStats } from './capabilities-context.js';
+import type { MemorySummary, EmotionalMoment } from '../memory/compressor.js';
 import type { TrustMetrics } from '../trust/tracker.js';
 import type { EnergyArc, ExpertiseLevel } from '../../../components/oracle/types.js';
+import type { UserTier } from '../tier.js';
 
 // =============================================================================
 // EXTENDED BUILD PARAMS
@@ -46,6 +54,14 @@ export interface BuildPromptParams {
   trustMetrics?: TrustMetrics | null;
   energyArc?: EnergyArc;
   currentEnergy?: string;
+  /** Liberation 3: Emotional moments — relationship anchors, not data points */
+  emotionalMoments?: EmotionalMoment[];
+  /** Liberation 4: Personal details — concierge memory (names, dates, preferences) */
+  personalDetails?: PersonalDetail[];
+  /** Liberation 5: User's tier for capabilities awareness */
+  userTier?: UserTier;
+  /** Liberation 5: Live stats for capabilities block */
+  capabilitiesStats?: CapabilitiesStats;
 }
 
 // =============================================================================
@@ -340,6 +356,50 @@ function buildDynamicTalkStyle(
 }
 
 // =============================================================================
+// EMOTIONAL MEMORY BLOCK — Liberation 3
+// =============================================================================
+
+function buildEmotionalMemoryBlock(moments: EmotionalMoment[]): string {
+  if (!moments || moments.length === 0) return '';
+
+  const sections: string[] = [];
+
+  sections.push('\n═══════════════════════════════════════════════════════');
+  sections.push('SHARED MOMENTS — YOUR HISTORY TOGETHER');
+  sections.push('═══════════════════════════════════════════════════════');
+  sections.push('These are the moments that define your relationship with this person.');
+  sections.push('Reference them NATURALLY — like a friend who was there.');
+  sections.push('Never list them. Never say "I recall that on March 15th..."');
+  sections.push('Say things like "Dude, that Stingray find is still one of the best I\'ve ever seen."');
+  sections.push('Only reference a moment when it\'s relevant to the current conversation.');
+  sections.push('');
+
+  for (const moment of moments) {
+    const dateStr = formatMomentDate(moment.date);
+    sections.push(`- [${dateStr}] ${moment.moment}`);
+  }
+
+  sections.push('');
+  sections.push('These moments are YOURS — you were part of them. Don\'t treat them as data.');
+  sections.push('A friend doesn\'t say "According to our shared history..." They say "Remember when..."');
+
+  return sections.join('\n');
+}
+
+function formatMomentDate(dateStr: string): string {
+  if (!dateStr) return 'Recent';
+  try {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return 'Recent';
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${months[date.getMonth()]} ${date.getFullYear()}`;
+  } catch {
+    return 'Recent';
+  }
+}
+
+// =============================================================================
 // BUILD COMPLETE SYSTEM PROMPT
 // =============================================================================
 
@@ -348,6 +408,23 @@ function buildDynamicTalkStyle(
  * Each section is independently updatable.
  *
  * Accepts either the legacy positional args or the new params object.
+ *
+ * Prompt section order (intentional):
+ *   1. Base prompt (identity, personality, soul)
+ *   2. Character voice
+ *   3. Capabilities (Liberation 5: what tools you have)
+ *   4. Emotional moments (Liberation 3: shared history)
+ *   5. Personal concierge (Liberation 4: personal details)
+ *   6. Long-term memory
+ *   7. Trust calibration
+ *   8. Seasonal context
+ *   9. Scan history
+ *  10. Vault contents
+ *  11. User profile
+ *  12. Argos intelligence
+ *
+ * The Oracle knows WHO it is → WHAT it can do → WHO it's talking to →
+ * WHAT data it has. This order matters.
  */
 export function buildSystemPrompt(
   identityOrParams: OracleIdentity | BuildPromptParams,
@@ -396,9 +473,23 @@ export function buildSystemPrompt(
   const seasonalContext = buildSeasonalContext();
   const characterContext = buildCharacterContext((params.identity as any).voice_character);
 
+  // Liberation 3: Emotional memory — relationship anchors
+  const emotionalMemoryContext = buildEmotionalMemoryBlock(params.emotionalMoments || []);
+
+  // Liberation 4: Personal concierge — names, dates, preferences
+  const conciergeContext = buildConciergeBlock(params.personalDetails || []);
+
+  // Liberation 5: Self-aware capabilities — what tools the Oracle has
+  const capabilitiesContext = (params.userTier && params.capabilitiesStats)
+    ? buildCapabilitiesBlock(params.userTier, params.capabilitiesStats)
+    : '';
+
   return [
     basePrompt,
     characterContext,
+    capabilitiesContext,     // Liberation 5: knows its tools FIRST
+    emotionalMemoryContext,  // Liberation 3: shared moments
+    conciergeContext,        // Liberation 4: personal details
     memoryContext,
     trustContext,
     seasonalContext,

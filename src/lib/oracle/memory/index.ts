@@ -2,12 +2,21 @@
 // Oracle Long-Term Memory — retrieval, semantic matching, expertise derivation
 // Searches compressed conversation summaries to give Dash persistent recall
 // "You were really into vintage Pyrex back in March — still collecting those?"
+//
+// ═══════════════════════════════════════════════════════════════════════
+// LIBERATION 3 — EMOTIONAL MEMORY
+// ═══════════════════════════════════════════════════════════════════════
+// New export: getEmotionalMoments()
+// Retrieves the most significant emotional moments across all memories.
+// These are injected into the system prompt as "SHARED MOMENTS" —
+// relationship anchors that make the Oracle feel like a partner, not a tool.
+// ═══════════════════════════════════════════════════════════════════════
 
 export { compressConversation, shouldCompress, getUserMemories } from './compressor.js';
-export type { MemorySummary } from './compressor.js';
+export type { MemorySummary, EmotionalMoment } from './compressor.js';
 
 import { createClient } from '@supabase/supabase-js';
-import type { MemorySummary } from './compressor.js';
+import type { MemorySummary, EmotionalMoment } from './compressor.js';
 
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL!,
@@ -54,6 +63,8 @@ export async function getRelevantMemories(
       ...(memory.interests_revealed || []).map((i: any) => `${i.category} ${i.specifics}`),
       ...(memory.items_discussed || []).map((i: any) => `${i.name} ${i.category || ''}`),
       ...(memory.promises_made || []).map((p: any) => p.promise),
+      // Liberation 3: also score against emotional moments
+      ...(memory.emotional_moments || []).map((m: any) => m.moment),
     ].join(' ').toLowerCase();
 
     for (const keyword of keywords) {
@@ -93,6 +104,106 @@ export async function getRecentMemories(
 
   if (error) return [];
   return data || [];
+}
+
+// =============================================================================
+// EMOTIONAL MOMENTS RETRIEVAL — Liberation 3
+// =============================================================================
+
+/**
+ * Retrieve the most significant emotional moments across all memories.
+ * Ranked by significance (high > medium > low) then by recency.
+ * Returns max `limit` moments for prompt injection as "SHARED MOMENTS".
+ *
+ * Available at ALL tiers — this is what makes the Oracle feel real.
+ * Cost: ~150 tokens in the system prompt. Impact: immeasurable.
+ */
+export async function getEmotionalMoments(
+  userId: string,
+  limit = 5,
+): Promise<EmotionalMoment[]> {
+  const { data: memories, error } = await supabaseAdmin
+    .from('oracle_memory_summaries')
+    .select('emotional_moments, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(50); // Scan recent 50 memories
+
+  if (error || !memories?.length) return [];
+
+  // Flatten all emotional moments from all memories
+  const allMoments: (EmotionalMoment & { memoryDate: string })[] = [];
+
+  for (const memory of memories) {
+    const moments = memory.emotional_moments || [];
+    for (const m of moments) {
+      if (m.moment && m.emotion) {
+        allMoments.push({
+          moment: m.moment,
+          emotion: m.emotion,
+          significance: m.significance || 'medium',
+          date: m.date || memory.created_at?.split('T')[0] || '',
+          memoryDate: memory.created_at || '',
+        });
+      }
+    }
+  }
+
+  if (allMoments.length === 0) return [];
+
+  // Score: significance weight + recency bonus
+  const significanceWeight: Record<string, number> = {
+    high: 30,
+    medium: 15,
+    low: 5,
+  };
+
+  const now = Date.now();
+
+  const scored = allMoments.map(m => {
+    const sigScore = significanceWeight[m.significance] || 10;
+
+    // Recency bonus: moments from last 30 days get +10, last 90 days +5
+    const momentAge = now - new Date(m.memoryDate).getTime();
+    const daysSince = momentAge / (1000 * 60 * 60 * 24);
+    const recencyBonus = daysSince < 30 ? 10 : daysSince < 90 ? 5 : 0;
+
+    return {
+      moment: {
+        moment: m.moment,
+        emotion: m.emotion,
+        significance: m.significance,
+        date: m.date,
+      } as EmotionalMoment,
+      score: sigScore + recencyBonus,
+    };
+  });
+
+  // Sort by score (highest first), deduplicate by moment text similarity
+  scored.sort((a, b) => b.score - a.score);
+
+  // Simple deduplication: skip moments that share >60% of words with an already-selected one
+  const selected: EmotionalMoment[] = [];
+  const selectedTexts: string[] = [];
+
+  for (const item of scored) {
+    if (selected.length >= limit) break;
+
+    const words = new Set(item.moment.moment.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+    const isDuplicate = selectedTexts.some(existing => {
+      const existingWords = new Set(existing.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+      const overlap = [...words].filter(w => existingWords.has(w)).length;
+      const maxSize = Math.max(words.size, existingWords.size);
+      return maxSize > 0 && overlap / maxSize > 0.6;
+    });
+
+    if (!isDuplicate) {
+      selected.push(item.moment);
+      selectedTexts.push(item.moment.moment);
+    }
+  }
+
+  return selected;
 }
 
 // =============================================================================
