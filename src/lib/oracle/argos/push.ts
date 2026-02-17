@@ -3,20 +3,33 @@
 //
 // Sprint I: Push notifications — Argos alerts reach users when app is closed
 //
+// ═══════════════════════════════════════════════════════════════════════
+// LIBERATION 6 — ORACLE-VOICED PUSH NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Before:  "Price alert: Item X dropped 15%"
+// After:   "That Pyrex 443 you've been stalking? $45. Steal."
+//
+// Voice generation runs ONCE per alert (before the device loop),
+// then the same voiced text is delivered to all devices. ~$0.001/push.
+// Falls back to static templates if voice generation fails.
+// ═══════════════════════════════════════════════════════════════════════
+//
 // Device-agnostic push system:
 //   - Web Push API (PWA / browser)
 //   - FCM (Android / React Native)
 //   - APNs (iOS) — ready for integration
 //   - Custom transport (smart glasses SDK — future)
 //
-// When Argos generates an alert, this service delivers it to ALL of the
-// user's registered devices that match the alert type preferences.
-//
 // Mobile-first: Users configure notification preferences per-device.
 // Quiet hours respected. Dead subscriptions auto-cleaned.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ArgosAlert } from './engine.js';
+import {
+  buildOracleVoicedPush,
+  type PushAlertData,
+} from '../prompt/push-voice.js';
 
 // =============================================================================
 // TYPES
@@ -86,6 +99,9 @@ const ALERT_PREFERENCE_MAP: Record<string, keyof PushSubscription> = {
 /**
  * Send a push notification for an Argos alert to all of a user's devices.
  * Respects per-device notification preferences and quiet hours.
+ *
+ * Liberation 6: Generates Oracle-voiced text ONCE, then delivers
+ * the same voiced payload to all devices. Falls back to static on failure.
  */
 export async function pushAlert(
   supabase: SupabaseClient,
@@ -103,6 +119,9 @@ export async function pushAlert(
 
   result.targeted = subs.length;
 
+  // ── Liberation 6: Voice the alert ONCE before device loop ──
+  const payload = await voiceAlert(supabase, alert);
+
   for (const sub of subs) {
     const prefKey = ALERT_PREFERENCE_MAP[alert.alert_type];
     if (prefKey && sub[prefKey] === false) {
@@ -116,7 +135,7 @@ export async function pushAlert(
     }
 
     try {
-      await sendPush(sub, alert);
+      await sendPush(sub, payload);
       result.delivered++;
 
       supabase
@@ -170,15 +189,132 @@ export async function pushAlertBatch(
     const toSend = prioritizeAlerts(userAlerts).slice(0, 3);
 
     for (const alert of toSend) {
-      const result = await pushAlert(supabase, alert);
-      totals.targeted += result.targeted;
-      totals.delivered += result.delivered;
-      totals.failed += result.failed;
-      totals.skipped += result.skipped;
+      const r = await pushAlert(supabase, alert);
+      totals.targeted += r.targeted;
+      totals.delivered += r.delivered;
+      totals.failed += r.failed;
+      totals.skipped += r.skipped;
     }
   }
 
   return totals;
+}
+
+// =============================================================================
+// LIBERATION 6: ORACLE VOICE GENERATION
+// =============================================================================
+
+/** Payload shape shared by all transports */
+interface PushPayload {
+  title: string;
+  body: string;
+  icon: string;
+  badge: string;
+  tag: string;
+  data: Record<string, any>;
+}
+
+/**
+ * Voice an alert through the Oracle's personality.
+ * Loads the user's Oracle identity, generates voiced text via gpt-4o-mini.
+ * Falls back to static template on any failure.
+ */
+async function voiceAlert(
+  supabase: SupabaseClient,
+  alert: ArgosAlert,
+): Promise<PushPayload> {
+  try {
+    // Load the user's Oracle identity for personality
+    const { data: identity } = await supabase
+      .from('oracle_identities')
+      .select('oracle_name, personality_traits, communication_style')
+      .eq('user_id', alert.user_id)
+      .single();
+
+    if (!identity) {
+      // No identity yet — use static template
+      return buildStaticPayload(alert);
+    }
+
+    // Convert ArgosAlert → PushAlertData for push-voice.ts
+    const alertData: PushAlertData = mapAlertToPushData(alert);
+
+    // Generate Oracle-voiced text (~$0.001)
+    const voiced = await buildOracleVoicedPush(identity, alertData);
+
+    if (voiced.isVoiced) {
+      console.log(`[L6] Oracle-voiced push for ${alert.alert_type}: "${voiced.title.substring(0, 60)}..."`);
+    }
+
+    return {
+      title: voiced.title,
+      body: voiced.body || alert.body || '',
+      icon: getAlertIcon(alert.alert_type),
+      badge: '/icons/badge-72.png',
+      tag: `argos-${alert.alert_type}-${alert.vault_item_id || 'general'}`,
+      data: {
+        alert_type: alert.alert_type,
+        action_url: alert.action_url,
+        action_label: alert.action_label,
+        vault_item_id: alert.vault_item_id,
+        item_name: alert.item_name,
+        oracle_voiced: voiced.isVoiced,
+      },
+    };
+
+  } catch (err) {
+    console.warn('[L6] Voice generation failed, using static template:', err);
+    return buildStaticPayload(alert);
+  }
+}
+
+/**
+ * Map an ArgosAlert to the PushAlertData format expected by push-voice.ts.
+ */
+function mapAlertToPushData(alert: ArgosAlert): PushAlertData {
+  const meta = (alert as any).metadata || {};
+
+  const base: PushAlertData = {
+    type: mapAlertType(alert.alert_type),
+    itemName: alert.item_name,
+    category: meta.category,
+    rawContext: alert.body,
+  };
+
+  // Add price data if present in alert metadata
+  if (meta.current_price !== undefined || meta.previous_price !== undefined) {
+    base.price = {
+      current: meta.current_price,
+      previous: meta.previous_price,
+      changePercent: meta.change_percent,
+      userCeiling: meta.user_ceiling,
+    };
+  }
+
+  // Add personal detail for date reminders (Liberation 4 integration)
+  if (alert.alert_type === 'oracle_nudge' && meta.personal_detail) {
+    base.type = 'date_reminder';
+    base.personalDetail = meta.personal_detail;
+  }
+
+  return base;
+}
+
+/**
+ * Map Argos alert_type strings to PushAlertData type enum.
+ */
+function mapAlertType(argosType: string): PushAlertData['type'] {
+  const typeMap: Record<string, PushAlertData['type']> = {
+    'price_drop': 'price_drop',
+    'price_spike': 'price_spike',
+    'new_listing': 'watchlist_hit',
+    'market_trend': 'market_shift',
+    'flip_opportunity': 'watchlist_hit',
+    'vault_milestone': 'milestone',
+    'hunt_result': 'trend_alert',
+    'oracle_nudge': 'date_reminder',
+  };
+  return typeMap[argosType] || 'trend_alert';
 }
 
 // =============================================================================
@@ -342,10 +478,8 @@ export async function cleanupDeadSubscriptions(
 
 async function sendPush(
   sub: PushSubscription,
-  alert: ArgosAlert
+  payload: PushPayload
 ): Promise<void> {
-  const payload = buildPushPayload(alert);
-
   switch (sub.transport) {
     case 'web_push':
       await sendWebPush(sub.subscription as WebPushPayload, payload);
@@ -364,14 +498,7 @@ async function sendPush(
   }
 }
 
-function buildPushPayload(alert: ArgosAlert): {
-  title: string;
-  body: string;
-  icon: string;
-  badge: string;
-  tag: string;
-  data: Record<string, any>;
-} {
+function getAlertIcon(alertType: string): string {
   const iconMap: Record<string, string> = {
     price_drop: '📉',
     price_spike: '📈',
@@ -382,11 +509,18 @@ function buildPushPayload(alert: ArgosAlert): {
     hunt_result: '🎯',
     oracle_nudge: '💡',
   };
+  return iconMap[alertType] || '🔮';
+}
 
+/**
+ * Static payload builder — fallback when Oracle voice generation fails,
+ * or when user has no Oracle identity yet.
+ */
+function buildStaticPayload(alert: ArgosAlert): PushPayload {
   return {
     title: alert.title,
     body: alert.body,
-    icon: iconMap[alert.alert_type] || '🔮',
+    icon: getAlertIcon(alert.alert_type),
     badge: '/icons/badge-72.png',
     tag: `argos-${alert.alert_type}-${alert.vault_item_id || 'general'}`,
     data: {
@@ -395,13 +529,14 @@ function buildPushPayload(alert: ArgosAlert): {
       action_label: alert.action_label,
       vault_item_id: alert.vault_item_id,
       item_name: alert.item_name,
+      oracle_voiced: false,
     },
   };
 }
 
 async function sendWebPush(
   subscription: WebPushPayload,
-  payload: ReturnType<typeof buildPushPayload>
+  payload: PushPayload
 ): Promise<void> {
   try {
     const webpush = await import('web-push');
@@ -435,7 +570,7 @@ async function sendWebPush(
 
 async function sendFcm(
   subscription: FcmPayload,
-  payload: ReturnType<typeof buildPushPayload>
+  payload: PushPayload
 ): Promise<void> {
   const serverKey = process.env.FIREBASE_SERVER_KEY;
   if (!serverKey) {
@@ -466,7 +601,7 @@ async function sendFcm(
 
 async function sendApns(
   subscription: ApnsPayload,
-  payload: ReturnType<typeof buildPushPayload>
+  payload: PushPayload
 ): Promise<void> {
   console.log(`APNs push queued for device ${subscription.deviceToken.slice(0, 8)}...: ${payload.title}`);
 }

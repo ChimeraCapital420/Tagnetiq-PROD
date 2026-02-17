@@ -17,6 +17,15 @@
 //
 // The server VALIDATES but TRUSTS client hints to skip redundant work.
 // Net savings: ~50ms server time + ~20ms energy detection + 1 DB read
+//
+// ═══════════════════════════════════════════════════════════════════════
+// LIBERATION 7 — CLIENT-SIDE MARKET DATA CACHING
+// ═══════════════════════════════════════════════════════════════════════
+// When the server returns live market data (Pro/Elite market queries),
+// the client caches it in localStorage keyed by item name.
+// On the next message about the same item (within 30 minutes),
+// the client sends the cached data back — server skips the eBay API
+// call entirely. Zero cost on cache hit.
 // ═══════════════════════════════════════════════════════════════════════
 
 import { useState, useCallback, useRef } from 'react';
@@ -226,6 +235,73 @@ function setCachedTier(tier: any): void {
 }
 
 // =============================================================================
+// LIBERATION 7 — MARKET DATA CACHE (localStorage, 30min TTL)
+// =============================================================================
+// When the server returns marketData in a response (Pro/Elite market queries),
+// we cache it keyed by item name. On the next message, if the user asks about
+// the same item within 30 minutes, we send the cached data back so the server
+// skips the eBay API call entirely. Zero cost on cache hit.
+
+const MARKET_CACHE_KEY = 'oracle_market_cache';
+const MARKET_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+interface MarketCacheEntry {
+  result: any;
+  itemName: string;
+  cachedAt: string;
+  storedAt: number;
+}
+
+function getMarketCache(): MarketCacheEntry | null {
+  try {
+    const raw = localStorage.getItem(MARKET_CACHE_KEY);
+    if (!raw) return null;
+    const entry: MarketCacheEntry = JSON.parse(raw);
+    // Check TTL
+    if (Date.now() - entry.storedAt > MARKET_CACHE_TTL) {
+      localStorage.removeItem(MARKET_CACHE_KEY);
+      return null;
+    }
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+function setMarketCache(marketData: { result: any; itemName: string; cachedAt: string }): void {
+  try {
+    const entry: MarketCacheEntry = {
+      ...marketData,
+      storedAt: Date.now(),
+    };
+    localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(entry));
+  } catch {
+    // localStorage not available or full — silently continue
+  }
+}
+
+/**
+ * Check if the user's message mentions the same item that's in our market cache.
+ * Simple keyword overlap — doesn't need to be perfect, server validates anyway.
+ */
+function getRelevantMarketCache(message: string): { result: any; cachedAt: string } | null {
+  const cache = getMarketCache();
+  if (!cache || !cache.itemName) return null;
+
+  const lower = message.toLowerCase();
+  const itemWords = cache.itemName.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  if (itemWords.length === 0) return null;
+
+  // If >50% of the item name words appear in the message, it's relevant
+  const matchCount = itemWords.filter(w => lower.includes(w)).length;
+  if (matchCount >= Math.max(1, Math.floor(itemWords.length * 0.5))) {
+    return { result: cache.result, cachedAt: cache.cachedAt };
+  }
+
+  return null;
+}
+
+// =============================================================================
 // HOOK
 // =============================================================================
 
@@ -401,7 +477,7 @@ export function useOracleChat() {
   }, [conversationId, startNewConversation]);
 
   // ══════════════════════════════════════════════════════════
-  // SEND MESSAGE — Liberation 2: client intelligence payload
+  // SEND MESSAGE — Liberation 2 + 7: client intelligence + market cache
   // ══════════════════════════════════════════════════════════
   const sendMessage = useCallback(async (text: string): Promise<string | null> => {
     if (!text.trim() || isLoading) return null;
@@ -411,6 +487,9 @@ export function useOracleChat() {
     const intent = detectClientIntent(text);
     const localContext = searchLocalContext(text, messages);
     const deviceType = getDeviceType();
+
+    // ── Liberation 7: Check market cache for this message ──
+    const cachedMarket = getRelevantMarketCache(text);
 
     setCurrentEnergy(energy);
 
@@ -441,7 +520,7 @@ export function useOracleChat() {
           message: text.trim(),
           conversationHistory: history.slice(-20),
           conversationId,
-          // ── Liberation 2: enriched payload ─────────────
+          // ── Liberation 2: enriched client context ──────
           clientContext: {
             detectedIntent: intent,
             detectedEnergy: energy,
@@ -449,6 +528,10 @@ export function useOracleChat() {
             deviceType,
             timestamp: Date.now(),
           },
+          // ── Liberation 7: cached market data ──────────
+          // If we have fresh cached data for the item being discussed,
+          // send it so the server skips the eBay API call.
+          cachedMarketData: cachedMarket || undefined,
         }),
       });
 
@@ -472,6 +555,13 @@ export function useOracleChat() {
 
       // Cache tier from response
       if (data.tier) setCachedTier(data.tier);
+
+      // ── Liberation 7: Cache market data from response ─
+      // Server returns marketData when a live fetch happened.
+      // Store it so the next message about same item uses cache.
+      if (data.marketData) {
+        setMarketCache(data.marketData);
+      }
 
       return data.response as string;
     } catch (err) {
