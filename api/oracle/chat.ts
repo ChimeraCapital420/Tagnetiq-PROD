@@ -18,18 +18,19 @@
 //   market/      → Quick market data fetching (Liberation 7)
 //
 // ═══════════════════════════════════════════════════════════════════════
-// THE NINE LIBERATIONS — FULLY WIRED
+// THE NINE LIBERATIONS + LIBERATION 10 — FULLY WIRED
 // ═══════════════════════════════════════════════════════════════════════
 //
-// L1: Kill the Fossil — ask.ts tombstoned, lightweight mode
-// L2: Client-Side Intelligence — clientContext hints, validated
-// L3: Emotional Memory — shared moments injected
-// L4: Personal Concierge — names, dates, preferences extracted + injected
-// L5: Self-Aware Oracle — capabilities block from tier + stats
-// L6: Oracle-Voiced Push — push-voice.ts (called by Argos cron, not here)
-// L7: Market-Aware Chat — quick-fetch mid-conversation for Pro/Elite
-// L8: Conversational HYDRA — multi-model synthesis for Elite deep questions
-// L9: Adaptive Token Depth — auto-continuation on truncation
+// L1:  Kill the Fossil — ask.ts tombstoned, lightweight mode
+// L2:  Client-Side Intelligence — clientContext hints, validated
+// L3:  Emotional Memory — shared moments injected
+// L4:  Personal Concierge — names, dates, preferences extracted + injected
+// L5:  Self-Aware Oracle — capabilities block from tier + stats
+// L6:  Oracle-Voiced Push — push-voice.ts (called by Argos cron, not here)
+// L7:  Market-Aware Chat — quick-fetch mid-conversation for Pro/Elite
+// L8:  Conversational HYDRA — multi-model synthesis for Elite deep questions
+// L9:  Adaptive Token Depth — auto-continuation on truncation
+// L10: How-To Teaching — routes to web providers for authoritative links
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -118,7 +119,7 @@ const supabaseAdmin = createClient(
 // =============================================================================
 
 const VALID_INTENTS = new Set([
-  'casual', 'quick_answer', 'deep_analysis', 'market_query',
+  'casual', 'quick_answer', 'deep_analysis', 'market_query', 'how_to',
   'vision', 'strategy', 'creative', 'speed',
 ]);
 

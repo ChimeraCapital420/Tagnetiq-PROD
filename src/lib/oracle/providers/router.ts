@@ -24,6 +24,21 @@
 //
 // The server always validates: if intentHint is garbage or missing,
 // it falls back to server-side detection. Zero risk.
+//
+// ═══════════════════════════════════════════════════════════════════════
+// LIBERATION 10 — HOW-TO INTENT + AUTHORITATIVE LINKS
+// ═══════════════════════════════════════════════════════════════════════
+//
+// New intent: `how_to` — routes to web-capable providers (Perplexity,
+// xAI) that return REAL URLs with citations. The Oracle teaches AND
+// provides authoritative external resources (YouTube tutorials,
+// manufacturer guides, Chilton/Haynes, specialist forums).
+//
+// Detected by: "how do I", "teach me", "walk me through", "diagnose",
+// "troubleshoot", "repair", "technique for", etc.
+//
+// Routes to: `web` strength (Perplexity sonar → real search results)
+// Token budget: 700 (enough for explanation + links)
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { OracleIdentity, AiDnaProfile } from '../types.js';
@@ -63,6 +78,7 @@ export type MessageIntent =
   | 'quick_answer' // "what's this worth?", short factual
   | 'deep_analysis'// "break down the valuation factors for..."
   | 'market_query' // "what's trending", "price of X right now"
+  | 'how_to'       // "how do I dry brush", "teach me", "walk me through"
   | 'vision'       // References looking at something, image context
   | 'strategy'     // "should I sell or hold", portfolio advice
   | 'creative'     // Personality questions, humor, non-resale chat
@@ -91,6 +107,23 @@ const INTENT_SIGNALS: Record<MessageIntent, string[]> = {
     'going down', 'selling for', 'recent sales', 'comps', 'ebay price',
     'what are people paying', 'current price', 'market value',
   ],
+  how_to: [
+    // Learning / teaching signals
+    'how do i', 'how to', 'how can i', 'teach me', 'show me how',
+    'walk me through', 'explain how', 'what\'s the best way to',
+    'step by step', 'step-by-step', 'guide me', 'tutorial',
+    'instructions for', 'learn to', 'learn how', 'where can i learn',
+    // Repair / troubleshooting signals
+    'diagnose', 'troubleshoot', 'fix my', 'repair', 'maintain',
+    'what\'s wrong with', 'not working', 'won\'t start',
+    // Technique / skill signals
+    'technique for', 'method for', 'practice', 'improve at',
+    'tips for', 'best practice', 'proper way to',
+    // Resource signals
+    'resources for', 'recommend a video', 'youtube', 'good video',
+    'where to find', 'any guides', 'reference material',
+    'chilton', 'haynes', 'manual for',
+  ],
   vision: [
     'look at', 'see this', 'what is this', 'identify', 'can you see',
     'in the image', 'in the photo', 'this item', 'what do you see',
@@ -114,7 +147,7 @@ const INTENT_SIGNALS: Record<MessageIntent, string[]> = {
 
 // Valid intent values for hint validation
 const VALID_INTENTS = new Set<MessageIntent>([
-  'casual', 'quick_answer', 'deep_analysis', 'market_query',
+  'casual', 'quick_answer', 'deep_analysis', 'market_query', 'how_to',
   'vision', 'strategy', 'creative', 'speed',
 ]);
 
@@ -127,6 +160,7 @@ const INTENT_TO_STRENGTH: Record<MessageIntent, ProviderStrength> = {
   quick_answer:  'general',
   deep_analysis: 'reasoning',
   market_query:  'web',
+  how_to:        'web',        // Routes to Perplexity/xAI — they return REAL URLs
   vision:        'vision',
   strategy:      'reasoning',
   creative:      'creative',
@@ -244,6 +278,12 @@ export function routeMessage(
     maxTokens = 600;
   }
 
+  // How-to / learning — needs room for explanation + links
+  if (intent === 'how_to') {
+    maxTokens = 700;
+    temperature = 0.6; // Slightly lower — accuracy matters for tutorials
+  }
+
   // Speed mode: tight limits regardless
   if (intent === 'speed') {
     maxTokens = 250;
@@ -289,6 +329,7 @@ function detectIntent(message: string): MessageIntent {
     'vision',        // Most specific: references images
     'deep_analysis', // "break down", "analyze" → clearly wants depth
     'market_query',  // "trending", "market" → wants live data
+    'how_to',        // "how do I", "teach me", "troubleshoot" → wants learning + links
     'strategy',      // "should I sell" → wants advice
     'creative',      // Personality, opinions, fun
     'quick_answer',  // "how much", "worth" → wants a number

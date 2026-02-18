@@ -26,6 +26,13 @@
 // On the next message about the same item (within 30 minutes),
 // the client sends the cached data back — server skips the eBay API
 // call entirely. Zero cost on cache hit.
+//
+// ═══════════════════════════════════════════════════════════════════════
+// LIBERATION 10 — HOW-TO INTENT (CLIENT MIRROR)
+// ═══════════════════════════════════════════════════════════════════════
+// Client detects how_to intent on-device so the server can skip its
+// own detection and route directly to web-capable providers (Perplexity)
+// that return real URLs with citations. Zero additional server cost.
 // ═══════════════════════════════════════════════════════════════════════
 
 import { useState, useCallback, useRef } from 'react';
@@ -55,6 +62,7 @@ type ClientIntent =
   | 'quick_answer'
   | 'deep_analysis'
   | 'market_query'
+  | 'how_to'
   | 'vision'
   | 'strategy'
   | 'creative';
@@ -74,6 +82,23 @@ const INTENT_SIGNALS: Record<ClientIntent, string[]> = {
     'trending', 'market', 'what\'s hot', 'price trend', 'going up',
     'going down', 'selling for', 'recent sales', 'comps', 'ebay price',
     'what are people paying', 'current price', 'market value',
+  ],
+  how_to: [
+    // Learning / teaching signals
+    'how do i', 'how to', 'how can i', 'teach me', 'show me how',
+    'walk me through', 'explain how', 'what\'s the best way to',
+    'step by step', 'step-by-step', 'guide me', 'tutorial',
+    'instructions for', 'learn to', 'learn how', 'where can i learn',
+    // Repair / troubleshooting signals
+    'diagnose', 'troubleshoot', 'fix my', 'repair', 'maintain',
+    'what\'s wrong with', 'not working', 'won\'t start',
+    // Technique / skill signals
+    'technique for', 'method for', 'practice', 'improve at',
+    'tips for', 'best practice', 'proper way to',
+    // Resource signals
+    'resources for', 'recommend a video', 'youtube', 'good video',
+    'where to find', 'any guides', 'reference material',
+    'chilton', 'haynes', 'manual for',
   ],
   strategy: [
     'should i sell', 'should i hold', 'should i buy', 'flip',
@@ -97,9 +122,10 @@ const INTENT_SIGNALS: Record<ClientIntent, string[]> = {
 };
 
 // Priority order — more specific intents checked first
+// how_to BEFORE quick_answer so "how do I fix" doesn't match "how" in quick_answer
 const INTENT_PRIORITY: ClientIntent[] = [
-  'vision', 'deep_analysis', 'market_query', 'strategy',
-  'creative', 'quick_answer', 'casual',
+  'vision', 'deep_analysis', 'market_query', 'how_to',
+  'strategy', 'creative', 'quick_answer', 'casual',
 ];
 
 function detectClientIntent(message: string): ClientIntent {
