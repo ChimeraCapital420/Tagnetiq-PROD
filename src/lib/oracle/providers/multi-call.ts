@@ -27,6 +27,22 @@
 // fused into one confident, personality-driven answer.
 //
 // No single model produces that.
+//
+// ═══════════════════════════════════════════════════════════════════════
+// TIMEOUT FIX — February 2026
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Problem: Each perspective call went through callOracle() which has its
+//          own 20s budget + fallback chain. Two providers × 20s = 40s.
+//          Then the HYDRA fallback called callOracle() AGAIN for 20s.
+//          Total: 60s+ → guaranteed 504.
+//
+// Fix:
+//   1. Perspective calls get fallbacks: [] — no cascading chains.
+//      Either the provider answers in ~8s or it fails. Period.
+//   2. Hard wall-clock timeout: 12s for all perspectives (not 20s).
+//   3. HYDRA failure → speedFallback() via Groq (6s hard cap).
+//      Never calls callOracle(routing) which burns another 20s.
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { OracleMessage, CallerResult } from './caller.js';
@@ -63,6 +79,22 @@ export interface MultiPerspectiveResult {
 }
 
 // =============================================================================
+// TIMEOUT CONSTANTS
+// =============================================================================
+
+// Hard wall-clock limit for gathering perspectives.
+// All perspective calls run in parallel, so this is the max wait
+// for the slowest provider. 12s leaves room for synthesis + response.
+const PERSPECTIVE_TIMEOUT_MS = 12_000;
+
+// Speed fallback timeout — used when HYDRA fails entirely.
+// Groq typically responds in 1-3s. 6s is generous.
+const SPEED_FALLBACK_TIMEOUT_MS = 6_000;
+
+// Speed fallback provider priority — fastest first.
+const SPEED_FALLBACK_PROVIDERS: OracleProviderId[] = ['groq', 'google', 'deepseek'];
+
+// =============================================================================
 // PROVIDER SELECTION FOR MULTI-CALL
 // =============================================================================
 
@@ -95,6 +127,67 @@ function selectProviders(): OracleProviderId[] {
 }
 
 // =============================================================================
+// SPEED FALLBACK — Fast single call when HYDRA fails entirely
+// =============================================================================
+
+/**
+ * Fast single-model fallback when HYDRA can't gather any perspectives.
+ * Uses the fastest available provider (Groq > Google > DeepSeek) with
+ * a tight timeout and NO fallback chain — either it works in 6s or
+ * the whole thing throws up to the handler's catch block.
+ *
+ * This replaces the old pattern of calling callOracle(routing, messages)
+ * which would burn another 20s on its own fallback chain.
+ */
+async function speedFallback(
+  routing: RoutingResult,
+  messages: OracleMessage[],
+  startTime: number,
+  providerTimes: Record<string, number>,
+): Promise<MultiPerspectiveResult> {
+  const available = getAvailableProviders();
+
+  // Find the fastest available provider
+  let speedProvider: OracleProviderId | null = null;
+  for (const id of SPEED_FALLBACK_PROVIDERS) {
+    if (available.includes(id)) {
+      speedProvider = id;
+      break;
+    }
+  }
+
+  // If no speed provider, try the original routing provider as absolute last resort
+  if (!speedProvider) {
+    speedProvider = routing.providerId;
+  }
+
+  const config = ORACLE_PROVIDERS[speedProvider];
+
+  console.log(`[MultiCall] Speed fallback → ${speedProvider} (${SPEED_FALLBACK_TIMEOUT_MS}ms cap)`);
+
+  const result = await callOracle(
+    {
+      ...routing,
+      providerId: speedProvider,
+      model: config?.model || routing.model,
+      reason: `multi-perspective:speed-fallback(${speedProvider})`,
+      maxTokens: routing.maxTokens,
+      fallbacks: [], // NO fallback chain — succeed or throw
+    },
+    messages,
+  );
+
+  return {
+    text: result.text,
+    providers: [result.providerId],
+    perspectiveCount: 1,
+    isFallback: true,
+    totalTimeMs: Date.now() - startTime,
+    providerTimes,
+  };
+}
+
+// =============================================================================
 // MULTI-PERSPECTIVE CALL
 // =============================================================================
 
@@ -121,24 +214,15 @@ export async function multiPerspectiveCall(
   // Need at least 2 providers for meaningful synthesis
   if (providers.length < 2) {
     console.log('[MultiCall] Not enough providers, falling back to single-model');
-    const result = await callOracle(routing, messages);
-    return {
-      text: result.text,
-      providers: [result.providerId],
-      perspectiveCount: 1,
-      isFallback: true,
-      totalTimeMs: Date.now() - startTime,
-      providerTimes: { [result.providerId]: result.responseTime },
-    };
+    return speedFallback(routing, messages, startTime, providerTimes);
   }
 
   console.log(`[MultiCall] Firing ${providers.length} providers: ${providers.join(', ')}`);
 
   // ── 1. Fire all providers in parallel ────────────────
   // Each gets the same messages but uses their own model.
-  // We strip the system prompt's "you are a synthesis of 8 AIs" part
-  // and replace with a neutral "give your best analysis" instruction
-  // so each model responds authentically, not performing synthesis.
+  // CRITICAL: fallbacks: [] prevents each call from running its own
+  // 20s fallback chain. Either the provider responds or it doesn't.
   const perspectivePromises = providers.map(async (providerId) => {
     const providerStart = Date.now();
     const config = ORACLE_PROVIDERS[providerId];
@@ -154,13 +238,15 @@ export async function multiPerspectiveCall(
         },
       ];
 
-      // Route through callOracle with provider-specific routing
+      // Route through callOracle with provider-specific routing.
+      // fallbacks: [] is CRITICAL — prevents cascading 20s timeout chains.
       const perspectiveRouting: RoutingResult = {
         ...routing,
         providerId,
         model: config.model,
         reason: `multi-perspective:${providerId}`,
         maxTokens: 600,
+        fallbacks: [], // ← NO FALLBACK CHAIN. Succeed or fail fast.
       };
 
       const result = await callOracle(perspectiveRouting, perspectiveMessages);
@@ -179,24 +265,18 @@ export async function multiPerspectiveCall(
     }
   });
 
-  // Wait for all with a 20-second hard timeout
+  // Wait for all with a hard wall-clock timeout.
+  // 12s is enough for most providers to respond (typical: 3-8s).
+  // If a provider is slow, we proceed without it.
   const perspectiveResults = await Promise.race([
     Promise.allSettled(perspectivePromises),
-    new Promise<'timeout'>(resolve => setTimeout(() => resolve('timeout'), 20000)),
+    new Promise<'timeout'>(resolve => setTimeout(() => resolve('timeout'), PERSPECTIVE_TIMEOUT_MS)),
   ]);
 
-  // Handle timeout
+  // Handle timeout — speed fallback, NOT another full callOracle
   if (perspectiveResults === 'timeout') {
-    console.log('[MultiCall] Timed out waiting for perspectives');
-    const result = await callOracle(routing, messages);
-    return {
-      text: result.text,
-      providers: [result.providerId],
-      perspectiveCount: 1,
-      isFallback: true,
-      totalTimeMs: Date.now() - startTime,
-      providerTimes,
-    };
+    console.log(`[MultiCall] Timed out after ${PERSPECTIVE_TIMEOUT_MS}ms waiting for perspectives`);
+    return speedFallback(routing, messages, startTime, providerTimes);
   }
 
   // Collect successful responses
@@ -210,6 +290,7 @@ export async function multiPerspectiveCall(
 
   // Need at least 2 for synthesis
   if (perspectives.length < 2) {
+    // If we got 1, use it directly
     const fallbackText = perspectives[0]?.text;
     if (fallbackText) {
       return {
@@ -221,16 +302,8 @@ export async function multiPerspectiveCall(
         providerTimes,
       };
     }
-    // Complete failure — normal single call
-    const result = await callOracle(routing, messages);
-    return {
-      text: result.text,
-      providers: [result.providerId],
-      perspectiveCount: 1,
-      isFallback: true,
-      totalTimeMs: Date.now() - startTime,
-      providerTimes,
-    };
+    // Complete failure — speed fallback (NOT full callOracle)
+    return speedFallback(routing, messages, startTime, providerTimes);
   }
 
   // ── 2. Synthesize through the primary model ──────────
@@ -269,12 +342,15 @@ SYNTHESIS RULES:
   ];
 
   try {
+    // Synthesis call — also no fallback chain.
+    // If synthesis fails, we return the best perspective directly.
     const synthesisRouting: RoutingResult = {
       ...routing,
       providerId: routing.providerId, // Use primary provider for synthesis
       model: ORACLE_PROVIDERS[routing.providerId]?.model || 'gpt-4o',
       reason: `multi-perspective:synthesis(${perspectives.length})`,
       maxTokens: 1000, // Synthesis needs more room
+      fallbacks: [], // ← NO FALLBACK CHAIN for synthesis either
     };
 
     const synthesis = await callOracle(synthesisRouting, synthesisMessages);

@@ -52,7 +52,7 @@ import { runPostCallTasks } from '../../src/lib/oracle/chat/post-call.js';
 import { buildChatResponse } from '../../src/lib/oracle/chat/response-builder.js';
 
 export const config = {
-  maxDuration: 30,
+  maxDuration: 60,
 };
 
 // ── Clients ─────────────────────────────────────────────
