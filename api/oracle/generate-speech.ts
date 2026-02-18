@@ -37,9 +37,10 @@ const supabaseAdmin = createClient(
 // ElevenLabs fetch timeout — leave 5s for Vercel overhead + response streaming
 const ELEVENLABS_TIMEOUT_MS = 18_000;
 
-// Max text length for TTS — 2500 chars ≈ ~2 minutes of speech.
-// Longer text rarely gets listened to fully and causes ElevenLabs timeouts.
-const MAX_TTS_TEXT_LENGTH = 2500;
+// Max text length for TTS — 1500 chars ≈ ~1 minute of speech.
+// Longer text causes ElevenLabs multilingual_v2 to timeout on Vercel.
+// Users can read the full text in chat — TTS is for the summary.
+const MAX_TTS_TEXT_LENGTH = 1500;
 
 // Curated alias → ElevenLabs voice ID mapping
 const VOICE_MAPPING: Record<string, string> = {
@@ -198,7 +199,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           },
           body: JSON.stringify({
             text: ttsText,
-            model_id: 'eleven_multilingual_v2',
+            // Turbo model for English: 2-3x faster than multilingual_v2.
+            // Only use multilingual when non-ASCII detected (accents, CJK, etc.)
+            model_id: /[^\x00-\x7F]/.test(ttsText) ? 'eleven_multilingual_v2' : 'eleven_turbo_v2_5',
             voice_settings: mergedSettings,
           }),
           signal: controller.signal,

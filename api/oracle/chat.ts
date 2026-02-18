@@ -654,8 +654,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const maxTokens = routing.maxTokens || 500;
       const utilizationRatio = estimatedTokens / maxTokens;
 
-      // Response hit >92% of token limit AND doesn't end with punctuation
-      if (utilizationRatio > 0.92 && !responseText.match(/[.!?…"')\]]\s*$/)) {
+      // Only fire when ACTUALLY truncated: 92-105% utilization AND no ending punctuation.
+      // >105% means the model finished naturally (just wrote a long response) — NOT truncated.
+      // Also skip if the response already ends with punctuation — it's complete.
+      const looksComplete = /[.!?…"')\]]\s*$/.test(responseText);
+      const isTruncated = utilizationRatio > 0.92 && utilizationRatio < 1.05 && !looksComplete;
+
+      if (isTruncated) {
         console.log(`[L9] Response appears truncated (${Math.floor(utilizationRatio * 100)}% utilization), continuing`);
 
         try {
@@ -665,10 +670,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             { role: 'user', content: 'Continue your thought.' },
           ];
 
+          // Use the provider that ACTUALLY succeeded, not the original routing.
+          // If primary timed out and Groq answered, continue with Groq — not OpenAI.
+          const successfulProviderId = result.providerId as any;
+          const successfulModel = result.model;
+
           const continuationRouting: RoutingResult = {
             ...routing,
+            providerId: successfulProviderId,
+            model: successfulModel,
             maxTokens: Math.min(maxTokens, 500),
-            reason: `${routing.reason}→continuation`,
+            reason: `${routing.reason}→continuation(${successfulProviderId})`,
+            fallbacks: routing.fallbacks, // Keep fallbacks in case continuation also fails
           };
 
           const continuation = await callOracle(continuationRouting, continuationMessages);
@@ -678,11 +691,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const needsSpace = !responseText.endsWith(' ') && !continuation.text.startsWith(' ');
             responseText = responseText + (needsSpace ? ' ' : '') + continuation.text;
             didContinue = true;
-            console.log(`[L9] Continuation added: +${continuation.text.length} chars`);
+            console.log(`[L9] Continuation added: +${continuation.text.length} chars via ${continuation.providerId}`);
           }
         } catch (err) {
           console.error('[L9] Continuation failed (non-fatal):', err);
         }
+      } else if (utilizationRatio > 1.05) {
+        console.log(`[L9] Response over budget (${Math.floor(utilizationRatio * 100)}% utilization) but NOT truncated — model finished naturally`);
       }
     }
 
