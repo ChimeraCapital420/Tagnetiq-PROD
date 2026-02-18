@@ -16,6 +16,7 @@
 //   trust/       → Trust score tracking
 //   voice-profile/ → User writing style analysis
 //   market/      → Quick market data fetching (Liberation 7)
+//   chat/        → Extracted validators, detectors, context-builders (Phase 1)
 //
 // ═══════════════════════════════════════════════════════════════════════
 // THE NINE LIBERATIONS + LIBERATION 10 — FULLY WIRED
@@ -102,6 +103,26 @@ import {
   isComplexEnoughForMulti,
 } from '../../src/lib/oracle/providers/multi-call.js';
 
+// ── Phase 1 Extractions: Validators, Detectors, Context Builders ──
+import {
+  VALID_INTENTS,
+  VALID_ENERGIES,
+  validateIntent,
+  validateEnergy,
+  generateTitle,
+} from '../../src/lib/oracle/chat/validators.js';
+
+import {
+  isRecallQuestion,
+  isContentCreationRequest,
+  isMarketQuery,
+} from '../../src/lib/oracle/chat/detectors.js';
+
+import {
+  buildVisualMemoryContext,
+  buildAnalysisContextBlock,
+} from '../../src/lib/oracle/chat/context-builders.js';
+
 export const config = {
   maxDuration: 30,
 };
@@ -113,175 +134,6 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
-
-// =============================================================================
-// VALIDATION — Liberation 2 client hint whitelists
-// =============================================================================
-
-const VALID_INTENTS = new Set([
-  'casual', 'quick_answer', 'deep_analysis', 'market_query', 'how_to',
-  'vision', 'strategy', 'creative', 'speed',
-]);
-
-const VALID_ENERGIES = new Set([
-  'neutral', 'excited', 'frustrated', 'focused', 'curious', 'casual',
-]);
-
-// =============================================================================
-// TITLE GENERATOR
-// =============================================================================
-
-function generateTitle(firstMessage: string): string {
-  const clean = firstMessage.trim().replace(/\n/g, ' ');
-  if (clean.length <= 50) return clean;
-  return clean.substring(0, 47) + '...';
-}
-
-// =============================================================================
-// RECALL DETECTION
-// =============================================================================
-
-function isRecallQuestion(message: string): boolean {
-  const lower = message.toLowerCase();
-
-  const recallPatterns = [
-    /where\s+(?:did|do|are|is|was|were)\s+(?:i|my|the)/,
-    /where\s+(?:are|is)\s+my/,
-    /where.*(?:put|leave|left|place|set|store)/,
-    /what\s+(?:did|do)\s+(?:i|we)\s+(?:see|scan|capture|photograph|look at)/,
-    /what\s+(?:was|were)\s+(?:in|on|at)\s+(?:the|my|that)/,
-    /(?:find|seen|remember|recall)\s+my/,
-    /have\s+you\s+seen/,
-    /do\s+you\s+remember\s+(?:seeing|where|what|when)/,
-    /what\s+(?:did|does|was)\s+(?:that|the)\s+(?:receipt|label|tag|document|paper|article|sign)/,
-    /what(?:'s|\s+is)\s+in\s+(?:my|the)/,
-    /show\s+me\s+(?:what|everything)\s+(?:you\s+)?(?:saw|see|remember)/,
-  ];
-
-  return recallPatterns.some(pattern => pattern.test(lower));
-}
-
-// =============================================================================
-// VISUAL MEMORY CONTEXT BUILDER
-// =============================================================================
-
-function buildVisualMemoryContext(visualMemories: any[]): string {
-  if (!visualMemories || visualMemories.length === 0) return '';
-
-  let context = '\n\n## ORACLE VISUAL MEMORY — What You Have Seen\n';
-  context += 'You have visual memories from looking through the user\'s camera/glasses. ';
-  context += 'Use these to answer questions like "where did I put X?", "what did that article say?", ';
-  context += '"what was in that room?". Reference specific details — timestamps, positions, descriptions.\n\n';
-
-  for (const mem of visualMemories) {
-    const when = new Date(mem.observed_at).toLocaleDateString('en-US', {
-      weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-    });
-
-    context += `---\n`;
-    context += `SEEN: ${when}\n`;
-    context += `MODE: ${mem.mode}\n`;
-    context += `DESCRIPTION: ${mem.description}\n`;
-
-    if (mem.location_hint) {
-      context += `LOCATION: ${mem.location_hint}\n`;
-    }
-
-    if (mem.objects && Array.isArray(mem.objects) && mem.objects.length > 0) {
-      context += `OBJECTS: ${mem.objects.map((o: any) =>
-        `${o.name}${o.position_hint ? ` [${o.position_hint}]` : ''}${o.estimated_value ? ` ~$${o.estimated_value}` : ''}`
-      ).join(', ')}\n`;
-    }
-
-    if (mem.extracted_text) {
-      const textPreview = mem.extracted_text.length > 500
-        ? mem.extracted_text.substring(0, 500) + '... [truncated]'
-        : mem.extracted_text;
-      context += `TEXT CONTENT: ${textPreview}\n`;
-    }
-
-    context += `SOURCE: ${mem.source || 'phone_camera'}\n\n`;
-  }
-
-  if (visualMemories.length >= 30) {
-    context += '(Showing most recent 30 visual memories. Older ones exist but are not shown.)\n';
-  }
-
-  return context;
-}
-
-// =============================================================================
-// ANALYSIS CONTEXT BUILDER (for ask.ts compat / item-specific conversations)
-// =============================================================================
-
-function buildAnalysisContextBlock(analysisContext: any): string {
-  if (!analysisContext) return '';
-
-  let block = '\n\n## ITEM CONTEXT — What The User Is Asking About\n';
-  block += 'The user is asking about a specific item they analyzed. Use this data to inform your response.\n\n';
-
-  if (analysisContext.itemName) block += `Item: ${analysisContext.itemName}\n`;
-  if (analysisContext.estimatedValue !== undefined) block += `Estimated Value: $${analysisContext.estimatedValue}\n`;
-  if (analysisContext.summary_reasoning) block += `Analysis Summary: ${analysisContext.summary_reasoning}\n`;
-  if (Array.isArray(analysisContext.valuation_factors) && analysisContext.valuation_factors.length > 0) {
-    block += `Key Valuation Factors: ${analysisContext.valuation_factors.join('; ')}\n`;
-  }
-  if (analysisContext.category) block += `Category: ${analysisContext.category}\n`;
-  if (analysisContext.confidence !== undefined) block += `Confidence: ${analysisContext.confidence}%\n`;
-
-  return block;
-}
-
-// =============================================================================
-// CONTENT CREATION DETECTION
-// =============================================================================
-
-function isContentCreationRequest(message: string): { isCreation: boolean; mode?: string; platform?: string } {
-  const lower = message.toLowerCase();
-
-  const listingPatterns = [
-    /(?:list|sell|post)\s+(?:this|my|that|the)\s+(?:on|to)\s+(ebay|mercari|poshmark|facebook|amazon|whatnot)/i,
-    /(?:write|create|make|generate)\s+(?:a|me|my)?\s*(?:listing|description)/i,
-    /(?:help me )?list\s+(?:this|it|my)/i,
-  ];
-
-  for (const pattern of listingPatterns) {
-    const match = message.match(pattern);
-    if (match) {
-      return { isCreation: true, mode: 'listing', platform: match[1]?.toLowerCase() || 'ebay' };
-    }
-  }
-
-  if (/(?:make|create|generate)\s+(?:a|me)?\s*video/i.test(lower)) {
-    return { isCreation: true, mode: 'video' };
-  }
-
-  if (/(?:brag|flex)\s*card/i.test(lower) || /(?:celebrate|show off)\s+(?:this|my)\s+(?:flip|sale|win)/i.test(lower)) {
-    return { isCreation: true, mode: 'brag_card' };
-  }
-
-  return { isCreation: false };
-}
-
-// =============================================================================
-// MARKET QUERY DETECTION (Liberation 7)
-// =============================================================================
-
-function isMarketQuery(message: string, intent: string): boolean {
-  if (intent === 'market_query') return true;
-
-  const lower = message.toLowerCase();
-  const marketPatterns = [
-    /(?:what(?:'s|\s+is|\s+are))\s+(?:it|they|those|this|that|these)\s+(?:worth|going for|selling for)/i,
-    /(?:how much)\s+(?:is|are|does|do|could|should)/i,
-    /(?:check|pull|look up|search)\s+(?:the\s+)?(?:price|market|ebay|value)/i,
-    /(?:current|live|recent)\s+(?:price|value|market|listing)/i,
-    /what(?:'s|\s+is)\s+(?:the\s+)?(?:market|going rate|average price)/i,
-    /(?:price\s+check|comp\s+check)/i,
-  ];
-
-  return marketPatterns.some(p => p.test(lower));
-}
 
 // =============================================================================
 // HANDLER
@@ -331,16 +183,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const safetyScan = scanMessage(message);
 
     // ── 0.6 ENERGY (L2: use client hint if valid) ────────
-    const clientEnergy = clientContext?.detectedEnergy;
-    const currentEnergy = (clientEnergy && VALID_ENERGIES.has(clientEnergy))
-      ? clientEnergy
-      : detectEnergy(message);
+    const validatedEnergy = validateEnergy(clientContext?.detectedEnergy);
+    const currentEnergy = validatedEnergy || detectEnergy(message);
 
     // ── 0.65 INTENT HINT (L2: validate for router) ──────
-    const clientIntent = clientContext?.detectedIntent;
-    const validatedIntentHint = (clientIntent && VALID_INTENTS.has(clientIntent))
-      ? clientIntent
-      : null;
+    const validatedIntentHint = validateIntent(clientContext?.detectedIntent);
 
     // ── 0.7 TRUST SIGNAL DETECTION ───────────────────────
     const trustSignal = detectTrustSignals(message);
@@ -552,8 +399,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ══════════════════════════════════════════════════════
     // LIBERATION 7: MARKET-AWARE CONVERSATION
     // ══════════════════════════════════════════════════════
-    // If this is a market query AND the user has live_market access,
-    // fetch real-time pricing data and inject it into the prompt.
 
     let marketData: any = null;
     let marketItemRef: any = null;
@@ -563,7 +408,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       hasFeature(userTier as any, 'live_market') &&
       isMarketQuery(message, routing.intent)
     ) {
-      // Try to identify which item they're asking about
       marketItemRef = extractItemReference(message, vaultItems, scanHistory);
 
       if (marketItemRef) {
@@ -612,8 +456,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ══════════════════════════════════════════════════════
     // LIBERATION 8: CONVERSATIONAL HYDRA
     // ══════════════════════════════════════════════════════
-    // For Elite users with complex strategic/analytical questions,
-    // fire multiple providers and synthesize perspectives.
 
     let result: any;
     let usedMultiCall = false;
@@ -644,9 +486,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ══════════════════════════════════════════════════════
     // LIBERATION 9: ADAPTIVE TOKEN DEPTH
     // ══════════════════════════════════════════════════════
-    // If the response looks truncated (hit token limit, doesn't end
-    // with sentence-ending punctuation), auto-continue.
-    // Only runs once. Max 500 additional tokens.
 
     let didContinue = false;
 
@@ -655,9 +494,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const maxTokens = routing.maxTokens || 500;
       const utilizationRatio = estimatedTokens / maxTokens;
 
-      // Only fire when ACTUALLY truncated: 92-105% utilization AND no ending punctuation.
-      // >105% means the model finished naturally (just wrote a long response) — NOT truncated.
-      // Also skip if the response already ends with punctuation — it's complete.
       const looksComplete = /[.!?…"')\]]\s*$/.test(responseText);
       const isTruncated = utilizationRatio > 0.92 && utilizationRatio < 1.05 && !looksComplete;
 
@@ -671,8 +507,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             { role: 'user', content: 'Continue your thought.' },
           ];
 
-          // Use the provider that ACTUALLY succeeded, not the original routing.
-          // If primary timed out and Groq answered, continue with Groq — not OpenAI.
           const successfulProviderId = result.providerId as any;
           const successfulModel = result.model;
 
@@ -682,13 +516,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             model: successfulModel,
             maxTokens: Math.min(maxTokens, 500),
             reason: `${routing.reason}→continuation(${successfulProviderId})`,
-            fallbacks: routing.fallbacks, // Keep fallbacks in case continuation also fails
+            fallbacks: routing.fallbacks,
           };
 
           const continuation = await callOracle(continuationRouting, continuationMessages);
 
           if (continuation.text && continuation.text.trim().length > 10) {
-            // Stitch together with natural join
             const needsSpace = !responseText.endsWith(' ') && !continuation.text.startsWith(' ');
             responseText = responseText + (needsSpace ? ' ' : '') + continuation.text;
             didContinue = true;
