@@ -66,14 +66,33 @@ export default {
   			}
   		},
   		fontFamily: {
-  			mono: [
-  				'JetBrains Mono',
-  				'monospace'
-  			],
+  			// ── MOBILE-FIRST FONT STACKS ────────────────────
+  			// System fonts render instantly (zero network).
+  			// Inter/JetBrains load fast (preloaded in index.html).
+  			// Swap happens seamlessly via display=swap.
+  			//
+  			// The stack order means: on iOS you get SF Pro,
+  			// on Android you get Roboto, on Windows you get Segoe UI
+  			// — all before Inter even downloads. Zero blank text.
   			sans: [
   				'Inter',
-  				'sans-serif'
-  			]
+  				'-apple-system',
+  				'BlinkMacSystemFont',
+  				'Segoe UI',
+  				'Roboto',
+  				'Oxygen',
+  				'Ubuntu',
+  				'Cantarell',
+  				'sans-serif',
+  			],
+  			mono: [
+  				'JetBrains Mono',
+  				'ui-monospace',
+  				'SFMono-Regular',
+  				'Menlo',
+  				'Consolas',
+  				'monospace',
+  			],
   		},
   		borderRadius: {
   			lg: 'calc(var(--radius) + 2px)',

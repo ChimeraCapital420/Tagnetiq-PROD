@@ -41,10 +41,37 @@
     <meta property="twitter:description" content="AI-powered valuation and authentication platform for collectibles, sneakers, watches, and luxury goods." />
     <meta property="twitter:image" content="https://tagnetiq.com/og-image.png" />
     
-    <!-- Fonts -->
+    <!-- ═══════════════════════════════════════════════════════════════
+         FONTS — Mobile-First Strategy
+         ═══════════════════════════════════════════════════════════════
+         CRITICAL (render path): Inter (UI font) + JetBrains Mono (code)
+           - Preconnect + preload = fastest possible load
+           - Only 400/500/600/700 weights (what Tailwind actually uses)
+           - display=swap = system font shows instantly, swaps when ready
+         
+         DEFERRED (content creation / listing fonts):
+           - Loaded async via media="print" trick
+           - Zero render-blocking — user sees UI instantly
+           - Available by the time they open content creation
+         ═══════════════════════════════════════════════════════════════ -->
+    
+    <!-- Preconnect (one per origin, shared by both font links) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Courier+Prime&family=Lato&family=Lora&family=Merriweather&family=Open+Sans&family=Orbitron&family=Playfair+Display&family=Poppins&family=Roboto+Condensed&family=Roboto&family=Share+Tech+Mono&family=Source+Sans+Pro&family=Source+Serif+Pro&display=swap" rel="stylesheet" />
+    
+    <!-- CRITICAL: UI fonts — render-blocking (small, fast) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    
+    <!-- DEFERRED: Decorative fonts for listings, brag cards, content creation -->
+    <!-- media="print" prevents render-blocking; onload swaps to all media -->
+    <link rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Courier+Prime&family=Lato:wght@400;700&family=Lora:wght@400;700&family=Merriweather:wght@400;700&family=Open+Sans:wght@400;600&family=Orbitron:wght@400;700&family=Playfair+Display:wght@400;700&family=Poppins:wght@400;500;600&family=Roboto+Condensed:wght@400;700&family=Roboto:wght@400;500&family=Share+Tech+Mono&family=Source+Sans+Pro:wght@400;600&family=Source+Serif+Pro:wght@400;600&display=swap"
+          media="print"
+          onload="this.media='all'" />
+    <!-- Fallback for no-JS: load decorative fonts normally -->
+    <noscript>
+      <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Courier+Prime&family=Lato:wght@400;700&family=Lora:wght@400;700&family=Merriweather:wght@400;700&family=Open+Sans:wght@400;600&family=Orbitron:wght@400;700&family=Playfair+Display:wght@400;700&family=Poppins:wght@400;500;600&family=Roboto+Condensed:wght@400;700&family=Roboto:wght@400;500&family=Share+Tech+Mono&family=Source+Sans+Pro:wght@400;600&family=Source+Serif+Pro:wght@400;600&display=swap" rel="stylesheet" />
+    </noscript>
   </head>
   <body>
     <div id="root"></div>
