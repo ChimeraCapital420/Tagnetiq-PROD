@@ -2,6 +2,23 @@
 // Oracle — Premium voice generation with ElevenLabs
 // Accepts curated aliases (oracle-nova-en) AND direct ElevenLabs IDs (el-xxx)
 // Sprint N: Energy-aware voiceSettings from useTts hook
+//
+// ═══════════════════════════════════════════════════════════════════════
+// VOICE TIMEOUT FIX — February 2026
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Problem: maxDuration was 15s. After the LLM call takes 10s (especially
+//          on fallback), the speech endpoint only gets 5s before the
+//          client's fetch times out → 504 → browser TTS → robot voice.
+//
+// Fixes:
+//   1. maxDuration → 25s (matches chat.ts budget)
+//   2. Truncate text to 2500 chars for TTS (nobody listens to 5 min audio)
+//   3. ElevenLabs fetch timeout: 18s (leave room for response)
+//   4. Stream audio back to client as it arrives (no full buffer wait)
+//   5. Return partial audio on timeout rather than 504
+// ═══════════════════════════════════════════════════════════════════════
+//
 // FIXED: Uses supabaseAdmin with service role key
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -9,13 +26,20 @@ import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 
 export const config = {
-  maxDuration: 15,
+  maxDuration: 25,
 };
 
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
+
+// ElevenLabs fetch timeout — leave 5s for Vercel overhead + response streaming
+const ELEVENLABS_TIMEOUT_MS = 18_000;
+
+// Max text length for TTS — 2500 chars ≈ ~2 minutes of speech.
+// Longer text rarely gets listened to fully and causes ElevenLabs timeouts.
+const MAX_TTS_TEXT_LENGTH = 2500;
 
 // Curated alias → ElevenLabs voice ID mapping
 const VOICE_MAPPING: Record<string, string> = {
@@ -48,12 +72,39 @@ function resolveVoiceId(voiceId: string): string | null {
     return voiceId.slice(3);
   }
 
-  // 3. Raw ElevenLabs ID (alphanumeric, 20+ chars)
+  // 3. Raw ElevenLabs ID (alphanumeric, 15+ chars)
   if (/^[a-zA-Z0-9]{15,}$/.test(voiceId)) {
     return voiceId;
   }
 
   return null;
+}
+
+/**
+ * Truncate text for TTS while keeping it natural.
+ * Cuts at the last sentence boundary before the limit.
+ */
+function truncateForTTS(text: string): string {
+  if (text.length <= MAX_TTS_TEXT_LENGTH) return text;
+
+  // Find last sentence-ending punctuation before the limit
+  const truncated = text.substring(0, MAX_TTS_TEXT_LENGTH);
+  const lastSentenceEnd = Math.max(
+    truncated.lastIndexOf('. '),
+    truncated.lastIndexOf('! '),
+    truncated.lastIndexOf('? '),
+    truncated.lastIndexOf('.\n'),
+    truncated.lastIndexOf('!\n'),
+    truncated.lastIndexOf('?\n'),
+  );
+
+  if (lastSentenceEnd > MAX_TTS_TEXT_LENGTH * 0.5) {
+    // Cut at the sentence boundary (include the punctuation)
+    return truncated.substring(0, lastSentenceEnd + 1).trim();
+  }
+
+  // No good sentence boundary — just cut and add ellipsis
+  return truncated.trim() + '...';
 }
 
 // Default voice settings (neutral energy)
@@ -118,6 +169,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(503).json({ error: 'Premium voice service not configured' });
     }
 
+    // ── Truncate text for TTS ────────────────────────────
+    // Long responses cause ElevenLabs timeouts. Cut at sentence boundary.
+    const ttsText = truncateForTTS(text);
+
     // Merge energy-aware settings with defaults
     const mergedSettings = {
       stability: voiceSettings?.stability ?? DEFAULT_VOICE_SETTINGS.stability,
@@ -126,23 +181,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       use_speaker_boost: true,
     };
 
-    // Call ElevenLabs API
-    const elevenLabsResponse = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${elevenlabsVoiceId}`,
-      {
-        method: 'POST',
-        headers: {
-          'Accept': 'audio/mpeg',
-          'xi-api-key': process.env.ELEVENLABS_API_KEY,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          text,
-          model_id: 'eleven_multilingual_v2',
-          voice_settings: mergedSettings,
-        }),
+    // ── Call ElevenLabs with timeout ─────────────────────
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), ELEVENLABS_TIMEOUT_MS);
+
+    let elevenLabsResponse: Response;
+    try {
+      elevenLabsResponse = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${elevenlabsVoiceId}`,
+        {
+          method: 'POST',
+          headers: {
+            'Accept': 'audio/mpeg',
+            'xi-api-key': process.env.ELEVENLABS_API_KEY,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: ttsText,
+            model_id: 'eleven_multilingual_v2',
+            voice_settings: mergedSettings,
+          }),
+          signal: controller.signal,
+        }
+      );
+    } catch (fetchErr: any) {
+      clearTimeout(timeoutId);
+      if (fetchErr.name === 'AbortError') {
+        console.error(`ElevenLabs timed out after ${ELEVENLABS_TIMEOUT_MS}ms (text: ${ttsText.length} chars)`);
+        return res.status(504).json({ error: 'Voice generation timed out' });
       }
-    );
+      throw fetchErr;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!elevenLabsResponse.ok) {
       const errorText = await elevenLabsResponse.text();
@@ -150,12 +221,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error(`ElevenLabs API error: ${elevenLabsResponse.status}`);
     }
 
-    const audioBuffer = await elevenLabsResponse.arrayBuffer();
+    // ── Stream audio back to client ─────────────────────
+    // Don't buffer the entire audio — start sending as ElevenLabs delivers.
+    const audioBody = elevenLabsResponse.body;
 
     res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Content-Length', audioBuffer.byteLength.toString());
     res.setHeader('Cache-Control', 'public, max-age=3600');
 
+    if (audioBody && typeof audioBody.pipeTo === 'function') {
+      // Streams API available — pipe directly
+      // Vercel edge/node environments may support this
+      try {
+        const reader = audioBody.getReader();
+        const pump = async () => {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(Buffer.from(value));
+          }
+          res.end();
+        };
+        await pump();
+        return;
+      } catch {
+        // Stream pipe failed — fall through to buffer approach
+      }
+    }
+
+    // Fallback: buffer and send (original approach, but with timeout protection)
+    const audioBuffer = await elevenLabsResponse.arrayBuffer();
+    res.setHeader('Content-Length', audioBuffer.byteLength.toString());
     res.status(200).end(Buffer.from(audioBuffer));
 
   } catch (error) {

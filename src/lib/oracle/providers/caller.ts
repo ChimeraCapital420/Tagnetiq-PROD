@@ -1,7 +1,8 @@
 // FILE: src/lib/oracle/providers/caller.ts
 // Unified Oracle Provider Caller
 //
-// Sprint F: Provider Registry + Hot-Loading
+// Sprint F:  Provider Registry + Hot-Loading
+// Sprint N+: Time-budget-aware fallback chain
 //
 // Single function that calls ANY provider and returns the response text.
 // Handles three API formats:
@@ -11,6 +12,24 @@
 //
 // The chat handler doesn't need to know which provider it's calling —
 // it just passes the routing decision and gets text back.
+//
+// ═══════════════════════════════════════════════════════════════════════
+// TIME BUDGET FIX — February 2026
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Problem: Primary provider times out at 25s, fallback gets 5s,
+//          speech generation gets 0s → cascade failure → robot voice.
+//
+// Fix: When fallbacks exist, cap primary timeout to leave room.
+//      Track elapsed time. Skip fallbacks if budget exhausted.
+//
+//   Budget strategy:
+//     - Total budget: 20s (leave 10s for speech + response)
+//     - Primary: min(provider.timeout, budget * 0.5) → ~10s max
+//     - Fallback: remaining budget
+//     - If primary fails FAST (404/401 = <1s), fallback gets ~19s
+//     - If primary fails SLOW (timeout), fallback gets ~10s
+// ═══════════════════════════════════════════════════════════════════════
 //
 // Mobile-first: All provider logic is server-side. Client sends a message,
 // gets a response. Doesn't know or care which model answered.
@@ -42,14 +61,31 @@ export interface CallerResult {
 }
 
 // =============================================================================
+// TIME BUDGET
+// =============================================================================
+
+// Total time budget for the LLM call phase.
+// chat.ts maxDuration is 30s. We need to leave room for:
+//   - speech generation (~8-12s)
+//   - response serialization (~200ms)
+//   - safety logging, trust recording (~100ms)
+// So LLM budget = 20s max.
+const TOTAL_LLM_BUDGET_MS = 20_000;
+
+// Minimum time needed for a fallback call to be worthwhile
+const MIN_FALLBACK_BUDGET_MS = 3_000;
+
+// =============================================================================
 // PUBLIC API
 // =============================================================================
 
 /**
  * Call the Oracle's selected provider with full fallback chain.
  *
- * Tries the primary provider first, then falls through the fallback
- * chain until one succeeds. If all fail, throws an error.
+ * Time-budget-aware: tracks elapsed time, caps provider timeouts
+ * so fallbacks always have a chance. If primary fails fast (404/401),
+ * fallback gets almost the full budget. If primary fails slow (timeout),
+ * fallback gets the remainder.
  *
  * @param routing   - The routing decision from router.ts
  * @param messages  - Conversation messages (system + history + user)
@@ -59,13 +95,22 @@ export async function callOracle(
   messages: OracleMessage[]
 ): Promise<CallerResult> {
   const startTime = Date.now();
+  const hasFallbacks = routing.fallbacks && routing.fallbacks.length > 0;
 
-  // Try primary provider
+  // ── Calculate primary timeout ─────────────────────────
+  // If we have fallbacks, cap primary so there's always time for a fallback.
+  // If no fallbacks, give primary the full budget.
+  const primaryTimeout = hasFallbacks
+    ? Math.min(ORACLE_PROVIDERS[routing.providerId]?.timeout || 15000, Math.floor(TOTAL_LLM_BUDGET_MS * 0.5))
+    : Math.min(ORACLE_PROVIDERS[routing.providerId]?.timeout || 25000, TOTAL_LLM_BUDGET_MS);
+
+  // ── Try primary provider ──────────────────────────────
   try {
     const text = await callProvider(routing.providerId, messages, {
       model: routing.model,
       temperature: routing.temperature,
       maxTokens: routing.maxTokens,
+      timeoutMs: primaryTimeout,
     });
 
     return {
@@ -76,19 +121,43 @@ export async function callOracle(
       isFallback: false,
     };
   } catch (primaryError: any) {
-    console.warn(`Oracle primary provider ${routing.providerId} failed: ${primaryError.message}`);
+    const elapsed = Date.now() - startTime;
+    console.warn(
+      `Oracle primary provider ${routing.providerId} failed after ${elapsed}ms: ${primaryError.message}`
+    );
   }
 
-  // Try fallbacks in order
-  for (const fallbackId of routing.fallbacks) {
-    try {
-      const config = ORACLE_PROVIDERS[fallbackId];
-      const fallbackStart = Date.now();
+  // ── Try fallbacks with remaining budget ───────────────
+  if (!hasFallbacks) {
+    throw new Error('Oracle primary provider failed and no fallbacks configured.');
+  }
 
+  for (const fallbackId of routing.fallbacks) {
+    const elapsed = Date.now() - startTime;
+    const remaining = TOTAL_LLM_BUDGET_MS - elapsed;
+
+    // Not enough time for a meaningful call? Skip.
+    if (remaining < MIN_FALLBACK_BUDGET_MS) {
+      console.warn(
+        `Oracle: Skipping fallback ${fallbackId} — only ${remaining}ms remaining (need ${MIN_FALLBACK_BUDGET_MS}ms)`
+      );
+      continue;
+    }
+
+    const config = ORACLE_PROVIDERS[fallbackId];
+    if (!config) continue;
+
+    try {
+      const fallbackStart = Date.now();
+      const fallbackTimeout = Math.min(config.timeout, remaining);
+
+      // Always use the fallback provider's FULL model, not its fallbackModel.
+      // The user deserves the best brain regardless of how we got here.
       const text = await callProvider(fallbackId, messages, {
         model: config.model,
         temperature: routing.temperature,
         maxTokens: routing.maxTokens,
+        timeoutMs: fallbackTimeout,
       });
 
       console.log(`Oracle fallback ${fallbackId} succeeded (${Date.now() - fallbackStart}ms)`);
@@ -101,7 +170,9 @@ export async function callOracle(
         isFallback: true,
       };
     } catch (fallbackError: any) {
-      console.warn(`Oracle fallback ${fallbackId} failed: ${fallbackError.message}`);
+      console.warn(
+        `Oracle fallback ${fallbackId} failed after ${Date.now() - startTime}ms: ${fallbackError.message}`
+      );
     }
   }
 
@@ -116,6 +187,8 @@ interface CallOptions {
   model: string;
   temperature: number;
   maxTokens: number;
+  /** Override timeout for this specific call */
+  timeoutMs?: number;
 }
 
 /**
@@ -133,18 +206,21 @@ async function callProvider(
     throw new Error(`No API key for ${providerId}`);
   }
 
+  // Use the explicit timeout if provided, otherwise fall back to config
+  const timeout = options.timeoutMs || config.timeout;
+
   // Anthropic uses its own API format
   if (providerId === 'anthropic') {
-    return callAnthropic(apiKey, messages, options);
+    return callAnthropic(apiKey, messages, options, timeout);
   }
 
   // Google uses Gemini API format
   if (providerId === 'google') {
-    return callGoogle(apiKey, messages, options, config);
+    return callGoogle(apiKey, messages, options, config, timeout);
   }
 
   // Everything else is OpenAI-compatible
-  return callOpenAICompatible(apiKey, messages, options, config);
+  return callOpenAICompatible(apiKey, messages, options, config, timeout);
 }
 
 // =============================================================================
@@ -155,7 +231,8 @@ async function callOpenAICompatible(
   apiKey: string,
   messages: OracleMessage[],
   options: CallOptions,
-  config: OracleProviderConfig
+  config: OracleProviderConfig,
+  timeout: number
 ): Promise<string> {
   const baseUrl = config.baseUrl || 'https://api.openai.com';
   const url = `${baseUrl}/v1/chat/completions`;
@@ -172,7 +249,7 @@ async function callOpenAICompatible(
       temperature: options.temperature,
       max_tokens: options.maxTokens,
     }),
-  }, config.timeout);
+  }, timeout);
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => 'Unknown error');
@@ -196,7 +273,8 @@ async function callOpenAICompatible(
 async function callAnthropic(
   apiKey: string,
   messages: OracleMessage[],
-  options: CallOptions
+  options: CallOptions,
+  timeout: number
 ): Promise<string> {
   // Anthropic separates system prompt from messages
   const systemMessages = messages.filter(m => m.role === 'system');
@@ -221,7 +299,7 @@ async function callAnthropic(
         content: m.content,
       })),
     }),
-  }, ORACLE_PROVIDERS.anthropic.timeout);
+  }, timeout);
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => 'Unknown error');
@@ -246,13 +324,13 @@ async function callGoogle(
   apiKey: string,
   messages: OracleMessage[],
   options: CallOptions,
-  config: OracleProviderConfig
+  config: OracleProviderConfig,
+  timeout: number
 ): Promise<string> {
   const model = options.model || config.model;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   // Gemini uses a different message format
-  // System instruction is separate, then contents array
   const systemMessages = messages.filter(m => m.role === 'system');
   const chatMessages = messages.filter(m => m.role !== 'system');
 
@@ -282,7 +360,7 @@ async function callGoogle(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  }, config.timeout);
+  }, timeout);
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => 'Unknown error');
