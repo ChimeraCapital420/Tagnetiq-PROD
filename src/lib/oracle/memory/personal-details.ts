@@ -66,6 +66,16 @@ export type PersonalDetailType =
   | 'location';
 
 // =============================================================================
+// API KEY RESOLUTION
+// =============================================================================
+// Vercel env uses OPEN_AI_API_KEY (with underscore). Some code uses OPENAI_API_KEY.
+// Check both, prefer the one that actually exists.
+
+function getOpenAIKey(): string | undefined {
+  return process.env.OPEN_AI_API_KEY || process.env.OPENAI_API_KEY || process.env.OPEN_AI_TOKEN;
+}
+
+// =============================================================================
 // EXTRACTION PROMPT
 // =============================================================================
 
@@ -126,6 +136,13 @@ export async function extractPersonalDetails(
   );
   if (userMessages.length < 2) return [];
 
+  // ── API KEY CHECK ─────────────────────────────────────
+  const apiKey = getOpenAIKey();
+  if (!apiKey) {
+    console.error('[Concierge] No OpenAI API key found (checked OPEN_AI_API_KEY, OPENAI_API_KEY, OPEN_AI_TOKEN)');
+    return [];
+  }
+
   // Build transcript (user messages only — we're extracting THEIR details)
   const transcript = messages
     .filter(m => m.role !== 'system')
@@ -138,7 +155,7 @@ export async function extractPersonalDetails(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',

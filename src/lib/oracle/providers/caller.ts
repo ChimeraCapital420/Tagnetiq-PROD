@@ -31,6 +31,18 @@
 //     - If primary fails SLOW (timeout), fallback gets ~10s
 // ═══════════════════════════════════════════════════════════════════════
 //
+// ═══════════════════════════════════════════════════════════════════════
+// PERPLEXITY 404 FIX — February 18, 2026
+// ═══════════════════════════════════════════════════════════════════════
+// Perplexity's API endpoint is /chat/completions (no /v1/ prefix).
+// The caller was constructing ${baseUrl}/v1/chat/completions for ALL
+// OpenAI-compatible providers, which 404'd on Perplexity.
+//
+// Fix: Added optional chatEndpoint to OracleProviderConfig.
+// Default: '/v1/chat/completions' (works for OpenAI, Groq, DeepSeek, xAI)
+// Perplexity: '/chat/completions'
+// ═══════════════════════════════════════════════════════════════════════
+//
 // Mobile-first: All provider logic is server-side. Client sends a message,
 // gets a response. Doesn't know or care which model answered.
 
@@ -234,8 +246,13 @@ async function callOpenAICompatible(
   config: OracleProviderConfig,
   timeout: number
 ): Promise<string> {
+  // ── URL construction ──────────────────────────────────
+  // Each provider can specify its own chat endpoint path.
+  // Default: /v1/chat/completions (OpenAI, Groq, DeepSeek, xAI)
+  // Perplexity: /chat/completions (no /v1/ prefix — their API 404s with it)
   const baseUrl = config.baseUrl || 'https://api.openai.com';
-  const url = `${baseUrl}/v1/chat/completions`;
+  const chatEndpoint = config.chatEndpoint || '/v1/chat/completions';
+  const url = `${baseUrl}${chatEndpoint}`;
 
   const response = await fetchWithTimeout(url, {
     method: 'POST',

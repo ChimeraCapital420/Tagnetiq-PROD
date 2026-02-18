@@ -90,6 +90,12 @@ export interface OracleProviderConfig {
   openaiCompatible: boolean;
   /** Base URL for OpenAI-compatible providers (null = use SDK default) */
   baseUrl?: string;
+  /**
+   * Chat completions endpoint path appended to baseUrl.
+   * Default: '/v1/chat/completions' (OpenAI, Groq, DeepSeek, xAI)
+   * Perplexity uses '/chat/completions' (no /v1/ prefix — 404s without this).
+   */
+  chatEndpoint?: string;
 }
 
 // =============================================================================
@@ -207,12 +213,17 @@ export const ORACLE_PROVIDERS: Record<OracleProviderId, OracleProviderConfig> = 
   },
 
   // ── Market Search: Live pricing + trends ──────────────
+  // NOTE: Perplexity API endpoint is /chat/completions (no /v1/ prefix).
+  // The OpenAI SDK appends /chat/completions to baseUrl automatically.
+  // So baseUrl should NOT include /v1/ — just the bare domain.
+  // Model sonar-pro is current as of Feb 2026 (sonar-reasoning was
+  // deprecated Dec 2025, but sonar and sonar-pro remain active).
   perplexity: {
     id: 'perplexity',
     name: 'Perplexity',
-    model: 'sonar-pro',                 // Full search — ALL tiers
-    backgroundModel: 'sonar',
-    fallbackModel: 'sonar',
+    model: 'sonar-pro',                 // Full search — ALL tiers (still active Feb 2026)
+    backgroundModel: 'sonar',           // Lightweight search model
+    fallbackModel: 'sonar',             // Fallback to base sonar
     envKeys: ['PERPLEXITY_API_KEY'],
     strengths: ['web'],
     primaryStrength: 'web',
@@ -223,6 +234,7 @@ export const ORACLE_PROVIDERS: Record<OracleProviderId, OracleProviderConfig> = 
     costTier: 'medium',
     openaiCompatible: true,
     baseUrl: 'https://api.perplexity.ai',
+    chatEndpoint: '/chat/completions',   // Perplexity has NO /v1/ prefix — 404s with it
   },
 };
 
