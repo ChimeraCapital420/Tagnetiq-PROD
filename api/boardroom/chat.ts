@@ -1,31 +1,87 @@
 // FILE: api/boardroom/chat.ts
-// Boardroom Chat Handler — Multi-provider AI board with evolution
+// ═══════════════════════════════════════════════════════════════════════
+// BOARDROOM CHAT HANDLER — The Orchestrator
+// ═══════════════════════════════════════════════════════════════════════
 //
-// Sprint M: Board members now evolve with AI DNA, uncaged personalities,
-//           cross-domain detection, and provider performance tracking.
+// Phase 0: The board now has a soul.
 //
-// Supports 8 AI providers: OpenAI, Anthropic, Google, DeepSeek, Groq, xAI, Perplexity, Mistral
+// BEFORE (stateless):
+//   message → buildPrompt(member) → callProvider → respond
+//
+// AFTER (living):
+//   message → detectEnergy → fetchMemory → fetchCrossBoardFeed
+//     → buildRichPrompt(member + memory + energy + feed)
+//     → callProvider (with timeout management)
+//     → respond
+//     → [background] extractFounderDetails
+//     → [background] updateEnergy
+//     → [background] compressThread (if threshold)
+//     → [background] postToActivityFeed
+//     → [background] evolveDNA
+//
+// Every conversation makes the board smarter. Every interaction
+// builds the relationship. Nothing is wasted. Nothing is forgotten.
+//
+// Supports 8+ AI providers: OpenAI, Anthropic, Google, DeepSeek,
+// Groq, xAI, Perplexity, Mistral (+ future local towers)
+//
+// maxDuration: 60 (Vercel Pro) — no more 504s
+//
+// ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { createHmac } from 'crypto';
 import { verifyUser } from '../_lib/security.js';
+
+// ── Evolution (DNA, trust, cross-domain) ────────────────
 import {
-  buildBoardMemberPrompt,
   evolveBoarDna,
   isCrossDomain,
+  detectTopicCategory,
   type BoardMember,
   type InteractionResult,
 } from '../../src/lib/boardroom/evolution.js';
 
+// ── Phase 0: Living Board ───────────────────────────────
+import { buildBoardMemberPrompt } from './lib/prompt-builder.js';
+import { detectEnergy, detectEnergyArc, type EnergyLevel, type EnergyArc } from '../../src/lib/boardroom/energy.js';
+import {
+  getFounderMemory,
+  getCrossBoardFeed,
+  getRecentDecisions,
+  extractFounderDetails,
+  compressBoardThread,
+  trackEmotionalArc,
+  updateFounderEnergy,
+} from '../../src/lib/boardroom/memory/founder-memory.js';
+
+// ═══════════════════════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════════════════════
+
 export const config = {
-  maxDuration: 30,
+  maxDuration: 60, // Vercel Pro — no more 504 timeouts
 };
 
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
+
+// Provider timeout caps (learned from HYDRA fix)
+const PROVIDER_TIMEOUTS: Record<string, number> = {
+  groq: 8000,        // Groq is fast or not at all
+  openai: 15000,
+  anthropic: 20000,  // Claude needs more time for deep responses
+  google: 15000,
+  deepseek: 18000,
+  xai: 15000,
+  perplexity: 15000,
+  mistral: 15000,
+  local: 30000,      // Local towers get more time (slower but free)
+};
+
+const HARD_TIMEOUT = 25000; // Never wait longer than 25s for any single call
 
 // =============================================================================
 // PROVIDER CALLERS
@@ -41,19 +97,25 @@ interface ProviderResponse {
 
 /**
  * Call the appropriate AI provider for a board member.
- * Falls back to OpenAI if the primary provider fails.
+ * Time-budget aware with provider-specific timeouts.
+ * Falls back to Groq (fastest) then OpenAI if primary fails.
  */
 async function callProvider(
   member: BoardMember,
   systemPrompt: string,
-  messages: Array<{ role: string; content: string }>
+  userPrompt: string,
 ): Promise<ProviderResponse> {
   const start = Date.now();
   const provider = member.dominant_provider || member.ai_provider;
   const model = member.ai_model;
+  const timeout = Math.min(
+    PROVIDER_TIMEOUTS[provider] || 15000,
+    HARD_TIMEOUT,
+  );
 
+  // ── Primary attempt ──────────────────────────────────
   try {
-    const text = await callProviderDirect(provider, model, systemPrompt, messages);
+    const text = await callProviderDirect(provider, model, systemPrompt, userPrompt, timeout);
     return {
       text,
       provider,
@@ -62,117 +124,149 @@ async function callProvider(
       isFallback: false,
     };
   } catch (err: any) {
-    console.warn(`Board member ${member.slug} primary provider (${provider}) failed: ${err.message}`);
+    console.warn(`[Board] ${member.slug} primary (${provider}/${model}) failed: ${err.message}`);
+  }
 
-    // Fallback to OpenAI
+  // ── Speed fallback: Groq (if not already Groq) ────────
+  if (provider !== 'groq') {
     try {
-      const fallbackStart = Date.now();
-      const text = await callProviderDirect('openai', 'gpt-4o-mini', systemPrompt, messages);
+      const groqStart = Date.now();
+      const text = await callProviderDirect(
+        'groq', 'llama-3.3-70b-versatile',
+        systemPrompt, userPrompt, 8000,
+      );
       return {
         text,
-        provider: 'openai',
-        model: 'gpt-4o-mini',
-        responseTime: Date.now() - fallbackStart,
+        provider: 'groq',
+        model: 'llama-3.3-70b-versatile',
+        responseTime: Date.now() - groqStart,
         isFallback: true,
       };
-    } catch (fallbackErr: any) {
-      throw new Error(`All providers failed for ${member.name}: ${fallbackErr.message}`);
+    } catch (groqErr: any) {
+      console.warn(`[Board] ${member.slug} Groq fallback failed: ${groqErr.message}`);
     }
+  }
+
+  // ── Final fallback: OpenAI ────────────────────────────
+  try {
+    const oaiStart = Date.now();
+    const text = await callProviderDirect(
+      'openai', 'gpt-4o-mini',
+      systemPrompt, userPrompt, 12000,
+    );
+    return {
+      text,
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      responseTime: Date.now() - oaiStart,
+      isFallback: true,
+    };
+  } catch (oaiErr: any) {
+    throw new Error(`All providers failed for ${member.name}: ${oaiErr.message}`);
   }
 }
 
 /**
- * Direct provider call — handles all 8 provider APIs.
+ * Direct provider call — handles all provider API formats.
+ * Sends system prompt + user prompt as the standard two-message pattern.
  */
 async function callProviderDirect(
   provider: string,
   model: string,
   systemPrompt: string,
-  messages: Array<{ role: string; content: string }>
+  userPrompt: string,
+  timeoutMs: number,
 ): Promise<string> {
+  const messages = [
+    { role: 'user' as const, content: userPrompt },
+  ];
+
   switch (provider) {
     case 'openai':
       return callOpenAICompatible(
         'https://api.openai.com/v1/chat/completions',
-        process.env.OPEN_AI_API_KEY!,
-        model || 'gpt-4o-mini',
-        systemPrompt,
-        messages
+        process.env.OPEN_AI_API_KEY!, model || 'gpt-4o-mini',
+        systemPrompt, messages, timeoutMs,
       );
 
     case 'anthropic':
-      return callAnthropic(model || 'claude-sonnet-4-20250514', systemPrompt, messages);
+      return callAnthropic(model || 'claude-sonnet-4-20250514', systemPrompt, messages, timeoutMs);
 
     case 'google':
     case 'gemini':
-      return callGemini(model || 'gemini-2.0-flash', systemPrompt, messages);
+      return callGemini(model || 'gemini-2.0-flash', systemPrompt, messages, timeoutMs);
 
     case 'deepseek':
       return callOpenAICompatible(
         'https://api.deepseek.com/v1/chat/completions',
-        process.env.DEEPSEEK_API_KEY!,
-        model || 'deepseek-chat',
-        systemPrompt,
-        messages
+        process.env.DEEPSEEK_API_KEY!, model || 'deepseek-chat',
+        systemPrompt, messages, timeoutMs,
       );
 
     case 'groq':
       return callOpenAICompatible(
         'https://api.groq.com/openai/v1/chat/completions',
-        process.env.GROQ_API_KEY!,
-        model || 'llama-3.3-70b-versatile',
-        systemPrompt,
-        messages
+        process.env.GROQ_API_KEY!, model || 'llama-3.3-70b-versatile',
+        systemPrompt, messages, timeoutMs,
       );
 
     case 'xai':
       return callOpenAICompatible(
         'https://api.x.ai/v1/chat/completions',
-        process.env.XAI_API_KEY!,
-        model || 'grok-2-latest',
-        systemPrompt,
-        messages
+        process.env.XAI_API_KEY!, model || 'grok-2-latest',
+        systemPrompt, messages, timeoutMs,
       );
 
     case 'perplexity':
       return callOpenAICompatible(
         'https://api.perplexity.ai/chat/completions',
-        process.env.PERPLEXITY_API_KEY!,
-        model || 'sonar-pro',
-        systemPrompt,
-        messages
+        process.env.PERPLEXITY_API_KEY!, model || 'sonar-pro',
+        systemPrompt, messages, timeoutMs,
       );
 
     case 'mistral':
       return callOpenAICompatible(
         'https://api.mistral.ai/v1/chat/completions',
-        process.env.MISTRAL_API_KEY!,
-        model || 'mistral-large-latest',
-        systemPrompt,
-        messages
+        process.env.MISTRAL_API_KEY!, model || 'mistral-large-latest',
+        systemPrompt, messages, timeoutMs,
       );
 
+    // Future: local tower providers
     default:
+      if (provider.startsWith('local_tower')) {
+        const towerIp = process.env[`${provider.toUpperCase()}_IP`] || '192.168.1.101';
+        const towerPort = process.env[`${provider.toUpperCase()}_PORT`] || '11434';
+        return callOpenAICompatible(
+          `http://${towerIp}:${towerPort}/v1/chat/completions`,
+          'not-needed', model || 'qwen2.5:14b',
+          systemPrompt, messages, timeoutMs,
+        );
+      }
       throw new Error(`Unknown provider: ${provider}`);
   }
 }
 
-// ── OpenAI-compatible (OpenAI, Groq, DeepSeek, xAI, Perplexity, Mistral) ──
+// ── OpenAI-compatible (OpenAI, Groq, DeepSeek, xAI, Perplexity, Mistral, Local) ──
 async function callOpenAICompatible(
   baseUrl: string,
   apiKey: string,
   model: string,
   systemPrompt: string,
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string }>,
+  timeoutMs: number,
 ): Promise<string> {
-  if (!apiKey) throw new Error('API key not configured');
+  if (!apiKey && !baseUrl.startsWith('http://192.168')) {
+    throw new Error('API key not configured');
+  }
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey && apiKey !== 'not-needed') {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
 
   const response = await fetchWithTimeout(baseUrl, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
+    headers,
     body: JSON.stringify({
       model,
       messages: [
@@ -182,7 +276,7 @@ async function callOpenAICompatible(
       max_tokens: 2000,
       temperature: 0.7,
     }),
-  }, 20000);
+  }, timeoutMs);
 
   const data = await response.json();
   return data.choices?.[0]?.message?.content || '';
@@ -192,7 +286,8 @@ async function callOpenAICompatible(
 async function callAnthropic(
   model: string,
   systemPrompt: string,
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string }>,
+  timeoutMs: number,
 ): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
@@ -214,7 +309,7 @@ async function callAnthropic(
       max_tokens: 2000,
       temperature: 0.7,
     }),
-  }, 20000);
+  }, timeoutMs);
 
   const data = await response.json();
   return data.content?.[0]?.text || '';
@@ -224,7 +319,8 @@ async function callAnthropic(
 async function callGemini(
   model: string,
   systemPrompt: string,
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string }>,
+  timeoutMs: number,
 ): Promise<string> {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   if (!apiKey) throw new Error('GOOGLE_AI_API_KEY not configured');
@@ -244,7 +340,7 @@ async function callGemini(
       contents,
       generationConfig: { maxOutputTokens: 2000, temperature: 0.7 },
     }),
-  }, 20000);
+  }, timeoutMs);
 
   const data = await response.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
@@ -254,7 +350,7 @@ async function callGemini(
 async function fetchWithTimeout(
   url: string,
   options: RequestInit,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -269,35 +365,7 @@ async function fetchWithTimeout(
 }
 
 // =============================================================================
-// TOPIC DETECTION
-// =============================================================================
-
-function detectTopicCategory(message: string): string {
-  const topics: Array<[RegExp, string]> = [
-    [/\b(revenue|cost|budget|pricing|margin|p[&]l|financial|roi|subscription|stripe)\b/i, 'finance'],
-    [/\b(security|fraud|hack|breach|encrypt|auth|verification|trust)\b/i, 'security'],
-    [/\b(strateg|competi|market position|long.?term|vision|pivot)\b/i, 'strategy'],
-    [/\b(code|bug|deploy|api|refactor|architect|infra|database)\b/i, 'technical'],
-    [/\b(market|brand|growth|campaign|seo|social|content|acquisition)\b/i, 'marketing'],
-    [/\b(legal|compliance|contract|ip|patent|regulat|terms|privacy)\b/i, 'legal'],
-    [/\b(hire|team|culture|onboard|performance review|hr)\b/i, 'hr'],
-    [/\b(data|analytics|metric|dashboard|ml|model|pipeline)\b/i, 'data'],
-    [/\b(product|feature|ux|roadmap|user experience|design)\b/i, 'product'],
-    [/\b(research|investigat|deep.?dive|analysis|study)\b/i, 'research'],
-    [/\b(science|experiment|hypothesis|method|test)\b/i, 'science'],
-    [/\b(innovat|emerging|future|ai|blockchain|trend)\b/i, 'innovation'],
-    [/\b(operat|process|efficien|uptime|health|monitor)\b/i, 'operations'],
-    [/\b(psycholog|behavior|motivat|cognitiv|mental)\b/i, 'psychology'],
-  ];
-
-  for (const [pattern, category] of topics) {
-    if (pattern.test(message)) return category;
-  }
-  return 'general';
-}
-
-// =============================================================================
-// HANDLER
+// MAIN HANDLER
 // =============================================================================
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -313,6 +381,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       message,
       conversation_history,
       mention_all,
+      meeting_type,
     } = req.body;
 
     if (!message || typeof message !== 'string') {
@@ -330,10 +399,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(403).json({ error: 'You do not have boardroom access.' });
     }
 
-    // Detect topic for cross-domain tracking
+    // ── Detect energy + topic (instant, zero cost) ──────
+    const founderEnergy = detectEnergy(message);
+    const founderArc = conversation_history?.length > 2
+      ? detectEnergyArc(conversation_history)
+      : 'steady' as EnergyArc;
     const topicCategory = detectTopicCategory(message);
 
-    // ── Single member chat ─────────────────────────────────
+    // ══════════════════════════════════════════════════════
+    // SINGLE MEMBER CHAT
+    // ══════════════════════════════════════════════════════
+
     if (member_slug && !mention_all) {
       const { data: member } = await supabaseAdmin
         .from('boardroom_members')
@@ -346,17 +422,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const boardMember = member as BoardMember;
-      const systemPrompt = buildBoardMemberPrompt(boardMember);
 
-      const messages = (conversation_history || [])
-        .slice(-20)
-        .map((m: any) => ({ role: m.role, content: m.content }));
-      messages.push({ role: 'user', content: message });
+      // ── Fetch memory + context (parallel, non-blocking) ──
+      const [founderMemory, crossBoardFeed, recentDecisions] = await Promise.all([
+        getFounderMemory(supabaseAdmin, user.id, member_slug).catch(() => null),
+        getCrossBoardFeed(supabaseAdmin, user.id, member_slug).catch(() => []),
+        getRecentDecisions(supabaseAdmin, user.id).catch(() => []),
+      ]);
 
-      const result = await callProvider(boardMember, systemPrompt, messages);
+      // ── Build rich prompt (memory + energy + feed) ────
+      const { systemPrompt, userPrompt } = buildBoardMemberPrompt({
+        member: boardMember,
+        userMessage: message,
+        meetingType: meeting_type || 'one_on_one',
+        conversationHistory: (conversation_history || []).slice(-20),
+        founderMemory,
+        founderEnergy,
+        founderArc,
+        crossBoardFeed,
+        recentDecisions,
+      });
 
-      // Evolve DNA (non-blocking)
+      // ── Call provider ─────────────────────────────────
+      const result = await callProvider(boardMember, systemPrompt, userPrompt);
+
+      // ── Background post-call tasks (fire and forget) ──
       const crossDomain = isCrossDomain(boardMember, topicCategory);
+      const hasMemory = !!(founderMemory && (
+        (founderMemory.founder_details || []).length > 0 ||
+        (founderMemory.compressed_memories || []).length > 0
+      ));
+
+      // 1. Evolve DNA
       evolveBoarDna(supabaseAdmin, {
         memberSlug: member_slug,
         providerUsed: result.provider,
@@ -366,13 +463,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         wasCrossDomain: crossDomain,
         topicCategory,
         messageType: crossDomain ? 'cross_domain' : 'chat',
+        founderEnergy,
+        founderArc,
+        memoryHit: hasMemory,
+        feedInjected: (crossBoardFeed || []).length > 0,
       }).catch(() => {});
 
-      // Persist to meeting if provided
+      // 2. Extract founder details from this conversation
+      const fullMessages = [
+        ...(conversation_history || []).slice(-20),
+        { role: 'user', content: message },
+        { role: 'assistant', content: result.text },
+      ];
+      extractFounderDetails(supabaseAdmin, user.id, member_slug, fullMessages).catch(() => {});
+
+      // 3. Update energy state
+      updateFounderEnergy(supabaseAdmin, user.id, member_slug, founderEnergy, founderArc).catch(() => {});
+
+      // 4. Prometheus special: track emotional arc
+      if (member_slug === 'prometheus') {
+        const note = message.length > 100
+          ? message.substring(0, 100) + '...'
+          : message;
+        trackEmotionalArc(supabaseAdmin, user.id, founderEnergy, founderArc, note).catch(() => {});
+      }
+
+      // 5. Compress thread if threshold reached
+      const msgCount = (conversation_history || []).length + 2;
+      if (msgCount >= 25 && msgCount % 10 === 0) {
+        compressBoardThread(supabaseAdmin, user.id, member_slug, fullMessages).catch(() => {});
+      }
+
+      // 6. Persist to meeting if provided
       if (meeting_id) {
         persistMessage(meeting_id, user.id, message, member_slug, result.text);
       }
 
+      // ── Response ──────────────────────────────────────
       return res.status(200).json({
         member: member_slug,
         response: result.text,
@@ -386,11 +513,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           crossDomain,
           trustLevel: boardMember.trust_level,
           aiDna: boardMember.ai_dna,
+          // Phase 0 meta
+          founderEnergy,
+          founderArc,
+          memoryDepth: (founderMemory?.founder_details || []).length,
+          feedSize: (crossBoardFeed || []).length,
         },
       });
     }
 
-    // ── All members (board meeting) ────────────────────────
+    // ══════════════════════════════════════════════════════
+    // ALL MEMBERS (BOARD MEETING)
+    // ══════════════════════════════════════════════════════
+
     if (mention_all) {
       const { data: members } = await supabaseAdmin
         .from('boardroom_members')
@@ -402,15 +537,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ error: 'No active board members found.' });
       }
 
+      // Fetch shared context once (not per-member)
+      const recentDecisions = await getRecentDecisions(supabaseAdmin, user.id).catch(() => []);
+
       const responses = await Promise.all(
         members.map(async (member) => {
           const boardMember = member as BoardMember;
           try {
-            const systemPrompt = buildBoardMemberPrompt(boardMember);
-            const msgs = [{ role: 'user', content: message }];
-            const result = await callProvider(boardMember, systemPrompt, msgs);
+            // Per-member memory (parallel within the Promise.all)
+            const [founderMemory, crossBoardFeed] = await Promise.all([
+              getFounderMemory(supabaseAdmin, user.id, boardMember.slug).catch(() => null),
+              getCrossBoardFeed(supabaseAdmin, user.id, boardMember.slug, 7, 3).catch(() => []),
+            ]);
 
-            // Evolve DNA (non-blocking)
+            const { systemPrompt, userPrompt } = buildBoardMemberPrompt({
+              member: boardMember,
+              userMessage: message,
+              meetingType: meeting_type || 'full_board',
+              conversationHistory: [], // Board meetings start fresh
+              founderMemory,
+              founderEnergy,
+              founderArc,
+              crossBoardFeed,
+              recentDecisions,
+            });
+
+            const result = await callProvider(boardMember, systemPrompt, userPrompt);
+
+            // Background: evolve DNA + extract details
             const crossDomain = isCrossDomain(boardMember, topicCategory);
             evolveBoarDna(supabaseAdmin, {
               memberSlug: boardMember.slug,
@@ -421,7 +575,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               wasCrossDomain: crossDomain,
               topicCategory,
               messageType: 'chat',
+              founderEnergy,
+              founderArc,
             }).catch(() => {});
+
+            extractFounderDetails(supabaseAdmin, user.id, boardMember.slug, [
+              { role: 'user', content: message },
+              { role: 'assistant', content: result.text },
+            ]).catch(() => {});
 
             return {
               member: boardMember.slug,
@@ -443,9 +604,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               error: true,
             };
           }
-        })
+        }),
       );
 
+      // Persist meeting message
       if (meeting_id) {
         persistMessage(meeting_id, user.id, message, '@all', 'Board meeting response');
       }
@@ -455,6 +617,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         responses,
         meeting_id,
         topic: topicCategory,
+        _meta: {
+          founderEnergy,
+          founderArc,
+          memberCount: responses.length,
+          errorCount: responses.filter(r => r.error).length,
+        },
       });
     }
 
@@ -467,7 +635,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (errMsg.includes('Authentication')) {
       return res.status(401).json({ error: errMsg });
     }
-    console.error('Boardroom chat error:', errMsg);
+    console.error('[Boardroom] Chat error:', errMsg);
     return res.status(500).json({ error: 'Board is in recess. Try again.' });
   }
 }
@@ -481,7 +649,7 @@ async function persistMessage(
   userId: string,
   userMessage: string,
   memberSlug: string,
-  response: string
+  response: string,
 ) {
   try {
     await supabaseAdmin

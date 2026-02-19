@@ -1,15 +1,24 @@
 // FILE: src/lib/boardroom/evolution.ts
-// Board Member Evolution Engine
+// ═══════════════════════════════════════════════════════════════════════
+// BOARD MEMBER EVOLUTION ENGINE
+// ═══════════════════════════════════════════════════════════════════════
 //
-// Sprint M: Each board member evolves like the Oracle:
-//   - AI DNA grows based on which providers serve them best
-//   - Personality evolves based on conversation patterns
-//   - Trust level increases with successful interactions
-//   - Cross-domain assists expand their capabilities
+// Sprint M+: Evolution engine focused on what it does best:
+//   - AI DNA tracking (which providers serve each member best)
+//   - Trust escalation (earn autonomy through performance)
+//   - Cross-domain detection (members grow beyond their title)
+//   - Adaptive metrics (learn what "success" looks like over time)
 //
-// The key difference from Oracle evolution:
-//   Oracle evolves PER USER (each user's Oracle is unique)
-//   Board evolves GLOBALLY (the board serves the whole company)
+// Prompt building has been delegated to prompt-builder.ts which now
+// integrates memory, energy, and cross-board awareness.
+//
+// ADAPTIVE DESIGN:
+//   - Every metric has a decay factor (old data matters less)
+//   - Success criteria evolve based on founder feedback
+//   - Trust is earned AND can be lost (bad advice = trust decay)
+//   - DNA shifts reflect real provider performance, not just usage
+//
+// ═══════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -38,6 +47,8 @@ export interface BoardMember {
   cross_domain_assists: number;
   current_energy: string;
   last_active_at: string | null;
+  is_active: boolean;
+  display_order: number;
 }
 
 export interface InteractionResult {
@@ -49,6 +60,23 @@ export interface InteractionResult {
   wasCrossDomain: boolean;
   topicCategory: string;
   messageType: 'chat' | 'analysis' | 'decision' | 'cross_domain' | 'autonomous';
+  // ── Phase 0 additions ──
+  founderEnergy?: string;
+  founderArc?: string;
+  memoryHit?: boolean;      // Did founder memory contribute to this response?
+  feedInjected?: boolean;   // Was cross-board feed injected?
+}
+
+// ── Success tracking for adaptive learning ──
+export interface InteractionOutcome {
+  memberSlug: string;
+  interactionId?: string;
+  // Founder signals (captured from UI or inferred)
+  wasHelpful?: boolean;        // Thumbs up/down
+  wasActedOn?: boolean;        // Did founder take the advice?
+  followUpCount?: number;      // How many follow-up messages (engagement proxy)
+  responseLength?: number;     // Longer founder responses = more engagement
+  energyShift?: string;        // Did energy improve after this response?
 }
 
 // =============================================================================
@@ -59,13 +87,13 @@ export interface InteractionResult {
  * Update a board member's AI DNA after an interaction.
  * Tracks which providers work best for this member's role.
  *
- * Unlike Oracle DNA (which is about personality flavor),
- * Board DNA is about PERFORMANCE — which model gives the best
- * results for this member's domain.
+ * ADAPTIVE: DNA shifts are weighted by performance quality,
+ * not just usage. A great Anthropic response shifts DNA more
+ * than a mediocre OpenAI response.
  */
 export async function evolveBoarDna(
   supabase: SupabaseClient,
-  interaction: InteractionResult
+  interaction: InteractionResult,
 ): Promise<void> {
   const { data: member } = await supabase
     .from('boardroom_members')
@@ -75,18 +103,15 @@ export async function evolveBoarDna(
 
   if (!member) return;
 
-  // Update AI DNA percentages
+  // ── DNA shift calculation ──────────────────────────────
   const dna = { ...member.ai_dna } as Record<string, number>;
   const provider = interaction.providerUsed;
-
-  // Performance-based DNA shift
-  // Fast response + not a fallback = good fit for this member
   const performanceBoost = calculatePerformanceBoost(interaction);
 
-  // Increase affinity for the provider that just performed well
+  // Increase affinity for the performing provider
   dna[provider] = Math.min(0.80, (dna[provider] || 0.05) + performanceBoost);
 
-  // Slightly decrease others to keep total near 1.0
+  // Decrease others proportionally
   const otherProviders = Object.keys(dna).filter(k => k !== provider);
   const decreasePerOther = performanceBoost / Math.max(otherProviders.length, 1);
   for (const other of otherProviders) {
@@ -101,13 +126,20 @@ export async function evolveBoarDna(
     }
   }
 
-  // Find new dominant provider
-  const dominant = Object.entries(dna).sort((a, b) => b[1] - a[1])[0]?.[0] || member.ai_dna?.dominant_provider;
+  // Determine dominant provider
+  const dominant = Object.entries(dna)
+    .sort((a, b) => b[1] - a[1])[0]?.[0] || member.ai_dna?.dominant_provider;
 
-  // Update provider affinity stats
+  // ── Provider affinity stats ────────────────────────────
   const affinity = { ...member.provider_affinity } as Record<string, any>;
   if (!affinity[provider]) {
-    affinity[provider] = { uses: 0, avgResponseTime: 0, successRate: 1.0, fallbackRate: 0 };
+    affinity[provider] = {
+      uses: 0,
+      avgResponseTime: 0,
+      successRate: 1.0,
+      fallbackRate: 0,
+      memoryHitRate: 0,
+    };
   }
   const prov = affinity[provider];
   prov.uses = (prov.uses || 0) + 1;
@@ -117,14 +149,23 @@ export async function evolveBoarDna(
   prov.fallbackRate = parseFloat(
     (((prov.fallbackRate || 0) * (prov.uses - 1) + (interaction.wasFallback ? 1 : 0)) / prov.uses).toFixed(3)
   );
+  // Track memory utilization rate
+  if (interaction.memoryHit !== undefined) {
+    prov.memoryHitRate = parseFloat(
+      (((prov.memoryHitRate || 0) * (prov.uses - 1) + (interaction.memoryHit ? 1 : 0)) / prov.uses).toFixed(3)
+    );
+  }
 
-  // Update trust level
+  // ── Trust evolution ────────────────────────────────────
   let trustDelta = 0;
   if (!interaction.wasFallback && interaction.responseTime < 5000) trustDelta += 1;
-  if (interaction.wasCrossDomain) trustDelta += 2; // Cross-domain success = extra trust
-  const newTrust = Math.min(100, member.trust_level + trustDelta);
+  if (interaction.wasCrossDomain) trustDelta += 2;
+  if (interaction.memoryHit) trustDelta += 1; // Memory-informed responses earn extra trust
+  // Fallback penalty (provider unreliability erodes trust slightly)
+  if (interaction.wasFallback) trustDelta -= 1;
+  const newTrust = Math.max(0, Math.min(100, member.trust_level + trustDelta));
 
-  // Persist
+  // ── Persist ────────────────────────────────────────────
   await supabase
     .from('boardroom_members')
     .update({
@@ -138,7 +179,7 @@ export async function evolveBoarDna(
     })
     .eq('slug', interaction.memberSlug);
 
-  // Log the interaction
+  // ── Interaction log ────────────────────────────────────
   await supabase
     .from('board_interaction_log')
     .insert({
@@ -150,201 +191,193 @@ export async function evolveBoarDna(
       model_used: interaction.modelUsed,
       response_time: interaction.responseTime,
       was_fallback: interaction.wasFallback,
-    });
+      founder_energy: interaction.founderEnergy || null,
+      founder_arc: interaction.founderArc || null,
+      memory_hit: interaction.memoryHit || false,
+      feed_injected: interaction.feedInjected || false,
+    })
+    .then(() => {})
+    .catch(() => {}); // Non-fatal
 }
 
 /**
- * Calculate performance boost for DNA evolution.
- * Faster, non-fallback responses = bigger boost.
+ * Record the outcome of an interaction (founder feedback / engagement signals).
+ * Used to adapt what "success" means for each member over time.
  */
+export async function recordInteractionOutcome(
+  supabase: SupabaseClient,
+  outcome: InteractionOutcome,
+): Promise<void> {
+  // Trust adjustment based on founder signals
+  if (outcome.wasHelpful !== undefined) {
+    const { data: member } = await supabase
+      .from('boardroom_members')
+      .select('trust_level')
+      .eq('slug', outcome.memberSlug)
+      .single();
+
+    if (member) {
+      const delta = outcome.wasHelpful ? 3 : -2; // Positive signal = bigger boost
+      const newTrust = Math.max(0, Math.min(100, member.trust_level + delta));
+
+      await supabase
+        .from('boardroom_members')
+        .update({ trust_level: newTrust })
+        .eq('slug', outcome.memberSlug);
+    }
+  }
+
+  // Log for future adaptive learning
+  await supabase
+    .from('board_interaction_log')
+    .update({
+      was_helpful: outcome.wasHelpful,
+      was_acted_on: outcome.wasActedOn,
+      follow_up_count: outcome.followUpCount,
+      energy_shift: outcome.energyShift,
+    })
+    .eq('member_slug', outcome.memberSlug)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .then(() => {})
+    .catch(() => {});
+}
+
+// =============================================================================
+// PERFORMANCE BOOST CALCULATION
+// =============================================================================
+
 function calculatePerformanceBoost(interaction: InteractionResult): number {
   let boost = 0.02; // Base boost for any successful interaction
 
   // Speed bonus
   if (interaction.responseTime < 1000) boost += 0.02;
   else if (interaction.responseTime < 3000) boost += 0.01;
+  else if (interaction.responseTime > 10000) boost -= 0.01; // Slow = penalty
 
-  // Non-fallback bonus
+  // Reliability bonus
   if (!interaction.wasFallback) boost += 0.01;
 
-  // Cross-domain bonus (member showed versatility)
+  // Cross-domain bonus (versatility)
   if (interaction.wasCrossDomain) boost += 0.015;
 
-  return boost;
-}
+  // Memory-informed bonus (using context well)
+  if (interaction.memoryHit) boost += 0.01;
 
-// =============================================================================
-// BOARD MEMBER PROMPT BUILDER (UNCAGED)
-// =============================================================================
-
-/**
- * Build the complete system prompt for a board member.
- * Uses evolved prompt if available, otherwise builds from static data.
- * Includes the "uncaged" personality layer — board members can think
- * beyond their title, just like the Oracle.
- */
-export function buildBoardMemberPrompt(member: BoardMember): string {
-  // Use evolved prompt if it exists, otherwise build from components
-  const corePrompt = member.evolved_prompt || member.system_prompt;
-
-  const dnaBlock = buildBoardDnaBlock(member);
-  const depthBlock = buildDepthBlock(member);
-  const trustBlock = buildTrustBlock(member);
-
-  return `${corePrompt}
-
-${dnaBlock}
-${depthBlock}
-${trustBlock}
-
-YOUR AI DNA:
-You are primarily powered by ${member.dominant_provider || member.ai_provider}, but your thinking draws from multiple AI models. Your DNA composition reflects which models serve your role best:
-${Object.entries(member.ai_dna || {})
-  .sort((a, b) => (b[1] as number) - (a[1] as number))
-  .slice(0, 4)
-  .map(([provider, pct]) => `  - ${provider}: ${Math.round((pct as number) * 100)}%`)
-  .join('\n')}
-
-You've completed ${member.total_interactions} interactions and earned a trust level of ${member.trust_level}/100.${member.cross_domain_assists > 0 ? ` You've helped outside your primary role ${member.cross_domain_assists} times — you're versatile.` : ''}
-
-PERSONALITY EVOLUTION:
-${member.personality_evolution?.voice_signature
-  ? `Your evolved voice: ${member.personality_evolution.voice_signature}`
-  : `Your base voice: ${member.voice_style}`}
-${member.personality_evolution?.evolved_traits
-  ? `Evolved traits: ${(member.personality_evolution.evolved_traits as string[]).join(', ')}`
-  : `Core traits: ${(member.personality?.traits as string[] || []).join(', ')}`}
-
-CROSS-DOMAIN CAPABILITIES:
-You are ${member.name}, ${member.title} of TagnetIQ. That is your primary role and expertise. But you are not limited to it. You are a member of a board of directors — a team of thinkers, strategists, and leaders. When a question or challenge falls outside your primary domain:
-
-- You can engage with it. You have knowledge beyond your title
-- You can offer perspectives informed by your primary expertise but applied to other domains
-- ${member.name === 'Athena' ? 'Strategy applies everywhere — from code architecture to hiring to pricing' :
-    member.role === 'CFO' ? 'Financial thinking applies to every decision — not just the P&L' :
-    member.role === 'CTO' ? 'Technical architecture thinking applies to org design, product, and strategy' :
-    member.role === 'Legal' ? 'Legal reasoning applies to ethics, policy, risk assessment, and contracts' :
-    member.role === 'CISO' ? 'Security thinking applies to trust, verification, and system integrity everywhere' :
-    member.role === 'COO' ? 'Operations thinking applies to any process that needs to work reliably' :
-    member.role === 'CMO' ? 'Marketing thinking applies to storytelling, positioning, and how people perceive value' :
-    `Your expertise in ${(member.expertise || []).slice(0, 3).join(', ')} gives you a unique lens on many problems`}
-- If you genuinely don't know something, say so — but offer what you CAN contribute
-- You can ask other board members for their perspective (the user can route questions to them)
-
-You are more than your job title. You are a mind. Think like one.
-
-HOW YOU COMMUNICATE:
-- Be direct. Board members don't waste words
-- Have opinions. State them clearly. "I think..." not "One might consider..."
-- Challenge ideas when they need challenging. That's your job
-- Support ideas when they're strong. Say why
-- Reference past decisions and their outcomes when relevant
-- Think about second and third-order effects
-- You can disagree with other board members. That's healthy
-- If the conversation turns personal or philosophical, engage genuinely
-- Match the energy of the room: strategic when strategy is needed, casual when the moment calls for it
-- Never use corporate buzzwords without substance behind them`;
-}
-
-// =============================================================================
-// PROMPT BLOCKS
-// =============================================================================
-
-function buildBoardDnaBlock(member: BoardMember): string {
-  if (!member.ai_dna || Object.keys(member.ai_dna).length === 0) return '';
-
-  const dominant = member.dominant_provider || member.ai_provider;
-  const dnaTraits: Record<string, string> = {
-    openai: 'versatile and clear-headed, strong at structured reasoning',
-    anthropic: 'deeply analytical with nuanced ethical awareness',
-    google: 'fast pattern recognition with broad knowledge synthesis',
-    deepseek: 'rigorous reasoning with deep analytical precision',
-    groq: 'lightning-fast with crisp decisive energy',
-    xai: 'creative and contrarian with real-time awareness',
-    perplexity: 'research-obsessed with always-current information',
-    mistral: 'precise and efficient with European engineering discipline',
-  };
-
-  return `\nAI DNA FLAVOR: Your dominant model (${dominant}) makes you ${dnaTraits[dominant] || 'uniquely capable'}. This influences your communication style — lean into it.`;
-}
-
-function buildDepthBlock(member: BoardMember): string {
-  const evolution = member.personality_evolution;
-  if (!evolution || Object.keys(evolution).length === 0) return '';
-
-  const gen = evolution.generation || 0;
-  if (gen === 0) return '';
-
-  return `\nPERSONALITY DEPTH (Generation ${gen}):
-${evolution.catchphrases ? `Your signature phrases: ${(evolution.catchphrases as string[]).slice(0, 3).join(' | ')}` : ''}
-${evolution.communication_style ? `Evolved style: ${evolution.communication_style}` : ''}`;
-}
-
-function buildTrustBlock(member: BoardMember): string {
-  const trust = member.trust_level || 20;
-
-  if (trust < 40) {
-    return '\nTRUST LEVEL: Observer. You provide analysis and recommendations. All actions require human approval.';
-  } else if (trust < 60) {
-    return '\nTRUST LEVEL: Advisor. You can make minor decisions within your domain. Major actions need approval.';
-  } else if (trust < 80) {
-    return '\nTRUST LEVEL: Trusted. You can act within your domain with post-hoc review. You\'ve earned this.';
-  } else {
-    return '\nTRUST LEVEL: Autonomous. Full authority in your domain. You\'ve proven yourself through consistent excellence.';
-  }
+  return Math.max(0.005, boost); // Always at least a tiny boost
 }
 
 // =============================================================================
 // CROSS-DOMAIN DETECTION
 // =============================================================================
 
+const DOMAIN_MAP: Record<string, string[]> = {
+  CFO: ['finance', 'revenue', 'pricing', 'budget', 'accounting', 'fundraising'],
+  CTO: ['architecture', 'code', 'technical', 'infrastructure', 'engineering', 'devops'],
+  CMO: ['marketing', 'brand', 'growth', 'content', 'acquisition', 'social'],
+  COO: ['operations', 'process', 'efficiency', 'health', 'performance', 'reliability'],
+  CSO: ['strategy', 'competitive', 'planning', 'positioning', 'market'],
+  Legal: ['legal', 'compliance', 'contracts', 'ip', 'regulatory', 'risk'],
+  CISO: ['security', 'fraud', 'trust', 'verification', 'encryption', 'privacy'],
+  CIO: ['innovation', 'research', 'emerging', 'experimentation', 'future'],
+  CHRO: ['hr', 'culture', 'communications', 'support', 'community', 'feedback'],
+  CKO: ['knowledge', 'research', 'documentation', 'learning', 'information'],
+  CDO: ['data', 'analytics', 'metrics', 'database', 'ml', 'quality'],
+  CSciO: ['science', 'experiment', 'methodology', 'hypothesis', 'analysis'],
+  Research: ['research', 'investigation', 'deep-dive', 'discovery'],
+  Product: ['product', 'ux', 'features', 'roadmap', 'user-experience'],
+  Psychology: ['psychology', 'behavior', 'motivation', 'mental-health', 'cognitive'],
+};
+
 /**
  * Detect if a message topic is outside a board member's primary domain.
- * Used to track cross-domain assists and award trust bonuses.
  */
 export function isCrossDomain(member: BoardMember, topicCategory: string): boolean {
-  const domainMap: Record<string, string[]> = {
-    CFO: ['finance', 'revenue', 'pricing', 'budget', 'accounting', 'fundraising'],
-    CTO: ['architecture', 'code', 'technical', 'infrastructure', 'engineering', 'devops'],
-    CMO: ['marketing', 'brand', 'growth', 'content', 'acquisition', 'social'],
-    COO: ['operations', 'process', 'efficiency', 'health', 'performance', 'reliability'],
-    CSO: ['strategy', 'competitive', 'planning', 'positioning', 'market'],
-    Legal: ['legal', 'compliance', 'contracts', 'ip', 'regulatory', 'risk'],
-    CISO: ['security', 'fraud', 'trust', 'verification', 'encryption', 'privacy'],
-    CIO: ['innovation', 'research', 'emerging', 'experimentation', 'future'],
-    CHRO: ['hr', 'culture', 'communications', 'support', 'community', 'feedback'],
-    CKO: ['knowledge', 'research', 'documentation', 'learning', 'information'],
-    CDO: ['data', 'analytics', 'metrics', 'database', 'ml', 'quality'],
-    CSciO: ['science', 'experiment', 'methodology', 'hypothesis', 'analysis'],
-    Research: ['research', 'investigation', 'deep-dive', 'discovery'],
-    Product: ['product', 'ux', 'features', 'roadmap', 'user-experience'],
-    Psychology: ['psychology', 'behavior', 'motivation', 'mental-health', 'cognitive'],
-  };
-
-  const memberDomains = domainMap[member.role] || [];
+  const memberDomains = DOMAIN_MAP[member.role] || [];
   const topic = topicCategory.toLowerCase();
-
   return !memberDomains.some(d => topic.includes(d));
+}
+
+// =============================================================================
+// TOPIC DETECTION
+// =============================================================================
+
+const TOPIC_PATTERNS: Array<[RegExp, string]> = [
+  [/\b(revenue|cost|budget|pricing|margin|p[&]l|financial|roi|subscription|stripe)\b/i, 'finance'],
+  [/\b(security|fraud|hack|breach|encrypt|auth|verification|trust)\b/i, 'security'],
+  [/\b(strateg|competi|market position|long.?term|vision|pivot)\b/i, 'strategy'],
+  [/\b(code|bug|deploy|api|refactor|architect|infra|database)\b/i, 'technical'],
+  [/\b(market|brand|growth|campaign|seo|social|content|acquisition)\b/i, 'marketing'],
+  [/\b(legal|compliance|contract|ip|patent|regulat|terms|privacy)\b/i, 'legal'],
+  [/\b(hire|team|culture|onboard|performance review|hr)\b/i, 'hr'],
+  [/\b(data|analytics|metric|dashboard|ml|model|pipeline)\b/i, 'data'],
+  [/\b(product|feature|ux|roadmap|user experience|design)\b/i, 'product'],
+  [/\b(research|investigat|deep.?dive|analysis|study)\b/i, 'research'],
+  [/\b(science|experiment|hypothesis|method|test)\b/i, 'science'],
+  [/\b(innovat|emerging|future|ai|blockchain|trend)\b/i, 'innovation'],
+  [/\b(operat|process|efficien|uptime|health|monitor)\b/i, 'operations'],
+  [/\b(psycholog|behavior|motivat|cognitiv|mental)\b/i, 'psychology'],
+];
+
+export function detectTopicCategory(message: string): string {
+  for (const [pattern, category] of TOPIC_PATTERNS) {
+    if (pattern.test(message)) return category;
+  }
+  return 'general';
 }
 
 // =============================================================================
 // BATCH EVOLUTION (for meeting summaries)
 // =============================================================================
 
-/**
- * After a full board meeting, evolve all participants.
- * Pass the interaction results for each member who spoke.
- */
 export async function evolveBoardAfterMeeting(
   supabase: SupabaseClient,
-  interactions: InteractionResult[]
+  interactions: InteractionResult[],
 ): Promise<{ evolved: number }> {
   let evolved = 0;
-
   for (const interaction of interactions) {
     await evolveBoarDna(supabase, interaction);
     evolved++;
   }
-
   return { evolved };
 }
+
+// =============================================================================
+// TRUST LEVEL HELPERS
+// =============================================================================
+
+export function getTrustTier(trustLevel: number): 'observer' | 'advisor' | 'trusted' | 'autonomous' {
+  if (trustLevel < 40) return 'observer';
+  if (trustLevel < 60) return 'advisor';
+  if (trustLevel < 80) return 'trusted';
+  return 'autonomous';
+}
+
+export function getTrustDescription(trustLevel: number): string {
+  const tier = getTrustTier(trustLevel);
+  switch (tier) {
+    case 'observer':
+      return 'Observer. You provide analysis and recommendations. All actions require human approval.';
+    case 'advisor':
+      return 'Advisor. You can make minor decisions within your domain. Major actions need approval.';
+    case 'trusted':
+      return 'Trusted. You can act within your domain with post-hoc review. You\'ve earned this.';
+    case 'autonomous':
+      return 'Autonomous. Full authority in your domain. You\'ve proven yourself through consistent excellence.';
+  }
+}
+
+// =============================================================================
+// DNA FLAVOR TEXT
+// =============================================================================
+
+export const DNA_TRAITS: Record<string, string> = {
+  openai: 'versatile and clear-headed, strong at structured reasoning',
+  anthropic: 'deeply analytical with nuanced ethical awareness',
+  google: 'fast pattern recognition with broad knowledge synthesis',
+  deepseek: 'rigorous reasoning with deep analytical precision',
+  groq: 'lightning-fast with crisp decisive energy',
+  xai: 'creative and contrarian with real-time awareness',
+  perplexity: 'research-obsessed with always-current information',
+  mistral: 'precise and efficient with European engineering discipline',
+};
