@@ -1,0 +1,181 @@
+// FILE: api/boardroom/lib/chat/single-member.ts
+// ═══════════════════════════════════════════════════════════════════════
+// CHAT MODULE — Single Member Handler
+// ═══════════════════════════════════════════════════════════════════════
+//
+// The primary chat path: 1:1 conversations between the CEO and one
+// board member. This is the most common interaction pattern and the
+// only path with full conversation persistence.
+//
+// Pipeline:
+//   Load member → Load conversation → Fetch memory (parallel) →
+//   Build prompt → Call provider → Persist exchange → Respond →
+//   Background tasks (fire and forget)
+//
+// ═══════════════════════════════════════════════════════════════════════
+
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { callWithFallback, getSupaAdmin } from '../provider-caller.js';
+import { buildBoardMemberPrompt } from '../prompt-builder.js';
+import {
+  isCrossDomain,
+  getTrustTier,
+  type BoardMember,
+} from '../../../../src/lib/boardroom/evolution.js';
+import {
+  detectEnergyArc,
+  getEnergyGuidance,
+} from '../../../../src/lib/boardroom/energy.js';
+import {
+  getFounderMemory,
+  getCrossBoardFeed,
+  getRecentDecisions,
+} from '../../../../src/lib/boardroom/memory/founder-memory.js';
+import { loadOrCreateConversation, persistExchange } from './conversations.js';
+import { runBackgroundTasks } from './background-tasks.js';
+import { MAX_CONTEXT_MESSAGES } from './types.js';
+import type { SingleChatParams, EnergyArc } from './types.js';
+
+const supabaseAdmin = getSupaAdmin();
+
+// =============================================================================
+// HANDLER
+// =============================================================================
+
+export async function handleSingleMemberChat(
+  req: VercelRequest,
+  res: VercelResponse,
+  params: SingleChatParams,
+): Promise<void> {
+  const {
+    userId, meetingId, memberSlug, message,
+    conversationId, legacyHistory, meetingType,
+    founderEnergy, founderArc, topicCategory,
+  } = params;
+
+  // ── Load board member ─────────────────────────────────
+  const { data: member } = await supabaseAdmin
+    .from('boardroom_members')
+    .select('*')
+    .eq('slug', memberSlug)
+    .single();
+
+  if (!member) {
+    res.status(404).json({ error: `Board member "${memberSlug}" not found.` });
+    return;
+  }
+
+  const boardMember = member as BoardMember;
+
+  // ── Load / create conversation ────────────────────────
+  const conversation = await loadOrCreateConversation(
+    supabaseAdmin, userId, memberSlug, meetingType, message, conversationId,
+  );
+
+  // Use server-side messages if available, fall back to legacy client history
+  const conversationHistory = conversation.messages.length > 0
+    ? conversation.messages
+    : legacyHistory;
+
+  // Re-detect energy arc from the full conversation (server-side messages)
+  const effectiveArc: EnergyArc = conversationHistory.length > 2
+    ? detectEnergyArc(conversationHistory)
+    : founderArc;
+
+  // ── Fetch memory + context (parallel) ─────────────────
+  const [founderMemory, crossBoardFeed, recentDecisions] = await Promise.all([
+    getFounderMemory(supabaseAdmin, userId, memberSlug).catch((err) => {
+      console.warn(`[Chat] Memory fetch failed for ${memberSlug}:`, err.message);
+      return null;
+    }),
+    getCrossBoardFeed(supabaseAdmin, userId, memberSlug).catch(() => []),
+    getRecentDecisions(supabaseAdmin, userId).catch(() => []),
+  ]);
+
+  // ── Build rich prompt (8 layers) ──────────────────────
+  const { systemPrompt, userPrompt } = buildBoardMemberPrompt({
+    member: boardMember,
+    userMessage: message,
+    meetingType,
+    conversationHistory: conversationHistory.slice(-MAX_CONTEXT_MESSAGES),
+    founderMemory,
+    founderEnergy,
+    founderArc: effectiveArc,
+    crossBoardFeed,
+    recentDecisions,
+  });
+
+  // ── Call provider via gateway ─────────────────────────
+  const result = await callWithFallback(
+    boardMember.dominant_provider || boardMember.ai_provider,
+    boardMember.ai_model,
+    systemPrompt,
+    userPrompt,
+    { maxTokens: 2000 },
+  );
+
+  // ── Persist exchange ──────────────────────────────────
+  const { updatedMessages, newCount } = await persistExchange(
+    supabaseAdmin,
+    conversation.id,
+    conversation.messages,
+    message,
+    result.text,
+    memberSlug,
+  );
+
+  // ── Build response metadata ───────────────────────────
+  const crossDomain = isCrossDomain(boardMember, topicCategory);
+  const hasMemory = !!(founderMemory && (
+    (founderMemory.founder_details || []).length > 0 ||
+    (founderMemory.compressed_memories || []).length > 0
+  ));
+  const trustTier = getTrustTier(boardMember.trust_level || 0);
+
+  // ── Respond ───────────────────────────────────────────
+  res.status(200).json({
+    member: memberSlug,
+    response: result.text,
+    meeting_id: meetingId,
+    conversation_id: conversation.id || undefined,
+    _meta: {
+      provider: result.provider,
+      model: result.model,
+      responseTime: result.responseTime,
+      isFallback: result.isFallback,
+      topic: topicCategory,
+      crossDomain,
+      trustLevel: boardMember.trust_level,
+      trustTier,
+      aiDna: boardMember.ai_dna,
+      founderEnergy,
+      founderArc: effectiveArc,
+      energyGuidance: getEnergyGuidance(memberSlug, founderEnergy, effectiveArc),
+      memoryDepth: (founderMemory?.founder_details || []).length,
+      compressedMemories: (founderMemory?.compressed_memories || []).length,
+      feedSize: (crossBoardFeed || []).length,
+      decisionsInPlay: recentDecisions.length,
+      conversationMessageCount: newCount,
+    },
+  });
+
+  // ── Background tasks (fire and forget) ────────────────
+  runBackgroundTasks({
+    userId,
+    memberSlug,
+    boardMember,
+    message,
+    conversationMessages: updatedMessages,
+    responseText: result.text,
+    result,
+    crossDomain,
+    hasMemory,
+    topicCategory,
+    founderEnergy,
+    founderArc: effectiveArc,
+    crossBoardFeed,
+    meetingId,
+    conversationId: conversation.id,
+    messageCount: newCount,
+  });
+}

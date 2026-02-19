@@ -13,6 +13,13 @@
 //
 // All extraction runs as non-blocking background tasks (fire-and-forget).
 // Uses gpt-4o-mini for extraction — ~$0.001 per call. Cheap. High impact.
+//
+// BUG FIX (Sprint 1):
+//   Extraction functions now resolve the OpenAI API key via the same
+//   multi-variant lookup the gateway uses. Previously hardcoded to
+//   OPEN_AI_API_KEY which could silently fail if the env var was
+//   named OPENAI_API_KEY (no underscore).
+//
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -56,6 +63,23 @@ export interface FounderMemoryState {
   last_energy_arc: string;
   emotional_arc: Array<{ date: string; energy: string; arc: string; note: string }>;
   recurring_patterns: Array<{ pattern: string; first_seen: string; occurrences: number; last_seen: string }>;
+}
+
+// =============================================================================
+// API KEY RESOLUTION
+// =============================================================================
+// Bug #2 fix: Check both env var naming conventions.
+// The gateway's getApiKey checks OPENAI_API_KEY and OPEN_AI_API_KEY.
+// We replicate that logic here since founder-memory.ts calls OpenAI
+// directly (bypassing the gateway for cheap extraction calls).
+
+function getOpenAIKey(): string | null {
+  const candidates = ['OPENAI_API_KEY', 'OPEN_AI_API_KEY'];
+  for (const envKey of candidates) {
+    const value = process.env[envKey];
+    if (value && value.trim().length > 0) return value.trim();
+  }
+  return null;
 }
 
 // =============================================================================
@@ -299,6 +323,9 @@ export async function getRecentDecisions(
  * expertise lens. Runs as a non-blocking background task.
  *
  * Uses gpt-4o-mini — ~$0.001 per call.
+ *
+ * Bug #2 fix: API key resolved via getOpenAIKey() which checks both
+ * OPENAI_API_KEY and OPEN_AI_API_KEY env var names.
  */
 export async function extractFounderDetails(
   supabase: SupabaseClient,
@@ -310,6 +337,13 @@ export async function extractFounderDetails(
     m.role === 'user' && m.content.trim().length > 10
   );
   if (userMessages.length < 2) return;
+
+  // ── Bug #2 fix: use multi-variant key lookup ──────────
+  const openaiKey = getOpenAIKey();
+  if (!openaiKey) {
+    console.warn('[BoardMemory] No OpenAI API key found (checked OPENAI_API_KEY and OPEN_AI_API_KEY). Skipping extraction.');
+    return;
+  }
 
   const extractionPrompt = MEMBER_EXTRACTION_PROMPTS[memberSlug]
     || MEMBER_EXTRACTION_PROMPTS._default;
@@ -325,7 +359,7 @@ export async function extractFounderDetails(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPEN_AI_API_KEY}`,
+        'Authorization': `Bearer ${openaiKey}`,
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
@@ -458,7 +492,10 @@ Return empty arrays if nothing relevant found.`,
 
 /**
  * Compress a board member's conversation thread into a memory summary.
- * Triggered when thread_message_count >= 25 and divisible by 10.
+ * Triggered when thread_message_count >= COMPRESSION_THRESHOLD.
+ *
+ * Bug #2 fix: API key resolved via getOpenAIKey() which checks both
+ * OPENAI_API_KEY and OPEN_AI_API_KEY env var names.
  */
 export async function compressBoardThread(
   supabase: SupabaseClient,
@@ -470,6 +507,13 @@ export async function compressBoardThread(
     m.role !== 'system' && m.content.trim().length > 10
   );
   if (meaningful.length < 8) return;
+
+  // ── Bug #2 fix: use multi-variant key lookup ──────────
+  const openaiKey = getOpenAIKey();
+  if (!openaiKey) {
+    console.warn('[BoardMemory] No OpenAI API key found. Skipping compression.');
+    return;
+  }
 
   const extractionPrompt = MEMBER_EXTRACTION_PROMPTS[memberSlug]
     || MEMBER_EXTRACTION_PROMPTS._default;
@@ -484,7 +528,7 @@ export async function compressBoardThread(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPEN_AI_API_KEY}`,
+        'Authorization': `Bearer ${openaiKey}`,
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
@@ -546,9 +590,6 @@ Return ONLY valid JSON:
       .from('board_founder_memory')
       .update({
         compressed_memories: trimmed,
-        // Clear the active thread after compression
-        active_thread: messages.slice(-10), // Keep last 10 for continuity
-        thread_message_count: 10,
         updated_at: new Date().toISOString(),
       })
       .eq('user_id', userId)
