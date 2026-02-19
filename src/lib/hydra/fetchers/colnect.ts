@@ -1,8 +1,10 @@
 // FILE: src/lib/hydra/fetchers/colnect.ts
-// HYDRA v8.0 - Colnect Authority Data Fetcher
+// HYDRA v8.1 - Colnect Authority Data Fetcher
 // Covers 40+ collectible categories via Colnect API (CAPI)
 //
 // Auth: HMAC-SHA256 signed requests (server-side only - no CORS)
+// Routing: Gateway proxy (DigitalOcean VPS) for production,
+//          direct for local development
 // Docs: https://colnect.com/en/help/api
 // Attribution: "Catalog information courtesy of Colnect, an online collectors community."
 //
@@ -19,7 +21,28 @@ import type { MarketDataSource, PriceAnalysis } from '../types.js';
 const COLNECT_BASE_URL = 'https://api.colnect.net';
 const USER_AGENT = 'TagnetIQ-HYDRA/1.0.0'; // Must be >15 chars per CAPI spec
 const DEFAULT_LANG = 'en';
-const REQUEST_TIMEOUT = 12000; // 12s - keep it tight for mobile UX
+const REQUEST_TIMEOUT = 15000; // 15s - gateway adds ~1-2s overhead
+
+// =============================================================================
+// GATEWAY CONFIGURATION
+// =============================================================================
+// Colnect blocks datacenter IPs. Production routes through a DigitalOcean VPS
+// with a whitelisted static IP. Local dev can hit Colnect directly.
+//
+// Env vars:
+//   COLNECT_GATEWAY_URL  - e.g. https://178.128.249.81:8443
+//   COLNECT_GATEWAY_KEY  - shared secret for gateway auth
+
+function getGatewayConfig(): { url: string; key: string } | null {
+  const url = process.env.COLNECT_GATEWAY_URL;
+  const key = process.env.COLNECT_GATEWAY_KEY;
+  if (!url || !key) return null;
+  return { url, key };
+}
+
+function isGatewayEnabled(): boolean {
+  return getGatewayConfig() !== null;
+}
 
 // =============================================================================
 // HYDRA CATEGORY → COLNECT CATEGORY MAPPING
@@ -129,13 +152,34 @@ function buildAuthHeaders(urlPath: string, appSecret: string): Record<string, st
 // =============================================================================
 // API REQUEST HELPER
 // =============================================================================
+// Routes through gateway in production, direct in local dev.
+// Gateway path: COLNECT_GATEWAY_URL/colnect{urlPath}
+// Direct path:  https://api.colnect.net{urlPath}
 
 async function colnectRequest<T = unknown>(urlPath: string): Promise<T> {
   const creds = getCredentials();
   if (!creds) throw new Error('COLNECT_API_KEY / COLNECT_API_SECRET not configured');
 
-  const headers = buildAuthHeaders(urlPath, creds.appSecret);
-  const fullUrl = `${COLNECT_BASE_URL}${urlPath}`;
+  const authHeaders = buildAuthHeaders(urlPath, creds.appSecret);
+  const gateway = getGatewayConfig();
+
+  let fullUrl: string;
+  let headers: Record<string, string>;
+
+  if (gateway) {
+    // Production: route through gateway proxy
+    fullUrl = `${gateway.url}/colnect${urlPath}`;
+    headers = {
+      ...authHeaders,
+      'X-Gateway-Key': gateway.key,
+    };
+    console.log(`🌐 Colnect via gateway: ${urlPath}`);
+  } else {
+    // Local dev: hit Colnect directly
+    fullUrl = `${COLNECT_BASE_URL}${urlPath}`;
+    headers = authHeaders;
+    console.log(`🔗 Colnect direct: ${urlPath}`);
+  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
@@ -145,6 +189,8 @@ async function colnectRequest<T = unknown>(urlPath: string): Promise<T> {
       method: 'GET',
       headers,
       signal: controller.signal,
+      // Skip TLS verification for self-signed gateway cert
+      ...(gateway ? { dispatcher: undefined } : {}),
     });
 
     clearTimeout(timeoutId);
@@ -194,6 +240,7 @@ export async function fetchColnectData(
   console.log(`\n🏛️ === COLNECT FETCHER ===`);
   console.log(`📦 Item: "${itemName}"`);
   console.log(`🏷️ HYDRA Category: ${category || 'unknown'}`);
+  console.log(`🌐 Gateway: ${isGatewayEnabled() ? 'ENABLED' : 'DIRECT'}`);
 
   // Check credentials
   const creds = getCredentials();
@@ -277,6 +324,7 @@ export async function fetchColnectData(
         itemName: bestMatch[5] || bestMatch[7] || itemName, // item_description or item_name
         totalResults: searchResults.length,
         fetchTime,
+        routedViaGateway: isGatewayEnabled(),
       },
     };
   } catch (error: any) {
@@ -296,7 +344,8 @@ export async function fetchColnectData(
 // =============================================================================
 // SEARCH ITEMS
 // =============================================================================
-// Uses the "list" action to find items matching the search query
+// Uses the "search" action for global search across categories
+// Falls back to "list" action with item_name filter
 // Returns: array of [item_id, series_id, producer_id, front_picture_id,
 //          back_picture_id, item_description, catalog_codes, item_name]
 
@@ -307,13 +356,29 @@ async function searchItems(
   colnectCategory: string,
   itemName: string
 ): Promise<ColnectListItem[]> {
-  // Build search URL with the item name as a filter
-  // Colnect list action requires at least one filter
-  // We use the item name to search
+  // Try global search first (more flexible matching)
+  try {
+    const encodedQuery = encodeURIComponent(itemName);
+    const searchPath = `/${DEFAULT_LANG}/api/${appId}/search/collectibles/${colnectCategory}/q/${encodedQuery}`;
+    console.log(`🔍 Colnect search: ${searchPath}`);
+
+    const data = await colnectRequest<{ items?: ColnectListItem[]; total_items?: number } | ColnectListItem[]>(searchPath);
+
+    if (Array.isArray(data) && data.length > 0) {
+      return data;
+    }
+    if (!Array.isArray(data) && data.items && data.items.length > 0) {
+      console.log(`✅ Colnect search: ${data.total_items} total, returning first page`);
+      return data.items;
+    }
+  } catch (searchError: any) {
+    console.log(`⚠️ Colnect search failed, trying list fallback: ${searchError.message}`);
+  }
+
+  // Fallback: list action with item_name filter
   const slugName = urlize(itemName);
   const urlPath = `/${DEFAULT_LANG}/api/${appId}/list/cat/${colnectCategory}/item_name/${slugName}`;
-
-  console.log(`🔍 Colnect search: ${urlPath}`);
+  console.log(`🔍 Colnect list fallback: ${urlPath}`);
 
   try {
     const data = await colnectRequest<ColnectListItem[] | Record<string, unknown>>(urlPath);
@@ -326,17 +391,7 @@ async function searchItems(
     console.log('⚠️ Colnect returned non-array:', JSON.stringify(data).slice(0, 200));
     return [];
   } catch (error: any) {
-    // If list fails, try list_id as a fallback (lighter response)
-    console.log(`⚠️ Colnect list failed, trying alternative search...`);
-
-    try {
-      const altPath = `/${DEFAULT_LANG}/api/${appId}/list_id/cat/${colnectCategory}`;
-      const ids = await colnectRequest<number[]>(altPath);
-      // Return minimal data - just IDs wrapped in arrays
-      return ids.slice(0, 10).map(id => [id]);
-    } catch {
-      throw error; // Re-throw original error
-    }
+    throw error;
   }
 }
 
@@ -481,10 +536,19 @@ function buildAuthorityData(
   const itemName = (listItem[7] as string) || description || originalQuery;
 
   // Build image URLs using Colnect's image CDN
-  // Format: https://i.colnect.net/f/{id}/{slug}.jpg (full size)
-  // Format: https://i.colnect.net/t/{id}/{slug}.jpg (thumbnail)
-  const frontImageUrl = frontPicId ? `https://i.colnect.net/f/${frontPicId}/item.jpg` : undefined;
-  const backImageUrl = backPicId ? `https://i.colnect.net/t/${backPicId}/item.jpg` : undefined;
+  // Per CAPI spec: split picture ID at thousands separator
+  // e.g. ID 142891 → /142/891/
+  const formatPicId = (id: number): string => {
+    const str = String(id);
+    if (str.length <= 3) return str;
+    const thousands = str.slice(0, -3);
+    const remainder = str.slice(-3);
+    return `${thousands}/${remainder}`;
+  };
+
+  const slug = urlize(itemName);
+  const frontImageUrl = frontPicId ? `https://i.colnect.net/f/${formatPicId(frontPicId)}/${slug}.jpg` : undefined;
+  const backImageUrl = backPicId ? `https://i.colnect.net/t/${formatPicId(backPicId)}/${slug}.jpg` : undefined;
 
   // Build Colnect URL for the item
   const categoryDisplay = COLNECT_CATEGORY_DISPLAY[colnectCategory] || colnectCategory;
@@ -522,7 +586,7 @@ function buildAuthorityData(
       seriesId,
       producerId,
 
-      // Images
+      // Images (proper URL format per CAPI spec)
       frontImageUrl,
       backImageUrl,
 
@@ -547,6 +611,7 @@ export async function healthCheck(): Promise<{
   status: 'healthy' | 'degraded' | 'unhealthy';
   latency: number;
   message: string;
+  gateway: boolean;
 }> {
   const startTime = Date.now();
   const creds = getCredentials();
@@ -556,8 +621,11 @@ export async function healthCheck(): Promise<{
       status: 'unhealthy',
       latency: 0,
       message: 'COLNECT_API_KEY / COLNECT_API_SECRET not configured',
+      gateway: false,
     };
   }
+
+  const usingGateway = isGatewayEnabled();
 
   try {
     // Test with the categories endpoint (lightweight)
@@ -569,7 +637,8 @@ export async function healthCheck(): Promise<{
       return {
         status: 'healthy',
         latency,
-        message: `Colnect API responding. ${data.length} categories available.`,
+        message: `Colnect API responding via ${usingGateway ? 'gateway' : 'direct'}. ${data.length} categories available.`,
+        gateway: usingGateway,
       };
     }
 
@@ -577,12 +646,14 @@ export async function healthCheck(): Promise<{
       status: 'degraded',
       latency,
       message: 'Colnect API responded but returned unexpected data',
+      gateway: usingGateway,
     };
   } catch (error: any) {
     return {
       status: 'unhealthy',
       latency: Date.now() - startTime,
       message: error.message || 'Colnect health check failed',
+      gateway: usingGateway,
     };
   }
 }

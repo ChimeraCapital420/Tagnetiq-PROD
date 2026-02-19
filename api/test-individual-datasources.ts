@@ -1,6 +1,6 @@
 // ============================================
 // FILE: api/test-individual-datasources.ts
-// HYDRA v6.3 - Market Data API Connection Tester
+// HYDRA v6.4 - Market Data API Connection Tester
 // 
 // Mirrors /api/test-individual-providers for AI providers
 // Tests all external datasource API connections:
@@ -317,11 +317,11 @@ const DATASOURCES: DatasourceConfig[] = [
   // ------------------------------------------
   {
     name: 'ebay',
-    displayName: 'eBay',
+    displayName: 'eBay Browse API',
     category: 'General Marketplace',
     envKeys: ['EBAY_APP_ID', 'EBAY_CLIENT_ID'],
     requiresKey: true,
-    documentation: 'https://developer.ebay.com/develop/apis',
+    documentation: 'https://developer.ebay.com/api-docs/buy/browse/overview.html',
     test: async (apiKey) => {
       if (!apiKey) throw new Error('EBAY_APP_ID / EBAY_CLIENT_ID not configured');
 
@@ -489,7 +489,7 @@ const DATASOURCES: DatasourceConfig[] = [
   },
 
   // ------------------------------------------
-  // 11. Colnect (Collectibles) - HMAC Auth
+  // 11. Colnect (Collectibles) - HMAC Auth via Gateway
   // ------------------------------------------
   {
     name: 'colnect',
@@ -503,6 +503,10 @@ const DATASOURCES: DatasourceConfig[] = [
       const appSecret = process.env.COLNECT_API_SECRET;
       if (!appId || !appSecret) throw new Error('COLNECT_API_KEY / COLNECT_API_SECRET not configured');
 
+      // Gateway config for production (Colnect blocks datacenter IPs)
+      const gatewayUrl = process.env.COLNECT_GATEWAY_URL;
+      const gatewayKey = process.env.COLNECT_GATEWAY_KEY;
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
 
@@ -512,21 +516,39 @@ const DATASOURCES: DatasourceConfig[] = [
       const hashInput = `${urlPath}>|<${timestamp}`;
       const hash = createHmac('sha256', appSecret).update(hashInput).digest('hex');
 
-      const response = await fetch(
-        `https://api.colnect.net${urlPath}`,
-        {
-          headers: {
-            'Capi-Timestamp': String(timestamp),
-            'Capi-Hash': hash,
-            'User-Agent': 'TagnetIQ-HYDRA/1.0.0',
-            'Accept': 'application/json',
-          },
-          signal: controller.signal,
-        }
-      );
+      const capiHeaders: Record<string, string> = {
+        'Capi-Timestamp': String(timestamp),
+        'Capi-Hash': hash,
+        'User-Agent': 'TagnetIQ-HYDRA/1.0.0',
+        'Accept': 'application/json',
+      };
+
+      let fetchUrl: string;
+      let fetchHeaders: Record<string, string>;
+
+      if (gatewayUrl && gatewayKey) {
+        // Production: route through gateway proxy
+        fetchUrl = `${gatewayUrl}/colnect${urlPath}`;
+        fetchHeaders = {
+          ...capiHeaders,
+          'X-Gateway-Key': gatewayKey,
+        };
+      } else {
+        // Local dev: hit Colnect directly
+        fetchUrl = `https://api.colnect.net${urlPath}`;
+        fetchHeaders = capiHeaders;
+      }
+
+      const response = await fetch(fetchUrl, {
+        headers: fetchHeaders,
+        signal: controller.signal,
+      });
       clearTimeout(timeoutId);
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}: ${body || response.statusText}`);
+      }
 
       const data = await response.json();
       const categories = Array.isArray(data) ? data : [];
