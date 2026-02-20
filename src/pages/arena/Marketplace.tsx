@@ -1,6 +1,8 @@
 // FILE: src/pages/arena/Marketplace.tsx
 // Marketplace Page - Slim Orchestrator
 // FIXED: Added onOpenScanner wiring for MarketplaceHeader
+// FIXED: Import path './marketplace/index' to avoid Windows case collision
+//        with Marketplace.tsx vs marketplace/ directory
 // All components modularized in ./marketplace/
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -27,7 +29,7 @@ import { useAppContext } from '@/contexts/AppContext';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
-// Import modular components
+// Import modular components — explicit /index to avoid Windows case collision
 import {
   MarketplaceHeader,
   MarketplaceCard,
@@ -38,14 +40,14 @@ import {
   useListingActions,
   DEFAULT_FILTERS,
   MAX_PRICE,
-} from './marketplace';
+} from './marketplace/index';
 
 import type {
   MarketplaceItem,
   FilterState,
   ViewMode,
   LayoutMode,
-} from './marketplace';
+} from './marketplace/index';
 
 const Marketplace: React.FC = () => {
   // FIXED: Get setIsScannerOpen from AppContext for scanner button

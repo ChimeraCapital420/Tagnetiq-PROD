@@ -289,3 +289,13 @@ export const SUCCESS_MESSAGES = {
   killSwitchDeactivated: 'Kill switch deactivated.',
   standupGenerated: 'Standup generated!',
 } as const;
+
+// ============================================================================
+// LOADING MESSAGES
+// ============================================================================
+
+export const LOADING_MESSAGES = {
+  briefing: 'Scuba Steve is scanning market news, Athena is analyzing strategy...',
+  chat: 'Thinking...',
+  task: 'Processing...',
+} as const;
