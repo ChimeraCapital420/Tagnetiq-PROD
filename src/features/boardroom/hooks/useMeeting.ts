@@ -1,7 +1,13 @@
 // FILE: src/features/boardroom/hooks/useMeeting.ts
 // Hook for meeting management and chat functionality
+//
+// Sprint 9: Client-Side Intelligence Integration
+//   - Every sendMessage attaches clientContext (energy, routing, room hints)
+//   - Offline queue: messages saved locally when network drops
+//   - Network restoration: queued messages replay automatically
+//   - Routing preview exposed for UI ("Athena is preparing..." before send)
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import type { 
@@ -20,12 +26,47 @@ import {
   PARTICIPANT_REQUIRED_TYPES 
 } from '../constants';
 
+// Sprint 9: Intelligence
+import { useBoardroomIntelligence } from './useBoardroomIntelligence';
+import type { BoardroomClientContext } from './useBoardroomIntelligence';
+import { isOnline as checkOnline } from '../intelligence/offline-queue';
+
+// =============================================================================
+// TYPES
+// =============================================================================
+
 interface UseMeetingOptions {
   members: BoardMember[];
   onMeetingCreated?: (meeting: Meeting) => void;
 }
 
-export function useMeeting(options: UseMeetingOptions): UseMeetingReturn {
+// Extend the return type with Sprint 9 intelligence
+export interface UseMeetingWithIntelligence extends UseMeetingReturn {
+  /** Sprint 9: Whether the device is online */
+  isOnline: boolean;
+  /** Sprint 9: Number of messages queued for offline send */
+  pendingOfflineCount: number;
+  /** Sprint 9: Whether cognitive context is preloaded */
+  contextReady: boolean;
+  /** Sprint 9: Preview which member will respond for a given message */
+  routingPreview: (message: string) => {
+    primarySlug: string | null;
+    primaryName: string;
+    topic: string;
+    confidence: number;
+  };
+  /** Sprint 9: Detect energy from message text (for real-time UI) */
+  detectEnergy: (message: string) => {
+    energy: string;
+    confidence: number;
+  };
+}
+
+// =============================================================================
+// HOOK
+// =============================================================================
+
+export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligence {
   const { members, onMeetingCreated } = options;
 
   // State
@@ -33,6 +74,9 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [sending, setSending] = useState(false);
   const [loadingResponses, setLoadingResponses] = useState<string[]>([]);
+
+  // Sprint 9: Wire intelligence
+  const intelligence = useBoardroomIntelligence(members, activeMeeting);
 
   // Get auth session helper
   const getSession = async () => {
@@ -43,7 +87,45 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingReturn {
     return session;
   };
 
+  // ==========================================================================
+  // Sprint 9: Auto-replay queued messages when network restores
+  // ==========================================================================
+  useEffect(() => {
+    if (intelligence.online && intelligence.pendingOffline > 0) {
+      intelligence.replay(async (meetingId, payload) => {
+        try {
+          const session = await getSession();
+          const response = await fetch(API_ENDPOINTS.chat, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+          });
+          return response.ok;
+        } catch {
+          return false;
+        }
+      }).then(() => {
+        const remaining = intelligence.pendingOffline;
+        if (remaining === 0) {
+          toast.success('Queued messages sent successfully');
+        }
+      });
+    }
+  }, [intelligence.online]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ==========================================================================
+  // Clear context when meeting changes
+  // ==========================================================================
+  useEffect(() => {
+    intelligence.clearContext();
+  }, [activeMeeting?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ==========================================================================
   // Create a new meeting
+  // ==========================================================================
   const createMeeting = useCallback(async (
     title: string, 
     type: MeetingType, 
@@ -92,7 +174,9 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingReturn {
     }
   }, [members, onMeetingCreated]);
 
+  // ==========================================================================
   // Load an existing meeting
+  // ==========================================================================
   const loadMeeting = useCallback(async (meeting: Meeting): Promise<void> => {
     try {
       const session = await getSession();
@@ -114,12 +198,18 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingReturn {
     }
   }, []);
 
+  // ==========================================================================
   // Send a message in the active meeting
+  // Sprint 9: Enriched with client intelligence + offline queue fallback
+  // ==========================================================================
   const sendMessage = useCallback(async (content: string): Promise<void> => {
     if (!content.trim() || !activeMeeting || sending) return;
 
     setSending(true);
     const messageText = content.trim();
+
+    // ── Sprint 9: Client-side intelligence (runs BEFORE network) ──
+    const clientContext: BoardroomClientContext = intelligence.enrich(messageText);
 
     // Determine which members should respond
     let respondingMembers: string[] = [];
@@ -145,6 +235,29 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingReturn {
     };
     setMessages(prev => [...prev, tempUserMsg]);
 
+    // Build the full request payload
+    const payload = {
+      meeting_id: activeMeeting.id,
+      message: messageText,
+      // Sprint 9: Attach client intelligence
+      clientContext,
+    };
+
+    // ── Sprint 9: Offline check — queue if no network ──
+    if (!checkOnline()) {
+      intelligence.queueOffline(activeMeeting.id, messageText, payload);
+      toast.info('Message queued — will send when back online');
+      // Update the optimistic message to show queued state
+      setMessages(prev => prev.map(m => 
+        m.id === tempUserMsg.id 
+          ? { ...m, content: `${messageText}\n\n⏳ Queued — waiting for network` }
+          : m
+      ));
+      setSending(false);
+      setLoadingResponses([]);
+      return;
+    }
+
     try {
       const session = await getSession();
 
@@ -154,10 +267,7 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingReturn {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          meeting_id: activeMeeting.id,
-          message: messageText,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -194,16 +304,25 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingReturn {
 
     } catch (err) {
       console.error('Send message error:', err);
-      toast.error(ERROR_MESSAGES.messageSendFailed);
-      // Remove optimistic message on error
-      setMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
+
+      // Sprint 9: If send fails, offer to queue
+      if (!checkOnline()) {
+        intelligence.queueOffline(activeMeeting.id, messageText, payload);
+        toast.info('Network dropped — message queued for retry');
+      } else {
+        toast.error(ERROR_MESSAGES.messageSendFailed);
+        // Remove optimistic message on error
+        setMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
+      }
     } finally {
       setSending(false);
       setLoadingResponses([]);
     }
-  }, [activeMeeting, sending, members]);
+  }, [activeMeeting, sending, members, intelligence]);
 
+  // ==========================================================================
   // Conclude the active meeting
+  // ==========================================================================
   const concludeMeeting = useCallback(async (summary?: string): Promise<void> => {
     if (!activeMeeting) return;
 
@@ -236,12 +355,39 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingReturn {
     }
   }, [activeMeeting]);
 
+  // ==========================================================================
   // Clear active meeting
+  // ==========================================================================
   const clearActiveMeeting = useCallback(() => {
     setActiveMeeting(null);
     setMessages([]);
     setLoadingResponses([]);
-  }, []);
+    intelligence.clearContext();
+  }, [intelligence]);
+
+  // ==========================================================================
+  // Sprint 9: Routing preview for UI
+  // ==========================================================================
+  const routingPreview = useCallback((message: string) => {
+    const preview = intelligence.routingPreview(message);
+    return {
+      primarySlug: preview.primarySlug,
+      primaryName: preview.primaryName,
+      topic: preview.topic,
+      confidence: preview.confidence,
+    };
+  }, [intelligence]);
+
+  // ==========================================================================
+  // Sprint 9: Energy detection for UI
+  // ==========================================================================
+  const detectEnergy = useCallback((message: string) => {
+    const result = intelligence.detectEnergy(message);
+    return {
+      energy: result.energy,
+      confidence: result.confidence,
+    };
+  }, [intelligence]);
 
   return {
     // State
@@ -256,6 +402,13 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingReturn {
     sendMessage,
     concludeMeeting,
     clearActiveMeeting,
+
+    // Sprint 9: Intelligence
+    isOnline: intelligence.online,
+    pendingOfflineCount: intelligence.pendingOffline,
+    contextReady: intelligence.contextReady,
+    routingPreview,
+    detectEnergy,
   };
 }
 

@@ -1,7 +1,7 @@
 // FILE: src/features/boardroom/index.ts
 // Main barrel export for the boardroom feature
 //
-// Sprint 7: Added layouts export
+// Sprint 9: Added Intelligence module (client-side)
 
 // Types
 export * from './types';
@@ -24,12 +24,34 @@ export * from './hooks';
 // Components
 export * from './components';
 
-// Layouts
-export * from './layouts';
-
 // Voice System
 export * from './voice/types';
 export { useVoiceConversation } from './voice/useVoiceConversation';
 
 // Knowledge System
 export * from './knowledge/living-knowledge-system';
+
+// Sprint 9: Client-Side Intelligence (pure functions — safe for client)
+export {
+  // Energy detection
+  detectClientEnergy,
+  estimateRoomEnergy,
+  type ClientEnergyType,
+  type ClientEnergyResult,
+  type ClientRoomEnergyHint,
+  // Topic detection + routing preview
+  detectClientTopic,
+  previewRouting,
+  type ClientRoutingPreview,
+  // Context preloading
+  preloadCognitiveContext,
+  getCachedContext,
+  clearCachedContext,
+  type CachedCognitiveContext,
+  // Offline queue
+  isOnline,
+  getPendingCount,
+  getPendingMessages,
+  type QueuedMessage,
+  type OfflineQueueState,
+} from './intelligence';
