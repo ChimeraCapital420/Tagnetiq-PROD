@@ -16,6 +16,8 @@
 //   provider-caller.ts  — AI Gateway (routing, fallback, audit, towers)
 //   prompt-builder.ts   — Prompt Assembly (8-layer: identity + protocols
 //                         + memory + energy + feed + trust + DNA + voice)
+//   chat/               — Modular chat handler (Sprint 1 refactor)
+//
 //   [future] execution-gateway.ts — Trust-gated action channels
 //   [future] audit-log.ts         — Full audit trail for every action
 //   [future] scheduler.ts         — Meeting scheduling + cron triggers
@@ -33,34 +35,24 @@
 // PROVIDER GATEWAY
 // =============================================================================
 // The board's connection to AI. 8 cloud providers + local GPU towers.
-// Intelligent fallback chains. Cost tracking. Performance metrics.
-// Every conversation, task, briefing, and sandbox run flows through here.
+// Intelligent fallback chains. Every conversation, task, briefing,
+// and sandbox run flows through here.
 
 export {
   // ── Core calls ────────────────────────────────────────
   callProviderDirect,        // Single provider, no fallback (use for specific needs)
-  callWithFallback,          // Primary → Groq → OpenAI → DeepSeek (use for conversations)
+  callWithFallback,          // Primary → Groq → OpenAI (use for conversations)
 
   // ── Configuration ─────────────────────────────────────
   getApiKey,                 // Resolve API key for a provider
-  getAvailableProviders,     // List configured providers (health check)
 
   // ── Shared infrastructure ─────────────────────────────
   getSupaAdmin,              // Singleton Supabase admin client
   getCompanyContext,          // Cached company knowledge from DB
 
-  // ── Monitoring ────────────────────────────────────────
-  getGatewayMetrics,         // Performance dashboard data (24h window)
-  logGatewayCall,            // Audit trail for every AI call
-
-  // ── Local GPU towers ──────────────────────────────────
-  checkTowerHealth,          // Ping a specific tower
-  checkAllTowers,            // Health check all configured towers
-
   // ── Types ─────────────────────────────────────────────
-  type ProviderCallResult,   // Rich result: text + provider + timing + cost
-  type CallOptions,          // Config: tokens, temperature, timeout, context
-  type GatewayHealthStatus,  // Dashboard: provider status + tower reachability
+  type ProviderCallResult,   // Rich result: text + provider + timing
+  type CallOptions,          // Config: tokens, temperature, timeout
 } from './provider-caller.js';
 
 // =============================================================================
@@ -68,14 +60,41 @@ export {
 // =============================================================================
 // 8-layer prompt builder that makes each board member unique and context-aware.
 // Identity → Elevation Protocols → Memory → Energy → Cross-Board Feed
-// → Trust/DNA → Cross-Domain → Communication Voice
+// → Decisions → Meeting Type → Voice
 //
 // This is what turns a generic AI model into Athena, Griffin, Prometheus.
 
 export {
   buildBoardMemberPrompt,    // Full 8-layer prompt for conversations
   buildTaskPrompt,           // Task-specific prompt with deliverable format
+  buildBriefingPrompt,       // Briefing-specific prompt (morning/evening/weekly)
 } from './prompt-builder.js';
+
+// =============================================================================
+// CHAT MODULE (Sprint 1 refactor)
+// =============================================================================
+// Modular chat handlers — extracted from the 1,008-line monolith.
+// Import individual handlers or use the barrel.
+
+export {
+  handleSingleMemberChat,
+  handleCommitteeMeeting,
+  handleFullBoardMeeting,
+  loadOrCreateConversation,
+  persistExchange,
+  compressAndArchive,
+  runBackgroundTasks,
+  type ConversationState,
+  type ConversationMessage,
+  type SingleChatParams,
+  type CommitteeParams,
+  type FullBoardParams,
+  type BackgroundTaskParams,
+  type MemberResponse,
+  COMPRESSION_THRESHOLD,
+  MAX_CONTEXT_MESSAGES,
+  VALID_MEETING_TYPES,
+} from './chat/index.js';
 
 // =============================================================================
 // FUTURE EXPORTS (uncomment as modules are built)
