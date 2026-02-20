@@ -9,8 +9,11 @@
 //
 // Pipeline:
 //   Load member → Load conversation → Fetch memory (parallel) →
-//   Build prompt → Call provider → Persist exchange → Respond →
-//   Background tasks (fire and forget)
+//   Build prompt (9 layers) → Call provider → Persist exchange →
+//   Respond → Background tasks (fire and forget)
+//
+// Sprint 3: Meeting summaries (Layer 9) fetched in parallel with
+// existing memory/feed/decisions. Zero added latency.
 //
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -31,6 +34,7 @@ import {
   getCrossBoardFeed,
   getRecentDecisions,
 } from '../../../../src/lib/boardroom/memory/founder-memory.js';
+import { getRecentMeetingSummaries } from '../../../../src/lib/boardroom/memory/meeting-memory.js';
 import { loadOrCreateConversation, persistExchange } from './conversations.js';
 import { runBackgroundTasks } from './background-tasks.js';
 import { MAX_CONTEXT_MESSAGES } from './types.js';
@@ -83,16 +87,19 @@ export async function handleSingleMemberChat(
     : founderArc;
 
   // ── Fetch memory + context (parallel) ─────────────────
-  const [founderMemory, crossBoardFeed, recentDecisions] = await Promise.all([
+  // Sprint 3: meetingSummaries added — fetched alongside existing data.
+  // All 4 fetches run in parallel. Zero added latency.
+  const [founderMemory, crossBoardFeed, recentDecisions, meetingSummaries] = await Promise.all([
     getFounderMemory(supabaseAdmin, userId, memberSlug).catch((err) => {
       console.warn(`[Chat] Memory fetch failed for ${memberSlug}:`, err.message);
       return null;
     }),
     getCrossBoardFeed(supabaseAdmin, userId, memberSlug).catch(() => []),
     getRecentDecisions(supabaseAdmin, userId).catch(() => []),
+    getRecentMeetingSummaries(supabaseAdmin, userId, 3).catch(() => []),
   ]);
 
-  // ── Build rich prompt (8 layers) ──────────────────────
+  // ── Build rich prompt (9 layers) ──────────────────────
   const { systemPrompt, userPrompt } = buildBoardMemberPrompt({
     member: boardMember,
     userMessage: message,
@@ -103,6 +110,7 @@ export async function handleSingleMemberChat(
     founderArc: effectiveArc,
     crossBoardFeed,
     recentDecisions,
+    meetingSummaries,
   });
 
   // ── Call provider via gateway ─────────────────────────
@@ -155,6 +163,7 @@ export async function handleSingleMemberChat(
       compressedMemories: (founderMemory?.compressed_memories || []).length,
       feedSize: (crossBoardFeed || []).length,
       decisionsInPlay: recentDecisions.length,
+      meetingSummariesLoaded: meetingSummaries.length,
       conversationMessageCount: newCount,
     },
   });

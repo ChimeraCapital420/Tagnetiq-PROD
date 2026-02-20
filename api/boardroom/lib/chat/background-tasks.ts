@@ -15,6 +15,13 @@
 //   5. Evolve DNA (trust, provider performance, cross-domain tracking)
 //   6. Audit log (structured console log for now, DB table later)
 //
+// Sprint 3:
+//   7. Compress board meeting (after @all — shared meeting memory)
+//
+// Sprint 4:
+//   8. Evolve personality (every 25 interactions — voice, catchphrases,
+//      cross-member opinions, inside references)
+//
 // ═══════════════════════════════════════════════════════════════════════
 
 import { getSupaAdmin } from '../provider-caller.js';
@@ -23,14 +30,21 @@ import {
   trackEmotionalArc,
   updateFounderEnergy,
 } from '../../../../src/lib/boardroom/memory/founder-memory.js';
-import { evolveBoarDna } from '../../../../src/lib/boardroom/evolution.js';
+import { compressBoardMeeting, type MeetingResponse } from '../../../../src/lib/boardroom/memory/meeting-memory.js';
+import { evolveBoarDna, evolvePersonality } from '../../../../src/lib/boardroom/evolution.js';
 import { compressAndArchive, shouldCompress } from './conversations.js';
 import type { BackgroundTaskParams } from './types.js';
 
 const supabaseAdmin = getSupaAdmin();
 
+// ── Sprint 4: Evolution cadence ──────────────────────────────────────
+// Personality evolves every EVOLUTION_CADENCE interactions.
+// total_interactions in params is the count BEFORE this interaction,
+// so we check (count + 1) to see if this interaction hits the mark.
+const EVOLUTION_CADENCE = 25;
+
 // =============================================================================
-// MAIN RUNNER
+// PER-MESSAGE BACKGROUND TASKS
 // =============================================================================
 
 /**
@@ -107,4 +121,48 @@ export function runBackgroundTasks(params: BackgroundTaskParams): void {
     `${result.responseTime}ms | fallback=${result.isFallback} | ` +
     `energy=${founderEnergy} | msgs=${messageCount}`
   );
+
+  // ── 8. PERSONALITY EVOLUTION (Sprint 4) ───────────────
+  // Check if this interaction pushes the member past the evolution cadence.
+  // boardMember.total_interactions is the count BEFORE this chat.
+  // evolveBoarDna (task #5) will increment it by 1.
+  // So the "after" count is total_interactions + 1.
+  const afterCount = (boardMember.total_interactions || 0) + 1;
+  if (afterCount >= EVOLUTION_CADENCE && afterCount % EVOLUTION_CADENCE === 0) {
+    evolvePersonality(supabaseAdmin, userId, memberSlug).catch((err) => {
+      console.warn(`[Background] evolvePersonality failed for ${memberSlug}:`, err.message);
+    });
+  }
+}
+
+// =============================================================================
+// SPRINT 3: MEETING COMPRESSION TASK
+// =============================================================================
+
+/**
+ * Compress a full board meeting (@all) into shared institutional memory.
+ * Called ONCE after all members respond — NOT per-member.
+ *
+ * Fire-and-forget. Non-blocking. Errors are caught and logged.
+ *
+ * @param userId - Founder's user ID
+ * @param meetingId - Optional FK to boardroom_meetings
+ * @param userMessage - The CEO's original @all message
+ * @param responses - All member responses from the parallel call
+ */
+export function runMeetingCompressionTask(
+  userId: string,
+  meetingId: string | undefined,
+  userMessage: string,
+  responses: MeetingResponse[],
+): void {
+  compressBoardMeeting(
+    supabaseAdmin,
+    userId,
+    meetingId,
+    userMessage,
+    responses,
+  ).catch((err) => {
+    console.warn(`[Background] compressBoardMeeting failed:`, err.message);
+  });
 }

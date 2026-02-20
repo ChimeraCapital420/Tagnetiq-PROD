@@ -1,5 +1,7 @@
 // FILE: src/features/boardroom/index.ts
 // Main barrel export for the boardroom feature
+//
+// Sprint 7: Added layouts export
 
 // Types
 export * from './types';
@@ -21,6 +23,9 @@ export * from './hooks';
 
 // Components
 export * from './components';
+
+// Layouts
+export * from './layouts';
 
 // Voice System
 export * from './voice/types';

@@ -1,15 +1,19 @@
 // FILE: src/features/boardroom/hooks/useBoardroom.ts
 // Main hook for boardroom data loading and access control
+//
+// Sprint 7: Now parses execution dashboard data (Sprint 6) from the
+//           API response and exposes it alongside members/meetings/stats.
 
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import type { 
-  BoardMember, 
-  Meeting, 
-  DashboardStats, 
+import type {
+  BoardMember,
+  Meeting,
+  DashboardStats,
   Briefing,
   BoardroomData,
-  UseBoardroomReturn 
+  ExecutionDashboard,
+  UseBoardroomReturn,
 } from '../types';
 import { API_ENDPOINTS, ERROR_MESSAGES } from '../constants';
 
@@ -21,15 +25,17 @@ export function useBoardroom(options: UseBoardroomOptions = {}): UseBoardroomRet
   briefing: Briefing | null;
   setBriefing: React.Dispatch<React.SetStateAction<Briefing | null>>;
   setMeetings: React.Dispatch<React.SetStateAction<Meeting[]>>;
+  execution: ExecutionDashboard | null;
 } {
   const { autoLoad = true } = options;
-  
+
   // State
   const [hasAccess, setHasAccess] = useState<boolean | null>(null);
   const [members, setMembers] = useState<BoardMember[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [briefing, setBriefing] = useState<Briefing | null>(null);
+  const [execution, setExecution] = useState<ExecutionDashboard | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,7 +46,7 @@ export function useBoardroom(options: UseBoardroomOptions = {}): UseBoardroomRet
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       if (!session) {
         setHasAccess(false);
         setIsLoading(false);
@@ -48,7 +54,7 @@ export function useBoardroom(options: UseBoardroomOptions = {}): UseBoardroomRet
       }
 
       const response = await fetch(API_ENDPOINTS.boardroom, {
-        headers: { 'Authorization': `Bearer ${session.access_token}` }
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
       });
 
       if (response.status === 403) {
@@ -62,29 +68,28 @@ export function useBoardroom(options: UseBoardroomOptions = {}): UseBoardroomRet
       }
 
       const data: BoardroomData = await response.json();
-      
+
       setHasAccess(true);
       setMembers(data.members || []);
       setMeetings(data.meetings || []);
       setStats(data.stats || null);
-      
+
       if (data.todays_briefing) {
         setBriefing(data.todays_briefing);
+      }
+
+      // Sprint 6: Execution dashboard data
+      if (data.execution) {
+        setExecution(data.execution);
       }
 
     } catch (err) {
       console.error('Boardroom load error:', err);
       setError(err instanceof Error ? err.message : ERROR_MESSAGES.loadFailed);
-      setHasAccess(false);
     } finally {
       setIsLoading(false);
     }
   }, []);
-
-  // Get member by slug helper
-  const getMemberBySlug = useCallback((slug: string): BoardMember | undefined => {
-    return members.find(m => m.slug === slug);
-  }, [members]);
 
   // Auto-load on mount
   useEffect(() => {
@@ -93,24 +98,29 @@ export function useBoardroom(options: UseBoardroomOptions = {}): UseBoardroomRet
     }
   }, [autoLoad, loadBoardroom]);
 
+  // Lookup helper
+  const getMemberBySlug = useCallback(
+    (slug: string) => members.find(m => m.slug === slug),
+    [members]
+  );
+
   return {
     // State
     hasAccess,
     members,
     meetings,
     stats,
+    briefing,
+    execution,
     isLoading,
     error,
-    briefing,
-    
-    // Setters for child hooks
+
+    // Setters (used by child hooks)
     setBriefing,
     setMeetings,
-    
+
     // Actions
     refresh: loadBoardroom,
     getMemberBySlug,
   };
 }
-
-export default useBoardroom;

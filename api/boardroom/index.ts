@@ -1,5 +1,8 @@
 // FILE: api/boardroom/index.ts
-// Executive Boardroom - Dashboard data including tasks and capabilities
+// Executive Boardroom - Dashboard data including tasks, capabilities, and execution status
+//
+// Sprint 6: Added execution_queue (pending actions, kill switch, autonomy settings)
+//           to the GET response so the mobile dashboard shows action status.
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -35,7 +38,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(403).json({ error: 'Boardroom access not authorized.' });
     }
 
-    // GET - Get board members, meetings, tasks, and capabilities
+    // GET - Get board members, meetings, tasks, capabilities, and execution status
     if (req.method === 'GET') {
       // Get all board members with their capabilities
       const { data: members, error: membersError } = await supaAdmin
@@ -72,7 +75,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .limit(10);
 
       // ============================================
-      // NEW: Get task statistics
+      // Get task statistics
       // ============================================
       
       // Pending tasks
@@ -116,7 +119,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
 
       // ============================================
-      // NEW: Get today's briefing if exists
+      // Get today's briefing if exists
       // ============================================
       const today = new Date().toISOString().split('T')[0];
       const { data: todaysBriefing } = await supaAdmin
@@ -129,13 +132,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .single();
 
       // ============================================
-      // NEW: Get scheduled actions
+      // Get scheduled actions
       // ============================================
       const { data: scheduledActions } = await supaAdmin
         .from('boardroom_scheduled_actions')
         .select('id, member_slug, action_type, schedule, last_run, next_run, is_active')
         .eq('user_id', user.id)
         .eq('is_active', true);
+
+      // ============================================
+      // Sprint 6: Execution Gateway Status
+      // ============================================
+
+      // Pending actions awaiting CEO approval (mobile badge count)
+      const { count: pendingActionsCount } = await supaAdmin
+        .from('board_action_queue')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('status', 'pending');
+
+      // Recent executed actions (last 7 days, for the dashboard feed)
+      const { data: recentExecutions } = await supaAdmin
+        .from('board_action_queue')
+        .select('id, member_slug, action_type, title, status, impact_level, executed_at, created_at')
+        .eq('user_id', user.id)
+        .in('status', ['executed', 'auto_approved', 'failed'])
+        .gte('created_at', sevenDaysAgo.toISOString())
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      // Autonomy settings (kill switch, sandbox mode, spend caps)
+      const { data: autonomySettings } = await supaAdmin
+        .from('user_autonomy_settings')
+        .select('autonomy_enabled, sandbox_mode, kill_switch_activated, kill_switch_reason, spent_today, spent_this_month, max_spend_per_day, max_spend_per_month')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      // Pending autonomy confirmations (from guardrails)
+      const { count: pendingConfirmationsCount } = await supaAdmin
+        .from('autonomy_ledger')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('status', 'awaiting_confirmation');
 
       // ============================================
       // Format member capabilities for easier use
@@ -172,6 +210,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         
         // Automation
         scheduled_actions: scheduledActions || [],
+
+        // Sprint 6: Execution gateway status
+        execution: {
+          pending_approvals: pendingActionsCount || 0,
+          pending_confirmations: pendingConfirmationsCount || 0,
+          recent_executions: recentExecutions || [],
+          autonomy: autonomySettings
+            ? {
+                enabled: autonomySettings.autonomy_enabled,
+                sandbox: autonomySettings.sandbox_mode,
+                kill_switch: autonomySettings.kill_switch_activated,
+                kill_reason: autonomySettings.kill_switch_reason,
+                spent_today: autonomySettings.spent_today,
+                spent_this_month: autonomySettings.spent_this_month,
+                daily_limit: autonomySettings.max_spend_per_day,
+                monthly_limit: autonomySettings.max_spend_per_month,
+              }
+            : null,
+        },
         
         // Quick stats
         stats: {
@@ -180,6 +237,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           pending_tasks: pendingTasksCount || 0,
           tasks_completed_this_week: (recentCompletedTasks || []).length,
           has_unread_briefing: todaysBriefing && !todaysBriefing.read_at,
+          // Sprint 6 stats
+          pending_approvals: pendingActionsCount || 0,
+          kill_switch_active: autonomySettings?.kill_switch_activated || false,
         },
       });
     }

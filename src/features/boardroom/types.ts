@@ -1,5 +1,8 @@
 // FILE: src/features/boardroom/types.ts
 // All TypeScript interfaces for the Boardroom feature
+//
+// Sprint 7: Added execution, standup, autonomy, energy, personality types
+//           to support the full mobile-first frontend overhaul.
 
 // ============================================================================
 // BOARD MEMBER TYPES
@@ -19,6 +22,11 @@ export interface BoardMember {
   voice_style: string;
   display_order: number;
   is_active?: boolean;
+  trust_level?: number;
+  ai_dna?: Record<string, unknown>;
+  total_interactions?: number;
+  personality_evolution?: PersonalityEvolution | null;
+  evolved_prompt?: string | null;
   capabilities?: BoardMemberCapability[];
   workload?: MemberWorkload;
 }
@@ -32,6 +40,40 @@ export interface BoardMemberCapability {
 export interface MemberWorkload {
   pending: number;
   completed: number;
+}
+
+// ============================================================================
+// PERSONALITY EVOLUTION (Sprint 4)
+// ============================================================================
+
+export interface PersonalityEvolution {
+  voice_signature?: string;
+  catchphrases?: string[];
+  cross_member_opinions?: Record<string, string>;
+  inside_references?: string[];
+  expertise_evolution?: string;
+  communication_style?: string;
+  generation?: number;
+}
+
+// ============================================================================
+// ENERGY (Sprint 9 client-side, Sprint 2 server-side)
+// ============================================================================
+
+export type EnergyLevel =
+  | 'crisis'
+  | 'frustrated'
+  | 'overwhelmed'
+  | 'tired'
+  | 'neutral'
+  | 'focused'
+  | 'excited'
+  | 'celebrating';
+
+export interface EnergyState {
+  level: EnergyLevel;
+  confidence: number;
+  detectedAt: string;
 }
 
 // ============================================================================
@@ -54,11 +96,11 @@ export interface Meeting {
   messages?: Message[];
 }
 
-export type MeetingType = 
-  | 'full_board' 
-  | 'one_on_one' 
-  | 'committee' 
-  | 'vote' 
+export type MeetingType =
+  | 'full_board'
+  | 'one_on_one'
+  | 'committee'
+  | 'vote'
   | 'devils_advocate';
 
 export type MeetingStatus = 'active' | 'concluded' | 'archived';
@@ -79,6 +121,7 @@ export interface MeetingTypeConfig {
 export interface Message {
   id: string;
   meeting_id?: string;
+  conversation_id?: string;
   sender_type: 'user' | 'board_member';
   sender_id?: string;
   member_slug?: string;
@@ -104,6 +147,22 @@ export interface BoardResponse {
 export interface ChatResponse {
   user_message: Message;
   responses: BoardResponse[];
+}
+
+// ============================================================================
+// CONVERSATION PERSISTENCE (Sprint 1)
+// ============================================================================
+
+export interface Conversation {
+  id: string;
+  user_id: string;
+  member_slug: string;
+  title: string;
+  message_count: number;
+  is_compressed: boolean;
+  last_message_at: string;
+  created_at: string;
+  updated_at: string;
 }
 
 // ============================================================================
@@ -153,7 +212,7 @@ export interface QuickTask {
   description?: string;
 }
 
-export type TaskType = 
+export type TaskType =
   | 'social_media_posts'
   | 'competitive_analysis'
   | 'market_research'
@@ -170,6 +229,10 @@ export interface TaskResult {
   member: string;
   task_type?: TaskType;
   created_at?: string;
+  completed_at?: string;
+  title?: string;
+  assigned_to?: string;
+  deliverable_type?: string;
 }
 
 export interface TaskExecutionResponse {
@@ -182,6 +245,89 @@ export interface TaskExecutionResponse {
 }
 
 // ============================================================================
+// STANDUP TYPES (Sprint 5)
+// ============================================================================
+
+export interface StandupEntry {
+  id: string;
+  member_slug: string;
+  member_name?: string;
+  content: string;
+  priority_items: string[];
+  blockers: string[];
+  wins: string[];
+  entry_date: string;
+  created_at: string;
+}
+
+export interface StandupDay {
+  date: string;
+  entries: StandupEntry[];
+  hasBlockers: boolean;
+  totalWins: number;
+}
+
+// ============================================================================
+// EXECUTION TYPES (Sprint 6)
+// ============================================================================
+
+export type ActionStatus = 'pending' | 'auto_approved' | 'approved' | 'rejected' | 'executed' | 'failed' | 'rolled_back';
+export type ImpactLevel = 'low' | 'medium' | 'high' | 'critical';
+
+export interface PendingAction {
+  id: string;
+  member: string;
+  memberName: string;
+  memberTitle: string;
+  type: string;
+  title: string;
+  description: string;
+  impact: ImpactLevel;
+  cost: number | null;
+  affectsUsers: boolean;
+  reversible: boolean;
+  trust: number;
+  createdAt: string;
+}
+
+export interface ExecutionResult {
+  id: string;
+  member_slug: string;
+  action_type: string;
+  title: string;
+  status: ActionStatus;
+  impact_level: ImpactLevel;
+  executed_at: string | null;
+  created_at: string;
+}
+
+export interface AutonomyStatus {
+  enabled: boolean;
+  sandbox: boolean;
+  kill_switch: boolean;
+  kill_reason: string | null;
+  spent_today: number;
+  spent_this_month: number;
+  daily_limit: number;
+  monthly_limit: number;
+}
+
+export interface AuditEntry {
+  id: string;
+  source: 'board_action' | 'autonomy_ledger';
+  type: string;
+  title: string;
+  description: string;
+  member: string | null;
+  initiatedBy: string;
+  status: string;
+  cost: number | null;
+  isSandbox: boolean;
+  createdAt: string;
+  executedAt: string | null;
+}
+
+// ============================================================================
 // DASHBOARD & STATS TYPES
 // ============================================================================
 
@@ -191,8 +337,17 @@ export interface DashboardStats {
   pending_tasks: number;
   tasks_completed_this_week: number;
   has_unread_briefing: boolean;
+  pending_approvals?: number;
+  kill_switch_active?: boolean;
   last_meeting_date?: string;
   total_meetings?: number;
+}
+
+export interface ExecutionDashboard {
+  pending_approvals: number;
+  pending_confirmations: number;
+  recent_executions: ExecutionResult[];
+  autonomy: AutonomyStatus | null;
 }
 
 export interface BoardroomData {
@@ -205,13 +360,15 @@ export interface BoardroomData {
     recent_completed: TaskResult[];
     by_member: Record<string, MemberWorkload>;
   };
+  execution?: ExecutionDashboard;
   access_level?: 'owner' | 'admin' | 'member' | 'viewer';
   scheduled_actions?: ScheduledAction[];
 }
 
 export interface ScheduledAction {
   id: string;
-  title: string;
+  title?: string;
+  member_slug?: string;
   action_type: string;
   schedule: string;
   last_run?: string;
@@ -229,7 +386,7 @@ export interface VoiceRequest {
 }
 
 export interface VoiceResponse {
-  audio: string; // base64 encoded audio
+  audio: string;
   duration_ms?: number;
   voice_id?: string;
 }
@@ -246,31 +403,32 @@ export interface ApiError {
 }
 
 // ============================================================================
+// MOBILE NAV TYPES (Sprint 7)
+// ============================================================================
+
+export type MobileTab = 'chat' | 'tasks' | 'briefing' | 'execute' | 'more';
+
+// ============================================================================
 // HOOK RETURN TYPES
 // ============================================================================
 
 export interface UseBoardroomReturn {
-  // State
   hasAccess: boolean | null;
   members: BoardMember[];
   meetings: Meeting[];
   stats: DashboardStats | null;
+  execution: ExecutionDashboard | null;
   isLoading: boolean;
   error: string | null;
-  
-  // Actions
   refresh: () => Promise<void>;
   getMemberBySlug: (slug: string) => BoardMember | undefined;
 }
 
 export interface UseMeetingReturn {
-  // State
   activeMeeting: Meeting | null;
   messages: Message[];
   sending: boolean;
   loadingResponses: string[];
-  
-  // Actions
   createMeeting: (title: string, type: MeetingType, participants?: string[]) => Promise<Meeting | null>;
   loadMeeting: (meeting: Meeting) => Promise<void>;
   sendMessage: (content: string) => Promise<void>;
@@ -279,23 +437,38 @@ export interface UseMeetingReturn {
 }
 
 export interface UseBriefingReturn {
-  // State
   briefing: Briefing | null;
   isLoading: boolean;
   error: string | null;
-  
-  // Actions
   generateBriefing: (type?: Briefing['briefing_type']) => Promise<void>;
   fetchBriefing: () => Promise<void>;
   markAsRead: () => Promise<void>;
 }
 
 export interface UseTasksReturn {
-  // State
   taskResults: TaskResult[];
   loadingTaskId: string | null;
-  
-  // Actions
   executeTask: (task: QuickTask) => Promise<void>;
   clearResults: () => void;
+}
+
+export interface UseExecutionQueueReturn {
+  queue: PendingAction[];
+  autonomy: AutonomyStatus | null;
+  isLoading: boolean;
+  error: string | null;
+  approveAction: (actionId: string) => Promise<boolean>;
+  rejectAction: (actionId: string, reason: string) => Promise<boolean>;
+  toggleKillSwitch: (reason?: string) => Promise<boolean>;
+  refreshQueue: () => Promise<void>;
+}
+
+export interface UseStandupsReturn {
+  entries: StandupEntry[];
+  history: StandupDay[];
+  isLoading: boolean;
+  error: string | null;
+  fetchToday: () => Promise<void>;
+  fetchHistory: () => Promise<void>;
+  triggerGeneration: (memberSlug?: string) => Promise<void>;
 }

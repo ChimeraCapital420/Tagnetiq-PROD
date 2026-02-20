@@ -6,6 +6,9 @@
 // Sprint M: AI DNA + evolution
 // Sprint P: Autonomous actions
 // Phase 0: Memory, energy, cross-board awareness
+// Sprint 2: Voice personality (energy-aware voice adjustments)
+// Sprint 4: Personality evolution (voice signature, catchphrases,
+//           cross-member opinions, inside references, rollback)
 //
 // ═══════════════════════════════════════════════════════════════════════
 // BREAKING CHANGE LOG (Phase 0):
@@ -38,6 +41,15 @@ export {
   DNA_TRAITS,
 } from './evolution.js';
 
+// ── Sprint 4: Personality Evolution ──────────────────────────────────
+export {
+  type PersonalityEvolutionData,
+  type EvolutionHistoryEntry,
+  evolvePersonality,
+  getEvolutionHistory,
+  rollbackPersonality,
+} from './evolution.js';
+
 // ── Energy Detection (pure functions — safe for client AND server) ───
 export {
   type EnergyLevel,
@@ -46,6 +58,15 @@ export {
   detectEnergyArc,
   getEnergyGuidance,
 } from './energy.js';
+
+// ── Voice Personality (Sprint 2 — energy-aware voice adjustments) ────
+export {
+  type VoiceAdjustments,
+  type MergedVoiceSettings,
+  getVoiceAdjustments,
+  mergeVoiceSettings,
+  getEnergyAwareVoiceSettings,
+} from './voice-personality.js';
 
 // ── Founder Memory Types (safe for client — read-only types) ─────────
 export type {

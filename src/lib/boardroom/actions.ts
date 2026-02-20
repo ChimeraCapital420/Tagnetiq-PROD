@@ -2,6 +2,7 @@
 // Board Autonomous Action Engine
 //
 // Sprint P: Board members can DO things, not just talk.
+// Sprint 6: Enhanced with execution channel routing + user_id tracking.
 //
 // Flow:
 //   1. Board member identifies an action to take (during conversation or autonomously)
@@ -10,7 +11,7 @@
 //      - Low trust: always needs approval
 //      - High trust: auto-approved for low/medium impact
 //      - Autonomous trust: auto-approved for everything in their domain
-//   4. Approved actions are executed
+//   4. Approved actions are executed via channel handlers
 //   5. Everything is logged with a paper trail
 //
 // Safety: Even at max trust, critical actions always need human approval.
@@ -24,9 +25,23 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type ActionStatus = 'pending' | 'auto_approved' | 'approved' | 'rejected' | 'executed' | 'failed' | 'rolled_back';
 export type ImpactLevel = 'low' | 'medium' | 'high' | 'critical';
-export type ActionType = 'report' | 'alert' | 'config_change' | 'data_update' | 'user_action' | 'financial' | 'security' | 'content' | 'integration' | 'recommendation';
+export type ActionType =
+  | 'report'
+  | 'alert'
+  | 'config_change'
+  | 'data_update'
+  | 'user_action'
+  | 'financial'
+  | 'security'
+  | 'content'
+  | 'integration'
+  | 'recommendation'
+  | 'social_media'
+  | 'email'
+  | 'support';
 
 export interface ProposeActionParams {
+  userId: string;
   memberSlug: string;
   actionType: ActionType;
   title: string;
@@ -51,6 +66,42 @@ export interface ActionExecution {
   success: boolean;
   details: string;
   data?: any;
+}
+
+/**
+ * Execution channel interface.
+ * Each channel in api/boardroom/execution/channels/ exports an execute()
+ * function matching this signature.
+ */
+export interface ExecutionChannel {
+  execute: (supabase: SupabaseClient, action: any) => Promise<ActionExecution>;
+  riskLevel: 'low' | 'medium' | 'high';
+}
+
+// =============================================================================
+// CHANNEL REGISTRY — maps action_type to channel modules
+// =============================================================================
+
+// In-process channel map. The gateway populates this at startup.
+// action engine calls routeExecution → checks registry → falls back to built-in handlers.
+const channelRegistry = new Map<string, (supabase: SupabaseClient, action: any) => Promise<ActionExecution>>();
+
+/**
+ * Register an execution channel for a given action type.
+ * Called by the gateway during bootstrap.
+ */
+export function registerChannel(
+  actionType: string,
+  handler: (supabase: SupabaseClient, action: any) => Promise<ActionExecution>
+): void {
+  channelRegistry.set(actionType, handler);
+}
+
+/**
+ * Check if a channel is registered for a given action type.
+ */
+export function hasChannel(actionType: string): boolean {
+  return channelRegistry.has(actionType);
 }
 
 // =============================================================================
@@ -111,10 +162,11 @@ export async function proposeAction(
 
   const status: ActionStatus = canAutoApprove ? 'auto_approved' : 'pending';
 
-  // Insert action
+  // Insert action with user_id for ownership tracking
   const { data: action, error } = await supabase
     .from('board_action_queue')
     .insert({
+      user_id: params.userId,
       member_slug: params.memberSlug,
       action_type: params.actionType,
       title: params.title,
@@ -143,7 +195,7 @@ export async function proposeAction(
     };
   }
 
-  // If auto-approved, execute immediately
+  // If auto-approved, execute immediately (fire-and-forget)
   if (canAutoApprove) {
     executeAction(supabase, action.id).catch(() => {});
   }
@@ -184,7 +236,7 @@ export async function approveAction(
 
   if (error) return false;
 
-  // Execute after approval
+  // Execute after approval (fire-and-forget)
   executeAction(supabase, actionId).catch(() => {});
   return true;
 }
@@ -218,7 +270,7 @@ export async function rejectAction(
 
 /**
  * Execute an approved action.
- * This is the dispatcher — routes to the appropriate handler.
+ * This is the dispatcher — routes to registered channels or built-in handlers.
  */
 async function executeAction(
   supabase: SupabaseClient,
@@ -246,7 +298,7 @@ async function executeAction(
       })
       .eq('id', actionId);
 
-    // Boost trust for successful execution
+    // Boost trust for successful execution (+1, capped at 100)
     await supabase
       .from('boardroom_members')
       .update({
@@ -268,12 +320,19 @@ async function executeAction(
 
 /**
  * Route execution to the appropriate handler based on action type.
- * In production, these would call real services.
+ * Checks registered channels first, then falls back to built-in handlers.
  */
 async function routeExecution(
   supabase: SupabaseClient,
   action: any
 ): Promise<ActionExecution> {
+  // 1. Check if an execution channel is registered for this type
+  const channelHandler = channelRegistry.get(action.action_type);
+  if (channelHandler) {
+    return channelHandler(supabase, action);
+  }
+
+  // 2. Fall back to built-in handlers
   switch (action.action_type) {
     case 'report':
       return executeReport(supabase, action);
@@ -303,14 +362,10 @@ async function routeExecution(
   }
 }
 
-// ── Action Handlers ─────────────────────────────────────
+// ── Built-in Action Handlers ────────────────────────────
 
-async function executeReport(supabase: SupabaseClient, action: any): Promise<ActionExecution> {
+async function executeReport(_supabase: SupabaseClient, action: any): Promise<ActionExecution> {
   const payload = action.action_payload || {};
-
-  // Reports generate data snapshots
-  // In production, each member has specific report generators
-  // For now, we log the request and return a stub
 
   return {
     success: true,
@@ -319,16 +374,12 @@ async function executeReport(supabase: SupabaseClient, action: any): Promise<Act
       reportType: payload.reportType || 'general',
       generatedAt: new Date().toISOString(),
       memberSlug: action.member_slug,
-      // Real implementation would generate actual data here
     },
   };
 }
 
-async function executeAlert(supabase: SupabaseClient, action: any): Promise<ActionExecution> {
+async function executeAlert(_supabase: SupabaseClient, action: any): Promise<ActionExecution> {
   const payload = action.action_payload || {};
-
-  // Insert as a system notification
-  // Could also trigger push notifications via Sprint I
 
   return {
     success: true,
@@ -341,12 +392,10 @@ async function executeAlert(supabase: SupabaseClient, action: any): Promise<Acti
   };
 }
 
-async function executeSecurity(supabase: SupabaseClient, action: any): Promise<ActionExecution> {
+async function executeSecurity(_supabase: SupabaseClient, action: any): Promise<ActionExecution> {
   const payload = action.action_payload || {};
 
-  // Security actions: flag users, flag listings, etc.
   if (payload.flagUserId) {
-    // Log the flag (don't actually suspend without human review)
     return {
       success: true,
       details: `User ${payload.flagUserId} flagged for review: ${action.description}`,
@@ -369,10 +418,9 @@ async function executeSecurity(supabase: SupabaseClient, action: any): Promise<A
   };
 }
 
-async function executeDataUpdate(supabase: SupabaseClient, action: any): Promise<ActionExecution> {
+async function executeDataUpdate(_supabase: SupabaseClient, action: any): Promise<ActionExecution> {
   const payload = action.action_payload || {};
 
-  // Data updates: clean anomalies, update cached values, etc.
   return {
     success: true,
     details: `Data update executed: ${action.title}`,
@@ -472,7 +520,7 @@ function determineAutoApproval(
   // Financial actions need higher trust
   if (params.actionType === 'financial' && trust < 80) return false;
 
-  // Security actions need higher trust
+  // Security actions need higher trust for high impact
   if (params.actionType === 'security' && params.impactLevel === 'high' && trust < 80) return false;
 
   // Standard auto-approval: trust >= threshold and impact isn't high

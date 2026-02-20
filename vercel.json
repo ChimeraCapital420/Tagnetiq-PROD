@@ -37,6 +37,18 @@
     {
       "path": "/api/notifications/daily-digest?cron_secret=YOUR_CRON_SECRET_HERE",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/boardroom/scheduler?type=morning_briefing&cron_secret=YOUR_CRON_SECRET_HERE",
+      "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/boardroom/scheduler?type=standup&cron_secret=YOUR_CRON_SECRET_HERE",
+      "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/boardroom/scheduler?type=evening_debrief&cron_secret=YOUR_CRON_SECRET_HERE",
+      "schedule": "0 1 * * *"
     }
   ]
 }

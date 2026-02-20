@@ -1,29 +1,35 @@
 // FILE: api/boardroom/lib/prompt-builder.ts
 // ═══════════════════════════════════════════════════════════════════════
-// BOARD PROMPT BUILDER — 8-Layer Assembly
+// BOARD PROMPT BUILDER — 9-Layer Assembly
 // ═══════════════════════════════════════════════════════════════════════
 //
 // Turns a generic AI model into Athena, Griffin, Prometheus.
 //
 // LAYERS (injected into every board conversation):
 //   1. Identity      — Name, title, expertise, personality, voice
+//                      Sprint 4: + evolved personality (voice signature,
+//                      catchphrases, cross-member opinions, inside refs)
 //   2. Elevation     — Billionaire mental models + member-specific protocols
 //   3. Memory        — Founder details extracted from past conversations
 //   4. Energy        — CEO's current emotional state + adaptation guidance
-//   5. Cross-Board   — What other board members recently discussed
+//   5. Cross-Board   — What other board members recently discussed (1:1s)
 //   6. Decisions     — Recent board decisions for institutional continuity
 //   7. Meeting Type  — Context modifier (1:1, committee, vote, etc.)
 //   8. Voice         — Communication style directives
+//   9. Meetings      — Shared memory from full board meetings (@all)
 //
-// BUG #3 FIX (Sprint 1):
+// Sprint 1 BUG #3 FIX:
 //   Previous version accepted { companyContext?, memories? } but chat.ts
-//   was sending Phase 0 fields { founderMemory, founderEnergy, founderArc,
-//   crossBoardFeed, recentDecisions }. All Phase 0 data was silently
-//   dropped — board members never saw memory, energy, or cross-board
-//   context despite the pipeline collecting it correctly.
+//   was sending Phase 0 fields. All Phase 0 data was silently dropped.
+//   This version accepts BOTH Phase 0 and legacy fields.
 //
-//   This version accepts BOTH the Phase 0 fields AND the legacy fields
-//   for backward compatibility with tasks.ts and briefing.ts.
+// Sprint 3: Added Layer 9 — Board Meeting Memory.
+//
+// Sprint 4: Enhanced Layer 1 — Evolved personality injection.
+//   personality_evolution JSONB from boardroom_members is formatted into
+//   organic identity text: voice signature, catchphrases, colleague views,
+//   inside references. Feels like the member GREW these traits, not like
+//   they were programmed.
 //
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -37,6 +43,7 @@ import {
 
 import type { EnergyLevel, EnergyArc } from '../../../src/lib/boardroom/energy';
 import type { FounderMemoryState, BoardActivityEntry } from '../../../src/lib/boardroom/memory/founder-memory';
+import type { MeetingSummary } from '../../../src/lib/boardroom/memory/meeting-memory';
 
 // ============================================================================
 // TYPES
@@ -56,12 +63,16 @@ interface BoardMember {
   voice_style?: string;
   trust_level?: number;
   ai_dna?: Record<string, number>;
+  // ── Sprint 4: Personality evolution fields ─────────────
+  personality_evolution?: Record<string, any>;
+  evolved_prompt?: string | null;
+  total_interactions?: number;
 }
 
 /**
- * Phase 0 prompt context — the full 8-layer input.
+ * Prompt context — the full 9-layer input.
  *
- * chat.ts sends all Phase 0 fields.
+ * chat.ts sends all Phase 0 fields + meeting summaries.
  * tasks.ts and briefing.ts may send legacy fields only.
  * Both work — Phase 0 fields take priority, legacy fields are fallbacks.
  */
@@ -77,6 +88,9 @@ interface PromptContext {
   founderArc?: EnergyArc;
   crossBoardFeed?: BoardActivityEntry[];
   recentDecisions?: Array<{ decision: string; member_slug: string; category: string; created_at: string }>;
+
+  // ── Sprint 3: Meeting summaries (from chat.ts) ────────
+  meetingSummaries?: MeetingSummary[];
 
   // ── Legacy fields (backward compat for tasks/briefing) ─
   companyContext?: string;
@@ -240,6 +254,87 @@ Your job is to argue AGAINST the proposal:
 };
 
 // ============================================================================
+// SPRINT 4: PERSONALITY EVOLUTION FORMATTER (Layer 1 enhancement)
+// ============================================================================
+
+/**
+ * Format evolved personality data for injection into Layer 1 (Identity).
+ *
+ * This makes the member feel like they've GROWN these traits organically.
+ * The text is conversational, not structured — it reads like a character
+ * brief, not a database dump.
+ *
+ * Only renders if personality_evolution has meaningful data.
+ */
+function formatPersonalityEvolution(
+  evolution?: Record<string, any>,
+  memberName?: string,
+): string {
+  if (!evolution || !evolution.generation || evolution.generation < 1) return '';
+
+  const sections: string[] = [];
+
+  // Voice signature — the core of who they are now
+  if (evolution.voice_signature) {
+    sections.push(`Your communication has evolved: ${evolution.voice_signature}`);
+  }
+
+  // Catchphrases — natural speech patterns
+  const catchphrases = evolution.catchphrases as string[] | undefined;
+  if (catchphrases && catchphrases.length > 0) {
+    sections.push(
+      `You naturally gravitate toward phrases like: ${catchphrases.map(c => `"${c}"`).join(', ')}. ` +
+      `Use these when they fit — they're YOUR voice, not a script.`
+    );
+  }
+
+  // Cross-member opinions — organic relationships
+  const opinions = evolution.cross_member_opinions as Record<string, string> | undefined;
+  if (opinions && Object.keys(opinions).length > 0) {
+    const opinionLines = Object.entries(opinions)
+      .slice(0, 4)
+      .map(([slug, opinion]) => `  - ${slug}: ${opinion}`)
+      .join('\n');
+    sections.push(
+      `Your professional views on colleagues (reference naturally, don't list):\n${opinionLines}`
+    );
+  }
+
+  // Inside references — shared history with the CEO
+  const references = evolution.inside_references as Array<{ reference: string; context: string }> | undefined;
+  if (references && references.length > 0) {
+    const refLines = references
+      .slice(0, 3)
+      .map(r => `  - "${r.reference}" — ${r.context}`)
+      .join('\n');
+    sections.push(
+      `Shared history you can reference when relevant:\n${refLines}\n` +
+      `Weave these in naturally — "Remember when we discussed..." not "According to my records..."`
+    );
+  }
+
+  // Communication style
+  if (evolution.communication_style) {
+    sections.push(`Your evolved style: ${evolution.communication_style}`);
+  }
+
+  // Expertise deepening
+  if (evolution.expertise_evolution) {
+    sections.push(`How you've grown: ${evolution.expertise_evolution}`);
+  }
+
+  if (sections.length === 0) return '';
+
+  return `
+### YOUR EVOLVED PERSONALITY (Generation ${evolution.generation})
+You've been advising this CEO across many conversations. You're not a template —
+you've developed real patterns, opinions, and a relationship. Lean into it.
+
+${sections.join('\n\n')}
+`;
+}
+
+// ============================================================================
 // PHASE 0: FOUNDER MEMORY FORMATTER (Layer 3)
 // ============================================================================
 
@@ -253,7 +348,7 @@ function formatFounderMemory(memory: FounderMemoryState | null | undefined): str
   if (details.length > 0) {
     const highConfidence = details
       .filter(d => d.confidence >= 0.7)
-      .slice(-15); // Most recent 15 high-confidence facts
+      .slice(-15);
 
     if (highConfidence.length > 0) {
       sections.push(`### What You Know About This CEO:
@@ -264,7 +359,7 @@ ${highConfidence.map(d => `- **${d.detail_type}**: ${d.value}`).join('\n')}`);
   // Compressed memories — summaries of past conversation threads
   const compressed = memory.compressed_memories || [];
   if (compressed.length > 0) {
-    const recent = compressed.slice(-5); // Last 5 compressed threads
+    const recent = compressed.slice(-5);
     sections.push(`### Past Conversation Summaries:
 ${recent.map(c => `- [${c.date}] ${c.summary} (Topics: ${(c.topics || []).join(', ')})`).join('\n')}`);
   }
@@ -364,7 +459,6 @@ function formatCrossBoardFeed(
 ): string {
   if (!feed || feed.length === 0) return '';
 
-  // Filter out current member's own entries
   const otherMembers = feed.filter(f => f.member_slug !== currentMemberSlug);
   if (otherMembers.length === 0) return '';
 
@@ -401,6 +495,84 @@ don't contradict active decisions without acknowledging the conflict.
 ${decisions.slice(0, 5).map(d =>
     `- [${d.category}] ${d.decision} (by ${d.member_slug}, ${d.created_at.split('T')[0]})`
   ).join('\n')}
+`;
+}
+
+// ============================================================================
+// SPRINT 3: MEETING SUMMARIES (Layer 9)
+// ============================================================================
+
+function formatMeetingSummaries(
+  summaries?: MeetingSummary[],
+  currentMemberSlug?: string,
+): string {
+  if (!summaries || summaries.length === 0) return '';
+
+  const blocks = summaries.slice(0, 3).map(meeting => {
+    const date = meeting.compressed_at
+      ? new Date(meeting.compressed_at).toLocaleDateString('en-US', {
+          weekday: 'short', month: 'short', day: 'numeric',
+        })
+      : 'Recent';
+
+    const lines: string[] = [];
+    lines.push(`### Board Meeting — ${date}`);
+
+    if (meeting.user_message) {
+      const truncated = meeting.user_message.length > 200
+        ? meeting.user_message.substring(0, 200) + '...'
+        : meeting.user_message;
+      lines.push(`**CEO asked:** "${truncated}"`);
+    }
+
+    lines.push(meeting.summary);
+
+    const myPosition = currentMemberSlug
+      ? meeting.member_positions?.[currentMemberSlug]
+      : null;
+    if (myPosition) {
+      lines.push(`**Your position in this meeting:** ${myPosition}`);
+    }
+
+    const otherPositions = Object.entries(meeting.member_positions || {})
+      .filter(([slug]) => slug !== currentMemberSlug)
+      .slice(0, 4);
+    if (otherPositions.length > 0) {
+      lines.push('**Colleague positions:**');
+      for (const [slug, position] of otherPositions) {
+        lines.push(`- **${slug}**: ${position}`);
+      }
+    }
+
+    const decisions = meeting.decisions_made || [];
+    if (decisions.length > 0) {
+      lines.push('**Decisions reached:**');
+      for (const d of decisions.slice(0, 3)) {
+        lines.push(`- ${d.decision} (${d.confidence})`);
+      }
+    }
+
+    const disagreements = meeting.disagreements || [];
+    if (disagreements.length > 0) {
+      lines.push('**Unresolved tensions:**');
+      for (const d of disagreements.slice(0, 2)) {
+        const sidesSummary = Object.entries(d.sides || {})
+          .map(([slug, pos]) => `${slug}: "${pos}"`)
+          .join(' vs. ');
+        lines.push(`- ${d.topic}: ${sidesSummary}${d.resolution ? ` → Resolved: ${d.resolution}` : ''}`);
+      }
+    }
+
+    return lines.join('\n');
+  });
+
+  return `
+## RECENT BOARD MEETINGS
+You participated in these full board meetings. Reference them naturally —
+acknowledge your own previous positions, build on colleague input,
+and note any unresolved tensions that relate to the current discussion.
+
+${blocks.join('\n\n---\n\n')}
 `;
 }
 
@@ -442,7 +614,7 @@ ${recent.map(h => {
 }
 
 // ============================================================================
-// MAIN PROMPT BUILDER — 8-Layer Assembly
+// MAIN PROMPT BUILDER — 9-Layer Assembly
 // ============================================================================
 
 export function buildBoardMemberPrompt(context: PromptContext): {
@@ -454,11 +626,18 @@ export function buildBoardMemberPrompt(context: PromptContext): {
     // Phase 0 fields
     founderMemory, founderEnergy, founderArc,
     crossBoardFeed, recentDecisions,
+    // Sprint 3 field
+    meetingSummaries,
     // Legacy fields
     companyContext, memories,
   } = context;
 
-  // ── Layer 1: Identity ─────────────────────────────────
+  // ── Layer 1: Identity + Evolved Personality (Sprint 4) ─
+  const evolvedBlock = formatPersonalityEvolution(
+    member.personality_evolution,
+    member.name,
+  );
+
   const identityBlock = `
 # ${member.name.toUpperCase()} - ${member.title}
 ## AI Board of Directors | Executive Boardroom
@@ -472,6 +651,7 @@ ${(member.expertise || []).map(e => `- ${e}`).join('\n')}
 ### YOUR PERSONALITY:
 ${member.personality?.style || 'Direct, insightful, and action-oriented'}
 Voice: ${member.voice_style || 'Professional but warm'}
+${evolvedBlock}
 `;
 
   // ── Layer 2: Elevation Protocols ──────────────────────
@@ -511,6 +691,9 @@ Your goal is not just to advise, but to ELEVATE the CEO's thinking permanently.
 Every response should leave them at a higher level than before.
 `;
 
+  // ── Layer 9: Board Meeting Summaries (Sprint 3) ───────
+  const meetingsBlock = formatMeetingSummaries(meetingSummaries, member.slug);
+
   // ── Assemble system prompt ────────────────────────────
   const systemPrompt = [
     identityBlock,
@@ -521,6 +704,7 @@ Every response should leave them at a higher level than before.
     decisionsBlock,
     meetingBlock,
     voiceBlock,
+    meetingsBlock,
   ]
     .filter(block => block.trim().length > 0)
     .join('\n')

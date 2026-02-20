@@ -2,6 +2,7 @@
 // Board Autonomous Actions API
 //
 // Sprint P: Board members can DO things, not just talk.
+// Sprint 6: Uses getSupaAdmin(), adds user_id to action proposals.
 //
 // AUTHENTICATED (admin only):
 //   POST { action: 'propose', memberSlug, actionType, title, description, domain, payload }
@@ -13,8 +14,8 @@
 //   POST { action: 'templates', memberSlug? }   → Available action templates
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
 import { verifyUser } from '../_lib/security.js';
+import { getSupaAdmin } from './lib/provider-caller.js';
 import {
   proposeAction,
   approveAction,
@@ -30,21 +31,18 @@ export const config = {
   maxDuration: 15,
 };
 
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
+  const supabase = getSupaAdmin();
+
   try {
     const user = await verifyUser(req);
 
     // Verify admin access
-    const { data: access } = await supabaseAdmin
+    const { data: access } = await supabase
       .from('boardroom_access')
       .select('access_level')
       .eq('user_id', user.id)
@@ -63,7 +61,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     switch (action) {
       // ── Propose an action ─────────────────────────────
       case 'propose': {
-        const { memberSlug, actionType, title, description, domain, payload, impactLevel, estimatedCost, affectsUsers, reversible } = req.body;
+        const {
+          memberSlug, actionType, title, description, domain,
+          payload, impactLevel, estimatedCost, affectsUsers, reversible,
+        } = req.body;
 
         if (!memberSlug || !actionType || !title || !description || !domain) {
           return res.status(400).json({
@@ -71,7 +72,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           });
         }
 
-        const result = await proposeAction(supabaseAdmin, {
+        const result = await proposeAction(supabase, {
+          userId: user.id,
           memberSlug,
           actionType: actionType as ActionType,
           title,
@@ -95,7 +97,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(400).json({ error: '"actionId" is required.' });
         }
 
-        const success = await approveAction(supabaseAdmin, actionId, user.id);
+        const success = await approveAction(supabase, actionId, user.id);
         return res.status(200).json({
           success,
           message: success ? 'Action approved and executing.' : 'Failed to approve (may not be pending).',
@@ -109,7 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(400).json({ error: '"actionId" is required.' });
         }
 
-        const success = await rejectAction(supabaseAdmin, rejectId, user.id, reason || 'No reason provided.');
+        const success = await rejectAction(supabase, rejectId, user.id, reason || 'No reason provided.');
         return res.status(200).json({
           success,
           message: success ? 'Action rejected.' : 'Failed to reject (may not be pending).',
@@ -118,7 +120,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ── List pending actions ──────────────────────────
       case 'pending': {
-        const pending = await getPendingActions(supabaseAdmin);
+        const pending = await getPendingActions(supabase);
         return res.status(200).json({ actions: pending, count: pending.length });
       }
 
@@ -127,12 +129,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { memberSlug: historySlug, limit = 20 } = req.body;
 
         if (historySlug) {
-          const history = await getMemberActions(supabaseAdmin, historySlug, limit);
+          const history = await getMemberActions(supabase, historySlug, limit);
           return res.status(200).json({ actions: history, member: historySlug });
         }
 
         // All members
-        const { data: all } = await supabaseAdmin
+        const { data: all } = await supabase
           .from('board_action_queue')
           .select('*, boardroom_members!inner(name, title)')
           .order('created_at', { ascending: false })
@@ -143,7 +145,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ── Action stats ──────────────────────────────────
       case 'stats': {
-        const stats = await getActionStats(supabaseAdmin);
+        const stats = await getActionStats(supabase);
         return res.status(200).json(stats);
       }
 
@@ -151,7 +153,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case 'templates': {
         const { memberSlug: templateSlug } = req.body;
 
-        let query = supabaseAdmin
+        let query = supabase
           .from('board_action_templates')
           .select('*, boardroom_members!inner(name, title, trust_level)')
           .eq('is_active', true);
