@@ -8,6 +8,8 @@
 //   - member.slug passed to action handlers
 //   - Removed member.status (doesn't exist on type)
 //   - Bios keyed by slug for all 15 members
+//
+// Sprint 8 fix #2: Added DialogTitle + VisuallyHidden for Radix a11y compliance
 
 import React, { useState } from 'react';
 import {
@@ -22,7 +24,8 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
@@ -246,7 +249,12 @@ export const ExecutiveProfileModal: React.FC<ExecutiveProfileModalProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] p-0 overflow-hidden">
+      <DialogContent className="max-w-2xl max-h-[90vh] p-0 overflow-hidden" aria-describedby={undefined}>
+        {/* Accessible title — hidden visually, required by Radix for screen readers */}
+        <VisuallyHidden>
+          <DialogTitle>{member.name} — Executive Profile</DialogTitle>
+        </VisuallyHidden>
+
         {/* Header with Avatar */}
         <div className="relative bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-6 pb-4">
           <Button
@@ -261,9 +269,9 @@ export const ExecutiveProfileModal: React.FC<ExecutiveProfileModalProps> = ({
           <div className="flex items-start gap-4">
             {/* Avatar — uses avatar_url (the actual DB field) */}
             <div className="relative">
-              <div 
+              <div
                 className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold ring-4 ring-white/20"
-                style={{ 
+                style={{
                   backgroundImage: member.avatar_url ? `url(${member.avatar_url})` : undefined,
                   backgroundSize: 'cover',
                 }}
