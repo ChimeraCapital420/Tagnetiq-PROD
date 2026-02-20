@@ -1,25 +1,28 @@
 // FILE: src/features/boardroom/components/ExecutiveProfileModal.tsx
 // Modal showing board member details, projects, and voice chat activation
+//
+// Sprint 8 fix: Aligned ALL property accesses to BoardMember type
+//   - member.avatar_url (not .avatar)
+//   - member.expertise (not .specialties)
+//   - member.slug for bio lookup (not .id which is a UUID)
+//   - member.slug passed to action handlers
+//   - Removed member.status (doesn't exist on type)
+//   - Bios keyed by slug for all 15 members
 
 import React, { useState } from 'react';
 import {
   X,
-  Mic,
-  MicOff,
   Phone,
-  PhoneOff,
-  Settings,
   Briefcase,
   GraduationCap,
   Target,
   MessageSquare,
   Volume2,
-  VolumeX,
   Sparkles,
   ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
@@ -49,89 +52,161 @@ interface MemberSettings {
 }
 
 // =============================================================================
-// EXECUTIVE BIOS (Rich backgrounds for each board member)
+// EXECUTIVE BIOS — keyed by member SLUG (matches boardroom_members.slug)
 // =============================================================================
 
-const EXECUTIVE_BIOS: Record<string, {
+interface ExecutiveBio {
   background: string;
   education: string[];
-  expertise: string[];
   philosophy: string;
   currentFocus: string[];
   funFact: string;
-}> = {
-  ceo: {
-    background: "Former founder of two successful e-commerce exits. 15+ years leading high-growth consumer products companies. Known for turning around struggling brands and identifying undervalued market opportunities.",
-    education: ["MBA, Harvard Business School", "BS Economics, Wharton"],
-    expertise: ["Strategic Planning", "M&A", "Brand Building", "Market Positioning", "Leadership"],
-    philosophy: "Every item tells a story. Our job is to find the items whose stories are worth more than their price tags.",
-    currentFocus: ["Q1 Growth Strategy", "New Category Expansion", "Team Scaling"],
-    funFact: "Started reselling baseball cards at age 12, turned $50 into $5,000 by graduation."
+}
+
+const EXECUTIVE_BIOS: Record<string, ExecutiveBio> = {
+  // 1. Athena — Chief Strategy Officer
+  athena: {
+    background: "Former McKinsey partner specializing in retail disruption. Advised Fortune 500 companies on digital transformation. Expert in competitive analysis, market entry strategy, and strategic pivots.",
+    education: ["MBA, Stanford GSB", "Rhodes Scholar, Oxford", "BS Economics, Wharton"],
+    philosophy: "The resale market rewards those who see trends before they become obvious. Data is your crystal ball, but intuition is your compass.",
+    currentFocus: ["Competitive Positioning", "Market Expansion Playbook", "Strategic OKR Architecture"],
+    funFact: "Predicted the vintage Pyrex boom 18 months before it happened using only thrift store data.",
   },
-  cfo: {
+
+  // 2. Griffin — Chief Financial Officer
+  griffin: {
     background: "Former investment banker at Goldman Sachs, specialized in consumer retail. CPA with expertise in inventory-based businesses. Built financial models for over $2B in retail transactions.",
-    education: ["MBA Finance, Columbia", "CPA, New York"],
-    expertise: ["Financial Modeling", "Cash Flow Optimization", "Tax Strategy", "Investment Analysis", "Risk Management"],
-    philosophy: "Profit isn't just about selling high—it's about buying smart, holding right, and knowing when to move.",
-    currentFocus: ["Margin Optimization", "Tax Planning", "Capital Allocation"],
-    funFact: "Can calculate ROI on any item within 3 seconds of seeing it."
+    education: ["MBA Finance, Columbia", "CPA, New York", "BS Accounting, Notre Dame"],
+    philosophy: "Profit isn't just about selling high — it's about buying smart, holding right, and knowing when to move. Every dollar is a soldier.",
+    currentFocus: ["Unit Economics Optimization", "Cash Flow Runway Extension", "Capital Allocation Strategy"],
+    funFact: "Can calculate ROI on any item within 3 seconds of seeing it.",
   },
-  cmo: {
-    background: "Built marketing departments at three unicorn startups. Expert in marketplace dynamics and seller branding. Pioneered influencer partnerships in the resale space.",
-    education: ["BA Marketing, NYU Stern", "Google Analytics Certified"],
-    expertise: ["Marketplace Strategy", "Brand Positioning", "Social Commerce", "SEO/SEM", "Content Strategy"],
-    philosophy: "In resale, your reputation IS your brand. Every listing is a chance to tell your story.",
-    currentFocus: ["Multi-Platform Strategy", "Seller Brand Building", "Community Growth"],
-    funFact: "Viral tweet about a $2 thrift find that sold for $800 got 2M impressions."
-  },
-  coo: {
-    background: "Former Amazon logistics manager, scaled fulfillment operations from startup to $100M. Expert in inventory management systems and operational efficiency.",
-    education: ["MS Operations Research, MIT", "Six Sigma Black Belt"],
-    expertise: ["Supply Chain", "Process Optimization", "Inventory Systems", "Automation", "Quality Control"],
-    philosophy: "The fastest path to profit is eliminating waste. Every minute an item sits is money lost.",
-    currentFocus: ["Listing Automation", "Shipping Optimization", "Storage Systems"],
-    funFact: "Personal record: Listed 47 items in one hour with full descriptions and photos."
-  },
-  legal: {
-    background: "IP attorney with 20 years experience in consumer products. Former general counsel for major auction house. Expert in authenticity verification and seller protection.",
-    education: ["JD, Yale Law School", "BA Philosophy, Princeton"],
-    expertise: ["IP Law", "Contract Negotiation", "Authenticity Standards", "Platform Compliance", "Risk Mitigation"],
-    philosophy: "In resale, trust is everything. One fake item can destroy years of reputation building.",
-    currentFocus: ["Authentication Protocols", "Platform Policy Updates", "Seller Protection"],
-    funFact: "Successfully defended a client's right to resell limited edition sneakers against Nike."
-  },
-  strategy: {
-    background: "Former McKinsey partner specializing in retail disruption. Advised Fortune 500 companies on digital transformation. Expert in competitive analysis and market entry.",
-    education: ["MBA, Stanford GSB", "Rhodes Scholar, Oxford"],
-    expertise: ["Competitive Analysis", "Market Research", "Growth Strategy", "Digital Transformation", "M&A Advisory"],
-    philosophy: "The resale market rewards those who see trends before they become obvious. Data is your crystal ball.",
-    currentFocus: ["Category Opportunities", "Platform Diversification", "Trend Analysis"],
-    funFact: "Predicted the vintage Pyrex boom 18 months before it happened."
-  },
-  market: {
-    background: "Data scientist who built pricing algorithms for major e-commerce platforms. Expert in market dynamics, pricing optimization, and demand forecasting.",
+
+  // 3. Scuba Steve — Chief Research Officer
+  scuba: {
+    background: "Data scientist who built pricing algorithms for major e-commerce platforms. Goes 10 layers deep where others stop at 1. Expert in market dynamics, competitive intelligence, and contrarian analysis.",
     education: ["PhD Economics, Chicago", "MS Statistics, Stanford"],
-    expertise: ["Pricing Strategy", "Market Analysis", "Demand Forecasting", "Competitive Intelligence", "Data Science"],
-    philosophy: "Price is a conversation between supply and demand. Learn to listen and you'll never leave money on the table.",
-    currentFocus: ["Dynamic Pricing Models", "Comp Analysis Tools", "Market Trend Reports"],
-    funFact: "Built a model that predicts eBay final prices within 5% accuracy."
+    philosophy: "The best insights are hiding at the bottom of the data ocean. Everyone skims the surface — we dive.",
+    currentFocus: ["Market Trend Deep Dives", "Contrarian Signal Detection", "Competitive Intelligence Synthesis"],
+    funFact: "Built a model that predicts eBay final prices within 5% accuracy across 40 categories.",
   },
-  sourcing: {
-    background: "Legendary picker with 25+ years in the field. Discovered items worth millions in estate sales and thrift stores. Mentor to hundreds of successful resellers.",
-    education: ["School of Hard Knocks", "30,000+ hours in the field"],
-    expertise: ["Estate Sales", "Thrift Sourcing", "Auction Strategy", "Condition Assessment", "Hidden Gems"],
-    philosophy: "The best items are hiding in plain sight. Train your eye and trust your gut.",
-    currentFocus: ["Sourcing Route Optimization", "Relationship Building", "Training Programs"],
-    funFact: "Found a $50,000 painting at a garage sale marked $25."
+
+  // 4. Glitch — Chief Marketing Officer
+  glitch: {
+    background: "Built marketing departments at three unicorn startups. Pioneer of influencer partnerships in the resale space. Expert in viral mechanics, community building, and identity-based marketing.",
+    education: ["BA Marketing, NYU Stern", "Google Analytics Certified", "Self-taught meme economist"],
+    philosophy: "In resale, your reputation IS your brand. Every listing is a chance to tell your story. Think in hooks, not features.",
+    currentFocus: ["Viral Growth Mechanics", "Community-Led Acquisition", "Multi-Platform Brand Strategy"],
+    funFact: "Viral tweet about a $2 thrift find that sold for $800 got 2M impressions overnight.",
   },
+
+  // 5. Vulcan — Chief Technology Officer
+  vulcan: {
+    background: "Former principal engineer at Stripe and early AWS architect. Built distributed systems handling millions of transactions. Expert in scalable architecture, API design, and developer experience.",
+    education: ["MS Computer Science, Carnegie Mellon", "BS Engineering, Georgia Tech"],
+    philosophy: "Architecture is destiny. Build the right foundation and the product builds itself. Cut complexity before adding features.",
+    currentFocus: ["Platform Scalability", "AI Integration Pipeline", "Developer Experience Optimization"],
+    funFact: "Wrote a pricing engine in a weekend that outperformed a team of 12 working for 6 months.",
+  },
+
+  // 6. Lexicoda — Chief Legal Officer
+  lexicoda: {
+    background: "IP attorney with 20 years experience in consumer products. Former general counsel for major auction house. Expert in authenticity verification, platform compliance, and seller protection.",
+    education: ["JD, Yale Law School", "BA Philosophy, Princeton"],
+    philosophy: "In resale, trust is everything. One fake item can destroy years of reputation building. Compliance isn't a constraint — it's a competitive advantage.",
+    currentFocus: ["Authentication Protocol Design", "Platform Policy Compliance", "Seller Legal Protection Framework"],
+    funFact: "Successfully defended a client's right to resell limited edition sneakers against Nike's legal team.",
+  },
+
+  // 7. SHA-1 — Chief Partnerships Officer
+  sha1: {
+    background: "Former head of business development at Shopify. Built partner ecosystems generating $500M+ in GMV. Expert in deal structuring, affiliate programs, and strategic relationship management.",
+    education: ["MBA, INSEAD", "BS International Business, Georgetown"],
+    philosophy: "Great partnerships multiply value for everyone. The best deals are the ones where both sides feel like they won.",
+    currentFocus: ["Platform Partnership Expansion", "Affiliate Revenue Optimization", "Strategic Integration Planning"],
+    funFact: "Closed a partnership deal on a napkin at a conference that became a $10M revenue stream.",
+  },
+
+  // 8. LEO — Chief Innovation Officer
+  leo: {
+    background: "Serial inventor with 12 patents in AI and computer vision. Former research lead at Google X. Expert in emerging technologies, rapid prototyping, and turning moonshots into products.",
+    education: ["PhD AI/ML, MIT", "MS Robotics, ETH Zurich"],
+    philosophy: "Innovation isn't about being first — it's about being right. Prototype fast, fail cheap, scale what works.",
+    currentFocus: ["AI-Powered Product Identification", "Computer Vision for Condition Grading", "Next-Gen Scanning Technology"],
+    funFact: "Built an AI that identifies counterfeit handbags with 97% accuracy from a single photo.",
+  },
+
+  // 9. Cerebro — Chief People Officer
+  cerebro: {
+    background: "Former VP People at Netflix during hypergrowth. Organizational psychologist specializing in high-performance team dynamics. Expert in talent networks, culture design, and community building.",
+    education: ["PhD Organizational Psychology, Columbia", "MS I/O Psychology, Michigan"],
+    philosophy: "The right person in the right role with the right support is unstoppable. Build for people, not positions.",
+    currentFocus: ["Community Network Mapping", "Talent Development Programs", "Culture and Engagement Systems"],
+    funFact: "Can predict team performance with 85% accuracy just from meeting dynamics.",
+  },
+
+  // 10. Aegle — Chief Wellness Officer
+  aegle: {
+    background: "Integrative medicine practitioner who pivoted to business health diagnostics. Former wellness director for Fortune 100 companies. Treats organizations like living organisms — diagnoses issues before they become crises.",
+    education: ["MD, Johns Hopkins", "MBA Health Management, Wharton"],
+    philosophy: "A business that burns out its founder is a business on borrowed time. Sustainable growth beats fast growth every time.",
+    currentFocus: ["Founder Burnout Prevention", "Business Health Diagnostics", "Sustainable Growth Metrics"],
+    funFact: "Developed a 'business vital signs' framework now used by 200+ startups.",
+  },
+
+  // 11. Janus — Chief Intelligence Officer
+  janus: {
+    background: "Former intelligence analyst turned market strategist. Sees both past and future simultaneously. Expert in historical pattern analysis, scenario planning, and signal-vs-noise filtering.",
+    education: ["MA History, Oxford", "MS Futures Studies, University of Houston"],
+    philosophy: "History doesn't repeat, but it rhymes. The future whispers — learn to listen to both echoes and whispers.",
+    currentFocus: ["Historical Pattern Matching", "Scenario Planning Simulations", "Trend Timing Optimization"],
+    funFact: "Predicted three of the last five market crashes using 200-year-old economic patterns.",
+  },
+
+  // 12. Legolas — Chief Product Analyst
+  legolas: {
+    background: "Former senior appraiser at Christie's auction house. Encyclopedic knowledge of collectibles, toys, and consumer products. Every detail matters — from mold variations to packaging dates.",
+    education: ["MA Art History, Sotheby's Institute", "Certified Appraiser, ASA"],
+    philosophy: "Every product tells a story, and every detail matters. The difference between $5 and $5,000 is often one digit on a date stamp.",
+    currentFocus: ["Product Authentication Systems", "Rarity and Demand Forecasting", "Condition Grading Standards"],
+    funFact: "Identified a $40,000 prototype Hot Wheels at a flea market by a 0.5mm mold difference.",
+  },
+
+  // 13. Orion — Chief Knowledge Officer
+  orion: {
+    background: "Former chief librarian of Congress digital archives. Built knowledge management systems for NASA and DARPA. Expert in information architecture, institutional memory, and learning system design.",
+    education: ["PhD Information Science, Berkeley", "MLIS, University of Michigan"],
+    philosophy: "Knowledge is power, but organized knowledge is superpower. The best system is one that makes you smarter every time you use it.",
+    currentFocus: ["Institutional Knowledge Base", "Learning Path Optimization", "Documentation Best Practices"],
+    funFact: "Designed a knowledge system that reduced onboarding time from 6 weeks to 4 days.",
+  },
+
+  // 14. Sal — Chief Operations Officer
+  sal: {
+    background: "Former Amazon logistics manager who scaled fulfillment from startup to $100M. Six Sigma Black Belt. Expert in inventory management, process automation, and operational efficiency. Every minute an item sits is money lost.",
+    education: ["MS Operations Research, MIT", "Six Sigma Black Belt", "BS Industrial Engineering, Purdue"],
+    philosophy: "The fastest path to profit is eliminating waste. Optimize the system, not just the parts.",
+    currentFocus: ["Listing Automation Pipeline", "Shipping Cost Optimization", "Warehouse Layout Systems"],
+    funFact: "Personal record: Listed 47 items in one hour with full descriptions, measurements, and photos.",
+  },
+
+  // 15. Prometheus — Chief Psychology Officer
   prometheus: {
-    background: "Behavioral psychologist specializing in decision-making under uncertainty. Former professor studying cognitive biases in financial markets. Expert in the psychology of collecting and value perception.",
+    background: "Behavioral psychologist specializing in decision-making under uncertainty. Former professor studying cognitive biases in financial markets. Expert in the psychology of collecting, value perception, and founder mindset.",
     education: ["PhD Clinical Psychology, University of Toronto", "Postdoc Behavioral Economics, Harvard"],
-    expertise: ["Behavioral Psychology", "Decision Science", "Cognitive Bias", "Motivation", "Performance Psychology"],
     philosophy: "The market doesn't care about your feelings, but your feelings shape every decision you make. Master yourself first.",
-    currentFocus: ["Reseller Mindset", "Decision Frameworks", "Emotional Discipline"],
-    funFact: "Studied why people pay 10x more for 'vintage' vs 'used' - it's the same item."
+    currentFocus: ["Founder Decision Frameworks", "Cognitive Bias Identification", "Performance Psychology Programs"],
+    funFact: "Studied why people pay 10x more for 'vintage' vs 'used' — it's the same item with a different story.",
   },
+};
+
+/** Fallback bio for any member not in the map */
+const DEFAULT_BIO: ExecutiveBio = {
+  background: "Seasoned executive bringing deep domain expertise to the board. Committed to elevating strategic thinking and driving measurable outcomes.",
+  education: ["Advanced degree in relevant field"],
+  philosophy: "Excellence is not a destination — it's a daily practice.",
+  currentFocus: ["Strategic Advisory", "Cross-Functional Collaboration"],
+  funFact: "Joined the board because one conversation changed everything.",
 };
 
 // =============================================================================
@@ -157,12 +232,16 @@ export const ExecutiveProfileModal: React.FC<ExecutiveProfileModalProps> = ({
 
   if (!member) return null;
 
-  const bio = EXECUTIVE_BIOS[member.id] || EXECUTIVE_BIOS.ceo;
+  // Lookup bio by SLUG (matches boardroom_members.slug)
+  const bio = EXECUTIVE_BIOS[member.slug] || DEFAULT_BIO;
+
+  // Use member.expertise from DB (the actual field), with safe fallback
+  const memberExpertise = member.expertise || [];
 
   const handleSettingChange = (key: keyof MemberSettings, value: any) => {
     const newSettings = { ...settings, [key]: value };
     setSettings(newSettings);
-    onUpdateSettings(member.id, newSettings);
+    onUpdateSettings(member.slug, newSettings);
   };
 
   return (
@@ -180,43 +259,45 @@ export const ExecutiveProfileModal: React.FC<ExecutiveProfileModalProps> = ({
           </Button>
 
           <div className="flex items-start gap-4">
-            {/* Avatar */}
+            {/* Avatar — uses avatar_url (the actual DB field) */}
             <div className="relative">
               <div 
                 className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold ring-4 ring-white/20"
                 style={{ 
-                  backgroundImage: member.avatar ? `url(${member.avatar})` : undefined,
+                  backgroundImage: member.avatar_url ? `url(${member.avatar_url})` : undefined,
                   backgroundSize: 'cover',
                 }}
               >
-                {!member.avatar && member.name.split(' ').map(n => n[0]).join('')}
+                {!member.avatar_url && member.name.split(' ').map(n => n[0]).join('')}
               </div>
-              <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-slate-900 ${
-                member.status === 'available' ? 'bg-green-500' :
-                member.status === 'busy' ? 'bg-yellow-500' : 'bg-gray-500'
-              }`} />
+              {/* Active indicator — uses is_active from DB, not .status */}
+              {member.is_active !== undefined && (
+                <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-slate-900 ${
+                  member.is_active ? 'bg-green-500' : 'bg-gray-500'
+                }`} />
+              )}
             </div>
 
             {/* Name and Title */}
             <div className="flex-1">
               <h2 className="text-xl font-bold text-white">{member.name}</h2>
-              <p className="text-blue-300">{member.role}</p>
+              <p className="text-blue-300">{member.title || member.role}</p>
               <div className="flex flex-wrap gap-2 mt-2">
-                {member.specialties.slice(0, 3).map((specialty, i) => (
+                {memberExpertise.slice(0, 3).map((skill, i) => (
                   <Badge key={i} variant="secondary" className="bg-white/10 text-white/80 text-xs">
-                    {specialty}
+                    {typeof skill === 'string' ? skill : String(skill)}
                   </Badge>
                 ))}
               </div>
             </div>
 
-            {/* Quick Actions */}
+            {/* Quick Actions — pass slug (handlers expect slug, not UUID) */}
             <div className="flex flex-col gap-2">
               <Button
                 size="sm"
                 className="bg-green-600 hover:bg-green-700"
                 onClick={() => {
-                  onStartVoiceChat(member.id);
+                  onStartVoiceChat(member.slug);
                   onClose();
                 }}
               >
@@ -227,7 +308,7 @@ export const ExecutiveProfileModal: React.FC<ExecutiveProfileModalProps> = ({
                 size="sm"
                 variant="secondary"
                 onClick={() => {
-                  onStartTextChat(member.id);
+                  onStartTextChat(member.slug);
                   onClose();
                 }}
               >
@@ -285,18 +366,33 @@ export const ExecutiveProfileModal: React.FC<ExecutiveProfileModalProps> = ({
                 </ul>
               </div>
 
-              {/* Expertise */}
+              {/* Expertise — uses LIVE data from member, not static bio */}
               <div>
                 <h3 className="font-semibold flex items-center gap-2 mb-2">
                   <Target className="w-4 h-4 text-purple-500" />
                   Areas of Expertise
                 </h3>
                 <div className="flex flex-wrap gap-2">
-                  {bio.expertise.map((skill, i) => (
-                    <Badge key={i} variant="outline">{skill}</Badge>
+                  {memberExpertise.map((skill, i) => (
+                    <Badge key={i} variant="outline">
+                      {typeof skill === 'string' ? skill : String(skill)}
+                    </Badge>
                   ))}
                 </div>
               </div>
+
+              {/* AI Provider Badge */}
+              {member.ai_provider && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>Powered by</span>
+                  <Badge variant="secondary" className="text-xs capitalize">
+                    {member.ai_provider}
+                  </Badge>
+                  {member.ai_model && (
+                    <span className="text-[10px] opacity-60">{member.ai_model}</span>
+                  )}
+                </div>
+              )}
 
               {/* Fun Fact */}
               <div className="bg-yellow-500/10 rounded-lg p-4 border border-yellow-500/20">
@@ -321,11 +417,20 @@ export const ExecutiveProfileModal: React.FC<ExecutiveProfileModalProps> = ({
                 ))}
               </div>
 
-              <h3 className="font-semibold pt-4">Recent Consultations</h3>
+              {/* Workload stats from DB if available */}
+              <h3 className="font-semibold pt-4">Activity</h3>
               <div className="space-y-2 text-sm text-muted-foreground">
-                <p>• Advised on 23 item analyses this week</p>
-                <p>• Contributed to 8 sourcing decisions</p>
-                <p>• Reviewed 5 pricing strategies</p>
+                {member.workload ? (
+                  <>
+                    <p>• {member.workload.pending} pending tasks</p>
+                    <p>• {member.workload.completed} tasks completed</p>
+                  </>
+                ) : (
+                  <>
+                    <p>• Available for consultations</p>
+                    <p>• Ready to engage on strategy sessions</p>
+                  </>
+                )}
               </div>
             </TabsContent>
 
