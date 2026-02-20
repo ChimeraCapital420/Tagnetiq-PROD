@@ -9,6 +9,7 @@
 // Sprint 2: Voice personality (energy-aware voice adjustments)
 // Sprint 4: Personality evolution (voice signature, catchphrases,
 //           cross-member opinions, inside references, rollback)
+// Sprint 8: Cognitive Bridge (Oracle ↔ Board shared engine)
 //
 // ═══════════════════════════════════════════════════════════════════════
 // BREAKING CHANGE LOG (Phase 0):
@@ -91,3 +92,77 @@ export {
   getMemberActions,
   getActionStats,
 } from './actions.js';
+
+// ═══════════════════════════════════════════════════════════════════════
+// SPRINT 8: Cognitive Bridge (Oracle ↔ Board)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// These modules extend the boardroom with Oracle's cognitive engine:
+//   - board-energy: Multi-member room energy (wraps Oracle energy.ts)
+//   - board-trust: Trust signal detection + calibration (extends evolution.ts trust)
+//   - expertise-router: Question routing to best-fit member
+//   - memory-bridge: Oracle memory sharing filtered by member domain
+//   - cognitive-bridge: Main orchestrator (preResponse / postResponse)
+//
+// NOTE: Some names are aliased to avoid collision with existing exports:
+//   - getTrustTier (evolution.js) vs getTrustTierFromScore (board-trust.ts)
+//   - detectEnergy (energy.js) vs detectMemberEnergy (board-energy.ts)
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── Board Energy: Multi-member room energy detection ─────────────────
+export {
+  type MemberEnergy,
+  type RoomEnergy,
+  type BoardMessage,
+  detectMemberEnergy,
+  detectRoomEnergy,
+  persistMemberEnergy,
+  persistRoomEnergy,
+  buildEnergyPromptBlock,
+} from './board-energy.js';
+
+// ── Board Trust: Signal detection + calibration ──────────────────────
+// NOTE: getTrustTier already exported from evolution.js above.
+//       Sprint 8 adds the richer TrustTier type + calibration engine.
+//       Use getTrustTierLabel for human-readable tier names.
+export {
+  type TrustTier,
+  type TrustSignal,
+  type TrustSignalType,
+  type TrustCalibration,
+  type MemberTrustProfile,
+  getTrustTierLabel,
+  detectTrustSignals,
+  calibrateTrust,
+  applyTrustCalibration,
+  getMemberTrustProfile,
+  buildTrustPromptBlock,
+} from './board-trust.js';
+
+// ── Expertise Router: Question → best-fit member ─────────────────────
+export {
+  type RoutingResult,
+  type ScoredMember,
+  detectTopic,
+  scoreMember,
+  routeQuestion,
+} from './expertise-router.js';
+
+// ── Memory Bridge: Oracle memory → board context ─────────────────────
+export {
+  type BoardMemberContext,
+  type FetchContextOptions,
+  fetchBoardMemberContext,
+  buildContextPromptBlock,
+} from './memory-bridge.js';
+
+// ── Cognitive Bridge: Main orchestrator ──────────────────────────────
+export {
+  type CognitiveState,
+  type PreResponseInput,
+  type PostResponseInput,
+  type CognitiveDashboard,
+  preResponse,
+  postResponse,
+  getCognitiveDashboard,
+} from './cognitive-bridge.js';
