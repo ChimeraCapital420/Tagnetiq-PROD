@@ -9,11 +9,27 @@
 //
 // Pipeline:
 //   Load member → Load conversation → Fetch memory (parallel) →
-//   Build prompt (9 layers) → Call provider → Persist exchange →
-//   Respond → Background tasks (fire and forget)
+//   Build prompt (9 layers) → Cognitive bridge (enrich prompt) →
+//   Call provider → Persist exchange → Respond →
+//   Background tasks + cognitive postResponse (fire and forget)
 //
 // Sprint 3: Meeting summaries (Layer 9) fetched in parallel with
 // existing memory/feed/decisions. Zero added latency.
+//
+// Sprint 8: Cognitive Bridge wired in.
+//   preResponse() adds 3 layers on TOP of the 9-layer prompt:
+//     - Trust boundaries (behavioral guardrails per trust tier)
+//     - Room energy awareness (cross-member energy state)
+//     - Oracle user context (memory bridge — user data for this member)
+//   postResponse() runs fire-and-forget after response:
+//     - Detects trust signals from the interaction
+//     - Calibrates trust score (up or down)
+//     - Evolves AI DNA (provider/model affinity)
+//     - Persists energy state
+//
+//   SAFETY: Both hooks are wrapped in try/catch. If the bridge fails,
+//   the original 9-layer prompt still works. Bridge is additive, never
+//   required. The board never goes down because of Sprint 8.
 //
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -39,6 +55,13 @@ import { loadOrCreateConversation, persistExchange } from './conversations.js';
 import { runBackgroundTasks } from './background-tasks.js';
 import { MAX_CONTEXT_MESSAGES } from './types.js';
 import type { SingleChatParams, EnergyArc } from './types.js';
+
+// ── Sprint 8: Cognitive Bridge ──────────────────────────
+import {
+  preResponse,
+  postResponse,
+  type CognitiveState,
+} from '../../../../src/lib/boardroom/cognitive-bridge.js';
 
 const supabaseAdmin = getSupaAdmin();
 
@@ -113,11 +136,34 @@ export async function handleSingleMemberChat(
     meetingSummaries,
   });
 
+  // ── Sprint 8: Cognitive Bridge — preResponse ──────────
+  // Adds trust boundaries, room energy, and Oracle user context
+  // on TOP of the 9-layer prompt. If it fails, we use the original.
+  let finalSystemPrompt = systemPrompt;
+  let cognitiveState: CognitiveState | null = null;
+
+  try {
+    cognitiveState = await preResponse(supabaseAdmin, {
+      userId,
+      message,
+      conversationHistory: conversationHistory as any[],
+      participantSlugs: [memberSlug],
+      targetMember: boardMember,
+      basePrompt: systemPrompt,
+      allMembers: [boardMember],
+      forceMember: memberSlug,
+    });
+    finalSystemPrompt = cognitiveState.enrichedPrompt;
+  } catch (err: any) {
+    console.warn(`[CognitiveBridge] preResponse failed for ${memberSlug}:`, err.message);
+    // Falls back to the 9-layer systemPrompt — bridge is additive, not required
+  }
+
   // ── Call provider via gateway ─────────────────────────
   const result = await callWithFallback(
     boardMember.dominant_provider || boardMember.ai_provider,
     boardMember.ai_model,
-    systemPrompt,
+    finalSystemPrompt,
     userPrompt,
     { maxTokens: 2000 },
   );
@@ -165,6 +211,14 @@ export async function handleSingleMemberChat(
       decisionsInPlay: recentDecisions.length,
       meetingSummariesLoaded: meetingSummaries.length,
       conversationMessageCount: newCount,
+      // Sprint 8: Cognitive bridge metadata
+      cognitiveBridge: cognitiveState ? {
+        routedTopic: cognitiveState.routing.topic,
+        routedPrimary: cognitiveState.routing.primaryMember,
+        roomEnergyState: cognitiveState.roomEnergy.overall,
+        trustTierFromBridge: cognitiveState.trustTier,
+        oracleContextInjected: !!cognitiveState.memberContext,
+      } : null,
     },
   });
 
@@ -187,4 +241,21 @@ export async function handleSingleMemberChat(
     conversationId: conversation.id,
     messageCount: newCount,
   });
+
+  // ── Sprint 8: Cognitive Bridge — postResponse ─────────
+  // Runs AFTER response is sent. Detects trust signals, calibrates
+  // trust score, evolves AI DNA, persists energy. Fire and forget.
+  if (cognitiveState) {
+    postResponse(supabaseAdmin, {
+      memberSlug,
+      responseTime: result.responseTime,
+      wasFallback: result.isFallback,
+      wasCrossDomain: crossDomain,
+      providerUsed: result.provider,
+      modelUsed: result.model,
+      topicCategory,
+    }, cognitiveState.roomEnergy).catch((err) => {
+      console.warn(`[CognitiveBridge] postResponse failed for ${memberSlug}:`, err.message);
+    });
+  }
 }

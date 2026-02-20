@@ -3,6 +3,8 @@
 //
 // Sprint 7: Added execution, standup, autonomy, energy, personality types
 //           to support the full mobile-first frontend overhaul.
+// Sprint 8: Added BoardroomTask (full DB record), TaskStatus, TaskPriority,
+//           CreateTaskParams, expanded UseTasksReturn for TaskDashboard.
 
 // ============================================================================
 // BOARD MEMBER TYPES
@@ -244,6 +246,46 @@ export interface TaskExecutionResponse {
   error?: string;
 }
 
+// ── Sprint 8: Full task record from boardroom_tasks table ────────────
+
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'cancelled';
+export type TaskPriority = 'low' | 'normal' | 'high' | 'critical';
+
+/**
+ * Full task record from the boardroom_tasks table.
+ * Used by TaskDashboard for list/detail views.
+ * QuickTask is the preset shape; BoardroomTask is the DB record.
+ */
+export interface BoardroomTask {
+  id: string;
+  user_id: string;
+  assigned_to: string;
+  title: string;
+  description: string;
+  task_type: TaskType | string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  started_at: string | null;
+  completed_at: string | null;
+  deliverable_type: string | null;
+  deliverable_content: string | null;
+  ceo_feedback: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Params for creating a new task via the API.
+ */
+export interface CreateTaskParams {
+  assigned_to: string;
+  title: string;
+  description?: string;
+  task_type: TaskType | string;
+  priority?: TaskPriority;
+  execute_now?: boolean;
+}
+
 // ============================================================================
 // STANDUP TYPES (Sprint 5)
 // ============================================================================
@@ -446,10 +488,22 @@ export interface UseBriefingReturn {
 }
 
 export interface UseTasksReturn {
+  // Legacy quick-task state (backward compatible)
   taskResults: TaskResult[];
   loadingTaskId: string | null;
   executeTask: (task: QuickTask) => Promise<void>;
   clearResults: () => void;
+
+  // Sprint 8: Full CRUD task management
+  tasks: BoardroomTask[];
+  isLoadingTasks: boolean;
+  activeFilter: TaskStatus | 'all';
+  fetchTasks: (filter?: TaskStatus | 'all') => Promise<void>;
+  createTask: (params: CreateTaskParams) => Promise<BoardroomTask | null>;
+  updateTask: (id: string, action: string, feedback?: string) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
+  setFilter: (filter: TaskStatus | 'all') => void;
+  getTask: (id: string) => Promise<BoardroomTask | null>;
 }
 
 export interface UseExecutionQueueReturn {

@@ -10,6 +10,7 @@
 // Sprint 4: Personality evolution (voice signature, catchphrases,
 //           cross-member opinions, inside references, rollback)
 // Sprint 8: Cognitive Bridge (Oracle ↔ Board shared engine)
+// Sprint 8 Gap #3: Oracle Insights Pipeline (analytics → board context)
 //
 // ═══════════════════════════════════════════════════════════════════════
 // BREAKING CHANGE LOG (Phase 0):
@@ -166,3 +167,34 @@ export {
   postResponse,
   getCognitiveDashboard,
 } from './cognitive-bridge.js';
+
+// ═══════════════════════════════════════════════════════════════════════
+// SPRINT 8 GAP #3: Oracle Insights Pipeline
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Aggregates anonymized user behavioral data from the analytics pipeline
+// and transforms it into board-digestible insights for:
+//   - Morning briefings (cron-computed overnight)
+//   - Real-time board questions about product health
+//   - Prompt injection (Layer 10 — live product data)
+//
+// Data flow:
+//   analytics_events → analytics_daily → oracle-insights.ts → board_oracle_insights
+//        (existing)       (existing)          (this)               (new table)
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── Oracle Insights: Analytics → board-digestible data ───────────────
+export {
+  type BoardInsightsSnapshot,
+  type EngagementInsights,
+  type ScanPatternInsights,
+  type ConversionInsights,
+  type MarketplaceInsights,
+  type AIPerformanceInsights,
+  type InsightAlert,
+  computeBoardInsights,
+  persistBoardInsights,
+  getRecentInsights,
+  getTodayInsights,
+  formatInsightsForPrompt,
+} from './oracle-insights.js';

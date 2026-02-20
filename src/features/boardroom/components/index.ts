@@ -3,6 +3,8 @@
 //
 // Sprint 7: Added EnergyIndicator, TrustMeter, PersonalityBadge,
 //           StandupViewer, ApprovalCard, KillSwitchPanel
+// Sprint 7 Gap #4: Added CommitteePanel, ScheduleCalendar, GatewayMetrics
+// Sprint 8: Added TaskDashboard (full CRUD task management)
 
 export { AccessDenied } from './AccessDenied';
 export { BoardSidebar } from './BoardSidebar';
@@ -31,3 +33,11 @@ export { ApprovalCard } from './ApprovalCard';
 export { KillSwitchPanel } from './KillSwitchPanel';
 export { MemberCard } from './MemberCard';
 export { AuditLogViewer } from './AuditLogViewer';
+
+// Sprint 7 Gap #4: Previously missing components
+export { CommitteePanel } from './CommitteePanel';
+export { ScheduleCalendar } from './ScheduleCalendar';
+export { GatewayMetrics } from './GatewayMetrics';
+
+// Sprint 8: Full task management dashboard
+export { TaskDashboard } from './TaskDashboard';
