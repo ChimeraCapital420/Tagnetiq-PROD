@@ -376,7 +376,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const slug = member_slug || 'griffin';
 
       // ── 1. Truncate text at sentence boundary ─────────
-      const ttsText = truncateForTTS(text);
+      const cleanText = stripMarkdownForTTS(text);
+      const ttsText = truncateForTTS(cleanText);
 
       // ── 2. Detect founder energy ──────────────────────
       const founderEnergy = resolveFounderEnergy(clientEnergyHint, recent_messages);
@@ -457,3 +458,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: error.message || 'Voice generation failed' });
   }
 }
+
