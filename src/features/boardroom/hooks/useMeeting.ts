@@ -300,15 +300,22 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
           newMessages.push({ ...data.user_message, sender_type: 'user' });
         }
         
-        // Safely map responses with fallback to empty array
-        const responseMessages = (data.responses || []).map((r: BoardResponse) => ({
-          id: `response-${r.member?.slug || 'unknown'}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          sender_type: 'board_member' as const,
-          member_slug: r.member?.slug,
-          content: r.content || '[No response]',
-          created_at: new Date().toISOString(),
-          ai_provider: r.member?.ai_provider,
-        }));
+        // Safely map responses  normalize both API shapes:
+        //   Full board/committee: { member: "slug", response: "text", name, title }
+        //   Single member:        { member: { slug, name }, content: "text" }
+        const responseMessages = (data.responses || []).map((r: any) => {
+          const slug = typeof r.member === "string" ? r.member : r.member?.slug || "unknown";
+          const text = r.response || r.content || "[No response]";
+          const provider = r.provider || r.member?.ai_provider;
+          return {
+            id: `response-${slug}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            sender_type: "board_member" as const,
+            member_slug: slug,
+            content: text,
+            created_at: new Date().toISOString(),
+            ai_provider: provider,
+          };
+        });
         
         newMessages.push(...responseMessages);
         
@@ -426,3 +433,4 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
 }
 
 export default useMeeting;
+
