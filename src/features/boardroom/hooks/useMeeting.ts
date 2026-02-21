@@ -236,12 +236,25 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
     setMessages(prev => [...prev, tempUserMsg]);
 
     // Build the full request payload
-    const payload = {
+    const payload: Record<string, any> = {
       meeting_id: activeMeeting.id,
       message: messageText,
       // Sprint 9: Attach client intelligence
       clientContext,
     };
+
+    // Route: tell chat.ts which handler to use
+    if (activeMeeting.meeting_type === 'full_board' || activeMeeting.meeting_type === 'vote') {
+      payload.mention_all = true;
+    } else if (activeMeeting.meeting_type === 'committee' && respondingMembers.length >= 2) {
+      payload.committee_members = respondingMembers;
+    } else if (respondingMembers.length === 1) {
+      payload.member_slug = respondingMembers[0];
+    } else if (respondingMembers.length >= 2) {
+      payload.committee_members = respondingMembers;
+    } else {
+      payload.mention_all = true;
+    }
 
     // ── Sprint 9: Offline check — queue if no network ──
     if (!checkOnline()) {
