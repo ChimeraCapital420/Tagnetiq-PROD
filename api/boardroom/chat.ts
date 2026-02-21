@@ -160,7 +160,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Verify boardroom access
     const { data: accessRow } = await supabaseAdmin
       .from('boardroom_access')
-      .select('access_level, subscription_tier')
+      .select('access_level, expires_at')
       .eq('user_id', user.id)
       .single();
 
