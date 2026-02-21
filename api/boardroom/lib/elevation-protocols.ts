@@ -2,7 +2,7 @@
 // The 7 Elevation Protocols - Core frameworks that power all board members
 // These transform board members from advisors into transformational strategic partners
 
-import type { BoardMember } from './types';
+import type { BoardMember } from './types.js';
 
 // ============================================================================
 // ELEVATION PROTOCOL DEFINITIONS
