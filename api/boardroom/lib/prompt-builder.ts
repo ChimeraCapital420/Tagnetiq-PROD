@@ -39,7 +39,7 @@ import {
   getProtocolById,
   detectActiveProtocols,
   type ElevationProtocol,
-} from '../../../src/features/boardroom/elevation-protocols';
+} from './elevation-protocols';
 
 import type { EnergyLevel, EnergyArc } from '../../../src/lib/boardroom/energy';
 import type { FounderMemoryState, BoardActivityEntry } from '../../../src/lib/boardroom/memory/founder-memory';
