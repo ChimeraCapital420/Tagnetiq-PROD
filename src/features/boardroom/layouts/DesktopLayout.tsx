@@ -44,7 +44,7 @@ export const DesktopLayout: React.FC<BoardroomLayoutProps> = (props) => {
     setSelectedMemberSlug(memberSlug);
     const member = getMemberBySlug(memberSlug);
     if (member) {
-      await onCreateMeeting(`Chat with ${member.name}`, 'one_on_one', [member.id]);
+      await onCreateMeeting(`Chat with ${member.name}`, 'one_on_one', [member.slug]);
     }
     setActiveTab('chat' as any);
   };
@@ -54,7 +54,7 @@ export const DesktopLayout: React.FC<BoardroomLayoutProps> = (props) => {
     setSelectedMemberSlug(memberSlug);
     const member = getMemberBySlug(memberSlug);
     if (member) {
-      await onCreateMeeting(`Voice chat with ${member.name}`, 'one_on_one', [member.id]);
+      await onCreateMeeting(`Voice chat with ${member.name}`, 'one_on_one', [member.slug]);
     }
     setActiveTab('chat' as any);
   };
