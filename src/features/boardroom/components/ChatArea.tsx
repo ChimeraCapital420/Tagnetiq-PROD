@@ -76,7 +76,7 @@ const MessageInput: React.FC<{
         <Textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder="Address the board..."
+          placeholder={activeMeeting?.meeting_type === "one_on_one" ? `Message ${activeMeeting?.participant_details?.[0]?.name || "member"}...` : "Address the board..."}
           disabled={sending}
           className="flex-1 min-h-[44px] max-h-32 resize-none"
           maxLength={UI_CONFIG.maxMessageLength}

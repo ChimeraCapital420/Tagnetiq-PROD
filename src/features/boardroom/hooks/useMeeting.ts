@@ -287,7 +287,9 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
         throw new Error(ERROR_MESSAGES.messageSendFailed);
       }
 
-      const data: ChatResponse = await response.json();
+      const raw = await response.json();
+      // Normalize: single-member returns flat { member, response }, wrap into responses array
+      const data: ChatResponse = raw.responses ? raw : { ...raw, responses: [raw] };
 
       // Replace temp message with actual messages
       setMessages(prev => {
@@ -433,4 +435,5 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
 }
 
 export default useMeeting;
+
 
