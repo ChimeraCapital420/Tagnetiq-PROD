@@ -4,6 +4,9 @@
 // Sprint 7: The CEO runs the company from their phone.
 // Bottom nav: Chat | Tasks | Brief | Execute | More
 // Each tab renders a full-screen panel. Badges show counts.
+//
+// Sprint 8: Member cards in "More" tab now create 1:1 meetings
+//   and switch to the chat tab automatically.
 
 import React from 'react';
 import { cn } from '@/lib/utils';
@@ -17,9 +20,9 @@ import { DailyBriefing } from '../components/DailyBriefing';
 import { QuickTasks } from '../components/QuickTasks';
 import { NewMeetingDialog } from '../components/NewMeetingDialog';
 
-// ============================================================================
+// =============================================================================
 // MOBILE LAYOUT
-// ============================================================================
+// =============================================================================
 
 export const MobileLayout: React.FC<BoardroomLayoutProps> = (props) => {
   const {
@@ -33,6 +36,16 @@ export const MobileLayout: React.FC<BoardroomLayoutProps> = (props) => {
     onRefresh, getMemberBySlug,
   } = props;
 
+  // ── Sprint 8: Tap member → create 1:1 meeting → switch to chat ──
+  const handleMemberTap = async (memberSlug: string) => {
+    setSelectedMemberSlug(memberSlug);
+    const member = getMemberBySlug(memberSlug);
+    if (member) {
+      await onCreateMeeting(`Chat with ${member.name}`, 'one_on_one', [member.id]);
+    }
+    setActiveTab('chat' as any);
+  };
+
   // Badge counts for bottom nav
   const badgeCounts: Record<string, number> = {
     pending_approvals: execution?.pending_approvals || 0,
@@ -42,7 +55,7 @@ export const MobileLayout: React.FC<BoardroomLayoutProps> = (props) => {
 
   return (
     <div className="flex flex-col h-screen bg-background">
-      {/* ── Active Panel (full screen minus nav) ─────────── */}
+      {/* ── Active Panel (full screen minus nav) ─────── */}
       <div
         className="flex-1 overflow-hidden"
         style={{ paddingBottom: UI_CONFIG.bottomNavHeight }}
@@ -56,7 +69,7 @@ export const MobileLayout: React.FC<BoardroomLayoutProps> = (props) => {
                   {members.map((m) => (
                     <button
                       key={m.slug}
-                      onClick={() => setSelectedMemberSlug(m.slug)}
+                      onClick={() => handleMemberTap(m.slug)}
                       className={cn(
                         'flex-shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-colors',
                         selectedMemberSlug === m.slug
@@ -200,12 +213,12 @@ export const MobileLayout: React.FC<BoardroomLayoutProps> = (props) => {
           <div className="h-full overflow-y-auto p-4">
             <h2 className="text-lg font-semibold mb-4">Board</h2>
 
-            {/* Member list */}
+            {/* Member list — tap to start 1:1 chat */}
             <div className="space-y-2 mb-6">
               {members.map((m) => (
                 <button
                   key={m.slug}
-                  onClick={() => setSelectedMemberSlug(m.slug)}
+                  onClick={() => handleMemberTap(m.slug)}
                   className="w-full flex items-center gap-3 p-3 rounded-lg bg-muted hover:bg-muted/80 transition-colors text-left"
                 >
                   <img
@@ -251,7 +264,7 @@ export const MobileLayout: React.FC<BoardroomLayoutProps> = (props) => {
         )}
       </div>
 
-      {/* ── Bottom Navigation ────────────────────────────── */}
+      {/* ── Bottom Navigation ──────────────────────── */}
       <nav
         className="fixed bottom-0 inset-x-0 bg-background/95 backdrop-blur-sm border-t z-50 safe-area-pb"
         style={{ height: UI_CONFIG.bottomNavHeight }}
@@ -286,7 +299,7 @@ export const MobileLayout: React.FC<BoardroomLayoutProps> = (props) => {
         </div>
       </nav>
 
-      {/* ── Dialogs ──────────────────────────────────────── */}
+      {/* ── Dialogs ──────────────────────────────────── */}
       <NewMeetingDialog
         open={newMeetingOpen}
         onOpenChange={setNewMeetingOpen}

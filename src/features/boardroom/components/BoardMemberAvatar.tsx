@@ -123,12 +123,12 @@ export const BoardMemberAvatar: React.FC<BoardMemberAvatarProps> = ({
           isSpeaking && "ring-green-500 ring-4 animate-pulse",
         )}
         style={{
-          backgroundImage: member.avatar ? `url(${member.avatar})` : undefined,
+          backgroundImage: member.avatar_url ? `url(${member.avatar_url})` : undefined,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
         }}
       >
-        {!member.avatar && (
+        {!member.avatar_url && (
           <span className={sizeConfig.text}>{initials}</span>
         )}
       </div>

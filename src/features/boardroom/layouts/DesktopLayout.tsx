@@ -5,6 +5,9 @@
 // Left: Member list + meeting history
 // Center: Active panel (chat, tasks, briefing, etc.)
 // Right: Context panel (member profile, execution queue, standups)
+//
+// Sprint 8: Profile modal Voice Chat + Message buttons now create
+//   1:1 meetings and switch to chat tab automatically.
 
 import React from 'react';
 import { cn } from '@/lib/utils';
@@ -20,9 +23,9 @@ import { DailyBriefing } from '../components/DailyBriefing';
 import { QuickTasks } from '../components/QuickTasks';
 import { NewMeetingDialog } from '../components/NewMeetingDialog';
 
-// ============================================================================
+// =============================================================================
 // DESKTOP LAYOUT
-// ============================================================================
+// =============================================================================
 
 export const DesktopLayout: React.FC<BoardroomLayoutProps> = (props) => {
   const {
@@ -36,9 +39,29 @@ export const DesktopLayout: React.FC<BoardroomLayoutProps> = (props) => {
     onRefresh, getMemberBySlug,
   } = props;
 
+  // ── Sprint 8: Profile modal → start 1:1 text chat ──
+  const handleProfileTextChat = async (memberSlug: string) => {
+    setSelectedMemberSlug(memberSlug);
+    const member = getMemberBySlug(memberSlug);
+    if (member) {
+      await onCreateMeeting(`Chat with ${member.name}`, 'one_on_one', [member.id]);
+    }
+    setActiveTab('chat' as any);
+  };
+
+  // ── Sprint 8: Profile modal → start 1:1 voice chat ──
+  const handleProfileVoiceChat = async (memberSlug: string) => {
+    setSelectedMemberSlug(memberSlug);
+    const member = getMemberBySlug(memberSlug);
+    if (member) {
+      await onCreateMeeting(`Voice chat with ${member.name}`, 'one_on_one', [member.id]);
+    }
+    setActiveTab('chat' as any);
+  };
+
   return (
     <div className="h-screen flex flex-col bg-background">
-      {/* ── Header ───────────────────────────────────────── */}
+      {/* ── Header ───────────────────────────────────── */}
       <header className="flex-shrink-0 border-b px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Sparkles className="h-6 w-6 text-primary" />
@@ -84,7 +107,7 @@ export const DesktopLayout: React.FC<BoardroomLayoutProps> = (props) => {
         </div>
       </header>
 
-      {/* ── Main Content Area ────────────────────────────── */}
+      {/* ── Main Content Area ──────────────────────── */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Sidebar: Members + Meetings */}
         <aside className="w-72 flex-shrink-0 border-r overflow-hidden">
@@ -94,7 +117,8 @@ export const DesktopLayout: React.FC<BoardroomLayoutProps> = (props) => {
             activeMeetingId={activeMeeting?.id}
             onSelectMeeting={onSelectMeeting}
             activeMemberId={selectedMemberSlug}
-            onSelectMember={setSelectedMemberSlug}
+            onSelectMember={handleProfileTextChat}
+            onStartVoiceChat={handleProfileVoiceChat}
           />
         </aside>
 
@@ -227,7 +251,7 @@ export const DesktopLayout: React.FC<BoardroomLayoutProps> = (props) => {
         </main>
       </div>
 
-      {/* ── Dialogs ──────────────────────────────────────── */}
+      {/* ── Dialogs ──────────────────────────────────── */}
       <NewMeetingDialog
         open={newMeetingOpen}
         onOpenChange={setNewMeetingOpen}
