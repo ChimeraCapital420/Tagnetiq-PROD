@@ -1,4 +1,7 @@
-// HYDRA v5.3 STREAMING - Real-time Analysis Updates via Server-Sent Events
+// HYDRA v5.4 STREAMING - Real-time Analysis Updates via Server-Sent Events
+// FIX v5.4: SAVES TO DATABASE — was losing all scan data (analysis_history had 0 rows)
+//   Uses saveAnalysisAwaited() before sending 'complete' SSE event.
+//   Oracle, Argos, vault, scan-context ALL depend on this data persisting.
 // FIX v5.3: Uses REAL Hydra fetcher system (fetchMarketData) instead of
 //   homebrew fetchApiData() that called non-existent internal endpoints.
 //   Comic Vine authority cards, eBay pricing, Numista, Google Books — all now work.
@@ -13,6 +16,9 @@ import { createClient } from '@supabase/supabase-js';
 // v5.3: Import the REAL Hydra fetcher system — same one analyze.ts uses
 import { fetchMarketData } from '../src/lib/hydra/fetchers/index.js';
 import type { ItemCategory } from '../src/lib/hydra/types.js';
+
+// v5.4: Import save function — same one analyze.ts uses
+import { saveAnalysisAwaited } from '../src/lib/hydra/storage/supabase.js';
 
 export const config = {
   maxDuration: 60,
@@ -76,7 +82,7 @@ function sendInit(res: VercelResponse) {
     type: 'init',
     timestamp: Date.now(),
     data: {
-      message: 'Initializing Hydra Consensus Engine v5.3...',
+      message: 'Initializing Hydra Consensus Engine v5.4...',
       models: AI_MODELS.map((m) => ({
         name: m.name,
         icon: m.icon,
@@ -124,7 +130,8 @@ function normalizeCategory(cat: string): string {
 
 async function performStreamingAnalysis(
   request: any,
-  res: VercelResponse
+  res: VercelResponse,
+  userId?: string,  // v5.4: Accept userId for database save
 ): Promise<void> {
   const startTime = Date.now();
 
@@ -137,6 +144,23 @@ async function performStreamingAnalysis(
     imageData = request.items[0].data;
   } else if (request.data) {
     imageData = request.data;
+  }
+
+  // v5.4: Extract original image URLs for marketplace persistence
+  const originalImageUrls: string[] = [];
+  if (request.items && Array.isArray(request.items)) {
+    for (const item of request.items) {
+      if (item.originalUrl && !item.originalUrl.startsWith('blob:')) {
+        originalImageUrls.push(item.originalUrl);
+      }
+    }
+  }
+  if (Array.isArray(request.originalImageUrls)) {
+    for (const url of request.originalImageUrls) {
+      if (url && typeof url === 'string' && !url.startsWith('blob:') && !originalImageUrls.includes(url)) {
+        originalImageUrls.push(url);
+      }
+    }
   }
 
   const categoryHint = request.category_id || 'general';
@@ -357,6 +381,76 @@ CATEGORY OPTIONS: pokemon_cards, trading_cards, coins, lego, video_games, vinyl_
     startTime
   );
 
+  // ================================================================
+  // v5.4: SAVE TO DATABASE — BEFORE sending complete event
+  // This is the critical fix. Without this, analysis_history stays
+  // empty and Oracle/Argos/vault have zero scan data to work with.
+  // Uses saveAnalysisAwaited (same as analyze.ts) with 3s timeout.
+  // ================================================================
+  if (userId) {
+    try {
+      const processingTime = Date.now() - startTime;
+
+      // Extract authority data for storage
+      const authoritySource = marketResult.sources?.find(
+        (s: any) => s.authorityData && s.source !== 'ebay'
+      );
+      const authorityData = authoritySource?.authorityData || marketResult.primaryAuthority || null;
+
+      // Build consensus-compatible object for saveAnalysisAwaited
+      const consensusForSave = {
+        itemName: finalResult.itemName,
+        decision: finalResult.decision as 'BUY' | 'SELL',
+        estimatedValue: finalResult.estimatedValue,
+        confidence: normalizeConfidenceTo01(finalResult.confidenceScore),
+        analysisQuality: finalResult.analysis_quality || 'OPTIMAL',
+        totalVotes: votes.length,
+        consensusMetrics: {
+          aiConfidence: aiConfidence,
+          decisionAgreement: votes.filter((v: any) => v.success && v.rawResponse?.decision === finalResult.decision).length / Math.max(votes.length, 1),
+          marketSourceCount: marketResult.sources?.filter((s: any) => s.available).length || 0,
+          hasAuthority: !!authorityData,
+        },
+        // These fields exist on ConsensusResult type but may not be used by save
+        reasoning: finalResult.summary_reasoning || '',
+        votes: votes,
+      };
+
+      // Build vote objects for storage
+      const votesForSave = votes
+        .filter((v: any) => v.success)
+        .map((v: any) => ({
+          providerName: v.providerName || 'Unknown',
+          decision: v.rawResponse?.decision || v.decision || 'SELL',
+          estimatedValue: v.rawResponse?.estimatedValue || v.estimatedValue || 0,
+          confidence: normalizeConfidenceTo01(v.rawResponse?.confidence || v.confidence),
+          weight: v.weight || 1,
+        }));
+
+      const saveResult = await saveAnalysisAwaited(
+        finalResult.id,
+        consensusForSave as any,
+        detectedCategory,
+        userId,
+        votesForSave as any,
+        authorityData,
+        processingTime,
+        originalImageUrls.length > 0 ? originalImageUrls : undefined
+      );
+
+      if (saveResult.success) {
+        console.log(`✅ Stream analysis saved: ${finalResult.id} for user ${userId}`);
+      } else {
+        console.warn(`⚠️ Stream save incomplete: ${saveResult.error}`);
+      }
+    } catch (saveErr: any) {
+      // Save failure must NEVER block the scan response
+      console.error(`❌ Stream save failed (non-fatal): ${saveErr.message}`);
+    }
+  } else {
+    console.warn('⚠️ No userId available — skipping database save');
+  }
+
   // Send completion
   sendSSE(res, {
     type: 'complete',
@@ -544,7 +638,7 @@ function buildFinalResult(
       shareToSocial: true,
     },
 
-    tags: [detectedCategory, 'hydra-v5.3', 'streaming'],
+    tags: [detectedCategory, 'hydra-v5.4', 'streaming'],
   };
 }
 
@@ -580,7 +674,8 @@ export default async function handler(
   }
 
   try {
-    await verifyUser(req);
+    // v5.4: Capture user for database save (was: await verifyUser(req) with no capture)
+    const user = await verifyUser(req);
 
     const body = req.body;
 
@@ -605,7 +700,8 @@ export default async function handler(
       res.setHeader('X-Accel-Buffering', 'no');
       res.setHeader('Access-Control-Allow-Origin', '*');
 
-      await performStreamingAnalysis(body, res);
+      // v5.4: Pass user.id so scans get saved to analysis_history
+      await performStreamingAnalysis(body, res, user.id);
       res.end();
     } else {
       return res.status(200).json({
