@@ -8,13 +8,17 @@
 //
 // Architecture:
 //   - Reads scanProgress from AppContext (SSE events already land here)
-//   - On item_identified: shows template-driven comment ($0)
-//   - On analysis_complete: runs discrepancy detector (client-side)
+//   - On 'identifying' stage: shows template-driven comment ($0)
+//   - On analysis complete (!isAnalyzing + lastAnalysisResult):
+//     runs discrepancy detector (client-side)
 //     - Clean result → template comment ($0)
 //     - Interesting result → CAN fire narrate API (~$0.001)
 //       but template fallback always works
 //   - Tappable → saves comment to sessionStorage for Oracle conversation
 //   - Auto-dismisses after 8 seconds if not tapped
+//
+// Real AppContext scan stages (from SSE events):
+//   preparing → identifying → ai_consensus → market_data → finalizing → complete
 //
 // Mobile-first:
 //   - Thumb-zone positioned (bottom of screen)
@@ -25,10 +29,10 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
-import { renderTemplate } from '@/lib/oracle/narrator/templates.js';
-import { detectDiscrepancies } from '@/lib/oracle/narrator/discrepancy-detector.js';
-import type { NarratorContext, NarratorEventType } from '@/lib/oracle/narrator/templates.js';
-import type { VoteInput, ConsensusInput } from '@/lib/oracle/narrator/discrepancy-detector.js';
+import { renderTemplate } from '@/lib/oracle/narrator/templates';
+import { detectDiscrepancies } from '@/lib/oracle/narrator/discrepancy-detector';
+import type { NarratorContext } from '@/lib/oracle/narrator/templates';
+import type { VoteInput, ConsensusInput } from '@/lib/oracle/narrator/discrepancy-detector';
 
 // =============================================================================
 // TYPES
@@ -61,22 +65,27 @@ function extractVotesForDetector(result: any): {
   votes: VoteInput[];
 } {
   const hc = result?.hydraConsensus || {};
-  const rawVotes: any[] = hc.votes || hc.allVotes || [];
+  const rawVotes: any[] =
+    hc.votes || hc.allVotes || hc.hydraVotes || [];
 
   const consensus: ConsensusInput = {
-    estimatedValue: result?.estimatedValue || hc?.estimatedValue || 0,
-    decision: result?.decision || hc?.consensus?.decision || hc?.decision || 'SELL',
-    confidence: hc?.confidence || hc?.consensus?.confidence || result?.confidenceScore || 0.75,
-    itemName: result?.itemName || hc?.consensus?.itemName || 'Unknown Item',
+    estimatedValue:
+      result?.estimatedValue || hc?.estimatedValue || 0,
+    decision:
+      result?.decision || hc?.consensus?.decision || hc?.decision || 'SELL',
+    confidence:
+      hc?.confidence || hc?.consensus?.confidence || result?.confidenceScore || 0.75,
+    itemName:
+      result?.itemName || hc?.consensus?.itemName || 'Unknown Item',
   };
 
   const votes: VoteInput[] = rawVotes
     .filter((v: any) => v && typeof v === 'object')
     .map((v: any) => ({
-      providerName: v.providerName || 'Unknown',
-      estimatedValue: v.estimatedValue || 0,
+      providerName: v.providerName || v.provider_id || 'Unknown',
+      estimatedValue: v.estimatedValue || v.estimated_value || 0,
       decision: v.decision || 'SELL',
-      confidence: v.confidence || 0.5,
+      confidence: v.confidence || v.confidence_score || 0.5,
       success: v.success ?? true,
       weight: v.weight ?? 1,
     }));
@@ -89,29 +98,68 @@ function extractVotesForDetector(result: any): {
  */
 function writeNarratorComment(comment: string, itemName: string) {
   try {
-    sessionStorage.setItem('oracle_narrator_comment', JSON.stringify({
-      comment,
-      itemName,
-      timestamp: Date.now(),
-    }));
+    sessionStorage.setItem(
+      'oracle_narrator_comment',
+      JSON.stringify({
+        comment,
+        itemName,
+        timestamp: Date.now(),
+      }),
+    );
   } catch {
-    // silent
+    // silent — sessionStorage may not be available
   }
 }
 
 /**
  * Detect current persona from sessionStorage or default.
  */
-function detectPersona(): 'default' | 'estate' | 'hustle' | 'collector' {
+function detectPersona(): 'default' | 'estate' | 'flipper' | 'collector' {
   try {
     const cached = sessionStorage.getItem('oracle_persona');
-    if (cached === 'estate' || cached === 'hustle' || cached === 'collector') {
+    if (
+      cached === 'estate' ||
+      cached === 'flipper' ||
+      cached === 'collector'
+    ) {
       return cached;
     }
   } catch {
     // silent
   }
   return 'default';
+}
+
+/**
+ * Try to extract an item name from scanProgress.
+ * During scanning, we may not have a name yet — fall back gracefully.
+ */
+function getItemNameFromProgress(scanProgress: any): string | null {
+  // Some SSE events include model results with item names
+  if (scanProgress?.itemName) return scanProgress.itemName;
+  if (scanProgress?.detectedItem) return scanProgress.detectedItem;
+
+  // Check if any model status has reported an item name
+  const models = scanProgress?.models || scanProgress?.providers || [];
+  if (Array.isArray(models)) {
+    for (const m of models) {
+      if (m?.itemName) return m.itemName;
+      if (m?.estimate?.itemName) return m.estimate.itemName;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Try to extract category from scanProgress.
+ */
+function getCategoryFromProgress(scanProgress: any): string {
+  return (
+    scanProgress?.category ||
+    scanProgress?.detectedCategory ||
+    'general'
+  );
 }
 
 // =============================================================================
@@ -128,14 +176,20 @@ const OracleNarrator: React.FC = () => {
   });
 
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hasShownForScan = useRef<string>(''); // Track which scan we've narrated
+
+  // ── Fire guards (prevent multiple triggers per scan) ──
+  // These refs reset when a new scan starts (isAnalyzing flips true).
+  const hasShownIdentifying = useRef(false);
   const hasShownComplete = useRef(false);
+  const narrateCallInFlight = useRef(false);
 
   const persona = useMemo(() => detectPersona(), []);
 
   // ── Show comment helper ──
   const showComment = useCallback((comment: string, isLLM = false) => {
-    // Clear any existing timer
+    if (!comment) return;
+
+    // Clear any existing dismiss timer
     if (dismissTimer.current) clearTimeout(dismissTimer.current);
 
     setNarrator({
@@ -147,10 +201,10 @@ const OracleNarrator: React.FC = () => {
 
     // Auto-dismiss after 8 seconds
     dismissTimer.current = setTimeout(() => {
-      setNarrator(prev => ({ ...prev, dismissing: true }));
-      // Actually hide after animation
+      setNarrator((prev) => ({ ...prev, dismissing: true }));
+      // Actually hide after CSS animation completes
       setTimeout(() => {
-        setNarrator(prev => ({ ...prev, visible: false, dismissing: false }));
+        setNarrator((prev) => ({ ...prev, visible: false, dismissing: false }));
       }, 300);
     }, AUTO_DISMISS_MS);
   }, []);
@@ -158,49 +212,93 @@ const OracleNarrator: React.FC = () => {
   // ── Dismiss handler ──
   const dismiss = useCallback(() => {
     if (dismissTimer.current) clearTimeout(dismissTimer.current);
-    setNarrator(prev => ({ ...prev, dismissing: true }));
+    setNarrator((prev) => ({ ...prev, dismissing: true }));
     setTimeout(() => {
-      setNarrator(prev => ({ ...prev, visible: false, dismissing: false }));
+      setNarrator((prev) => ({ ...prev, visible: false, dismissing: false }));
     }, 300);
   }, []);
 
   // ── Tap handler → save to sessionStorage for Oracle chat ──
   const handleTap = useCallback(() => {
-    if (narrator.comment && lastAnalysisResult?.itemName) {
-      writeNarratorComment(narrator.comment, lastAnalysisResult.itemName);
+    const itemName =
+      lastAnalysisResult?.itemName ||
+      getItemNameFromProgress(scanProgress) ||
+      'Unknown Item';
+
+    if (narrator.comment) {
+      writeNarratorComment(narrator.comment, itemName);
     }
     dismiss();
-  }, [narrator.comment, lastAnalysisResult?.itemName, dismiss]);
+  }, [narrator.comment, lastAnalysisResult?.itemName, scanProgress, dismiss]);
 
-  // ── Stage 1: Item identified (during scan) ──
+  // ═══════════════════════════════════════════════════════════════════════
+  // EFFECT 1: Reset all guards when a new scan starts
+  // ═══════════════════════════════════════════════════════════════════════
   useEffect(() => {
-    if (!scanProgress || !isAnalyzing) return;
-
-    // Show comment when category is first detected and we have an item name
-    if (scanProgress.stage === 'ai_consensus' && scanProgress.category) {
-      const scanKey = `${scanProgress.category}-${Date.now()}`;
-      if (hasShownForScan.current === scanKey) return;
-
-      // We don't have itemName during scan yet, use category
-      const context: NarratorContext = {
-        eventType: 'item_identified',
-        itemName: scanProgress.category || 'this item',
-        category: scanProgress.category || 'general',
-        persona,
-      };
-
-      const comment = renderTemplate(context);
-      showComment(comment);
-      hasShownForScan.current = scanKey;
+    if (isAnalyzing) {
+      hasShownIdentifying.current = false;
       hasShownComplete.current = false;
+      narrateCallInFlight.current = false;
+      // Hide any existing narrator bubble when new scan begins
+      if (dismissTimer.current) clearTimeout(dismissTimer.current);
+      setNarrator((prev) =>
+        prev.visible ? { ...prev, visible: false, dismissing: false } : prev,
+      );
     }
-  }, [scanProgress?.stage, scanProgress?.category, isAnalyzing, persona, showComment]);
+  }, [isAnalyzing]);
 
-  // ── Stage 2: Analysis complete ──
+  // ═══════════════════════════════════════════════════════════════════════
+  // EFFECT 2: First comment during scan (template only, $0)
+  //
+  // Fires once when stage transitions to 'identifying' or 'ai_consensus'.
+  // Uses template engine — zero LLM cost, instant.
+  // ═══════════════════════════════════════════════════════════════════════
   useEffect(() => {
-    if (!lastAnalysisResult || hasShownComplete.current) return;
-    if (isAnalyzing) return; // Wait for analysis to fully complete
+    // Only fire during active analysis
+    if (!isAnalyzing || !scanProgress) return;
 
+    // Only fire once per scan
+    if (hasShownIdentifying.current) return;
+
+    // Fire when AIs are actively working
+    // 'identifying' = primary vision AIs started
+    // 'ai_consensus' = text AIs running (we definitely have category by now)
+    const activeStages = ['identifying', 'ai_consensus'];
+    if (!activeStages.includes(scanProgress.stage)) return;
+
+    // Mark as shown FIRST to prevent re-fires
+    hasShownIdentifying.current = true;
+
+    const itemName = getItemNameFromProgress(scanProgress) || 'this item';
+    const category = getCategoryFromProgress(scanProgress);
+
+    const context: NarratorContext = {
+      eventType: 'item_identified',
+      itemName,
+      category,
+      persona,
+    };
+
+    const comment = renderTemplate(context);
+    showComment(comment);
+  }, [scanProgress?.stage, isAnalyzing, persona, showComment]);
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // EFFECT 3: Post-analysis commentary (template + optional LLM)
+  //
+  // Fires once when analysis completes.
+  // Runs client-side discrepancy detection to decide if LLM is worth it.
+  // Template shows immediately. LLM upgrades the comment if interesting.
+  // ═══════════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    // Wait for analysis to fully complete
+    if (isAnalyzing) return;
+    if (!lastAnalysisResult) return;
+
+    // Only fire once per scan
+    if (hasShownComplete.current) return;
+
+    // Mark as shown FIRST — before any async work
     hasShownComplete.current = true;
 
     const { consensus, votes } = extractVotesForDetector(lastAnalysisResult);
@@ -216,44 +314,44 @@ const OracleNarrator: React.FC = () => {
       persona,
     };
 
-    // If interesting AND we have at least 3 votes, try LLM narration
-    if (report.isInteresting && votes.length >= 3) {
-      // Fire template immediately as fallback
-      const templateComment = renderTemplate(context);
-      showComment(templateComment, false);
+    // Always show template immediately ($0)
+    const templateComment = renderTemplate(context);
+    showComment(templateComment, false);
 
-      // Try LLM narration in background (with tight timeout)
-      fetchNarration(lastAnalysisResult, report.narratorPromptHint || '', persona)
-        .then(llmComment => {
+    // If interesting AND we have enough votes, try LLM upgrade in background
+    if (report.isInteresting && votes.length >= 3 && !narrateCallInFlight.current) {
+      narrateCallInFlight.current = true;
+
+      fetchNarration(
+        lastAnalysisResult,
+        report.narratorPromptHint || '',
+        persona,
+      )
+        .then((llmComment) => {
           if (llmComment) {
+            // Upgrade the template comment with LLM response
             showComment(llmComment, true);
           }
         })
         .catch(() => {
           // Template already showing — no action needed
+        })
+        .finally(() => {
+          narrateCallInFlight.current = false;
         });
-    } else {
-      // Clean result → template only ($0)
-      const comment = renderTemplate(context);
-      showComment(comment, false);
     }
   }, [lastAnalysisResult, isAnalyzing, persona, showComment]);
 
-  // ── Cleanup timers ──
+  // ═══════════════════════════════════════════════════════════════════════
+  // EFFECT 4: Cleanup timers on unmount
+  // ═══════════════════════════════════════════════════════════════════════
   useEffect(() => {
     return () => {
       if (dismissTimer.current) clearTimeout(dismissTimer.current);
     };
   }, []);
 
-  // ── Reset when new scan starts ──
-  useEffect(() => {
-    if (isAnalyzing) {
-      hasShownComplete.current = false;
-      setNarrator(prev => ({ ...prev, visible: false }));
-    }
-  }, [isAnalyzing]);
-
+  // ── Don't render when hidden ──
   if (!narrator.visible) return null;
 
   return (
@@ -281,7 +379,9 @@ const OracleNarrator: React.FC = () => {
             {narrator.comment}
           </p>
           <p className="text-[10px] text-white/30 mt-1">
-            {narrator.isLLM ? 'Oracle • Tap to discuss' : 'Tap to discuss with Oracle'}
+            {narrator.isLLM
+              ? 'Oracle • Tap to discuss'
+              : 'Tap to discuss with Oracle'}
           </p>
         </div>
 
@@ -315,6 +415,9 @@ async function fetchNarration(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), LLM_NARRATE_TIMEOUT_MS);
 
+    const hc = result?.hydraConsensus || {};
+    const rawVotes: any[] = hc.votes || hc.allVotes || hc.hydraVotes || [];
+
     const response = await fetch('/api/oracle/narrate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -322,10 +425,10 @@ async function fetchNarration(
         itemName: result.itemName || 'Unknown Item',
         category: result.category || 'general',
         consensusValue: result.estimatedValue || 0,
-        votes: (result.hydraConsensus?.votes || []).slice(0, 5).map((v: any) => ({
-          provider: v.providerName,
-          value: v.estimatedValue,
-          decision: v.decision,
+        votes: rawVotes.slice(0, 5).map((v: any) => ({
+          provider: v.providerName || v.provider_id || 'Unknown',
+          value: v.estimatedValue || v.estimated_value || 0,
+          decision: v.decision || 'SELL',
         })),
         discrepancies: discrepancyHint,
         persona,
