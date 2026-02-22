@@ -20,6 +20,10 @@
 // Liberation 4:  Personal Concierge — PERSONAL KNOWLEDGE block
 // Liberation 5:  Self-Aware Oracle — YOUR CAPABILITIES block
 // Liberation 10: How-To Teaching — AUTHORITATIVE RESOURCES block
+//
+// v2.0: buildScanContext now receives vaultItems to enable
+//       actionable suggestions (scan-actions.ts). Zero new
+//       dependencies — scan-context imports scan-actions internally.
 
 import type { OracleIdentity } from '../types.js';
 import { buildIdentityBlock, buildPersonalityBlock } from './identity-block.js';
@@ -468,7 +472,7 @@ function formatMomentDate(dateStr: string): string {
  *   6. Long-term memory
  *   7. Trust calibration
  *   8. Seasonal context
- *   9. Scan history
+ *   9. Scan history  ← v2.0: now includes market data, authority, actions
  *  10. Vault contents
  *  11. User profile
  *  12. Argos intelligence
@@ -507,7 +511,8 @@ export function buildSystemPrompt(
     params.currentEnergy,
   );
 
-  const scanContext = buildScanContext(params.scanHistory);
+  // v2.0: Pass vaultItems so scan-context can generate actionable suggestions
+  const scanContext = buildScanContext(params.scanHistory, params.vaultItems);
   const vaultContext = buildVaultContext(params.vaultItems);
   const profileContext = buildProfileContext(params.userProfile);
   const argosContext = params.argosData ? buildArgosBlock(params.argosData) : '';
