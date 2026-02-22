@@ -1,37 +1,20 @@
 // FILE: src/components/oracle/OracleNarrator.tsx
 // ═══════════════════════════════════════════════════════════════════════
-// Oracle Narrator — "Partner at the Store" Experience
+// Oracle Narrator — "Partner at the Store" Experience (v5)
 // ═══════════════════════════════════════════════════════════════════════
 //
-// Voice-enabled floating pill that appears during and after scans.
-// Creates the feeling of having a knowledgeable friend at your shoulder.
+// FIXED v5: Double-speak on page navigation. Refs reset on remount but
+// lastAnalysisResult persists in AppContext. Now uses sessionStorage to
+// track which analysisId has been narrated, surviving component remounts.
 //
-// Voice cascade:
-//   1. ElevenLabs premium voice (user's chosen voice from settings)
-//   2. Browser SpeechSynthesis (user's chosen system voice)
-//   3. Silent (if TTS disabled or no voice available)
+// Voice cascade: ElevenLabs → Browser TTS → Silent
+// Only LLM comments get voice. Templates stay silent.
 //
-// Only LLM comments get voice — templates stay silent (too generic).
-// Energy-aware: 'curious' for discrepancies, 'excited' for high value.
+// Display timing: scales with word count (200 wpm + 3s buffer)
+//   Templates: 6s min | LLM: 12s min | Max: 25s
 //
-// Cost model:
-//   - Template comments: $0 (client-side, no voice)
-//   - LLM comments: ~$0.001 AI + ~$0.002 ElevenLabs ≈ $0.003 total
-//   - ~30% of scans trigger LLM, rest are template-only
-//
-// Display timing:
-//   - Scales with word count (200 wpm reading speed + 3s buffer)
-//   - Templates: 6s minimum
-//   - LLM comments: 12s minimum, up to 25s for long responses
-//
-// Real AppContext scan stages (from SSE events):
+// Real AppContext scan stages:
 //   preparing → identifying → ai_consensus → market_data → finalizing → complete
-//
-// Mobile-first:
-//   - Thumb-zone positioned (bottom of screen, above nav)
-//   - Doesn't block camera or scan button
-//   - Slide-up entrance, fade-out exit
-//   - Min touch target 44px
 // ═══════════════════════════════════════════════════════════════════════
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
@@ -67,6 +50,9 @@ const READING_BUFFER_MS = 3000;
 const MAX_DISPLAY_MS = 25000;
 const LLM_NARRATE_TIMEOUT_MS = 4000;
 
+/** SessionStorage key for tracking narrated results across remounts */
+const NARRATED_KEY = 'oracle_narrator_last_narrated';
+
 // =============================================================================
 // HELPERS
 // =============================================================================
@@ -78,14 +64,57 @@ function calculateDisplayTime(comment: string, isLLM: boolean): number {
   return Math.min(Math.max(readTimeMs + READING_BUFFER_MS, minTime), MAX_DISPLAY_MS);
 }
 
-/**
- * Pick voice energy based on what the narrator is commenting on.
- * Keeps Oracle's tone natural — not everything is the same energy.
- */
 function pickNarratorEnergy(isLLM: boolean, consensusValue?: number): EnergyLevel {
-  if (!isLLM) return 'neutral'; // Templates don't get voice anyway
+  if (!isLLM) return 'neutral';
   if (consensusValue && consensusValue > 500) return 'excited';
-  return 'curious'; // Default for interesting scan commentary
+  return 'curious';
+}
+
+/**
+ * Generate a fingerprint for an analysis result.
+ * Used to detect "already narrated this exact result" across remounts.
+ */
+function getResultFingerprint(result: any): string {
+  if (!result) return '';
+  // Combine item name + value + timestamp for uniqueness
+  const name = result.itemName || '';
+  const value = result.estimatedValue || 0;
+  const id = result.analysisId || result.id || '';
+  // If we have an analysisId, use it (most reliable)
+  if (id) return `narrated-${id}`;
+  // Fallback: name + value creates a reasonable fingerprint
+  return `narrated-${name}-${value}`;
+}
+
+/**
+ * Check if we already narrated this exact result (survives remounts).
+ */
+function hasAlreadyNarrated(fingerprint: string): boolean {
+  if (!fingerprint) return false;
+  try {
+    return sessionStorage.getItem(NARRATED_KEY) === fingerprint;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mark this result as narrated (survives remounts).
+ */
+function markAsNarrated(fingerprint: string) {
+  if (!fingerprint) return;
+  try {
+    sessionStorage.setItem(NARRATED_KEY, fingerprint);
+  } catch { /* silent */ }
+}
+
+/**
+ * Clear the narrated marker (called when new scan starts).
+ */
+function clearNarratedMarker() {
+  try {
+    sessionStorage.removeItem(NARRATED_KEY);
+  } catch { /* silent */ }
 }
 
 function extractVotesForDetector(result: any): {
@@ -170,55 +199,44 @@ const OracleNarrator: React.FC = () => {
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const animationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Fire guards ──
+  // Ref guards (within same mount cycle)
   const hasShownIdentifying = useRef(false);
   const hasShownComplete = useRef(false);
   const narrateCallInFlight = useRef(false);
 
   const persona = useMemo(() => detectPersona(), []);
 
-  // ── Voice settings from user profile ──
+  // Voice settings from user profile
   const voiceEnabled = profile?.settings?.tts_enabled ?? false;
   const premiumVoiceId = profile?.settings?.premium_voice_id || null;
   const browserVoiceURI = profile?.settings?.tts_voice_uri || null;
 
-  // Track speaking state from global TTS
+  // Track speaking state
   useEffect(() => {
     setNarrator((prev) =>
       prev.speaking !== isSpeaking ? { ...prev, speaking: isSpeaking } : prev,
     );
   }, [isSpeaking]);
 
-  // ── Timer cleanup helper ──
   const clearTimers = useCallback(() => {
     if (dismissTimer.current) clearTimeout(dismissTimer.current);
     if (animationTimer.current) clearTimeout(animationTimer.current);
   }, []);
 
-  // ── Show comment + optionally speak it ──
   const showComment = useCallback(
     (comment: string, isLLM = false, consensusValue?: number) => {
       if (!comment) return;
       clearTimers();
 
-      setNarrator({
-        visible: true,
-        comment,
-        isLLM,
-        dismissing: false,
-        speaking: false,
-      });
+      setNarrator({ visible: true, comment, isLLM, dismissing: false, speaking: false });
 
-      // ── Voice: only LLM comments, only if user enabled TTS ──
+      // Voice: only LLM comments, only if user enabled TTS
       if (isLLM && voiceEnabled) {
         const energy = pickNarratorEnergy(isLLM, consensusValue);
-        // speak() handles the cascade: ElevenLabs → browser → silent
         speak(comment, browserVoiceURI, premiumVoiceId, energy);
       }
 
-      // Smart auto-dismiss based on word count
       const displayTime = calculateDisplayTime(comment, isLLM);
-
       dismissTimer.current = setTimeout(() => {
         setNarrator((prev) => ({ ...prev, dismissing: true }));
         animationTimer.current = setTimeout(() => {
@@ -229,17 +247,15 @@ const OracleNarrator: React.FC = () => {
     [clearTimers, voiceEnabled, premiumVoiceId, browserVoiceURI, speak],
   );
 
-  // ── Dismiss + stop speaking ──
   const dismiss = useCallback(() => {
     clearTimers();
-    cancelSpeech(); // Stop ElevenLabs/browser voice immediately
+    cancelSpeech();
     setNarrator((prev) => ({ ...prev, dismissing: true }));
     animationTimer.current = setTimeout(() => {
       setNarrator((prev) => ({ ...prev, visible: false, dismissing: false }));
     }, 300);
   }, [clearTimers, cancelSpeech]);
 
-  // ── Tap → save to sessionStorage for Oracle chat ──
   const handleTap = useCallback(() => {
     const itemName =
       lastAnalysisResult?.itemName ||
@@ -252,15 +268,16 @@ const OracleNarrator: React.FC = () => {
   }, [narrator.comment, lastAnalysisResult?.itemName, scanProgress, dismiss]);
 
   // ═══════════════════════════════════════════════════════════════════════
-  // EFFECT 1: Reset guards on new scan
+  // EFFECT 1: Reset guards when NEW scan starts
   // ═══════════════════════════════════════════════════════════════════════
   useEffect(() => {
     if (isAnalyzing) {
       hasShownIdentifying.current = false;
       hasShownComplete.current = false;
       narrateCallInFlight.current = false;
+      clearNarratedMarker(); // Allow narration for new scan
       clearTimers();
-      cancelSpeech(); // Stop any voice from previous scan
+      cancelSpeech();
       setNarrator((prev) =>
         prev.visible ? { ...prev, visible: false, dismissing: false } : prev,
       );
@@ -290,18 +307,32 @@ const OracleNarrator: React.FC = () => {
     };
 
     const comment = renderTemplate(context);
-    showComment(comment); // Template = no voice, shorter display
+    showComment(comment);
   }, [scanProgress?.stage, isAnalyzing, persona, showComment]);
 
   // ═══════════════════════════════════════════════════════════════════════
   // EFFECT 3: Post-analysis commentary (template + optional LLM voice)
+  //
+  // Double-fire protection:
+  //   - Ref guard: prevents re-fire within same mount
+  //   - SessionStorage guard: prevents re-fire after remount/navigation
   // ═══════════════════════════════════════════════════════════════════════
   useEffect(() => {
     if (isAnalyzing) return;
     if (!lastAnalysisResult) return;
     if (hasShownComplete.current) return;
 
+    // ── SessionStorage guard: survives remount ──
+    const fingerprint = getResultFingerprint(lastAnalysisResult);
+    if (hasAlreadyNarrated(fingerprint)) {
+      // Already narrated this result (user navigated away and came back)
+      hasShownComplete.current = true; // Also set ref so we don't check again
+      return;
+    }
+
+    // Mark both guards
     hasShownComplete.current = true;
+    markAsNarrated(fingerprint);
 
     const { consensus, votes } = extractVotesForDetector(lastAnalysisResult);
     const report = detectDiscrepancies(consensus, votes);
@@ -320,14 +351,13 @@ const OracleNarrator: React.FC = () => {
     const templateComment = renderTemplate(context);
     showComment(templateComment, false);
 
-    // LLM upgrade for interesting scans (costs ~$0.003 with voice)
+    // LLM upgrade for interesting scans
     if (report.isInteresting && votes.length >= 3 && !narrateCallInFlight.current) {
       narrateCallInFlight.current = true;
 
       fetchNarration(lastAnalysisResult, report.narratorPromptHint || '', persona)
         .then((llmComment) => {
           if (llmComment) {
-            // Upgrade → longer display + voice speaks it aloud
             showComment(llmComment, true, consensus.estimatedValue);
           }
         })
@@ -364,9 +394,7 @@ const OracleNarrator: React.FC = () => {
       >
         {/* Oracle avatar — pulses when speaking */}
         <span
-          className={`text-xl flex-shrink-0 mt-0.5 ${
-            narrator.speaking ? 'animate-pulse' : ''
-          }`}
+          className={`text-xl flex-shrink-0 mt-0.5 ${narrator.speaking ? 'animate-pulse' : ''}`}
           aria-hidden="true"
         >
           🔮

@@ -1,6 +1,14 @@
 // FILE: src/lib/spotlightTracking.ts
 // Adaptive Spotlight Tracking - Learns and grows with the user
 // Onboarding = seeds, Behavior = growth, Time = decay
+//
+// FIXED v2.1: Removed Nominatim reverse geocoding from client side.
+//   Nominatim blocks browser CORS — their API is server-side only.
+//   Now stores lat/lng immediately, derives city/state server-side
+//   via /api/dashboard/spotlight-items when needed.
+//
+// FIXED v2.1: Added userGesture flag to requestLocation() to prevent
+//   Chrome violation "Only request geolocation in response to user gesture".
 
 import { supabase } from '@/lib/supabase';
 
@@ -362,12 +370,8 @@ export function hideItem(listingId: string, category?: string): void {
   // Learn from hiding - slight negative for this category
   if (category) {
     const catLower = category.toLowerCase();
-    // Track that user hid something in this category
-    // This will be used as a negative signal in scoring
     if (!prefs.hidden_categories.includes(catLower)) {
       const hiddenInCategory = prefs.hidden_item_ids.filter(id => {
-        // We'd need to track category with hidden items for this
-        // For now, just track the category mention
         return true;
       }).length;
       
@@ -455,20 +459,20 @@ export function calculateCategoryScores(): CategoryScore[] {
   prefs.category_interactions.forEach(interaction => {
     const decay = getDecayMultiplier(interaction.timestamp);
     const count = interaction.count || 1;
-    const points = WEIGHTS.CATEGORY_VIEW * decay * Math.min(count, 5); // Cap repeat bonus
+    const points = WEIGHTS.CATEGORY_VIEW * decay * Math.min(count, 5);
     addScore(interaction.value, points, 'interactions');
   });
 
   // 3. Favorite categories (user explicitly chose)
   prefs.favorite_categories.forEach(cat => {
-    addScore(cat, 30, 'favorites'); // Strong signal
+    addScore(cat, 30, 'favorites');
   });
 
   // 4. Purchase history categories (strongest signal)
   prefs.purchases.forEach(purchase => {
     const decay = getDecayMultiplier(purchase.timestamp);
-    // We'd need category stored with purchase for precise scoring
-    // For now, this contributes to overall confidence
+    // Category stored with purchase would enable precise scoring
+    // For now, contributes to overall confidence
   });
 
   // 5. Hidden categories (negative learning)
@@ -483,7 +487,7 @@ export function calculateCategoryScores(): CategoryScore[] {
       score: Math.round(data.score * 10) / 10,
       sources: data.sources,
     }))
-    .filter(c => c.score > 0) // Only positive scores
+    .filter(c => c.score > 0)
     .sort((a, b) => b.score - a.score);
 }
 
@@ -495,19 +499,15 @@ export function getTopCategories(count: number = 5): string[] {
 export function getPreferredPriceRange(): { min: number; max: number } | null {
   const prefs = getPrefs();
   
-  // Need at least 5 price points
   if (prefs.price_history.length < 5) return null;
   
-  // Weight recent prices higher
   const weightedPrices = prefs.price_history.map(p => ({
     price: p.price,
     weight: getDecayMultiplier(p.timestamp),
   }));
   
-  // Sort by price
   const sorted = weightedPrices.sort((a, b) => a.price - b.price);
   
-  // Use weighted quartiles
   const totalWeight = sorted.reduce((sum, p) => sum + p.weight, 0);
   let cumWeight = 0;
   let q1Price = sorted[0].price;
@@ -532,15 +532,13 @@ export function getPreferredPriceRange(): { min: number; max: number } | null {
 export function getPersonalizationStatus(): PersonalizationStatus {
   const prefs = getPrefs();
   
-  // Calculate data points
   const dataPoints = 
     prefs.category_interactions.length +
     prefs.item_clicks.length +
-    prefs.purchases.length * 3 + // Purchases count triple
+    prefs.purchases.length * 3 +
     prefs.searches.length +
     prefs.favorite_categories.length * 2;
   
-  // Determine level
   let level = PERSONALIZATION_LEVELS.LEARNING;
   if (dataPoints > PERSONALIZATION_LEVELS.EXPERT.min) {
     level = PERSONALIZATION_LEVELS.EXPERT;
@@ -550,7 +548,6 @@ export function getPersonalizationStatus(): PersonalizationStatus {
     level = PERSONALIZATION_LEVELS.GROWING;
   }
   
-  // Calculate confidence (0-100)
   const confidence = Math.min(100, Math.round((dataPoints / 50) * 100));
   
   return {
@@ -571,9 +568,6 @@ export function setOnboardingInterests(interests: string[]): void {
   const prefs = getPrefs();
   prefs.onboarding_interests = interests;
   
-  // Don't automatically add to favorites - let behavior drive that
-  // The onboarding interests are just seeds with low weight
-  
   if (!prefs.first_interaction) {
     prefs.first_interaction = new Date().toISOString();
   }
@@ -591,7 +585,45 @@ export function getOnboardingInterests(): string[] {
 // LOCATION
 // ============================================================================
 
-export async function requestLocation(): Promise<SpotlightPrefs['location'] | null> {
+/** Key for caching location in sessionStorage (avoids re-prompting) */
+const LOCATION_CACHE_KEY = 'tagnetiq_location_cache';
+const LOCATION_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * Request user location. Only prompts for geolocation when called.
+ * 
+ * IMPORTANT: Call this ONLY in response to a user gesture (button tap,
+ * form submit, etc.) to avoid Chrome violation:
+ * "Only request geolocation information in response to a user gesture."
+ * 
+ * Reverse geocoding (city/state) is NOT done client-side because
+ * Nominatim blocks browser CORS. The server can derive city/state
+ * from lat/lng when building spotlight results.
+ * 
+ * @param userGesture - Set to true when called from a click/tap handler.
+ *                      When false, only returns cached location (no prompt).
+ */
+export async function requestLocation(
+  userGesture: boolean = false,
+): Promise<SpotlightPrefs['location'] | null> {
+  // ── Check cache first (avoids re-prompting within session) ──
+  try {
+    const cached = sessionStorage.getItem(LOCATION_CACHE_KEY);
+    if (cached) {
+      const { location, timestamp } = JSON.parse(cached);
+      if (Date.now() - timestamp < LOCATION_CACHE_TTL) {
+        return location;
+      }
+    }
+  } catch { /* silent */ }
+
+  // ── If not a user gesture, return stored location without prompting ──
+  if (!userGesture) {
+    const prefs = getPrefs();
+    return prefs.location || null;
+  }
+
+  // ── Request geolocation (only on user gesture) ──
   return new Promise((resolve) => {
     if (typeof window === 'undefined' || !navigator.geolocation) {
       resolve(null);
@@ -599,51 +631,41 @@ export async function requestLocation(): Promise<SpotlightPrefs['location'] | nu
     }
 
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
+      (position) => {
         const { latitude: lat, longitude: lng } = position.coords;
 
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 5000);
+        // Store lat/lng only — no reverse geocoding from client.
+        // Nominatim's API blocks browser CORS requests.
+        // Server-side spotlight-items endpoint can derive city/state
+        // from lat/lng if needed for "local items" features.
+        const location: SpotlightPrefs['location'] = { lat, lng };
 
-          const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-            {
-              headers: { 'User-Agent': 'TagnetIQ/1.0' },
-              signal: controller.signal
-            }
-          );
-
-          clearTimeout(timeoutId);
-
-          if (response.ok) {
-            const data = await response.json();
-            const location: SpotlightPrefs['location'] = {
-              lat,
-              lng,
-              city: data.address?.city || data.address?.town || data.address?.village,
-              state: data.address?.state,
-              country: data.address?.country,
-            };
-
-            const prefs = getPrefs();
-            prefs.location = location;
-            savePrefs(prefs);
-            resolve(location);
-            return;
-          }
-        } catch (e) {
-          console.warn('[Spotlight] Geocoding failed:', e);
-        }
-
-        const location = { lat, lng };
+        // Save to prefs (persists across sessions)
         const prefs = getPrefs();
+        // Preserve any server-derived city/state if we already have it
+        if (prefs.location?.city) {
+          location.city = prefs.location.city;
+          location.state = prefs.location.state;
+          location.country = prefs.location.country;
+        }
         prefs.location = location;
         savePrefs(prefs);
+
+        // Cache in sessionStorage (avoids re-prompting this session)
+        try {
+          sessionStorage.setItem(
+            LOCATION_CACHE_KEY,
+            JSON.stringify({ location, timestamp: Date.now() }),
+          );
+        } catch { /* silent */ }
+
         resolve(location);
       },
-      () => resolve(null),
-      { timeout: 8000, maximumAge: 600000, enableHighAccuracy: false }
+      (err) => {
+        console.warn('[Spotlight] Geolocation denied or failed:', err.message);
+        resolve(null);
+      },
+      { timeout: 8000, maximumAge: 600000, enableHighAccuracy: false },
     );
   });
 }
@@ -664,7 +686,6 @@ export function buildQueryParams(categoryFilter?: string): URLSearchParams {
   if (categoryFilter && categoryFilter !== 'all') {
     params.set('category_filter', categoryFilter);
   } else {
-    // Send scored categories with weights
     const categoryScores = calculateCategoryScores().slice(0, 10);
     if (categoryScores.length > 0) {
       params.set('category_scores', JSON.stringify(categoryScores));
@@ -735,22 +756,16 @@ export async function syncToProfile(): Promise<boolean> {
     const status = getPersonalizationStatus();
 
     const spotlightPreferences = {
-      // Learned preferences
       category_scores: categoryScores.slice(0, 20),
       hidden_item_ids: prefs.hidden_item_ids.slice(0, 100),
       hidden_categories: prefs.hidden_categories,
       favorite_categories: prefs.favorite_categories,
       price_range: getPreferredPriceRange(),
-      
-      // Seeds
       onboarding_interests: prefs.onboarding_interests,
-      
-      // Analytics
       personalization_level: status.level,
       confidence: status.confidence,
       total_interactions: prefs.total_interactions,
       first_interaction: prefs.first_interaction,
-      
       last_synced: new Date().toISOString(),
     };
 
@@ -791,12 +806,10 @@ export async function loadFromProfile(): Promise<boolean> {
 
     const prefs = getPrefs();
     
-    // Load onboarding interests as seeds
     if (profile.interests && Array.isArray(profile.interests)) {
       prefs.onboarding_interests = profile.interests;
     }
 
-    // Merge profile preferences
     if (profile.spotlight_preferences) {
       const p = profile.spotlight_preferences as any;
       
@@ -894,6 +907,12 @@ export async function addToWatchlist(keywords: string[]): Promise<boolean> {
 export async function initializeSpotlightTracking(): Promise<void> {
   await loadFromProfile();
   
+  // NOTE: Do NOT call requestLocation() here.
+  // Location should only be requested in response to a user gesture
+  // (e.g., tapping "Enable local items" or "Allow location").
+  // Auto-requesting triggers Chrome violation:
+  //   "Only request geolocation information in response to a user gesture."
+  
   setInterval(() => {
     const prefs = getPrefs();
     if (prefs.needs_sync) syncToProfile();
@@ -923,7 +942,6 @@ export function debugSpotlight(): void {
   console.groupEnd();
 }
 
-// Expose to window for debugging
 if (typeof window !== 'undefined') {
   (window as any).debugSpotlight = debugSpotlight;
 }

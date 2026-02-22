@@ -1,10 +1,21 @@
 // FILE: src/lib/ai-providers/openai-provider.ts
 // OpenAI GPT-4o Provider for HYDRA
 // Primary vision AI with JSON response mode
-// 
+//
+// FIXED v6.4.0: Changed image detail from 'low' to 'auto'
+//   'low' downscales to 512x512 which is too small for reliable
+//   structured JSON generation. 100% failure rate observed across
+//   3 consecutive scans (all returned empty choices).
+//   'auto' lets OpenAI pick optimal resolution. Cost increase is
+//   minimal for phone photos (~$0.002 → ~$0.005 per image).
+//
+// FIXED v6.4.0: Added diagnostic logging when choices are empty
+//   so we can see finish_reason, refusal, content_filter flags.
+//
+// FIXED v6.4.0: Retry once without response_format if first attempt
+//   returns empty content (graceful fallback for edge cases).
+//
 // FIXED v6.3.1: Removed dependency on hydra/config/providers import
-// that caused "Cannot read properties of undefined (reading 'models')"
-// Now uses same self-contained pattern as google-provider.ts
 // ============================================
 
 import { BaseAIProvider } from './base-provider.js';
@@ -12,9 +23,6 @@ import { AIProvider, AIAnalysisResponse } from '../types/hydra.js';
 
 // ============================================
 // HARDCODED DEFAULTS
-// These prevent crashes when config imports fail
-// Update these when upgrading models
-// Last updated: 2026-02-05
 // ============================================
 const DEFAULT_MODEL = 'gpt-4o';
 const DEFAULT_TIMEOUT = 45000;
@@ -25,7 +33,6 @@ export class OpenAIProvider extends BaseAIProvider {
   constructor(config: AIProvider) {
     super(config);
 
-    // Try multiple possible environment variable names for flexibility
     this.apiKey =
       process.env.OPEN_AI_API_KEY ||
       process.env.OPENAI_API_KEY ||
@@ -56,79 +63,36 @@ export class OpenAIProvider extends BaseAIProvider {
             type: 'image_url',
             image_url: {
               url: img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}`,
-              detail: 'low', // Use low detail to reduce costs
+              // 'auto' lets OpenAI pick optimal resolution for the image.
+              // 'low' (previous setting) forced 512x512 which was too small
+              // for reliable structured JSON generation — caused 100% empty
+              // responses across all vision scans.
+              // Cost delta: ~$0.003 per image (negligible vs losing the vote entirely)
+              detail: 'auto',
             },
           });
         }
       }
 
-      // Determine model - use config, then fallback to hardcoded default
-      // This is the line that was crashing before when it tried:
-      //   this.provider.model || AI_PROVIDERS.OpenAI.models[0]
-      // Now it safely falls back to the hardcoded DEFAULT_MODEL
       const model = this.provider.model || DEFAULT_MODEL;
-
       console.log(`🔍 OpenAI: Using model ${model}`);
 
-      const response = await this.fetchWithTimeout(
-        API_ENDPOINT,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: 800,
-            response_format: { type: 'json_object' },
-            messages: [
-              {
-                role: 'system',
-                content:
-                  'You are a valuation expert. Always respond with ONLY a valid JSON object.',
-              },
-              {
-                role: 'user',
-                content,
-              },
-            ],
-            temperature: 0.1,
-          }),
-        },
-        DEFAULT_TIMEOUT
-      );
+      // ── First attempt: with response_format for clean JSON ──
+      let contentResponse = await this.callOpenAI(model, content, prompt, true);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('OpenAI API error:', response.status, errorText);
-
-        if (response.status === 401) {
-          throw new Error('OpenAI API authentication failed - check API key');
-        } else if (response.status === 429) {
-          throw new Error('OpenAI API rate limit exceeded');
-        } else if (response.status === 400) {
-          throw new Error(`OpenAI API bad request: ${errorText}`);
-        } else if (response.status === 404) {
-          throw new Error(`OpenAI model not found: ${model}`);
-        }
-
-        throw new Error(`OpenAI API error: ${response.status}`);
+      // ── If empty, retry WITHOUT response_format (some images trip it up) ──
+      if (!contentResponse) {
+        console.warn('OpenAI: Empty response with json_object mode, retrying without response_format...');
+        contentResponse = await this.callOpenAI(model, content, prompt, false);
       }
 
-      const data = await response.json();
-
-      // Extract text from OpenAI response
-      const contentResponse = data.choices?.[0]?.message?.content || null;
-
       if (!contentResponse) {
-        console.warn('OpenAI: No response content in choices');
-        throw new Error('OpenAI: Empty response from API');
+        throw new Error('OpenAI: Empty response from API (both attempts)');
       }
 
       console.log(
         '🔍 OpenAI response preview:',
-        contentResponse.substring(0, 200) + '...'
+        contentResponse.substring(0, 200) + '...',
       );
 
       const parsed = this.parseAnalysisResult(contentResponse);
@@ -166,12 +130,101 @@ export class OpenAIProvider extends BaseAIProvider {
     } catch (error: any) {
       console.error('OpenAI analysis error:', error);
 
-      // Re-throw rate limits so retry logic can catch them
       if (error.message?.includes('429')) {
         throw new Error('OpenAI API rate limit exceeded');
       }
 
       throw error;
     }
+  }
+
+  /**
+   * Make the actual OpenAI API call.
+   * Separated so we can retry with different params.
+   */
+  private async callOpenAI(
+    model: string,
+    content: any[],
+    prompt: string,
+    useJsonMode: boolean,
+  ): Promise<string | null> {
+    const requestBody: any = {
+      model,
+      max_tokens: 800,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are a valuation expert. Always respond with ONLY a valid JSON object.',
+        },
+        {
+          role: 'user',
+          content,
+        },
+      ],
+      temperature: 0.1,
+    };
+
+    // Only add response_format on first attempt
+    if (useJsonMode) {
+      requestBody.response_format = { type: 'json_object' };
+    }
+
+    const response = await this.fetchWithTimeout(
+      API_ENDPOINT,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+      },
+      DEFAULT_TIMEOUT,
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('OpenAI API error:', response.status, errorText);
+
+      if (response.status === 401) {
+        throw new Error('OpenAI API authentication failed - check API key');
+      } else if (response.status === 429) {
+        throw new Error('OpenAI API rate limit exceeded');
+      } else if (response.status === 400) {
+        throw new Error(`OpenAI API bad request: ${errorText}`);
+      } else if (response.status === 404) {
+        throw new Error(`OpenAI model not found: ${model}`);
+      }
+
+      throw new Error(`OpenAI API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // ── Diagnostic logging for empty responses ──
+    const choice = data.choices?.[0];
+    if (!choice) {
+      console.warn('OpenAI: No choices in response. Full response:', JSON.stringify({
+        id: data.id,
+        model: data.model,
+        choices_length: data.choices?.length ?? 'undefined',
+        usage: data.usage,
+      }));
+      return null;
+    }
+
+    if (!choice.message?.content) {
+      console.warn('OpenAI: Choice present but no content. Diagnostics:', JSON.stringify({
+        finish_reason: choice.finish_reason,
+        refusal: choice.message?.refusal || 'none',
+        has_tool_calls: !!choice.message?.tool_calls,
+        content_is: typeof choice.message?.content,
+        json_mode: useJsonMode,
+      }));
+      return null;
+    }
+
+    return choice.message.content;
   }
 }
