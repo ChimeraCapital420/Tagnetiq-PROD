@@ -1,7 +1,11 @@
 // FILE: src/components/oracle/OracleNarrator.tsx
 // ═══════════════════════════════════════════════════════════════════════
-// Oracle Narrator — "Partner at the Store" Experience (v5)
+// Oracle Narrator — "Partner at the Store" Experience (v6)
 // ═══════════════════════════════════════════════════════════════════════
+//
+// v6: Now extracts authority + market + eBay data from lastAnalysisResult
+//     and sends it to the narrate endpoint. Oracle leads with market
+//     reality instead of AI model disagreements.
 //
 // FIXED v5: Double-speak on page navigation. Refs reset on remount but
 // lastAnalysisResult persists in AppContext. Now uses sessionStorage to
@@ -76,13 +80,10 @@ function pickNarratorEnergy(isLLM: boolean, consensusValue?: number): EnergyLeve
  */
 function getResultFingerprint(result: any): string {
   if (!result) return '';
-  // Combine item name + value + timestamp for uniqueness
   const name = result.itemName || '';
   const value = result.estimatedValue || 0;
   const id = result.analysisId || result.id || '';
-  // If we have an analysisId, use it (most reliable)
   if (id) return `narrated-${id}`;
-  // Fallback: name + value creates a reasonable fingerprint
   return `narrated-${name}-${value}`;
 }
 
@@ -143,6 +144,93 @@ function extractVotesForDetector(result: any): {
     }));
 
   return { consensus, votes };
+}
+
+/**
+ * Extract authority data from the analysis result.
+ * Handles multiple possible locations in the result object.
+ */
+function extractAuthorityData(result: any): any | null {
+  // Direct authorityData field
+  if (result?.authorityData) return result.authorityData;
+
+  // Nested in hydraConsensus
+  const hc = result?.hydraConsensus || {};
+  if (hc.authorityData) return hc.authorityData;
+
+  // In consensus object
+  if (hc.consensus?.authorityData) return hc.consensus.authorityData;
+
+  return null;
+}
+
+/**
+ * Extract market data from the analysis result.
+ */
+function extractMarketData(result: any): any | null {
+  if (result?.marketData) return result.marketData;
+
+  const hc = result?.hydraConsensus || {};
+  if (hc.marketData) return hc.marketData;
+
+  return null;
+}
+
+/**
+ * Extract eBay-specific data from wherever HYDRA stored it.
+ */
+function extractEbayData(result: any): any | null {
+  // Check authorityData if eBay was primary
+  const auth = extractAuthorityData(result);
+  if (auth?.source?.toLowerCase() === 'ebay') {
+    return {
+      count: auth.itemDetails?.listingCount || auth.itemDetails?.count || auth.itemDetails?.total_results,
+      priceRange: auth.priceData ? { low: auth.priceData.low, high: auth.priceData.high } : null,
+      averagePrice: auth.priceData?.market || auth.priceData?.median || auth.priceData?.average,
+    };
+  }
+
+  // Check apiSources in hydraConsensus
+  const hc = result?.hydraConsensus || {};
+  const apiSources = hc.apiSources || hc.consensus?.apiSources || {};
+
+  // apiSources could be array or object
+  if (Array.isArray(apiSources)) {
+    const ebaySrc = apiSources.find((s: any) =>
+      (s.source || s.name || '').toLowerCase() === 'ebay'
+    );
+    if (ebaySrc) return ebaySrc;
+  } else if (typeof apiSources === 'object') {
+    const ebaySrc = apiSources.ebay || apiSources.eBay;
+    if (ebaySrc) return ebaySrc;
+  }
+
+  // Check marketData sources
+  const md = extractMarketData(result);
+  if (md?.rawSources || md?.sourceDetails) {
+    const sources = md.rawSources || md.sourceDetails;
+    if (Array.isArray(sources)) {
+      const ebaySrc = sources.find((s: any) =>
+        (s.source || s.name || '').toLowerCase() === 'ebay'
+      );
+      if (ebaySrc) return ebaySrc;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract value range from the result.
+ */
+function extractValueRange(result: any): { low: number; high: number } | null {
+  if (result?.valueRange) return result.valueRange;
+
+  const hc = result?.hydraConsensus || {};
+  if (hc.valueRange) return hc.valueRange;
+  if (hc.consensus?.valueRange) return hc.consensus.valueRange;
+
+  return null;
 }
 
 function writeNarratorComment(comment: string, itemName: string) {
@@ -313,6 +401,9 @@ const OracleNarrator: React.FC = () => {
   // ═══════════════════════════════════════════════════════════════════════
   // EFFECT 3: Post-analysis commentary (template + optional LLM voice)
   //
+  // v6: Now extracts authority + market + eBay data and passes to
+  //     fetchNarration() so Oracle can lead with market reality.
+  //
   // Double-fire protection:
   //   - Ref guard: prevents re-fire within same mount
   //   - SessionStorage guard: prevents re-fire after remount/navigation
@@ -325,8 +416,7 @@ const OracleNarrator: React.FC = () => {
     // ── SessionStorage guard: survives remount ──
     const fingerprint = getResultFingerprint(lastAnalysisResult);
     if (hasAlreadyNarrated(fingerprint)) {
-      // Already narrated this result (user navigated away and came back)
-      hasShownComplete.current = true; // Also set ref so we don't check again
+      hasShownComplete.current = true;
       return;
     }
 
@@ -351,11 +441,29 @@ const OracleNarrator: React.FC = () => {
     const templateComment = renderTemplate(context);
     showComment(templateComment, false);
 
-    // LLM upgrade for interesting scans
-    if (report.isInteresting && votes.length >= 3 && !narrateCallInFlight.current) {
+    // v6: Extract rich context for LLM narration
+    const authorityData = extractAuthorityData(lastAnalysisResult);
+    const marketData = extractMarketData(lastAnalysisResult);
+    const ebayData = extractEbayData(lastAnalysisResult);
+    const valueRange = extractValueRange(lastAnalysisResult);
+
+    // v6: Determine if interesting — now also considers authority data availability
+    const hasRichContext = !!(authorityData || ebayData || marketData?.sources?.length > 0);
+    const shouldNarrate = (report.isInteresting || hasRichContext) && votes.length >= 2;
+
+    // LLM upgrade for interesting scans OR scans with rich market data
+    if (shouldNarrate && !narrateCallInFlight.current) {
       narrateCallInFlight.current = true;
 
-      fetchNarration(lastAnalysisResult, report.narratorPromptHint || '', persona)
+      fetchNarration(
+        lastAnalysisResult,
+        report.narratorPromptHint || '',
+        persona,
+        authorityData,
+        marketData,
+        ebayData,
+        valueRange,
+      )
         .then((llmComment) => {
           if (llmComment) {
             showComment(llmComment, true, consensus.estimatedValue);
@@ -444,13 +552,17 @@ const OracleNarrator: React.FC = () => {
 };
 
 // =============================================================================
-// LLM NARRATION FETCH
+// LLM NARRATION FETCH — v6: Now sends authority + market + eBay data
 // =============================================================================
 
 async function fetchNarration(
   result: any,
   discrepancyHint: string,
   persona: string,
+  authorityData: any | null,
+  marketData: any | null,
+  ebayData: any | null,
+  valueRange: { low: number; high: number } | null,
 ): Promise<string | null> {
   try {
     const controller = new AbortController();
@@ -473,6 +585,11 @@ async function fetchNarration(
         })),
         discrepancies: discrepancyHint,
         persona,
+        // v6: Rich context — Oracle can now reference real market data
+        authorityData: authorityData || null,
+        marketData: marketData || null,
+        ebayData: ebayData || null,
+        valueRange: valueRange || null,
       }),
       signal: controller.signal,
     });
