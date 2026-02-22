@@ -1,4 +1,10 @@
 // FILE: src/pages/Dashboard.tsx
+// v11.0 — OracleGreeting + OracleNarrator integration
+//
+// WHAT'S NEW:
+//   - OracleGreeting component at top of dashboard (fires once per session)
+//   - OracleNarrator floating bubble (appears during/after scans)
+//   - All existing functionality preserved
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -17,6 +23,10 @@ import { ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
 import { useWelcomeMessage } from '@/hooks/useWelcomeMessage';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import { useSharePrompt } from '@/hooks/useSharePrompt';
+
+// v11.0: Oracle Greeting + Narrator
+import OracleGreeting from '@/components/oracle/OracleGreeting';
+import OracleNarrator from '@/components/oracle/OracleNarrator';
 
 const Dashboard: React.FC = () => {
   // Send welcome message to new users (runs once after onboarding)
@@ -111,6 +121,9 @@ const Dashboard: React.FC = () => {
       <div className="relative z-10 p-4 sm:p-8">
         <div className="max-w-4xl mx-auto space-y-6">
           
+          {/* v11.0: Oracle Greeting — fires once per session, auto-dismisses */}
+          <OracleGreeting />
+
           {/* Welcome Card with Spotlight */}
           <Card className="overflow-hidden border-border/50 bg-background/50 backdrop-blur-sm">
             <div className="grid grid-cols-1 md:grid-cols-2 items-center">
@@ -206,6 +219,9 @@ const Dashboard: React.FC = () => {
       )}
       
       <OracleVisualizer />
+
+      {/* v11.0: Oracle Narrator — floating commentary during/after scans */}
+      <OracleNarrator />
 
       {/* Share Prompt — Oracle's gentle nudge (bottom banner, auto-dismisses) */}
       {sharePrompt && (

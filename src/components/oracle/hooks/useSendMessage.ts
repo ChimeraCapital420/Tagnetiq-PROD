@@ -7,7 +7,12 @@
 // Includes Liberation 2 (client-side intelligence) and
 // Liberation 7 (market data cache) integrations.
 //
-// ZERO LOGIC CHANGES — pure code movement.
+// v11.0: Reads provider report events from sessionStorage before each
+//        message send. If the user recently tapped a provider report
+//        card, Oracle gets awareness of what they were examining.
+//        Cost: $0 — purely client-side data, consumed on read.
+//
+// ZERO LOGIC CHANGES to existing Liberation 2 / 7 flows.
 // ═══════════════════════════════════════════════════════════════════════
 
 import { useCallback } from 'react';
@@ -24,6 +29,9 @@ import { getDeviceType } from '@/lib/oracle/client/device-detector';
 import { setCachedTier } from '@/lib/oracle/client/tier-cache';
 import { setMarketCache, getRelevantMarketCache } from '@/lib/oracle/client/market-cache';
 import { queueForOfflineSync } from '@/lib/oracle/client/offline-queue';
+
+// ── v11.0: Provider report awareness ────────────────────
+import { consumeProviderReportEvent } from '@/lib/oracle/client/provider-report-bridge';
 
 // =============================================================================
 // HOOK
@@ -51,6 +59,11 @@ export function useSendMessage(shared: SharedChatState) {
 
     // ── Liberation 7: Check market cache for this message ──
     const cachedMarket = getRelevantMarketCache(text);
+
+    // ── v11.0: Check if user recently viewed a provider report ──
+    // consumeProviderReportEvent reads + deletes from sessionStorage
+    // so it only fires once per report tap. Returns null if none/stale.
+    const providerReportEvent = consumeProviderReportEvent();
 
     setCurrentEnergy(energy);
 
@@ -91,6 +104,8 @@ export function useSendMessage(shared: SharedChatState) {
           },
           // ── Liberation 7: cached market data ──────────
           cachedMarketData: cachedMarket || undefined,
+          // ── v11.0: provider report context ─────────────
+          providerReportEvent: providerReportEvent || undefined,
         }),
       });
 

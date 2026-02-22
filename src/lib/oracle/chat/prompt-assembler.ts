@@ -9,13 +9,23 @@
 //
 // Pure function. No async. No side effects.
 //
-// ZERO LOGIC CHANGES — pure code movement from chat.ts handler.
+// v11.0: Added Step 8 — Provider report context injection.
+//        When user taps a provider report card, sessionStorage event
+//        flows through client → request body → here → system prompt.
+//        Zero server cost. Device decides what context to send.
+//
+// ZERO LOGIC CHANGES to existing Steps 1-7. Purely additive.
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { ChatContext } from './types.js';
 import type { BuildPromptParams } from '../prompt/builder.js';
 import { buildSystemPrompt } from '../index.js';
-import { buildAnalysisContextBlock, buildVisualMemoryContext } from './context-builders.js';
+import {
+  buildAnalysisContextBlock,
+  buildVisualMemoryContext,
+  buildProviderReportContext,
+} from './context-builders.js';
+import type { ProviderReportEvent } from './context-builders.js';
 import { buildRecallPromptBlock } from '../eyes/index.js';
 import { buildSafetyPromptBlock, buildFollowUpBlock } from '../safety/index.js';
 
@@ -38,6 +48,8 @@ export interface PromptAssemblyInput {
   energyArc: string;
   /** Message-level expertise detection result */
   messageExpertise: { level: string; indicators: string[] };
+  /** v11.0: Provider report event from client sessionStorage (optional) */
+  providerReportEvent?: ProviderReportEvent | null;
 }
 
 // =============================================================================
@@ -55,6 +67,7 @@ export interface PromptAssemblyInput {
  *   5. Inject active recall results (full mode only)
  *   6. Inject safety context (always)
  *   7. Inject follow-up block (full mode only, recent safety events)
+ *   8. Inject provider report context (v11.0 — if user recently tapped a report)
  *
  * Returns the fully assembled system prompt string.
  */
@@ -62,6 +75,7 @@ export function assembleSystemPrompt(input: PromptAssemblyInput): string {
   const {
     ctx, analysisContext, safetyScan, lightweight,
     currentEnergy, energyArc, messageExpertise,
+    providerReportEvent,
   } = input;
 
   const {
@@ -128,6 +142,14 @@ export function assembleSystemPrompt(input: PromptAssemblyInput): string {
   // ── 7. Safety follow-up (full mode, recent events) ─────
   if (!lightweight && recentSafety.hasRecentEvents) {
     systemPrompt += buildFollowUpBlock(recentSafety);
+  }
+
+  // ── 8. Provider report context (v11.0) ──────────────────
+  //    Injected when user recently tapped a provider report card.
+  //    Data flows: sessionStorage → client hook → request body → here.
+  //    Cost: $0. Client decides whether to send.
+  if (providerReportEvent) {
+    systemPrompt += buildProviderReportContext(providerReportEvent);
   }
 
   return systemPrompt;

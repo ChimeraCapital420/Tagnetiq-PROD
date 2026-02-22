@@ -1,14 +1,25 @@
 // FILE: src/components/HydraConsensusDisplay.tsx
-// v10.4 — CRASH-PROOF + DUAL EXPORT FIX + CONFIDENCE FIX
-// FIX v10.4: finalConfidence arrives as 0-100 integer from hydra-engine, not 0-1.
-//   Display was doing 77 * 100 = 7700%. Now normalizes: if > 1, divide by 100.
-// FIX: Both named AND default export (AnalysisResult.tsx uses named import)
-// FIX: Guards all .map() calls with optional chaining
-// FIX: Handles both votes and allVotes field names
-// FIX: Accepts any consensus shape (defensive against SSE vs standard response)
-// FIX: Returns minimal display if zero votes instead of crashing
+// v11.0 — TAPPABLE PROVIDER REPORT CARDS
+// 
+// WHAT'S NEW in v11.0:
+//   - Vote bars are tappable → opens ProviderReportSheet (slide-up bottom sheet)
+//   - extractVotes() now preserves rawResponse, itemName, category on each vote
+//   - Subtle tap affordance (chevron icon) on each vote row
+//   - Consensus context object built for ProviderReportSheet comparison
+//   - Oracle context event written to sessionStorage when report opens (Step 2 bridge)
+//
+// PRESERVED from v10.4:
+//   - CRASH-PROOF guards on all .map() calls
+//   - Handles votes, allVotes, hydraVotes field names
+//   - Confidence normalization (0-100 integer → 0-1 decimal)
+//   - Dual export (named + default)
+//   - Accepts any consensus shape (defensive against API changes)
+//   - Minimal display on zero votes
 
-import React from 'react';
+import React, { useState, useCallback } from 'react';
+import { ChevronRight } from 'lucide-react';
+import ProviderReportSheet from '@/components/analysis/ProviderReportSheet.js';
+import type { ProviderVote, ConsensusContext } from '@/components/analysis/ProviderReportSheet.js';
 
 // =============================================================================
 // TYPES — Accepts any shape to prevent crashes from API changes
@@ -24,14 +35,20 @@ interface NormalizedVote {
   estimatedValue: number;
   decision: string;
   confidence: number;
+  // v11.0: Preserved for report cards
+  itemName: string;
+  category: string;
+  rawResponse: any;
 }
 
 interface HydraConsensusDisplayProps {
   consensus: any; // Intentionally any — defensive against shape changes
+  isAdmin?: boolean; // Pass through for admin flag button in report sheet
 }
 
 // =============================================================================
 // NORMALIZE VOTES — extracts votes from any consensus shape
+// v11.0: Now preserves rawResponse, itemName, category for report cards
 // =============================================================================
 
 function extractVotes(consensus: any): NormalizedVote[] {
@@ -64,6 +81,10 @@ function extractVotes(consensus: any): NormalizedVote[] {
         typeof v.confidence === 'number'
           ? v.confidence
           : v.rawResponse?.confidence ?? 0.5,
+      // v11.0: Preserve these for ProviderReportSheet
+      itemName: v.itemName || v.rawResponse?.itemName || '',
+      category: v.category || v.rawResponse?.category || 'general',
+      rawResponse: v.rawResponse || null,
     }));
 }
 
@@ -88,12 +109,42 @@ function normalizeConfidence(raw: any): number {
 }
 
 // =============================================================================
+// BUILD CONSENSUS CONTEXT — for ProviderReportSheet comparison
+// =============================================================================
+
+function buildConsensusContext(consensus: any, votes: NormalizedVote[]): ConsensusContext {
+  const consensusBlock = consensus?.consensus || consensus || {};
+  
+  // Extract consensus values from various shapes
+  const estimatedValue =
+    typeof consensusBlock.estimatedValue === 'number'
+      ? consensusBlock.estimatedValue
+      : typeof consensus?.estimatedValue === 'number'
+        ? consensus.estimatedValue
+        : 0;
+
+  const decision = consensusBlock.decision || consensus?.decision || 'SELL';
+  const confidence = normalizeConfidence(consensus);
+  const itemName = consensusBlock.itemName || consensus?.itemName || votes[0]?.itemName || 'Unknown Item';
+
+  return { estimatedValue, decision, confidence, itemName };
+}
+
+// =============================================================================
 // COMPONENT
 // =============================================================================
 
 const HydraConsensusDisplay: React.FC<HydraConsensusDisplayProps> = ({
   consensus,
+  isAdmin = false,
 }) => {
+  const [selectedVote, setSelectedVote] = useState<NormalizedVote | null>(null);
+
+  // ── Close handler for report sheet ──
+  const handleCloseSheet = useCallback(() => {
+    setSelectedVote(null);
+  }, []);
+
   // Guard: no consensus at all
   if (!consensus || typeof consensus !== 'object') {
     return null;
@@ -124,90 +175,120 @@ const HydraConsensusDisplay: React.FC<HydraConsensusDisplayProps> = ({
   // hydra-engine returns 77 (integer), not 0.77 (decimal)
   const finalConfidence = normalizeConfidence(consensus);
 
+  // v11.0: Build consensus context for report sheet comparison
+  const consensusContext = buildConsensusContext(consensus, votes);
+
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-white/90 flex items-center gap-2">
-          🐉 Hydra Consensus
-          <span className="text-xs text-white/50 font-normal">
-            {totalSources} sources
+    <>
+      <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-white/90 flex items-center gap-2">
+            🐉 Hydra Consensus
+            <span className="text-xs text-white/50 font-normal">
+              {totalSources} sources
+            </span>
+          </h3>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-white/60">
+            {method.replace(/_/g, ' ')}
           </span>
-        </h3>
-        <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-white/60">
-          {method.replace(/_/g, ' ')}
-        </span>
-      </div>
+        </div>
 
-      {/* Vote bars */}
-      <div className="space-y-2">
-        {sortedVotes.map((vote, index) => {
-          const barWidth =
-            maxWeight > 0 ? (vote.weight / maxWeight) * 100 : 0;
+        {/* Tap hint — only show if there are successful votes with data */}
+        {successfulVotes.length > 0 && (
+          <p className="text-[10px] text-white/30 -mt-1">
+            Tap any provider to see full report
+          </p>
+        )}
 
-          return (
-            <div key={`${vote.providerName}-${index}`} className="space-y-1">
-              <div className="flex items-center justify-between text-xs">
-                <span className="flex items-center gap-1.5">
-                  <span>{vote.icon}</span>
-                  <span
-                    className={
-                      vote.success ? 'text-white/80' : 'text-white/30 line-through'
-                    }
-                  >
-                    {vote.providerName}
-                  </span>
-                  {vote.responseTime > 0 && (
-                    <span className="text-white/30">
-                      {(vote.responseTime / 1000).toFixed(1)}s
+        {/* Vote bars */}
+        <div className="space-y-2">
+          {sortedVotes.map((vote, index) => {
+            const barWidth =
+              maxWeight > 0 ? (vote.weight / maxWeight) * 100 : 0;
+
+            return (
+              <button
+                key={`${vote.providerName}-${index}`}
+                className="w-full text-left space-y-1 rounded-lg p-1.5 -mx-1.5 transition-colors hover:bg-white/5 active:bg-white/10 cursor-pointer min-h-[44px] flex flex-col justify-center"
+                onClick={() => vote.success ? setSelectedVote(vote) : undefined}
+                disabled={!vote.success}
+                aria-label={`View ${vote.providerName} report: $${vote.estimatedValue.toFixed(2)} ${vote.decision}`}
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span className="flex items-center gap-1.5">
+                    <span>{vote.icon}</span>
+                    <span
+                      className={
+                        vote.success ? 'text-white/80' : 'text-white/30 line-through'
+                      }
+                    >
+                      {vote.providerName}
                     </span>
-                  )}
-                </span>
-                <span className="flex items-center gap-2">
-                  {vote.success && vote.estimatedValue > 0 && (
-                    <span className="text-emerald-400 font-medium">
-                      ${vote.estimatedValue.toFixed(2)}
-                    </span>
-                  )}
-                  <span
-                    className={`text-xs px-1.5 py-0.5 rounded ${
-                      vote.decision === 'BUY'
-                        ? 'bg-emerald-500/20 text-emerald-400'
-                        : vote.decision === 'HOLD'
-                          ? 'bg-yellow-500/20 text-yellow-400'
-                          : 'bg-red-500/20 text-red-400'
-                    }`}
-                  >
-                    {vote.decision}
+                    {vote.responseTime > 0 && (
+                      <span className="text-white/30">
+                        {(vote.responseTime / 1000).toFixed(1)}s
+                      </span>
+                    )}
                   </span>
-                </span>
-              </div>
-              <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all duration-500"
-                  style={{
-                    width: `${barWidth}%`,
-                    backgroundColor: vote.success
-                      ? vote.color
-                      : 'rgba(255,255,255,0.1)',
-                  }}
-                />
-              </div>
-            </div>
-          );
-        })}
+                  <span className="flex items-center gap-2">
+                    {vote.success && vote.estimatedValue > 0 && (
+                      <span className="text-emerald-400 font-medium">
+                        ${vote.estimatedValue.toFixed(2)}
+                      </span>
+                    )}
+                    <span
+                      className={`text-xs px-1.5 py-0.5 rounded ${
+                        vote.decision === 'BUY'
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : vote.decision === 'HOLD'
+                            ? 'bg-yellow-500/20 text-yellow-400'
+                            : 'bg-red-500/20 text-red-400'
+                      }`}
+                    >
+                      {vote.decision}
+                    </span>
+                    {vote.success && (
+                      <ChevronRight className="w-3 h-3 text-white/20" />
+                    )}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${barWidth}%`,
+                      backgroundColor: vote.success
+                        ? vote.color
+                        : 'rgba(255,255,255,0.1)',
+                    }}
+                  />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Confidence footer */}
+        <div className="flex items-center justify-between pt-1 border-t border-white/5">
+          <span className="text-xs text-white/40">
+            {successfulVotes.length} of {votes.length} models responded
+          </span>
+          <span className="text-xs text-white/50">
+            Confidence: {(finalConfidence * 100).toFixed(0)}%
+          </span>
+        </div>
       </div>
 
-      {/* Confidence footer */}
-      <div className="flex items-center justify-between pt-1 border-t border-white/5">
-        <span className="text-xs text-white/40">
-          {successfulVotes.length} of {votes.length} models responded
-        </span>
-        <span className="text-xs text-white/50">
-          Confidence: {(finalConfidence * 100).toFixed(0)}%
-        </span>
-      </div>
-    </div>
+      {/* Provider Report Sheet — renders as portal overlay */}
+      <ProviderReportSheet
+        vote={selectedVote as ProviderVote}
+        consensus={consensusContext}
+        isOpen={selectedVote !== null}
+        onClose={handleCloseSheet}
+        isAdmin={isAdmin}
+      />
+    </>
   );
 };
 

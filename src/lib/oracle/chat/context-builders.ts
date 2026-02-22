@@ -9,11 +9,80 @@
 // Each returns a string (empty string if no data).
 //
 // Contains:
-//   - buildVisualMemoryContext()    — Oracle Eyes visual memories
-//   - buildAnalysisContextBlock()   — Item-specific analysis data
+//   - buildVisualMemoryContext()       — Oracle Eyes visual memories
+//   - buildAnalysisContextBlock()      — Item-specific analysis data
+//   - buildProviderReportContext()     — v11.0: Provider report tap awareness
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { AnalysisContext } from './types.js';
+
+// =============================================================================
+// PROVIDER REPORT CONTEXT (v11.0 — Oracle-Aware Report Reading)
+// =============================================================================
+
+/**
+ * Context event shape written by ProviderReportSheet to sessionStorage,
+ * read by the client chat hook, and passed here via request body.
+ */
+export interface ProviderReportEvent {
+  type: 'provider_report_opened';
+  provider: string;
+  itemName: string;
+  providerValue: number;
+  consensusValue: number;
+  providerDecision?: string;
+  consensusDecision?: string;
+  timestamp: number;
+}
+
+/**
+ * Build a system prompt block when the user recently tapped a provider
+ * report card. This gives Oracle awareness of the user's curiosity
+ * about specific provider reasoning.
+ *
+ * Data flow: ProviderReportSheet → sessionStorage → client chat hook →
+ *            request body → this function → system prompt injection.
+ *
+ * Cost: $0. All client-side data, no API calls.
+ *
+ * @param event - Provider report event from client (null if none)
+ * @returns Prompt block string (empty if no event or stale)
+ */
+export function buildProviderReportContext(event: ProviderReportEvent | null): string {
+  if (!event) return '';
+  if (event.type !== 'provider_report_opened') return '';
+
+  // Only inject if event is within last 5 minutes
+  const ageMs = Date.now() - (event.timestamp || 0);
+  if (ageMs > 5 * 60 * 1000) return '';
+
+  const provider = event.provider || 'an AI provider';
+  const itemName = event.itemName || 'an item';
+  const providerValue = typeof event.providerValue === 'number' ? `$${event.providerValue.toFixed(2)}` : 'unknown';
+  const consensusValue = typeof event.consensusValue === 'number' ? `$${event.consensusValue.toFixed(2)}` : 'unknown';
+
+  let block = '\n\n## RECENT USER ACTION — Provider Report Examined\n';
+  block += `The user just examined ${provider}'s individual report on "${itemName}".\n`;
+  block += `${provider} estimated ${providerValue} while consensus was ${consensusValue}.\n`;
+
+  if (event.providerDecision && event.consensusDecision) {
+    const match = event.providerDecision.toUpperCase() === event.consensusDecision.toUpperCase();
+    if (match) {
+      block += `Both ${provider} and the consensus recommend ${event.consensusDecision}.\n`;
+    } else {
+      block += `${provider} says ${event.providerDecision} but consensus says ${event.consensusDecision} — the user may be curious why.\n`;
+    }
+  }
+
+  block += '\nThe user is curious about AI reasoning. You can:\n';
+  block += `- Reference ${provider}'s analysis naturally if relevant\n`;
+  block += '- Offer to explain why providers disagreed\n';
+  block += '- Compare this provider\'s reasoning to others\n';
+  block += '- Help them understand which AI to trust and why\n';
+  block += 'Don\'t force it — mention it naturally if relevant to conversation flow.\n';
+
+  return block;
+}
 
 // =============================================================================
 // VISUAL MEMORY CONTEXT (Oracle Eyes — Sprint M)
@@ -114,6 +183,20 @@ export function buildAnalysisContextBlock(analysisContext: AnalysisContext | nul
   }
   if (analysisContext.confidence !== undefined) {
     block += `Confidence: ${analysisContext.confidence}%\n`;
+  }
+
+  // v11.0: Include individual provider vote summaries if available
+  if (analysisContext.providerVotes && Array.isArray(analysisContext.providerVotes)) {
+    block += '\nIndividual Provider Assessments:\n';
+    for (const vote of analysisContext.providerVotes) {
+      if (!vote || !vote.providerName) continue;
+      block += `  - ${vote.providerName}: $${vote.estimatedValue?.toFixed?.(2) ?? '?'} ${vote.decision || '?'} (confidence: ${typeof vote.confidence === 'number' ? (vote.confidence > 1 ? vote.confidence : Math.round(vote.confidence * 100)) + '%' : '?'})`;
+      if (vote.rawResponse?.summary_reasoning) {
+        block += ` — ${vote.rawResponse.summary_reasoning.substring(0, 120)}`;
+      }
+      block += '\n';
+    }
+    block += 'You can compare providers when the user asks which AI to trust or why they disagreed.\n';
   }
 
   return block;

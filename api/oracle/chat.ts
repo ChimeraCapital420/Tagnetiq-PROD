@@ -28,6 +28,13 @@
 // L4:  Personal Concierge     L9:  Adaptive Token Depth
 // L5:  Self-Aware Oracle      L10: How-To Teaching
 // ═══════════════════════════════════════════════════════════════════════
+//
+// v11.0: Added providerReportEvent pass-through from client → prompt
+//        assembler. When user taps a provider report card, the event
+//        flows: sessionStorage → useSendMessage → request body → here
+//        → assembleSystemPrompt Step 8 → Oracle awareness.
+//        Zero new dependencies. Zero logic changes to Steps 1–10.
+// ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from 'openai';
@@ -82,6 +89,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       analysisContext = null,
       clientContext = null,
       cachedMarketData = null,
+      providerReportEvent = null,  // v11.0: provider report card context
     } = req.body;
 
     if (!message || typeof message !== 'string') {
@@ -131,6 +139,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const systemPrompt = assembleSystemPrompt({
       ctx, analysisContext, safetyScan, lightweight,
       currentEnergy, energyArc, messageExpertise,
+      providerReportEvent,  // v11.0: flows to Step 8 in assembler
     });
 
     // ── 6. ROUTE ─────────────────────────────────────────

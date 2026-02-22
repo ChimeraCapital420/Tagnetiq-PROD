@@ -1,0 +1,8 @@
+// FILE: src/lib/oracle/narrator/index.ts
+// Oracle Narrator module exports
+
+export { selectTemplate, renderTemplate } from './templates.js';
+export type { NarratorEventType, NarratorContext } from './templates.js';
+
+export { detectDiscrepancies } from './discrepancy-detector.js';
+export type { Discrepancy, DiscrepancyReport, VoteInput, ConsensusInput } from './discrepancy-detector.js';
