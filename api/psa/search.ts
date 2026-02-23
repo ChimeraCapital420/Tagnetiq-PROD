@@ -1,4 +1,4 @@
-// PSA Search Helper
+﻿// PSA Search Helper
 // PSA doesn't have name-based search, so this module:
 // 1. Extracts cert numbers from text/images
 // 2. Builds optimized eBay search queries for PSA graded items
@@ -6,6 +6,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { fetchPSAData, extractCertNumber, type PSACardData } from './index';
+import { rateLimit } from '../_lib/rateLimit.js';
 
 // ==================== TYPES ====================
 
@@ -257,6 +258,8 @@ export async function searchPSA(request: PSASearchRequest): Promise<PSASearchRes
 // ==================== API HANDLER ====================
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!await rateLimit(req, res, { max: 20, windowMs: 60000 })) return;
+
   if (req.method !== 'POST' && req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

@@ -1,7 +1,8 @@
-// FILE: api/comicvine/volume.ts
+﻿// FILE: api/comicvine/volume.ts
 // Comic Vine Volume Details (Comic Series)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { rateLimit } from '../_lib/rateLimit.js';
 
 export const config = {
   runtime: 'nodejs',
@@ -27,6 +28,8 @@ interface ComicVineCharacterInVolume {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!await rateLimit(req, res, { max: 20, windowMs: 60000 })) return;
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }

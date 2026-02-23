@@ -1,7 +1,8 @@
-// FILE: api/rawg/health-check.ts
+﻿// FILE: api/rawg/health-check.ts
 // RAWG Video Games API Health Check
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { rateLimit } from '../_lib/rateLimit.js';
 
 export const config = {
   runtime: 'nodejs',
@@ -11,6 +12,8 @@ export const config = {
 const RAWG_BASE_URL = 'https://api.rawg.io/api';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!await rateLimit(req, res, { max: 10, windowMs: 60000 })) return;
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }

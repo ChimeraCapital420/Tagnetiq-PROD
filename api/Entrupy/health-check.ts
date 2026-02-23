@@ -1,8 +1,9 @@
-// Entrupy API Health Check
+﻿// Entrupy API Health Check
 // Tests connectivity to Entrupy luxury authentication API
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getEntrupyConfig } from './index';
+import { rateLimit } from '../_lib/rateLimit.js';
 
 const ENTRUPY_API_TOKEN = process.env.ENTRUPY_API_TOKEN;
 
@@ -91,6 +92,8 @@ export async function checkEntrupyHealth(): Promise<EntrupyHealthStatus> {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!await rateLimit(req, res, { max: 10, windowMs: 60000 })) return;
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

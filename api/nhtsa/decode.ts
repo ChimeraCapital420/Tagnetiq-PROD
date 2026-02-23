@@ -1,7 +1,8 @@
-// FILE: api/nhtsa/decode.ts
+﻿// FILE: api/nhtsa/decode.ts
 // NHTSA vPIC VIN Decoder - Returns comprehensive vehicle data
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { rateLimit } from '../_lib/rateLimit.js';
 
 export const config = {
   runtime: 'nodejs',
@@ -133,6 +134,8 @@ function generateDescription(vehicle: VehicleData): string {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!await rateLimit(req, res, { max: 30, windowMs: 60000 })) return;
+
   // Allow both GET and POST
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });

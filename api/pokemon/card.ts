@@ -1,7 +1,8 @@
-// FILE: api/pokemon/card.ts
+﻿// FILE: api/pokemon/card.ts
 // Pokemon TCG Card Detail with Full Pricing
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { rateLimit } from '../_lib/rateLimit.js';
 
 export const config = {
   runtime: 'nodejs',
@@ -93,6 +94,8 @@ function determinePriceRange(tcgplayer: any, cardmarket: any) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!await rateLimit(req, res, { max: 30, windowMs: 60000 })) return;
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }

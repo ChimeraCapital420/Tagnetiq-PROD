@@ -1,7 +1,8 @@
-// FILE: api/rawg/game.ts
+﻿// FILE: api/rawg/game.ts
 // RAWG Video Game Details
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { rateLimit } from '../_lib/rateLimit.js';
 
 export const config = {
   runtime: 'nodejs',
@@ -29,6 +30,8 @@ interface RAWGResponse<T> {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!await rateLimit(req, res, { max: 30, windowMs: 60000 })) return;
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }

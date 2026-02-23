@@ -1,8 +1,9 @@
-// Entrupy Search Helper
+﻿// Entrupy Search Helper
 // Detects luxury goods items and provides authentication search
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { 
+import { rateLimit } from '../_lib/rateLimit.js';
   isLuxuryItem, 
   extractBrandFromText, 
   searchEntrupyByBrand,
@@ -261,6 +262,8 @@ export async function searchLuxury(request: LuxurySearchRequest): Promise<Luxury
 // ==================== API HANDLER ====================
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!await rateLimit(req, res, { max: 10, windowMs: 60000 })) return;
+
   if (req.method !== 'POST' && req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

@@ -1,7 +1,8 @@
-// FILE: api/retailed/search.ts
+﻿// FILE: api/retailed/search.ts
 // Retailed Sneaker/Streetwear Search
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { rateLimit } from '../_lib/rateLimit.js';
 
 export const config = {
   runtime: 'nodejs',
@@ -72,6 +73,8 @@ function formatProductResult(product: RetailedProduct) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!await rateLimit(req, res, { max: 20, windowMs: 60000 })) return;
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }

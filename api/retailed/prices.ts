@@ -1,7 +1,8 @@
-// FILE: api/retailed/prices.ts
+﻿// FILE: api/retailed/prices.ts
 // Retailed Sneaker Pricing - Multi-marketplace prices
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { rateLimit } from '../_lib/rateLimit.js';
 
 export const config = {
   runtime: 'nodejs',
@@ -41,6 +42,8 @@ interface RetailedPriceResponse {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!await rateLimit(req, res, { max: 20, windowMs: 60000 })) return;
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
