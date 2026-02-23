@@ -57,7 +57,7 @@ export const CATEGORY_API_MAP: Record<string, string[]> = {
   // Only route to colnect for specific subcategories it actually supports.
   'trading_cards': ['ebay'],
   'sports_cards': ['ebay'],
-  'pokemon_cards': ['pokemon_tcg', 'ebay'],
+  'pokemon_cards': ['tcgdex', 'pokemon_tcg', 'ebay'],
   'graded_cards': ['psa', 'ebay'],
   'kids_meal_toys': ['colnect', 'ebay'],
   // Colnect-supported card subcategories:

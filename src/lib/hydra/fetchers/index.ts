@@ -1,5 +1,5 @@
 // FILE: src/lib/hydra/fetchers/index.ts
-// HYDRA v8.3 - Market Data Fetchers Index
+// HYDRA v8.4 - Market Data Fetchers Index
 // FIXED v6.3: Now passes additionalContext to fetchers (especially NHTSA for VIN)
 // FIXED v7.0: Default timeout bumped from 10s → 30s (Pokemon TCG needs it)
 // FIXED v7.1: Proper timeout cancellation - clearTimeout when fetch completes
@@ -11,6 +11,9 @@
 // FIXED v8.3: Barcode-aware injection — when additionalContext contains a UPC/EAN,
 //             upcitemdb is ALWAYS included regardless of detected category.
 //             This ensures scanned barcodes always get a product lookup + report card.
+// ADDED v8.4: TCGdex fetcher — FREE Pokemon card authority with TCGPlayer + Cardmarket pricing
+//             Replaces unreliable pokemontcg.io (80% error rate) as PRIMARY authority
+//             Pokemon TCG API demoted to fallback. No API key needed for TCGdex.
 
 import type { MarketDataSource, MarketDataResult, ItemCategory } from '../types.js';
 import { getApisForCategory } from '../category-detection/index.js';
@@ -19,6 +22,7 @@ import { getApisForCategory } from '../category-detection/index.js';
 export { fetchEbayData } from './ebay.js';
 export { fetchNumistaData } from './numista.js';
 export { fetchPokemonTcgData } from './pokemon-tcg.js';
+export { fetchTcgdexData } from './tcgdex.js';
 export { fetchBricksetData } from './brickset.js';
 export { fetchGoogleBooksData } from './google-books.js';
 export { fetchDiscogsData } from './discogs.js';
@@ -35,6 +39,7 @@ export { fetchKrogerData, isKrogerAvailable } from './kroger.js';
 import { fetchEbayData } from './ebay.js';
 import { fetchNumistaData } from './numista.js';
 import { fetchPokemonTcgData } from './pokemon-tcg.js';
+import { fetchTcgdexData } from './tcgdex.js';
 import { fetchBricksetData } from './brickset.js';
 import { fetchGoogleBooksData } from './google-books.js';
 import { fetchDiscogsData } from './discogs.js';
@@ -60,6 +65,7 @@ const FETCHER_REGISTRY: Record<string, StandardFetcherFunction | ExtendedFetcher
   'ebay': fetchEbayData,
   'numista': fetchNumistaData,
   'pokemon_tcg': fetchPokemonTcgData,
+  'tcgdex': fetchTcgdexData,
   'brickset': fetchBricksetData,
   'google_books': fetchGoogleBooksData,
   'discogs': fetchDiscogsData,
@@ -81,6 +87,7 @@ const CONTEXT_AWARE_FETCHERS = ['nhtsa', 'psa', 'upcitemdb', 'kroger'];
 // Per-fetcher timeout overrides (some APIs are slower than others)
 const FETCHER_TIMEOUTS: Record<string, number> = {
   'pokemon_tcg': 45000,    // INCREASED v7.1: 45s - API can be very slow
+  'tcgdex': 15000,         // v8.4: 15s - usually responds in <1s, generous buffer
   'ebay': 20000,           // INCREASED v7.1: 20s - OAuth + search
   'retailed': 15000,       // 15s
   'brickset': 25000,       // INCREASED v7.2: 25s - login (15s) + search (12s) on cold start
@@ -321,6 +328,10 @@ function calculateBlendedPrice(sources: MarketDataSource[]): { blendedPrice: num
     if (source.source === 'barcode_spider' && source.authorityData) {
       weight = 1.3;
     }
+    // v8.4: TCGdex = TCGPlayer market prices — very reliable for Pokemon cards
+    if (source.source === 'tcgdex' && source.authorityData) {
+      weight = 1.5; // TCGPlayer prices are the gold standard for Pokemon cards
+    }
 
     // Use median as primary price (most reliable)
     if (analysis.median > 0) {
@@ -381,6 +392,11 @@ function calculatePriceConfidence(sources: MarketDataSource[]): number {
     confidence += 0.1;
   }
 
+  // v8.4: TCGdex = TCGPlayer market data — strong confidence signal
+  if (available.some(s => s.source === 'tcgdex' && s.authorityData)) {
+    confidence += 0.1;
+  }
+
   return Math.min(confidence, 0.98);
 }
 
@@ -395,8 +411,9 @@ function determineMarketInfluence(sources: MarketDataSource[], category: ItemCat
   const hasEbay = availableSources.some(s => s.source === 'ebay' && (s.totalListings || 0) > 5);
   const hasColnect = availableSources.some(s => s.source === 'colnect' && s.authorityData);
   const hasKroger = availableSources.some(s => s.source === 'kroger' && s.authorityData);
+  const hasTcgdex = availableSources.some(s => s.source === 'tcgdex' && s.authorityData);
 
-  if (hasAuthority && hasEbay && (hasColnect || hasKroger)) {
+  if (hasAuthority && hasEbay && (hasColnect || hasKroger || hasTcgdex)) {
     return 'high_confidence_multi_source_catalog_verified';
   }
 
@@ -412,7 +429,7 @@ function determineMarketInfluence(sources: MarketDataSource[], category: ItemCat
     return 'authority_verified';
   }
 
-  if (hasColnect) {
+  if (hasColnect || hasTcgdex) {
     return 'catalog_verified';
   }
 
