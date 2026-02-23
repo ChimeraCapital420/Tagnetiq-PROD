@@ -1,11 +1,14 @@
 // FILE: src/lib/hydra/category-detection/data/api-map.ts
-// HYDRA v8.3 - Category → API Mapping
+// HYDRA v8.4 - Category → API Mapping
 // Pure data: maps each category to the APIs that should be queried.
 // Order matters: first API is primary authority, others are fallbacks.
 //
 // HOW TO ADD: Just add a new key-value pair. No logic changes needed.
 // UPDATED v8.3: Added grocery category (food/beverage/pantry items)
 //               Added food-specific subcategories
+// FIXED v8.4: Removed colnect from categories it can't handle (toys, trading_cards, sports_cards)
+//             Colnect only supports specific subcategories like kids_meal_toys, pins, stamps, etc.
+//             General "toys" and "trading_cards" were getting "No matching Colnect category" errors.
 
 export const CATEGORY_API_MAP: Record<string, string[]> = {
   // ==================== COINS & CURRENCY ====================
@@ -49,12 +52,18 @@ export const CATEGORY_API_MAP: Record<string, string[]> = {
   'sugar_packets': ['colnect', 'ebay'],
   'tea_bags': ['colnect', 'ebay'],
 
-  // ==================== CARD COLLECTIBLES (COLNECT PRIMARY) ====================
-  'trading_cards': ['colnect', 'ebay'],
-  'sports_cards': ['colnect', 'ebay'],
+  // ==================== CARD COLLECTIBLES ====================
+  // NOTE: Colnect does NOT have general trading_cards or sports_cards categories.
+  // Only route to colnect for specific subcategories it actually supports.
+  'trading_cards': ['ebay'],
+  'sports_cards': ['ebay'],
   'pokemon_cards': ['pokemon_tcg', 'ebay'],
   'graded_cards': ['psa', 'ebay'],
   'kids_meal_toys': ['colnect', 'ebay'],
+  // Colnect-supported card subcategories:
+  'casino_cards': ['colnect', 'ebay'],
+  'gift_cards': ['colnect', 'ebay'],
+  'hotel_key_cards': ['colnect', 'ebay'],
 
   // ==================== LEGO ====================
   'lego': ['brickset', 'ebay'],
@@ -101,7 +110,7 @@ export const CATEGORY_API_MAP: Record<string, string[]> = {
   'automotive': ['nhtsa', 'ebay'],
   'autos': ['nhtsa', 'ebay'],
 
-  // ==================== GROCERY / FOOD / BEVERAGE (NEW v8.3) ====================
+  // ==================== GROCERY / FOOD / BEVERAGE ====================
   'grocery': ['upcitemdb', 'kroger', 'ebay'],
   'food': ['upcitemdb', 'kroger', 'ebay'],
   'beverage': ['upcitemdb', 'kroger', 'ebay'],
@@ -128,7 +137,10 @@ export const CATEGORY_API_MAP: Record<string, string[]> = {
   'collectibles': ['colnect', 'ebay'],
   'antiques': ['ebay'],
   'vintage': ['ebay'],
-  'toys': ['colnect', 'ebay'],
+  // NOTE: General "toys" does NOT route to Colnect. Colnect only handles
+  // specific subcategories (kids_meal_toys, etc). A "Darth Vader Helmet"
+  // is not a Colnect item — eBay is the right authority for general toys.
+  'toys': ['ebay'],
   'action_figures': ['ebay'],
   'watches': ['ebay'],
   'jewelry': ['ebay'],
