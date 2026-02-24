@@ -1,8 +1,9 @@
-// FILE: src/components/investor/HighlightQuote.tsx (CREATE THIS NEW FILE)
-
+// FILE: src/components/investor/HighlightQuote.tsx
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
+import { investorFetch } from '@/lib/investorFetch';
 
 interface QuoteData {
   quote: string;
@@ -11,15 +12,15 @@ interface QuoteData {
 }
 
 export const HighlightQuote: React.FC = () => {
+  const { session } = useAuth();
   const [data, setData] = useState<QuoteData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchQuote = async () => {
       try {
-        const response = await fetch('/api/investor/highlight-quote');
+        const response = await investorFetch('/api/investor/highlight-quote', session);
         if (!response.ok) {
-          // Don't throw an error for a 404, it just means no quote is set
           if (response.status === 404) {
             setData(null);
             return;
@@ -34,12 +35,10 @@ export const HighlightQuote: React.FC = () => {
         setLoading(false);
       }
     };
-
     fetchQuote();
-  }, []);
+  }, [session]);
 
   if (loading) {
-    // Render a placeholder while loading to prevent layout shift
     return (
         <Card className="bg-primary/10 border-primary/20">
             <CardContent className="p-6">
@@ -51,7 +50,6 @@ export const HighlightQuote: React.FC = () => {
   }
 
   if (!data) {
-    // If no quote is active in the DB, render nothing
     return null;
   }
 

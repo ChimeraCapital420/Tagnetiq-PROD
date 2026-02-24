@@ -22,6 +22,16 @@
   ],
   "headers": [
     {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "X-XSS-Protection", "value": "1; mode=block" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "geolocation=(), microphone=(), camera=(self), interest-cohort=()" }
+      ]
+    },
+    {
       "source": "/api/seo/(.*)",
       "headers": [
         { "key": "X-Robots-Tag", "value": "index, follow" },
@@ -53,6 +63,10 @@
     {
       "path": "/api/boardroom/scheduler?type=evening_debrief&cron_secret=YOUR_CRON_SECRET_HERE",
       "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/argos-scan?cron_secret=YOUR_CRON_SECRET_HERE",
+      "schedule": "0 */6 * * *"
     }
   ]
 }

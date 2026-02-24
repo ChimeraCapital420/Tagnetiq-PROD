@@ -1,8 +1,9 @@
-// FILE: src/components/investor/SentimentChart.tsx (CREATE THIS NEW FILE)
-
+// FILE: src/components/investor/SentimentChart.tsx
 import React, { useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend } from 'recharts';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
+import { investorFetch } from '@/lib/investorFetch';
 
 interface SentimentData {
   Positive: number;
@@ -17,13 +18,14 @@ const COLORS = {
 };
 
 export const SentimentChart: React.FC = () => {
+  const { session } = useAuth();
   const [data, setData] = useState<SentimentData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchSentiment = async () => {
       try {
-        const response = await fetch('/api/investor/sentiment');
+        const response = await investorFetch('/api/investor/sentiment', session);
         if (!response.ok) {
           throw new Error('Failed to fetch sentiment data.');
         }
@@ -36,7 +38,7 @@ export const SentimentChart: React.FC = () => {
       }
     };
     fetchSentiment();
-  }, []);
+  }, [session]);
 
   if (loading) {
     return <div className="h-48 w-full animate-pulse bg-muted rounded-lg"></div>;

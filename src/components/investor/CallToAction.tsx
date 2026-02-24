@@ -1,4 +1,4 @@
-// FILE: src/components/investor/CallToAction.tsx (REPLACE ENTIRE FILE)
+// FILE: src/components/investor/CallToAction.tsx
 
 import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,8 +8,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
+import { investorPost } from '@/lib/investorFetch';
 
 export const CallToAction: React.FC = () => {
+  const { session } = useAuth();
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -33,24 +36,18 @@ export const CallToAction: React.FC = () => {
 
     setIsLoading(true);
     try {
-      const response = await fetch('/api/investor/request-meeting', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
+      const response = await investorPost('/api/investor/request-meeting', session, formData);
 
-      // --- FIX START: Properly handle the JSON response ---
       const result = await response.json();
       if (!response.ok) {
         throw new Error(result.error || 'An unknown error occurred.');
       }
-      // --- FIX END ---
 
       toast.success('Request Submitted!', {
         description: 'Thank you for your interest. We will be in touch shortly.',
       });
-      setFormData({ fullName: '', email: '', company: '', message: '' }); // Reset form
-      setOpen(false); // Close the dialog
+      setFormData({ fullName: '', email: '', company: '', message: '' });
+      setOpen(false);
 
     } catch (error) {
       toast.error('Submission Failed', { description: (error as Error).message });

@@ -1,32 +1,24 @@
 // FILE: api/investor/highlight-quote.ts
 // Returns highlight quotes for investor dashboard
 // Table: highlight_quotes (1 row exists!)
+//
+// SECURITY: Dual-path auth (admin JWT or invite token)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+import { supaAdmin } from '../_lib/supaAdmin.js';
+import { verifyInvestorAccess, setInvestorCORS } from '../_lib/investorAuth.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (setInvestorCORS(req, res)) return;
 
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
   try {
-    // Query highlight_quotes table - you have 1 real row!
-    const { data: quotes, error } = await supabase
+    await verifyInvestorAccess(req);
+
+    const { data: quotes, error } = await supaAdmin
       .from('highlight_quotes')
       .select('*')
       .order('created_at', { ascending: false })
@@ -34,7 +26,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error) {
       console.error('Error fetching quotes:', error);
-      // Return a placeholder if table query fails
       return res.status(200).json({
         quote: "Building the future of collectibles valuation.",
         author: "TagnetIQ Team",
@@ -43,12 +34,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // If we have real quotes, return one
     if (quotes && quotes.length > 0) {
-      // Rotate through quotes based on day of year
       const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
       const selectedQuote = quotes[dayOfYear % quotes.length];
-      
+
       return res.status(200).json({
         quote: selectedQuote.quote || selectedQuote.text || selectedQuote.content,
         author: selectedQuote.author || selectedQuote.name || 'Anonymous',
@@ -59,20 +48,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // No quotes in database - return a simple placeholder
     return res.status(200).json({
       quote: "Building the future of collectibles valuation.",
-      author: "TagnetIQ Team", 
+      author: "TagnetIQ Team",
       role: "Founders",
       source: "placeholder"
     });
 
-  } catch (error) {
-    console.error('Error in highlight-quote:', error);
+  } catch (error: any) {
+    const msg = error.message || 'An unexpected error occurred.';
+    if (msg.includes('Authentication') || msg.includes('Authorization')) {
+      return res.status(401).json({ error: msg });
+    }
+    console.error('Error in highlight-quote:', msg);
     return res.status(200).json({
       quote: "Building the future of collectibles valuation.",
       author: "TagnetIQ Team",
-      role: "Founders", 
+      role: "Founders",
       source: "error_fallback"
     });
   }

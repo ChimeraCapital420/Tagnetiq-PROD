@@ -1,11 +1,15 @@
 // FILE: src/components/analysis/AnalysisResult.tsx
-// STATUS: HYDRA v10.1 — Modular + eBay Display + Agreement Fix
+// STATUS: HYDRA v10.2 — Modular + eBay Display + Agreement Fix + Watch Auth Fix
 // Thin orchestrator that composes hooks + components.
 //
 // v10.1 CHANGES:
 //   - Renders EbayMarketDisplay showing median/low/high/sample from eBay
 //   - Agreement factor post-processing in useAnalysisData
 //   - eBay price range bar with HYDRA estimate marker
+//
+// v10.2 CHANGES:
+//   - FIX: Watch button now sends Authorization header (was 401ing)
+//   - Added `session` from useAuth() for Bearer token
 
 import React, { useState, Component, ErrorInfo, ReactNode } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
@@ -20,7 +24,7 @@ import { AnalysisHistoryNavigator } from '@/components/AnalysisHistoryNavigator.
 import { AuthorityReportCard } from '@/components/AuthorityReportCard.js';
 import { ListOnMarketplaceButton } from '@/components/marketplace/ListOnMarketplaceButton.js';
 
-// ── Local modules ──
+// — Local modules —
 import { useAnalysisData, useListingSubmit, useFeedback } from './hooks/index.js';
 import {
   NexusDecisionCard,
@@ -86,7 +90,8 @@ class AnalysisErrorBoundary extends Component<
 
 const AnalysisResultContent: React.FC = () => {
   const { setLastAnalysisResult, deleteFromHistory } = useAppContext();
-  const { user } = useAuth();
+  // v10.2: Added `session` — needed for Bearer token on argos/watch calls
+  const { user, session } = useAuth();
   const { raw, data, history, ebayData, marketSources } = useAnalysisData();
   const handleListOnTagnetiq = useListingSubmit(data);
   const [nexusDismissed, setNexusDismissed] = useState(false);
@@ -95,7 +100,7 @@ const AnalysisResultContent: React.FC = () => {
 
   if (!data) return null;
 
-  // ── Action handlers ──
+  // — Action handlers —
   const handleClear = () => setLastAnalysisResult(null);
 
   const handleDeleteFromHistory = async () => {
@@ -113,9 +118,15 @@ const AnalysisResultContent: React.FC = () => {
   const handleNexusWatch = async () => {
     if (!user) { toast.error('Please log in to watch prices'); return; }
     try {
+      // v10.2: Added Authorization header — endpoint requires verifyUser()
       const res = await fetch('/api/oracle/argos', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token && {
+            Authorization: `Bearer ${session.access_token}`,
+          }),
+        },
         body: JSON.stringify({
           action: 'watch',
           itemName: data.itemName,
@@ -134,7 +145,7 @@ const AnalysisResultContent: React.FC = () => {
       <Card className="w-full max-w-4xl mx-auto border-border/50 bg-background/50 backdrop-blur-sm animate-fade-in relative">
         <AnalysisHistoryNavigator />
 
-        {/* ── Header ── */}
+        {/* — Header — */}
         <CardHeader>
           <div className="flex justify-between items-start">
             <div>
@@ -176,7 +187,7 @@ const AnalysisResultContent: React.FC = () => {
           )}
         </CardHeader>
 
-        {/* ── Content: Images + Valuation ── */}
+        {/* — Content: Images + Valuation — */}
         <CardContent className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <ImageCarousel imageUrls={data.allImageUrls} itemName={data.itemName} />
@@ -189,7 +200,7 @@ const AnalysisResultContent: React.FC = () => {
             />
           </div>
 
-          {/* ── eBay Market Data (was always fetched, now displayed) ── */}
+          {/* — eBay Market Data (was always fetched, now displayed) — */}
           {ebayData && typeof ebayData === 'object' && (
             <EbayMarketDisplay
               ebayData={ebayData}
@@ -199,7 +210,7 @@ const AnalysisResultContent: React.FC = () => {
           )}
         </CardContent>
 
-        {/* ── Footer: Actions + Feedback ── */}
+        {/* — Footer: Actions + Feedback — */}
         <CardFooter className="flex flex-col gap-4">
           {/* Nexus Decision Tree OR fallback Action Hub */}
           {!history.isViewingHistory && data.nexusData && !nexusDismissed ? (

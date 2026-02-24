@@ -1,10 +1,11 @@
 // FILE: src/components/investor/PartnershipFunnel.tsx
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { Handshake, Target, Users, Percent } from 'lucide-react';
 import AnimatedCounter from './AnimatedCounter.js';
+import { useAuth } from '@/contexts/AuthContext';
+import { investorFetch } from '@/lib/investorFetch';
 
 interface PartnershipKpis {
   total_opportunities: number;
@@ -26,13 +27,14 @@ const KpiCard: React.FC<{ title: string; value: number; icon: React.ReactNode; s
 );
 
 export const PartnershipFunnel: React.FC = () => {
+  const { session } = useAuth();
   const [kpis, setKpis] = useState<PartnershipKpis | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchKpis = async () => {
       try {
-        const response = await fetch('/api/investor/partnership-kpis');
+        const response = await investorFetch('/api/investor/partnership-kpis', session);
         if (!response.ok) throw new Error('Failed to fetch partnership KPIs');
         const data = await response.json();
         setKpis(data);
@@ -43,7 +45,7 @@ export const PartnershipFunnel: React.FC = () => {
       }
     };
     fetchKpis();
-  }, []);
+  }, [session]);
 
   if (loading) {
     return <div className="h-48 w-full animate-pulse bg-muted rounded-lg" />;

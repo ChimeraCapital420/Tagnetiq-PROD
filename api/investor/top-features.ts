@@ -1,16 +1,13 @@
 // FILE: api/investor/top-features.ts
 // Top Feature Requests API - REAL DATA ONLY
 // Table: feedback (2 rows)
+//
+// SECURITY: Dual-path auth (admin JWT or invite token)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
+import { supaAdmin } from '../_lib/supaAdmin.js';
+import { verifyInvestorAccess, setInvestorCORS } from '../_lib/investorAuth.js';
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-// Cache to reduce computation
 interface CacheEntry {
   data: FeatureRequest[];
   timestamp: number;
@@ -25,7 +22,6 @@ interface FeatureRequest {
   category?: string;
 }
 
-// Feature keywords to look for in feedback
 const FEATURE_KEYWORDS: Record<string, { keywords: string[]; category: string }> = {
   'Dark Mode': { keywords: ['dark mode', 'dark theme', 'night mode', 'theme'], category: 'UI/UX' },
   'Bulk Operations': { keywords: ['bulk', 'batch', 'multiple', 'mass scan'], category: 'Core Feature' },
@@ -63,28 +59,22 @@ function extractFeaturesFromText(texts: string[]): FeatureRequest[] {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (setInvestorCORS(req, res)) return;
 
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Check cache first
-  if (featuresCache && Date.now() - featuresCache.timestamp < CACHE_DURATION) {
-    res.setHeader('X-Cache', 'HIT');
-    return res.status(200).json(featuresCache.data);
-  }
-
   try {
-    // Fetch feedback from database
-    const { data: feedback, error } = await supabase
+    await verifyInvestorAccess(req);
+
+    // Check cache first
+    if (featuresCache && Date.now() - featuresCache.timestamp < CACHE_DURATION) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.status(200).json(featuresCache.data);
+    }
+
+    const { data: feedback, error } = await supaAdmin
       .from('feedback')
       .select('*')
       .limit(200);
@@ -93,40 +83,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.error('Error fetching feedback:', error);
     }
 
-    // If no feedback, return honest empty state
     if (!feedback || feedback.length === 0) {
       featuresCache = { data: [], timestamp: Date.now() };
       res.setHeader('X-Cache', 'MISS');
-      // Return empty array (frontend expects array for .map())
       return res.status(200).json([]);
     }
 
-    // Extract text content from feedback
     const texts = feedback
       .map(f => f.content || f.message || f.text || f.feedback || '')
       .filter(t => t.length > 0);
 
     if (texts.length === 0) {
       featuresCache = { data: [], timestamp: Date.now() };
-      // Return empty array
       return res.status(200).json([]);
     }
 
-    // Extract features from feedback text
     const features = extractFeaturesFromText(texts);
 
-    // Cache the results (store array directly)
     featuresCache = { data: features, timestamp: Date.now() };
 
     res.setHeader('X-Cache', 'MISS');
     res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=1200');
 
-    // Return array directly (frontend expects array for .map())
     return res.status(200).json(features);
 
-  } catch (error) {
-    console.error('Error in top features handler:', error);
-    // Return empty array on error
+  } catch (error: any) {
+    const msg = error.message || 'An unexpected error occurred.';
+    if (msg.includes('Authentication') || msg.includes('Authorization')) {
+      return res.status(401).json({ error: msg });
+    }
+    console.error('Error in top features handler:', msg);
     return res.status(200).json([]);
   }
 }

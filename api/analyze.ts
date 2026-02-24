@@ -1,22 +1,11 @@
 // FILE: api/analyze.ts
-// HYDRA v9.4 - Slim Analysis Handler
+// HYDRA v9.6 - Slim Analysis Handler + Prompt Injection Guard + Rate Limiting
 // Evidence-based pipeline: IDENTIFY → FETCH → REASON → VALIDATE
-// Reduced from 866 lines to ~200 lines — orchestration only
 //
 // CHANGELOG:
-// v6.3: AI category passed to detectItemCategory
-// v6.4: originalImageUrls for marketplace
-// v6.5: HYDRA blended price (was ignoring market data)
-// v6.6: Aggressive market weighting
-// v7.5: eBay data in response
-// v8.0: Provider benchmark tracking
-// v8.1: Scanner barcode passthrough (additionalContext)
-// v8.2: Barcode Spider cascade + Kroger retail pricing
-// v9.0: Evidence-based pipeline — AIs reason WITH market data, not blind
-// v9.0.1: Barcode passthrough wired into pipeline (was missing from v9.0)
-// v9.2: FIXED — Save BEFORE response (Vercel teardown was killing fire-and-forget saves)
-// v9.3: Sprint M — Nexus decision tree + Oracle Eyes Tier 1 piggyback
-// v9.4: FIX — require() → ESM import (was crashing Nexus with "require is not defined")
+// v9.4: FIX — require() → ESM import
+// v9.5: SECURITY — Input sanitization + injection detection at entry point
+// v9.6: SECURITY — Rate limiting wired in (10 req/60s per IP)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -44,6 +33,18 @@ import type { NexusDecision, ScanContext, UserContext } from '../src/lib/oracle/
 
 // v9.3: Sprint M — Oracle Eyes Tier 1 piggyback
 import { captureFromScan } from '../src/lib/oracle/eyes/index.js';
+
+// v9.5: SECURITY — Input sanitization
+import {
+  sanitizeItemName,
+  sanitizeCategoryHint,
+  sanitizeCondition,
+  sanitizeAdditionalContext,
+  detectInjectionAttempt,
+} from './_lib/sanitize.js';
+
+// v9.6: SECURITY — Rate limiting
+import { applyRateLimit, LIMITS } from './_lib/rateLimit.js';
 
 // =============================================================================
 // CONFIG
@@ -192,7 +193,6 @@ function validateRequest(body: unknown): AnalyzeRequest {
 
 // =============================================================================
 // SUPABASE CLIENT (lazy, only created when needed for Nexus/Eyes)
-// v9.4: Uses top-level ESM import instead of require()
 // =============================================================================
 
 let _supabaseAdmin: any = null;
@@ -220,6 +220,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  // v9.6: Rate limit — analyze is expensive (multi-AI + HYDRA calls)
+  if (applyRateLimit(req, res, LIMITS.EXPENSIVE)) return;
+
   const startTime = Date.now();
   let analysisId = '';
 
@@ -228,6 +231,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const request = validateRequest(req.body);
     analysisId = request.analysisId!;
 
+    // ========================================================================
+    // v9.5: SANITIZE ALL TEXT INPUTS BEFORE PIPELINE
+    // This is the primary prompt injection defense layer.
+    // Sanitization happens AFTER validation but BEFORE any AI prompt building.
+    // ========================================================================
+    const rawItemName = request.itemName;
+    const rawCategoryHint = request.categoryHint;
+
+    request.itemName = sanitizeItemName(request.itemName);
+    request.categoryHint = request.categoryHint
+      ? sanitizeCategoryHint(request.categoryHint)
+      : undefined;
+    request.condition = request.condition
+      ? sanitizeCondition(request.condition)
+      : 'good';
+
+    // Detect and log injection attempts (for monitoring/alerting)
+    const injectionCheck = detectInjectionAttempt(
+      `${rawItemName} ${rawCategoryHint || ''}`
+    );
+    if (injectionCheck.detected) {
+      console.warn(
+        `🛡️ INJECTION ATTEMPT DETECTED in analysis ${analysisId}:`,
+        injectionCheck.patterns.join(', '),
+        `| userId: ${request.userId || 'anonymous'}`
+      );
+      // Don't reject — sanitized input is safe. But log for monitoring.
+    }
+    // ========================================================================
+
     const hasImage = !!request.imageBase64;
     const hasItemName = request.itemName.length > 0;
 
@@ -235,7 +268,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Either an image or item name is required');
     }
 
-    console.log(`\n🔥 === HYDRA v9.3 ANALYSIS START ===`);
+    console.log(`\n📥 === HYDRA v9.6 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
     console.log(`🖼️ Images: ${hasImage ? 1 + (request.additionalImages?.length || 0) : 0}`);
@@ -248,17 +281,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (request.imageBase64) images.push(request.imageBase64);
     if (request.additionalImages) images.push(...request.additionalImages.slice(0, 3));
 
-    // 3. Build additionalContext from scanner barcodes
+    // 3. Build additionalContext from scanner barcodes (sanitized)
     let additionalContext: string | undefined;
     if (request.scannedBarcodes && request.scannedBarcodes.length > 0) {
-      additionalContext = `UPC: ${request.scannedBarcodes[0]}`;
+      const rawContext = `UPC: ${request.scannedBarcodes[0]}`;
+      additionalContext = sanitizeAdditionalContext(rawContext);
       console.log(`🔗 Barcode context for fetchers: "${additionalContext}"`);
     }
 
     // 4. Get dynamic weights from self-heal (non-blocking, cached)
     const dynamicWeights = await getDynamicWeights().catch(() => null);
 
-    // 5. Run the evidence-based pipeline
+    // 5. Run the evidence-based pipeline (all inputs now sanitized)
     const pipelineResult = await runPipeline(images, request.itemName, {
       categoryHint: request.categoryHint,
       condition: request.condition,
@@ -305,14 +339,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ========================================================================
     // 6.5 Sprint M: NEXUS DECISION TREE — Oracle evaluates the scan
-    // Pure logic, zero extra API calls. Computed server-side.
     // ========================================================================
     let nexusDecision: NexusDecision | null = null;
 
     try {
       const supaAdmin = getSupabaseAdmin();
 
-      // Build scan context for Nexus
       const scanCtx: ScanContext = {
         itemName: pipelineResult.itemName,
         estimatedValue: pipelineResult.finalPrice,
@@ -326,7 +358,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         priceRange: pipelineResult.priceRange,
       };
 
-      // Build user context (lightweight — just enough for decision)
       let userCtx: UserContext = {
         userId: request.userId || 'anonymous',
         vaultItemCount: 0,
@@ -336,7 +367,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         tier: 'free',
       };
 
-      // Fetch minimal user context if we have a userId + supabase
       if (request.userId && supaAdmin) {
         const [vaultCount, scanCount, listingCheck] = await Promise.all([
           supaAdmin.from('vault_items').select('id', { count: 'exact', head: true }).eq('user_id', request.userId),
@@ -350,18 +380,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           scanCount: scanCount.count || 0,
           favoriteCategories: [],
           hasListedBefore: (listingCheck.data?.length || 0) > 0,
-          tier: 'free', // Tier check is expensive — skip for scan response speed
+          tier: 'free',
         };
       }
 
       nexusDecision = evaluateScan(scanCtx, userCtx);
 
-      // Log the decision (non-blocking)
       if (request.userId && supaAdmin) {
         logNexusDecision(supaAdmin, request.userId, analysisId, nexusDecision).then(() => {}, () => {});
       }
     } catch (nexusErr: any) {
-      // Nexus is non-critical — scan still works without it
       console.warn('Nexus decision failed (non-fatal):', nexusErr.message);
     }
 
@@ -371,9 +399,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       thumbnailUrl: request.originalImageUrls?.[0] || null,
       ebayMarketData: pipelineResult.ebayData,
       marketSources: pipelineResult.marketSources,
-      pipelineVersion: '9.4',
+      pipelineVersion: '9.6',
       pipelineTiming: pipelineResult.timing,
-      // Sprint M: Nexus decision included in response
       nexus: nexusDecision ? {
         nudge: nexusDecision.nudge,
         message: nexusDecision.message,
@@ -398,6 +425,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
         dynamicWeightsActive: !!dynamicWeights,
         nexusNudge: nexusDecision?.nudge || null,
+        injectionDetected: injectionCheck.detected,
       },
     };
 
@@ -422,8 +450,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ========================================================================
     // 7.5 Sprint M: Oracle Eyes Tier 1 — Piggyback visual memory
-    // Non-blocking: captures environment data from the scan we already ran.
-    // Zero extra API calls.
     // ========================================================================
     if (request.userId && getSupabaseAdmin()) {
       captureFromScan(
@@ -437,7 +463,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           stages: pipelineResult.stages,
         },
         request.originalImageUrls?.[0] || null
-      ).then(() => {}, () => {}); // Fully non-blocking
+      ).then(() => {}, () => {});
     }
 
     console.log(`\n  ✅ Complete in ${processingTime}ms${nexusDecision ? ` | Nexus: ${nexusDecision.nudge}` : ''}\n`);

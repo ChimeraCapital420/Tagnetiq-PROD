@@ -2,33 +2,22 @@
 // Full Investor Metrics — REAL DATA from all sources
 // Sprint E+: Now includes analytics trends, retention, feature adoption
 //
-// Original: profiles, vault_items, vaults, arena_listings, consensus_results,
-//           feedback, beta_invites, ghost_analytics
-// New:      analytics_daily, analytics_funnel, onboarding_progress,
-//           share_prompts, community_moments, oracle_conversations
+// SECURITY: Dual-path auth (admin JWT or invite token)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+import { supaAdmin } from '../_lib/supaAdmin.js';
+import { verifyInvestorAccess, setInvestorCORS } from '../_lib/investorAuth.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (setInvestorCORS(req, res)) return;
 
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
+    await verifyInvestorAccess(req);
+
     const days = Math.min(parseInt(req.query.days as string) || 30, 365);
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
@@ -38,7 +27,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     oneDayAgo.setDate(oneDayAgo.getDate() - 1);
 
     // =========================================================================
-    // EXISTING METRICS — original queries (unchanged)
+    // EXISTING METRICS — original queries
     // =========================================================================
 
     const [
@@ -52,25 +41,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       betaInvitesResult,
       growthResult,
     ] = await Promise.all([
-      supabase.from('profiles').select('*', { count: 'exact', head: true }),
-      supabase.from('profiles').select('id, last_login'),
-      supabase.from('vault_items').select('*', { count: 'exact', head: true }),
-      supabase.from('vaults').select('*', { count: 'exact', head: true }),
-      supabase.from('arena_listings').select('*', { count: 'exact', head: true }),
-      supabase.from('consensus_results').select('*', { count: 'exact', head: true }),
-      supabase.from('feedback').select('*', { count: 'exact', head: true }),
-      supabase.from('beta_invites').select('*', { count: 'exact', head: true }),
-      supabase.from('profiles')
+      supaAdmin.from('profiles').select('*', { count: 'exact', head: true }),
+      supaAdmin.from('profiles').select('id, last_login'),
+      supaAdmin.from('vault_items').select('*', { count: 'exact', head: true }),
+      supaAdmin.from('vaults').select('*', { count: 'exact', head: true }),
+      supaAdmin.from('arena_listings').select('*', { count: 'exact', head: true }),
+      supaAdmin.from('consensus_results').select('*', { count: 'exact', head: true }),
+      supaAdmin.from('feedback').select('*', { count: 'exact', head: true }),
+      supaAdmin.from('beta_invites').select('*', { count: 'exact', head: true }),
+      supaAdmin.from('profiles')
         .select('created_at')
         .gte('created_at', startDateISO)
         .order('created_at', { ascending: true }),
     ]);
 
     // =========================================================================
-    // GHOST PROTOCOL METRICS — (unchanged from your original)
+    // GHOST PROTOCOL METRICS
     // =========================================================================
 
-    const ghostTableCheck = await supabase
+    const ghostTableCheck = await supaAdmin
       .from('ghost_analytics')
       .select('id')
       .limit(1);
@@ -95,32 +84,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         scoutEconomicsResult,
         platformResult,
       ] = await Promise.all([
-        supabase
+        supaAdmin
           .from('arena_listings')
           .select('price, is_ghost')
           .eq('is_ghost', true)
           .eq('status', 'active'),
-        supabase
+        supaAdmin
           .from('ghost_analytics')
           .select('shelf_price, sold_price, actual_cost, actual_margin')
           .eq('status', 'fulfilled')
           .not('actual_margin', 'is', null),
-        supabase
+        supaAdmin
           .from('ghost_analytics')
           .select('hydra_accuracy_percent, created_at')
           .eq('status', 'fulfilled')
           .not('hydra_accuracy_percent', 'is', null)
           .order('created_at', { ascending: false })
           .limit(100),
-        supabase
+        supaAdmin
           .from('ghost_analytics')
           .select('store_name, region, created_at'),
-        supabase
+        supaAdmin
           .from('ghost_analytics')
           .select('user_id, actual_margin')
           .eq('status', 'fulfilled')
           .not('actual_margin', 'is', null),
-        supabase
+        supaAdmin
           .from('ghost_analytics')
           .select('sale_platform')
           .not('sale_platform', 'is', null),
@@ -142,8 +131,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // =========================================================================
-    // NEW: ANALYTICS ENGINE METRICS (Sprint E+)
-    // Gracefully handles missing tables — returns null sections if not deployed
+    // ANALYTICS ENGINE METRICS (Sprint E+)
     // =========================================================================
 
     let analyticsEngine = {
@@ -154,24 +142,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       weekOverWeek: null as any,
     };
 
-    const analyticsCheck = await supabase
+    const analyticsCheck = await supaAdmin
       .from('analytics_daily')
       .select('snapshot_date')
       .order('snapshot_date', { ascending: false })
       .limit(1);
 
     if (!analyticsCheck.error && analyticsCheck.data && analyticsCheck.data.length > 0) {
-      // Fetch trend data for charts (last N days)
       const trendStart = new Date();
       trendStart.setDate(trendStart.getDate() - days);
 
       const [trendsResult, funnelResult] = await Promise.all([
-        supabase
+        supaAdmin
           .from('analytics_daily')
           .select('snapshot_date, dau, wau, mau, total_scans, total_oracle_chats, total_shares, total_vault_adds, new_signups, onboarding_complete, error_count, avg_api_response_ms, p95_response_ms, avg_streak, users_with_vault, users_with_oracle, scan_success_rate, top_scan_categories')
           .gte('snapshot_date', trendStart.toISOString().split('T')[0])
           .order('snapshot_date', { ascending: true }),
-        supabase
+        supaAdmin
           .from('analytics_funnel')
           .select('*')
           .order('snapshot_date', { ascending: false })
@@ -181,7 +168,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const trends = trendsResult.data || [];
 
-      // Week-over-week comparison
       let weekOverWeek = null;
       if (trends.length >= 14) {
         const thisWeek = trends.slice(-7);
@@ -220,7 +206,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // =========================================================================
-    // NEW: ORACLE ENGAGEMENT (Sprint K+)
+    // ORACLE ENGAGEMENT (Sprint K+)
     // =========================================================================
 
     let oracleEngagement = {
@@ -232,17 +218,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       totalShareViews: 0,
     };
 
-    const oracleCheck = await supabase
+    const oracleCheck = await supaAdmin
       .from('oracle_conversations')
       .select('id', { count: 'exact', head: true });
 
     if (!oracleCheck.error) {
       const [convosResult, sharedResult, namedResult] = await Promise.all([
-        supabase.from('oracle_conversations').select('id, message_count, share_views')
+        supaAdmin.from('oracle_conversations').select('id, message_count, share_views')
           .not('share_token', 'is', null),
-        supabase.from('oracle_conversations').select('share_views', { count: 'exact' })
+        supaAdmin.from('oracle_conversations').select('share_views', { count: 'exact' })
           .not('share_token', 'is', null),
-        supabase.from('oracle_identities').select('id', { count: 'exact', head: true })
+        supaAdmin.from('oracle_identities').select('id', { count: 'exact', head: true })
           .not('oracle_name', 'is', null),
       ]);
 
@@ -251,7 +237,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       oracleEngagement = {
         available: true,
         totalConversations: oracleCheck.count || 0,
-        totalMessages: 0, // Would need a messages table count
+        totalMessages: 0,
         namedOracles: namedResult.count || 0,
         sharedConversations: sharedResult.count || 0,
         totalShareViews: sharedConvos.reduce((sum, c) => sum + (c.share_views || 0), 0),
@@ -259,7 +245,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // =========================================================================
-    // NEW: VAULT TYPE BREAKDOWN (Sprint O)
+    // VAULT TYPE BREAKDOWN (Sprint O)
     // =========================================================================
 
     let vaultBreakdown = {
@@ -269,7 +255,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       inventory: 0,
     };
 
-    const vaultTypeCheck = await supabase
+    const vaultTypeCheck = await supaAdmin
       .from('vault_items')
       .select('vault_type')
       .not('vault_type', 'is', null)
@@ -277,9 +263,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!vaultTypeCheck.error && vaultTypeCheck.data && vaultTypeCheck.data.length > 0) {
       const [personalCount, resaleCount, inventoryCount] = await Promise.all([
-        supabase.from('vault_items').select('*', { count: 'exact', head: true }).eq('vault_type', 'personal'),
-        supabase.from('vault_items').select('*', { count: 'exact', head: true }).eq('vault_type', 'resale'),
-        supabase.from('vault_items').select('*', { count: 'exact', head: true }).eq('vault_type', 'inventory'),
+        supaAdmin.from('vault_items').select('*', { count: 'exact', head: true }).eq('vault_type', 'personal'),
+        supaAdmin.from('vault_items').select('*', { count: 'exact', head: true }).eq('vault_type', 'resale'),
+        supaAdmin.from('vault_items').select('*', { count: 'exact', head: true }).eq('vault_type', 'inventory'),
       ]);
 
       vaultBreakdown = {
@@ -291,7 +277,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // =========================================================================
-    // CALCULATE EXISTING METRICS (unchanged from your original)
+    // CALCULATE EXISTING METRICS
     // =========================================================================
 
     const profiles = profilesWithLastSignIn.data || [];
@@ -382,7 +368,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // =========================================================================
 
     const metrics = {
-      // Original fields (unchanged — frontend compatibility)
       totalUsers: profilesResult.count || 0,
       dau,
       totalScans: vaultItemsResult.count || 0,
@@ -398,7 +383,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       growthData: Object.values(growthByDay),
 
-      // Ghost Protocol (unchanged)
       ghostProtocol: {
         enabled: hasGhostTable,
         darkInventory: {
@@ -430,16 +414,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .sort((a, b) => b.count - a.count),
       },
 
-      // ── NEW: Analytics Engine (Sprint E+) ─────────────
       analyticsEngine,
-
-      // ── NEW: Oracle Engagement ────────────────────────
       oracleEngagement,
-
-      // ── NEW: Vault Type Breakdown (Sprint O) ─────────
       vaultBreakdown,
 
-      // TAM (unchanged)
       tam: {
         total: '$1.3T',
         serviceable: '$125B',
@@ -462,11 +440,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json(metrics);
 
-  } catch (error) {
-    console.error('Error fetching investor metrics:', error);
-    return res.status(500).json({
-      error: 'Failed to fetch metrics',
-      details: error instanceof Error ? error.message : 'Unknown error',
-    });
+  } catch (error: any) {
+    const msg = error.message || 'An unexpected error occurred.';
+    if (msg.includes('Authentication') || msg.includes('Authorization')) {
+      return res.status(401).json({ error: msg });
+    }
+    console.error('Error fetching investor metrics:', msg);
+    return res.status(500).json({ error: 'Failed to fetch metrics' });
   }
 }

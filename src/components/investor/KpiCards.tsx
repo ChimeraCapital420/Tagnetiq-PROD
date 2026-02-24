@@ -1,10 +1,11 @@
 // FILE: src/components/investor/KpiCards.tsx
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Users, Activity, ScanLine } from 'lucide-react';
 import AnimatedCounter from './AnimatedCounter.js';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
+import { investorFetch } from '@/lib/investorFetch';
 
 interface KpiData {
   totalUsers: number;
@@ -27,13 +28,14 @@ const KpiCard: React.FC<{ title: string; value: number; icon: React.ReactNode }>
 );
 
 export const KpiCards: React.FC = () => {
+  const { session } = useAuth();
   const [data, setData] = useState<KpiData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchKpis = async () => {
       try {
-        const response = await fetch('/api/investor/kpis');
+        const response = await investorFetch('/api/investor/kpis', session);
         if (!response.ok) {
           throw new Error('Failed to fetch core KPIs');
         }
@@ -45,9 +47,8 @@ export const KpiCards: React.FC = () => {
         setLoading(false);
       }
     };
-
     fetchKpis();
-  }, []);
+  }, [session]);
 
   if (loading) {
     return (

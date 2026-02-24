@@ -1,8 +1,9 @@
-// FILE: src/components/investor/TopFeatures.tsx (CREATE OR REPLACE)
-
+// FILE: src/components/investor/TopFeatures.tsx
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
+import { useAuth } from '@/contexts/AuthContext';
+import { investorFetch } from '@/lib/investorFetch';
 
 interface FeatureRequest {
   feature: string;
@@ -10,13 +11,14 @@ interface FeatureRequest {
 }
 
 export const TopFeatures: React.FC = () => {
+  const { session } = useAuth();
   const [features, setFeatures] = useState<FeatureRequest[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchFeatures = async () => {
       try {
-        const response = await fetch('/api/investor/top-features');
+        const response = await investorFetch('/api/investor/top-features', session);
         if (!response.ok) {
           throw new Error('Failed to fetch top feature requests.');
         }
@@ -29,7 +31,7 @@ export const TopFeatures: React.FC = () => {
       }
     };
     fetchFeatures();
-  }, []);
+  }, [session]);
 
   if (loading) {
     return (

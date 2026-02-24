@@ -1,13 +1,14 @@
 // FILE: src/components/admin/investor/InvestorInviteForm.tsx
-
 import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 export const InvestorInviteForm: React.FC = () => {
+  const { session } = useAuth();
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -16,25 +17,30 @@ export const InvestorInviteForm: React.FC = () => {
       toast.error('Please enter the investor\'s email address.');
       return;
     }
-    setIsLoading(true);
+    if (!session) {
+      toast.error('You must be logged in to send invites.');
+      return;
+    }
 
+    setIsLoading(true);
     try {
       const response = await fetch('/api/investor/invite', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({ email }),
       });
-      
+
       if (!response.ok) {
         const { error } = await response.json();
         throw new Error(error || 'Failed to send invite.');
       }
-      
+
       toast.success('Invite Sent Successfully!', {
         description: `An invitation has been emailed to ${email}.`,
       });
-
-      // Reset form
       setEmail('');
     } catch (error) {
       toast.error('Invite Failed', { description: (error as Error).message });
@@ -52,11 +58,11 @@ export const InvestorInviteForm: React.FC = () => {
       <CardContent className="space-y-4">
         <div className="space-y-2">
             <Label htmlFor="investor-email">Investor Email</Label>
-            <Input 
-                id="investor-email" 
-                type="email" 
-                value={email} 
-                onChange={(e) => setEmail(e.target.value)} 
+            <Input
+                id="investor-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 placeholder="jane.doe@example.com"
                 disabled={isLoading}
             />

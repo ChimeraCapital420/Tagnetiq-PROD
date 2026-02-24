@@ -1,5 +1,7 @@
+// FILE: src/pages/investor/Portal.tsx
 import React, { useEffect, useState } from 'react';
 import { getInvestorToken } from '@/lib/investorAuth';
+import { investorFetch } from '@/lib/investorFetch';
 import { trackEvent } from '@/lib/analytics';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -22,13 +24,14 @@ const InvestorPortal: React.FC = () => {
   useEffect(() => {
     const foundToken = getInvestorToken();
     setToken(foundToken);
-    
+
     if (foundToken) {
       trackEvent('portal_view');
-      
+
       const fetchKpis = async () => {
         try {
-          const response = await fetch(`/api/investor/kpis?token=${foundToken}`);
+          // investorFetch with null session auto-appends ?token= from cookie/URL
+          const response = await investorFetch('/api/investor/kpis', null);
           if (!response.ok) {
             const err = await response.json();
             throw new Error(err.error || 'Failed to load data.');

@@ -1,9 +1,10 @@
 // FILE: src/components/investor/LiveFeed.tsx
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { AnimatePresence, motion } from 'framer-motion';
 import { UserPlus, ShieldCheck, Trophy, Landmark, DollarSign } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { investorFetch } from '@/lib/investorFetch';
 
 const eventIcons = {
     USER_SIGNUP: <UserPlus className="h-4 w-4 text-blue-400" />,
@@ -25,11 +26,13 @@ const formatEvent = (event: any) => {
 };
 
 export const LiveFeed: React.FC = () => {
+    const { session } = useAuth();
     const [feed, setFeed] = useState<any[]>([]);
+
     useEffect(() => {
         const fetchEvent = async () => {
             try {
-                const response = await fetch('/api/investor/live-feed');
+                const response = await investorFetch('/api/investor/live-feed', session);
                 if (!response.ok) return;
                 const newEvent = await response.json();
                 setFeed(prevFeed => [newEvent, ...prevFeed.slice(0, 4)]);
@@ -38,7 +41,7 @@ export const LiveFeed: React.FC = () => {
         fetchEvent();
         const interval = setInterval(fetchEvent, 4000);
         return () => clearInterval(interval);
-    }, []);
+    }, [session]);
 
     return (
         <Card>

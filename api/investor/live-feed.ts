@@ -2,18 +2,13 @@
 // Live Feed API - REAL DATA from original tables + analytics engine
 // Sprint E+: Now includes Oracle chats, shares, tour completions, community moments
 //
-// Original: profiles, vault_items, arena_listings, secure_messages, consensus_results
-// New:      analytics_events (anonymous aggregates only — no PII ever exposed)
+// SECURITY: Dual-path auth (admin JWT or invite token)
+// All data is ANONYMOUS. No PII exposed.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
+import { supaAdmin } from '../_lib/supaAdmin.js';
+import { verifyInvestorAccess, setInvestorCORS } from '../_lib/investorAuth.js';
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-// Event types — expanded to include new Sprint features
 type EventType =
   | 'USER_SIGNUP'
   | 'ITEM_VAULTED'
@@ -36,26 +31,20 @@ interface FeedEvent {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (setInvestorCORS(req, res)) return;
 
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const events: FeedEvent[] = [];
+    await verifyInvestorAccess(req);
 
-    // Get data from the last 7 days
+    const events: FeedEvent[] = [];
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
     // =========================================================================
-    // ORIGINAL SOURCES (unchanged)
+    // ORIGINAL SOURCES
     // =========================================================================
 
     const [
@@ -65,31 +54,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       messagesResult,
       analysesResult,
     ] = await Promise.all([
-      supabase
+      supaAdmin
         .from('profiles')
         .select('id, created_at, location_text')
         .gte('created_at', sevenDaysAgo)
         .order('created_at', { ascending: false })
         .limit(10),
-      supabase
+      supaAdmin
         .from('vault_items')
         .select('id, created_at, name, category')
         .gte('created_at', sevenDaysAgo)
         .order('created_at', { ascending: false })
         .limit(10),
-      supabase
+      supaAdmin
         .from('arena_listings')
         .select('id, created_at, title')
         .gte('created_at', sevenDaysAgo)
         .order('created_at', { ascending: false })
         .limit(5),
-      supabase
+      supaAdmin
         .from('secure_messages')
         .select('id, created_at')
         .gte('created_at', sevenDaysAgo)
         .order('created_at', { ascending: false })
         .limit(5),
-      supabase
+      supaAdmin
         .from('consensus_results')
         .select('id, created_at')
         .gte('created_at', sevenDaysAgo)
@@ -97,7 +86,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .limit(5),
     ]);
 
-    // Process original sources (unchanged)
     if (profilesResult.data) {
       profilesResult.data.forEach(profile => {
         if (profile.created_at) {
@@ -165,11 +153,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // =========================================================================
     // NEW SOURCES (Sprint E+ — graceful if tables don't exist)
-    // All data is anonymous. No PII. No user names. No content.
     // =========================================================================
 
-    // Oracle conversations (Sprint K+)
-    const oracleResult = await supabase
+    const oracleResult = await supaAdmin
       .from('oracle_conversations')
       .select('id, created_at, message_count')
       .gte('created_at', sevenDaysAgo)
@@ -189,8 +175,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // Shared conversations (Sprint N)
-    const sharedResult = await supabase
+    const sharedResult = await supaAdmin
       .from('oracle_conversations')
       .select('id, updated_at, share_views')
       .not('share_token', 'is', null)
@@ -211,8 +196,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // Tour completions (Sprint E)
-    const tourResult = await supabase
+    const tourResult = await supaAdmin
       .from('onboarding_progress')
       .select('tour_completed_at')
       .eq('tour_completed', true)
@@ -234,8 +218,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // Community moments (Sprint E)
-    const momentsResult = await supabase
+    const momentsResult = await supaAdmin
       .from('community_moments')
       .select('id, created_at, headline, moment_type')
       .eq('is_published', true)
@@ -256,11 +239,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // Analytics event aggregates — anonymous counts only
-    // (Not individual events — we show "12 scans completed this hour", not individual scans)
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
 
-    const recentAnalytics = await supabase
+    const recentAnalytics = await supaAdmin
       .from('analytics_events')
       .select('event_name, event_category')
       .gte('created_at', oneHourAgo);
@@ -271,7 +252,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         counts[e.event_name] = (counts[e.event_name] || 0) + 1;
       });
 
-      // Add aggregate events for the live feed
       if (counts['scan_complete'] && counts['scan_complete'] > 0) {
         events.push({
           type: 'SCAN_COMPLETED',
@@ -298,17 +278,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // Return one random event from the most recent 15
     const recentEvents = events.slice(0, 15);
     const randomEvent = recentEvents[Math.floor(Math.random() * recentEvents.length)];
 
-    // Short cache for "live" feel
     res.setHeader('Cache-Control', 's-maxage=2, stale-while-revalidate=5');
 
     return res.status(200).json(randomEvent);
 
-  } catch (error) {
-    console.error('Error fetching live feed:', error);
+  } catch (error: any) {
+    const msg = error.message || 'An unexpected error occurred.';
+    if (msg.includes('Authentication') || msg.includes('Authorization')) {
+      return res.status(401).json({ error: msg });
+    }
+    console.error('Error fetching live feed:', msg);
     return res.status(200).json({
       type: 'AI_ANALYSIS',
       timestamp: new Date().toISOString(),

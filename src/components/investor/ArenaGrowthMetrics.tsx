@@ -1,10 +1,12 @@
-// FILE: src/components/investor/ArenaGrowthMetrics.tsx (CREATE OR REPLACE)
+// FILE: src/components/investor/ArenaGrowthMetrics.tsx
 
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { Users, BarChart2, MessageCircle, ShieldCheck, Sword, Store, BellRing } from 'lucide-react';
 import AnimatedCounter from './AnimatedCounter.js';
+import { useAuth } from '@/contexts/AuthContext';
+import { investorFetch } from '@/lib/investorFetch';
 
 // Define the structure of the data we expect from our new API endpoint
 interface ArenaMetrics {
@@ -29,13 +31,14 @@ const KpiCard: React.FC<{ title: string; value: number; icon: React.ReactNode; d
 );
 
 export const ArenaGrowthMetrics: React.FC = () => {
+  const { session } = useAuth();
   const [metrics, setMetrics] = useState<ArenaMetrics | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchArenaMetrics = async () => {
       try {
-        const response = await fetch('/api/investor/arena-metrics');
+        const response = await investorFetch('/api/investor/arena-metrics', session);
         if (!response.ok) {
           throw new Error('Failed to fetch Arena metrics');
         }
@@ -49,10 +52,10 @@ export const ArenaGrowthMetrics: React.FC = () => {
     };
 
     fetchArenaMetrics();
-    const interval = setInterval(fetchArenaMetrics, 30000); 
+    const interval = setInterval(fetchArenaMetrics, 30000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [session]);
 
   if (loading) {
     return (
@@ -98,7 +101,7 @@ export const ArenaGrowthMetrics: React.FC = () => {
             <KpiCard title="Alerts" value={metrics.socialInteraction.alertsTriggeredToday} icon={<BellRing className="h-4 w-4" />} description="Triggered Today" />
           </div>
         </div>
-        
+
         <div>
             <h3 className="font-semibold mb-2 text-center text-sm uppercase tracking-wider text-muted-foreground">Ecosystem Health</h3>
             <div className="grid grid-cols-1">

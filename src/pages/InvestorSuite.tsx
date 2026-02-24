@@ -1,7 +1,10 @@
+// FILE: src/pages/InvestorSuite.tsx
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Printer, Ghost, TrendingUp, Brain, Map, Users } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
+import { investorFetch } from '@/lib/investorFetch';
 import { KpiCards } from '@/components/investor/KpiCards';
 import { FunnelChart } from '@/components/investor/FunnelChart';
 import { DocsShelf } from '@/components/investor/DocsShelf';
@@ -63,7 +66,7 @@ const GhostProtocolSection: React.FC<{ data: GhostProtocolMetrics | undefined }>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Ghost Protocol enables scouts to create virtual listings for items they discover 
+            Ghost Protocol enables scouts to create virtual listings for items they discover
             but don't yet own. Run the database migration to enable.
           </p>
         </CardContent>
@@ -119,7 +122,6 @@ const GhostProtocolSection: React.FC<{ data: GhostProtocolMetrics | undefined }>
       </p>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {/* Dark Inventory Index */}
         <Card className="bg-gradient-to-br from-purple-500/10 to-pink-500/10 border-purple-500/20">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -128,16 +130,11 @@ const GhostProtocolSection: React.FC<{ data: GhostProtocolMetrics | undefined }>
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-purple-400">
-              {formatCurrency(data.darkInventory.value)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {formatNumber(data.darkInventory.count)} items not online yet
-            </p>
+            <div className="text-3xl font-bold text-purple-400">{formatCurrency(data.darkInventory.value)}</div>
+            <p className="text-xs text-muted-foreground mt-1">{formatNumber(data.darkInventory.count)} items not online yet</p>
           </CardContent>
         </Card>
 
-        {/* Arbitrage Spread */}
         <Card className="bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border-emerald-500/20">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -146,16 +143,11 @@ const GhostProtocolSection: React.FC<{ data: GhostProtocolMetrics | undefined }>
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-emerald-400">
-              {data.arbitrageSpread.avgPercent}%
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              avg markup • {formatNumber(data.arbitrageSpread.totalTransactions)} transactions
-            </p>
+            <div className="text-3xl font-bold text-emerald-400">{data.arbitrageSpread.avgPercent}%</div>
+            <p className="text-xs text-muted-foreground mt-1">avg markup • {formatNumber(data.arbitrageSpread.totalTransactions)} transactions</p>
           </CardContent>
         </Card>
 
-        {/* HYDRA Accuracy */}
         <Card className="bg-gradient-to-br from-blue-500/10 to-cyan-500/10 border-blue-500/20">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -164,17 +156,12 @@ const GhostProtocolSection: React.FC<{ data: GhostProtocolMetrics | undefined }>
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-blue-400">
-              {data.hydraAccuracy.percent}%
-            </div>
+            <div className="text-3xl font-bold text-blue-400">{data.hydraAccuracy.percent}%</div>
             <Progress value={data.hydraAccuracy.percent} className="h-1.5 mt-2 bg-zinc-800" />
-            <p className="text-xs text-muted-foreground mt-1">
-              {formatNumber(data.hydraAccuracy.totalPredictions)} predictions
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">{formatNumber(data.hydraAccuracy.totalPredictions)} predictions</p>
           </CardContent>
         </Card>
 
-        {/* Coverage Velocity */}
         <Card className="bg-gradient-to-br from-orange-500/10 to-amber-500/10 border-orange-500/20">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -184,18 +171,13 @@ const GhostProtocolSection: React.FC<{ data: GhostProtocolMetrics | undefined }>
           </CardHeader>
           <CardContent>
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-bold text-orange-400">
-                {formatNumber(data.coverageVelocity.storesMapped)}
-              </span>
+              <span className="text-2xl font-bold text-orange-400">{formatNumber(data.coverageVelocity.storesMapped)}</span>
               <span className="text-sm text-muted-foreground">stores</span>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {formatNumber(data.coverageVelocity.weeklyDataPoints)} pts/week • {data.coverageVelocity.regionsCovered} regions
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">{formatNumber(data.coverageVelocity.weeklyDataPoints)} pts/week • {data.coverageVelocity.regionsCovered} regions</p>
           </CardContent>
         </Card>
 
-        {/* Scout Economics */}
         <Card className="bg-gradient-to-br from-pink-500/10 to-rose-500/10 border-pink-500/20 md:col-span-2">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -206,15 +188,11 @@ const GhostProtocolSection: React.FC<{ data: GhostProtocolMetrics | undefined }>
           <CardContent>
             <div className="flex items-center gap-8">
               <div>
-                <span className="text-2xl font-bold text-pink-400">
-                  ${data.scoutEconomics.avgMonthlyProfit.toFixed(0)}
-                </span>
+                <span className="text-2xl font-bold text-pink-400">${data.scoutEconomics.avgMonthlyProfit.toFixed(0)}</span>
                 <p className="text-xs text-muted-foreground">avg profit</p>
               </div>
               <div>
-                <span className="text-2xl font-bold text-pink-400">
-                  {formatNumber(data.scoutEconomics.activeScouts)}
-                </span>
+                <span className="text-2xl font-bold text-pink-400">{formatNumber(data.scoutEconomics.activeScouts)}</span>
                 <p className="text-xs text-muted-foreground">active scouts</p>
               </div>
             </div>
@@ -222,7 +200,6 @@ const GhostProtocolSection: React.FC<{ data: GhostProtocolMetrics | undefined }>
         </Card>
       </div>
 
-      {/* Platform Distribution */}
       {data.platformBreakdown.length > 0 && (
         <Card className="bg-zinc-900/50 border-zinc-800">
           <CardHeader className="pb-2">
@@ -240,11 +217,10 @@ const GhostProtocolSection: React.FC<{ data: GhostProtocolMetrics | undefined }>
         </Card>
       )}
 
-      {/* The Moat */}
       <Card className="bg-zinc-900/30 border-zinc-800">
         <CardContent className="pt-4">
           <p className="text-sm text-muted-foreground">
-            <strong className="text-foreground">The Data Moat:</strong> Every ghost scan creates 
+            <strong className="text-foreground">The Data Moat:</strong> Every ghost scan creates
             a data point that doesn't exist anywhere else. We're building{' '}
             <strong>Waze for thrift stores</strong> meets{' '}
             <strong>Bloomberg for collectibles</strong>. Google can't crawl this.
@@ -256,15 +232,16 @@ const GhostProtocolSection: React.FC<{ data: GhostProtocolMetrics | undefined }>
 };
 
 const InvestorSuite: React.FC = () => {
+  const { session } = useAuth();
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState<number>(30);
 
   useEffect(() => {
     const fetchMetrics = async () => {
-      if (!metrics) setLoading(true); 
+      if (!metrics) setLoading(true);
       try {
-        const response = await fetch(`/api/investor/metrics?days=${days}`);
+        const response = await investorFetch(`/api/investor/metrics?days=${days}`, session);
         if (!response.ok) {
           const errorData = await response.json();
           throw new Error(errorData.error || 'Failed to load investor metrics.');
@@ -278,7 +255,7 @@ const InvestorSuite: React.FC = () => {
       }
     };
     fetchMetrics();
-  }, [days]);
+  }, [days, session]);
 
   const funnelData = metrics ? [
     { name: 'Invited', value: metrics.totalBetaInvites, fill: '#8884d8' },
@@ -330,7 +307,6 @@ const InvestorSuite: React.FC = () => {
                 <ArenaGrowthMetrics />
                 <Separator className="my-8" />
 
-                {/* NEW: Ghost Protocol Section */}
                 <GhostProtocolSection data={metrics?.ghostProtocol} />
                 <Separator className="my-8" />
 

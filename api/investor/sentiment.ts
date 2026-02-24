@@ -1,14 +1,12 @@
 // FILE: api/investor/sentiment.ts
 // Sentiment Analysis API - REAL DATA ONLY
 // Table: feedback (2 rows)
+//
+// SECURITY: Dual-path auth (admin JWT or invite token)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+import { supaAdmin } from '../_lib/supaAdmin.js';
+import { verifyInvestorAccess, setInvestorCORS } from '../_lib/investorAuth.js';
 
 // Cache to reduce API costs
 interface CacheEntry {
@@ -29,17 +27,16 @@ interface SentimentData {
   note?: string;
 }
 
-// Simple keyword-based sentiment (no AI dependency)
 function analyzeSentiment(text: string): 'Positive' | 'Neutral' | 'Negative' {
   const lower = text.toLowerCase();
-  
+
   const positiveWords = [
-    'love', 'great', 'awesome', 'excellent', 'amazing', 'helpful', 
-    'good', 'best', 'fantastic', 'perfect', 'nice', 'thanks', 
+    'love', 'great', 'awesome', 'excellent', 'amazing', 'helpful',
+    'good', 'best', 'fantastic', 'perfect', 'nice', 'thanks',
     'wonderful', 'impressed', 'easy', 'useful', 'recommend'
   ];
   const negativeWords = [
-    'hate', 'bad', 'terrible', 'awful', 'worst', 'broken', 
+    'hate', 'bad', 'terrible', 'awful', 'worst', 'broken',
     'bug', 'issue', 'problem', 'slow', 'crash', 'error',
     'frustrating', 'annoying', 'difficult', 'confusing', 'wrong'
   ];
@@ -53,28 +50,22 @@ function analyzeSentiment(text: string): 'Positive' | 'Neutral' | 'Negative' {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (setInvestorCORS(req, res)) return;
 
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Check cache first
-  if (sentimentCache && Date.now() - sentimentCache.timestamp < CACHE_DURATION) {
-    res.setHeader('X-Cache', 'HIT');
-    return res.status(200).json(sentimentCache.data);
-  }
-
   try {
-    // Fetch feedback from database
-    const { data: feedback, error } = await supabase
+    await verifyInvestorAccess(req);
+
+    // Check cache first
+    if (sentimentCache && Date.now() - sentimentCache.timestamp < CACHE_DURATION) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.status(200).json(sentimentCache.data);
+    }
+
+    const { data: feedback, error } = await supaAdmin
       .from('feedback')
       .select('*')
       .limit(100);
@@ -83,7 +74,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.error('Error fetching feedback:', error);
     }
 
-    // If no feedback data, return honest zero state
     if (!feedback || feedback.length === 0) {
       const noData: SentimentData = {
         Positive: 0,
@@ -100,7 +90,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json(noData);
     }
 
-    // Analyze real feedback
     const sentimentCounts: SentimentData = {
       Positive: 0,
       Neutral: 0,
@@ -112,7 +101,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     feedback.forEach(item => {
-      // Try different possible field names for feedback content
       const content = item.content || item.message || item.text || item.feedback || '';
       if (content) {
         const sentiment = analyzeSentiment(content);
@@ -122,7 +110,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     });
 
-    // Cache the results
     sentimentCache = { data: sentimentCounts, timestamp: Date.now() };
 
     res.setHeader('X-Cache', 'MISS');
@@ -130,10 +117,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json(sentimentCounts);
 
-  } catch (error) {
-    console.error('Error in sentiment analysis:', error);
-
-    // Return honest error state
+  } catch (error: any) {
+    const msg = error.message || 'An unexpected error occurred.';
+    if (msg.includes('Authentication') || msg.includes('Authorization')) {
+      return res.status(401).json({ error: msg });
+    }
+    console.error('Error in sentiment analysis:', msg);
     return res.status(200).json({
       Positive: 0,
       Neutral: 0,
