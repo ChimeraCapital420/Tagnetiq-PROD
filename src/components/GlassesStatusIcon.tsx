@@ -3,10 +3,14 @@
 // Used in: ResponsiveNavigation (top nav bar), ScannerHeader (scanner toolbar)
 //
 // Status → Lens Color → Tap Action:
-//   gray   → SDK unavailable (browser)     → open SmartGlassesShopSheet
+//   gray   → SDK unavailable → shop sheet (context-aware messaging)
 //   red    → not registered with Meta AI   → trigger registration flow
 //   yellow → registered but disconnected   → toast "put on your glasses"
 //   green  → connected & ready             → navigate to Hunt Mode
+//
+// CONTEXT-AWARE: Detects Capacitor (native app) vs browser
+//   In app: never says "download the app" — offers pair/troubleshoot
+//   In browser: directs to mobile app or shop
 //
 // Mobile-first: 44px touch targets, haptic-ready
 
@@ -38,13 +42,21 @@ export interface GlassesStatusIconProps {
   onRegister?: () => void;
   /** Called when user taps green icon (ready for Hunt Mode) */
   onHuntMode?: () => void;
-  /** Called when user taps gray icon (no SDK — show shop sheet) */
+  /** Called when user taps gray icon (show shop/pair sheet) */
   onShopGlasses?: () => void;
   /** Visual variant — nav bar is smaller, scanner toolbar is larger */
   variant?: 'nav' | 'scanner';
   /** Additional CSS classes */
   className?: string;
 }
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+
+/** Detect if running inside Capacitor native shell */
+const isCapacitorApp = (): boolean =>
+  typeof (window as any)?.Capacitor !== 'undefined';
 
 // =============================================================================
 // STATUS DERIVATION
@@ -64,7 +76,7 @@ const STATUS_CONFIG: Record<GlassesStatus, {
 }> = {
   unavailable: {
     lensColor: '#6B7280', // gray-500
-    label: 'Get smart glasses for TagnetIQ',
+    label: 'Smart glasses — tap to explore',
     pulseClass: '',
   },
   unregistered: {
@@ -102,11 +114,17 @@ const GlassesStatusIcon: React.FC<GlassesStatusIconProps> = ({
   const handleTap = () => {
     switch (status) {
       case 'unavailable':
+        // Always open shop sheet — it handles context (pair vs shop)
         if (onShopGlasses) {
           onShopGlasses();
+        } else if (isCapacitorApp()) {
+          // In the app but no callback — shouldn't happen, but be helpful
+          toast.info('Browse compatible smart glasses', {
+            description: 'Pair your existing glasses or shop for a new pair',
+          });
         } else {
-          toast.info('Smart glasses enhance your TagnetIQ experience', {
-            description: 'Download the mobile app to get started',
+          toast.info('Smart glasses work best in the TagnetIQ app', {
+            description: 'Pair your glasses or browse compatible models',
           });
         }
         break;
@@ -114,7 +132,7 @@ const GlassesStatusIcon: React.FC<GlassesStatusIconProps> = ({
         if (onRegister) {
           onRegister();
         } else {
-          toast.info('Register your Meta glasses to get started');
+          toast.info('Register your glasses to get started');
         }
         break;
       case 'disconnected':

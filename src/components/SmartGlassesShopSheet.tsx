@@ -1,14 +1,16 @@
 // FILE: src/components/SmartGlassesShopSheet.tsx
 // Bottom sheet for smart glasses — pair existing glasses OR shop for new ones
 //
-// Shown when gray glasses icon tapped (no SDK/browser user)
+// CONTEXT-AWARE:
+//   In Capacitor app + supported brand → "Pair My Glasses" starts SDK registration
+//   In Capacitor app + coming soon brand → "Pair (Coming Soon)" disabled
+//   In browser + supported brand → "Pair in App" with app download hint
+//   In browser + coming soon brand → "Coming Soon" disabled
+//   Shop button → always active, opens affiliate link
 //
-// Each brand card has TWO clear actions:
-//   🔗 "I have these" → Pair button → starts SDK registration for that brand
-//   🛒 "Shop" → affiliate link → opens vendor store (commission opportunity)
-//
-// Brands with status "supported" show active Pair button
-// Brands with status "coming_soon" show disabled Pair + active Shop
+// Each brand card has TWO clear paths:
+//   🔗 "Pair My Glasses" → owners with glasses → starts pairing
+//   🛒 "Shop" → future buyers → affiliate link (commission opportunity)
 //
 // AFFILIATE STRATEGY:
 //   Meta Ray-Ban → meta.com / ray-ban.com affiliate program
@@ -26,9 +28,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ExternalLink, Bluetooth, Glasses, Sparkles, ShoppingCart } from 'lucide-react';
+import { ExternalLink, Bluetooth, Glasses, Sparkles, ShoppingCart, Smartphone } from 'lucide-react';
+import { toast } from 'sonner';
 
 // =============================================================================
 // TYPES
@@ -42,29 +44,30 @@ export interface GlassesVendor {
   model: string;
   tagline: string;
   specs: string;
-  /** Direct product page URL */
   shopUrl: string;
-  /** Affiliate link — replace with tracked URLs when partnerships established */
   affiliateUrl: string;
   status: GlassesVendorStatus;
-  /** Is the native SDK available on this device right now? */
   sdkAvailable: boolean;
-  /** Price range string */
   priceRange: string;
-  /** Camera capability — important for Hunt Mode */
   hasCamera: boolean;
 }
 
 export interface SmartGlassesShopSheetProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Called when user taps "Pair" on a supported brand */
   onPairBrand?: (vendorId: string) => void;
 }
 
 // =============================================================================
+// HELPERS
+// =============================================================================
+
+/** Detect if running inside Capacitor native shell */
+const isCapacitorApp = (): boolean =>
+  typeof (window as any)?.Capacitor !== 'undefined';
+
+// =============================================================================
 // VENDOR CATALOG
-// Update affiliateUrl with tracked params when partnerships are live
 // =============================================================================
 
 const GLASSES_VENDORS: GlassesVendor[] = [
@@ -77,7 +80,7 @@ const GLASSES_VENDORS: GlassesVendor[] = [
     shopUrl: 'https://www.ray-ban.com/usa/ray-ban-meta-smart-glasses',
     affiliateUrl: 'https://www.ray-ban.com/usa/ray-ban-meta-smart-glasses', // TODO: affiliate params
     status: 'supported',
-    sdkAvailable: false, // Set dynamically based on Capacitor detection
+    sdkAvailable: false,
     priceRange: '$299–$379',
     hasCamera: true,
   },
@@ -138,13 +141,14 @@ const StatusBadge: React.FC<{ status: GlassesVendorStatus }> = ({ status }) => {
 };
 
 // =============================================================================
-// VENDOR CARD — two clear paths: Pair (owners) or Shop (future buyers)
+// VENDOR CARD
 // =============================================================================
 
 const VendorCard: React.FC<{
   vendor: GlassesVendor;
+  isInApp: boolean;
   onPair?: () => void;
-}> = ({ vendor, onPair }) => {
+}> = ({ vendor, isInApp, onPair }) => {
   const handleShop = () => {
     // TODO: Track affiliate click for analytics
     // trackEvent('glasses_shop_click', 'affiliate', { vendor: vendor.id });
@@ -153,11 +157,37 @@ const VendorCard: React.FC<{
 
   const canPair = vendor.status === 'supported';
 
+  const handlePairClick = () => {
+    if (!canPair) return;
+
+    if (isInApp && onPair) {
+      // In Capacitor app — actually start pairing
+      onPair();
+    } else if (!isInApp) {
+      // In browser — helpful message, not "download the app"
+      toast.info(`Pair ${vendor.model} in the TagnetIQ app`, {
+        description: 'Open TagnetIQ on your phone to connect your glasses',
+      });
+    }
+  };
+
+  // Button label based on context
+  const getPairLabel = (): string => {
+    if (!canPair) return 'Coming Soon';
+    if (isInApp) return 'Pair My Glasses';
+    return 'Pair in App';
+  };
+
+  const getPairIcon = () => {
+    if (!canPair) return <Bluetooth className="w-3.5 h-3.5 opacity-40" />;
+    if (isInApp) return <Bluetooth className="w-3.5 h-3.5" />;
+    return <Smartphone className="w-3.5 h-3.5" />;
+  };
+
   return (
     <div className="rounded-lg border bg-card overflow-hidden">
       {/* Top row: brand info + status */}
       <div className="flex items-start gap-3 p-3 pb-2">
-        {/* Glasses icon — colored by support status */}
         <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
           canPair ? 'bg-green-500/20' : 'bg-muted'
         }`}>
@@ -166,7 +196,6 @@ const VendorCard: React.FC<{
           }`} />
         </div>
 
-        {/* Info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
             <span className="font-medium text-sm">{vendor.model}</span>
@@ -176,17 +205,16 @@ const VendorCard: React.FC<{
           <p className="text-[11px] text-muted-foreground/60 mt-0.5">{vendor.specs}</p>
         </div>
 
-        {/* Price */}
         <div className="flex-shrink-0 text-right">
           <span className="text-sm font-semibold">{vendor.priceRange}</span>
         </div>
       </div>
 
-      {/* Bottom row: action buttons — always two clear options */}
+      {/* Bottom row: Pair (owners) | Shop (buyers) */}
       <div className="flex border-t divide-x">
-        {/* Left: "I have these" → Pair */}
+        {/* Left: Pair — context-aware */}
         <button
-          onClick={canPair && onPair ? onPair : undefined}
+          onClick={handlePairClick}
           disabled={!canPair}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors touch-manipulation ${
             canPair
@@ -194,11 +222,11 @@ const VendorCard: React.FC<{
               : 'text-muted-foreground/40 cursor-not-allowed'
           }`}
         >
-          <Bluetooth className="w-3.5 h-3.5" />
-          {canPair ? 'Pair My Glasses' : 'Pair (Coming Soon)'}
+          {getPairIcon()}
+          {getPairLabel()}
         </button>
 
-        {/* Right: "I want these" → Shop (affiliate link) */}
+        {/* Right: Shop — always works */}
         <button
           onClick={handleShop}
           className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium hover:bg-accent text-foreground transition-colors touch-manipulation"
@@ -221,11 +249,12 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
   onClose,
   onPairBrand,
 }) => {
+  const isInApp = isCapacitorApp();
+
   // Mark Meta as SDK-available if we detect Capacitor runtime
-  const isCapacitor = typeof (window as any)?.Capacitor !== 'undefined';
   const vendors = GLASSES_VENDORS.map(v => ({
     ...v,
-    sdkAvailable: v.id === 'meta_rayban' && isCapacitor,
+    sdkAvailable: v.id === 'meta_rayban' && isInApp,
   }));
 
   return (
@@ -237,7 +266,10 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
             Smart Glasses for TagnetIQ
           </SheetTitle>
           <SheetDescription>
-            Already own a pair? Tap <strong>Pair</strong> to connect. Shopping? Tap <strong>Shop</strong> to browse.
+            {isInApp
+              ? 'Own a pair? Tap Pair to connect. Looking to buy? Tap Shop.'
+              : 'Browse compatible smart glasses. Pair your glasses in the TagnetIQ mobile app.'
+            }
           </SheetDescription>
         </SheetHeader>
 
@@ -249,6 +281,7 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
               <VendorCard
                 key={vendor.id}
                 vendor={vendor}
+                isInApp={isInApp}
                 onPair={
                   vendor.status === 'supported' && onPairBrand
                     ? () => onPairBrand(vendor.id)
@@ -269,6 +302,7 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
                   <VendorCard
                     key={vendor.id}
                     vendor={vendor}
+                    isInApp={isInApp}
                     onPair={
                       vendor.status === 'supported' && onPairBrand
                         ? () => onPairBrand(vendor.id)
