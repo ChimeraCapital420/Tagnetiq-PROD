@@ -1,12 +1,13 @@
 apply plugin: 'com.android.application'
+// kotlin-android is built into AGP 9.0+
 
 android {
     namespace = "com.tagnetiq.app"
-    compileSdk = rootProject.ext.compileSdkVersion
+    compileSdk = 36
     defaultConfig {
         applicationId "com.tagnetiq.app"
-        minSdkVersion rootProject.ext.minSdkVersion
-        targetSdkVersion rootProject.ext.targetSdkVersion
+        minSdkVersion 29
+        targetSdkVersion 36
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -40,6 +41,12 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+    // Meta Wearables SDK (MWDAT v0.4.0)
+    implementation 'com.meta.wearable:mwdat-core:0.4.0'
+    implementation 'com.meta.wearable:mwdat-camera:0.4.0'
+    // Kotlin Coroutines (required by MWDAT Flow APIs)
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
 }
 
 apply from: 'capacitor.build.gradle'

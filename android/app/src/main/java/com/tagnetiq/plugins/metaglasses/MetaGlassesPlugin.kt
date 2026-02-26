@@ -3,8 +3,8 @@
 // CAPACITOR NATIVE BRIDGE — Meta Wearables Device Access Toolkit (MWDAT)
 // ═══════════════════════════════════════════════════════════════════════
 //
-// This plugin bridges the TypeScript layer (SmartGlassesControl.tsx,
-// useBluetoothManager.ts) to the native Android MWDAT SDK.
+// ALL IMPORTS AND API CALLS VERIFIED against mwdat-core-0.4.0 and
+// mwdat-camera-0.4.0 JARs via javap. No guessed package paths.
 //
 // MOBILE-FIRST ARCHITECTURE:
 //   - Device does ALL image compression (compressFrameBytes)
@@ -12,24 +12,10 @@
 //   - Server only receives pre-processed, compressed JPEGs
 //   - Reduces bandwidth usage by ~80% vs raw frame upload
 //
-// SDK DEPENDENCY (in android/app/build.gradle):
-//   implementation 'com.meta.wearable:mwdat-core:0.4.0'
-//   implementation 'com.meta.wearable:mwdat-camera:0.4.0'
-//
-// Version catalog (gradle/libs.versions.toml) alternative:
-//   [versions]
-//   mwdat = "0.4.0"
-//   [libraries]
-//   mwdat-core = { group = "com.meta.wearable", name = "mwdat-core", version.ref = "mwdat" }
-//   mwdat-camera = { group = "com.meta.wearable", name = "mwdat-camera", version.ref = "mwdat" }
-//
-// Meta App ID: 780827647920626 (set in AndroidManifest.xml)
-// URL Scheme: tagnetiq (registered in AndroidManifest.xml intent-filter)
-//
 // SDK LIFECYCLE:
-//   Wearables.configure() → startRegistration() → Meta AI deep-link
-//   → handleUrl() callback → requestCameraPermission()
-//   → startStreaming() → JPEG frames flow to JS via notifyListeners
+//   Wearables.initialize(context) → startRegistration(activity)
+//   → Meta AI deep-link → user confirms → registrationState becomes Registered
+//   → checkPermissionStatus(CAMERA) → startStreamSession() → VideoFrame flow → JS
 // ═══════════════════════════════════════════════════════════════════════
 
 package com.tagnetiq.plugins.metaglasses
@@ -48,20 +34,23 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import org.json.JSONObject
 
-// ── Meta Wearables SDK (MWDAT v0.4.0) ───────────────────────────────
-// IMPORTANT: These are the CORRECT import paths verified against
-// the official Meta MWDAT Android SDK on GitHub Packages.
-// Previous versions of this file used com.meta.wearable.dat.core.*
-// which is WRONG and will not resolve.
-import com.meta.wearable.mwdat.core.Wearables
-import com.meta.wearable.mwdat.core.RegistrationState
-import com.meta.wearable.mwdat.core.Permission
-import com.meta.wearable.mwdat.core.PermissionStatus
-import com.meta.wearable.mwdat.camera.CameraAccess
-import com.meta.wearable.mwdat.camera.StreamingConfig
-import com.meta.wearable.mwdat.camera.VideoFrame
+// ── Meta Wearables SDK (MWDAT v0.4.0) — VERIFIED IMPORT PATHS ───────
+// Core SDK (from mwdat-core-0.4.0-runtime.jar)
+import com.meta.wearable.dat.core.Wearables
+import com.meta.wearable.dat.core.types.RegistrationState
+import com.meta.wearable.dat.core.types.Permission
+import com.meta.wearable.dat.core.types.PermissionStatus
+import com.meta.wearable.dat.core.types.DeviceIdentifier
+import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
 
-// ── Kotlin Coroutines (for Flow-based SDK APIs) ─────────────────────
+// Camera SDK (from mwdat-camera-0.4.0-runtime.jar)
+import com.meta.wearable.dat.camera.StreamSession
+import com.meta.wearable.dat.camera.startStreamSession
+import com.meta.wearable.dat.camera.types.StreamConfiguration
+import com.meta.wearable.dat.camera.types.VideoFrame
+import com.meta.wearable.dat.camera.types.VideoQuality
+
+// ── Kotlin Coroutines ────────────────────────────────────────────────
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -70,8 +59,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-// ── Java I/O (for JPEG compression) ─────────────────────────────────
+// ── Java I/O ─────────────────────────────────────────────────────────
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 
 // ═══════════════════════════════════════════════════════════════════════
 // PLUGIN CLASS
@@ -85,13 +75,16 @@ class MetaGlassesPlugin : Plugin() {
     }
 
     // ── State ────────────────────────────────────────────────────────
-    private var sdkConfigured = false
-    private var registrationState: RegistrationState = RegistrationState.Unknown
+    private var sdkInitialized = false
+    private var currentRegState: RegistrationState? = null
     private var hasCameraPermission = false
     private var connectedDeviceName: String? = null
     private var isStreaming = false
     private var latestFrameBytes: ByteArray? = null
     private var latestFrameTimestamp: Long = 0
+
+    // Active stream session (from startStreamSession extension function)
+    private var streamSession: StreamSession? = null
 
     // Coroutine scope — cancelled in handleOnDestroy
     private val pluginScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -100,37 +93,40 @@ class MetaGlassesPlugin : Plugin() {
 
     override fun load() {
         super.load()
-        Log.d(TAG, "Plugin loading — initializing MWDAT SDK")
+        Log.d(TAG, "Plugin loading - initializing MWDAT SDK")
 
         try {
-            Wearables.configure(activity.application)
-            sdkConfigured = true
-            Log.d(TAG, "SDK configured successfully")
+            // Wearables is a Kotlin object singleton (INSTANCE).
+            // initialize() takes Context, returns inline value class.
+            Wearables.initialize(context)
+            sdkInitialized = true
+            Log.d(TAG, "SDK initialized successfully")
 
             // Start observing registration state and connected devices
             observeRegistrationState()
             observeDevices()
         } catch (e: Exception) {
-            sdkConfigured = false
-            Log.e(TAG, "SDK configure failed: " + e.message)
+            sdkInitialized = false
+            Log.e(TAG, "SDK initialize failed: ${e.message}")
         }
     }
 
     // ── Registration State Observation ───────────────────────────────
+    // Wearables.registrationState is StateFlow<RegistrationState>
+    // Subclasses: Available, Registered, Registering, Unavailable, Unregistering
 
     private fun observeRegistrationState() {
         pluginScope.launch {
-            Wearables.getInstance().registrationStateFlow().collectLatest { state ->
-                val previousState = registrationState
-                registrationState = state
-                Log.d(TAG, "Registration state: " + state.toString())
+            Wearables.registrationState.collectLatest { state ->
+                currentRegState = state
+                Log.d(TAG, "Registration state: $state")
 
                 // Notify JS layer of state changes
                 val data = JSObject()
-                data.put("state", state.toString())
+                data.put("state", state.javaClass.simpleName)
                 notifyListeners("onRegistrationStateChanged", data)
 
-                // Track camera permission when registered
+                // Check camera permission when registered
                 if (state is RegistrationState.Registered) {
                     checkAndUpdateCameraPermission()
                 }
@@ -139,13 +135,13 @@ class MetaGlassesPlugin : Plugin() {
     }
 
     // ── Device Observation ───────────────────────────────────────────
+    // Wearables.devices is StateFlow<Set<DeviceIdentifier>>
 
     private fun observeDevices() {
         pluginScope.launch {
-            Wearables.getInstance().devicesFlow().collectLatest { devices ->
-                val deviceList = devices.toList()
-                if (deviceList.isNotEmpty()) {
-                    val device = deviceList.first()
+            Wearables.devices.collectLatest { deviceSet ->
+                if (deviceSet.isNotEmpty()) {
+                    val device = deviceSet.first()
                     val name = device.toString()
                     val wasDisconnected = connectedDeviceName == null
                     connectedDeviceName = name
@@ -155,7 +151,7 @@ class MetaGlassesPlugin : Plugin() {
                         data.put("connected", true)
                         data.put("deviceName", name)
                         notifyListeners("onConnectionChanged", data)
-                        Log.d(TAG, "Device connected: " + name)
+                        Log.d(TAG, "Device connected: $name")
                     }
                 } else {
                     val wasConnected = connectedDeviceName != null
@@ -174,14 +170,19 @@ class MetaGlassesPlugin : Plugin() {
     }
 
     // ── Helper: Check camera permission status ───────────────────────
+    // checkPermissionStatus is SUSPEND and returns DatResult<PermissionStatus, PermissionError>
 
     private fun checkAndUpdateCameraPermission() {
-        if (!sdkConfigured) return
-        try {
-            val status = Wearables.getInstance().checkPermissionStatus(Permission.Camera)
-            hasCameraPermission = (status == PermissionStatus.Granted)
-        } catch (e: Exception) {
-            Log.e(TAG, "Permission check failed: " + e.message)
+        if (!sdkInitialized) return
+        pluginScope.launch {
+            try {
+                val result = Wearables.checkPermissionStatus(Permission.CAMERA)
+                // DatResult has getOrNull() which returns the value or null on failure
+                val status = result.getOrNull()
+                hasCameraPermission = (status == PermissionStatus.Granted)
+            } catch (e: Exception) {
+                Log.e(TAG, "Permission check failed: ${e.message}")
+            }
         }
     }
 
@@ -194,7 +195,7 @@ class MetaGlassesPlugin : Plugin() {
     @PluginMethod
     fun isAvailable(call: PluginCall) {
         val result = JSObject()
-        result.put("available", sdkConfigured)
+        result.put("available", sdkInitialized)
         call.resolve(result)
     }
 
@@ -202,12 +203,10 @@ class MetaGlassesPlugin : Plugin() {
 
     @PluginMethod
     fun getStatus(call: PluginCall) {
-        checkAndUpdateCameraPermission()
-
-        val isRegistered = registrationState is RegistrationState.Registered
+        val isRegistered = currentRegState is RegistrationState.Registered
 
         val result = JSObject()
-        result.put("sdkAvailable", sdkConfigured)
+        result.put("sdkAvailable", sdkInitialized)
         result.put("isRegistered", isRegistered)
         result.put("cameraPermissionGranted", hasCameraPermission)
         result.put("isConnected", connectedDeviceName != null)
@@ -218,19 +217,21 @@ class MetaGlassesPlugin : Plugin() {
     }
 
     // ── register ─────────────────────────────────────────────────────
+    // startRegistration(Activity) is a regular (non-suspend) function.
+    // It deep-links to the Meta AI app for user confirmation.
 
     @PluginMethod
     fun register(call: PluginCall) {
-        if (!sdkConfigured) {
+        if (!sdkInitialized) {
             val result = JSObject()
             result.put("success", false)
-            result.put("error", "SDK not configured. Check AndroidManifest.xml APPLICATION_ID.")
+            result.put("error", "SDK not initialized. Check AndroidManifest.xml APPLICATION_ID.")
             call.resolve(result)
             return
         }
 
-        // ── Early-return guard: already registered? Don't re-trigger deep-link ──
-        if (registrationState is RegistrationState.Registered) {
+        // Already registered? Don't re-trigger deep-link
+        if (currentRegState is RegistrationState.Registered) {
             val result = JSObject()
             result.put("success", true)
             result.put("message", "Already registered")
@@ -238,105 +239,98 @@ class MetaGlassesPlugin : Plugin() {
             return
         }
 
-        pluginScope.launch {
-            try {
-                // This deep-links to the Meta AI app for user confirmation.
-                // Meta AI will callback via the tagnetiq:// URL scheme.
-                Wearables.getInstance().startRegistration(activity)
+        try {
+            Wearables.startRegistration(activity)
+        } catch (e: Exception) {
+            val result = JSObject()
+            result.put("success", false)
+            result.put("error", "startRegistration failed: ${e.message}")
+            call.resolve(result)
+            return
+        }
 
-                // Wait up to 60 seconds for registration to complete
-                val registered = withTimeoutOrNull(60_000L) {
-                    Wearables.getInstance().registrationStateFlow().collectLatest { state ->
-                        if (state is RegistrationState.Registered) {
-                            return@collectLatest
-                        }
-                        if (state is RegistrationState.Error) {
-                            throw Exception("Registration error: " + state.toString())
-                        }
+        // Wait up to 60s for registration state to become Registered
+        pluginScope.launch {
+            val registered = withTimeoutOrNull(60_000L) {
+                Wearables.registrationState.collectLatest { state ->
+                    if (state is RegistrationState.Registered) {
+                        return@collectLatest
+                    }
+                    // If error has a non-null error property, bail
+                    if (state.error != null) {
+                        throw Exception("Registration error: ${state.error}")
                     }
                 }
-
-                val result = JSObject()
-                if (registrationState is RegistrationState.Registered) {
-                    result.put("success", true)
-                    Log.d(TAG, "Registration successful")
-                } else {
-                    result.put("success", false)
-                    result.put("error", "Registration timed out. Please try again.")
-                    Log.w(TAG, "Registration timed out")
-                }
-                call.resolve(result)
-
-            } catch (e: Exception) {
-                val result = JSObject()
-                result.put("success", false)
-                result.put("error", "Registration failed: " + e.message)
-                call.resolve(result)
-                Log.e(TAG, "Registration failed: " + e.message)
             }
+
+            val result = JSObject()
+            if (currentRegState is RegistrationState.Registered) {
+                result.put("success", true)
+                Log.d(TAG, "Registration successful")
+            } else {
+                result.put("success", false)
+                result.put("error", "Registration timed out or failed. State: ${currentRegState?.javaClass?.simpleName}")
+                Log.w(TAG, "Registration did not complete")
+            }
+            call.resolve(result)
         }
     }
 
     // ── requestCameraPermission ──────────────────────────────────────
+    // NOTE: MWDAT 0.4.0 only has checkPermissionStatus (suspend).
+    // There is no requestPermission method. The permission is granted
+    // via the Meta AI app during registration or through the
+    // companion app settings. We check and report status.
 
     @PluginMethod
     fun requestCameraPermission(call: PluginCall) {
-        if (!sdkConfigured) {
+        if (!sdkInitialized) {
             val result = JSObject()
             result.put("granted", false)
-            result.put("error", "SDK not configured.")
-            call.resolve(result)
-            return
-        }
-
-        // Check if already granted
-        checkAndUpdateCameraPermission()
-        if (hasCameraPermission) {
-            val result = JSObject()
-            result.put("granted", true)
+            result.put("error", "SDK not initialized.")
             call.resolve(result)
             return
         }
 
         pluginScope.launch {
             try {
-                // This deep-links to Meta AI for permission confirmation
-                val status = Wearables.getInstance().requestPermission(
-                    activity,
-                    Permission.Camera
-                )
+                val datResult = Wearables.checkPermissionStatus(Permission.CAMERA)
+                val status = datResult.getOrNull()
                 val granted = (status == PermissionStatus.Granted)
                 hasCameraPermission = granted
 
                 val result = JSObject()
                 result.put("granted", granted)
+                if (!granted) {
+                    result.put("error", "Camera permission not granted. Grant it in Meta AI companion app settings.")
+                }
                 call.resolve(result)
-                Log.d(TAG, "Camera permission: " + (if (granted) "granted" else "denied"))
-
+                Log.d(TAG, "Camera permission check: ${if (granted) "granted" else "not granted"}")
             } catch (e: Exception) {
                 val result = JSObject()
                 result.put("granted", false)
-                result.put("error", "Permission request failed: " + e.message)
+                result.put("error", "Permission check failed: ${e.message}")
                 call.resolve(result)
-                Log.e(TAG, "Permission request failed: " + e.message)
+                Log.e(TAG, "Permission check failed: ${e.message}")
             }
         }
     }
 
     // ── startSession (Camera Streaming) ──────────────────────────────
+    // Uses the extension function: Wearables.startStreamSession(context, selector, config)
+    // Returns a StreamSession with .videoStream (Flow<VideoFrame>)
 
     @PluginMethod
     fun startSession(call: PluginCall) {
-        if (!sdkConfigured) {
+        if (!sdkInitialized) {
             val result = JSObject()
             result.put("success", false)
-            result.put("error", "SDK not configured.")
+            result.put("error", "SDK not initialized.")
             call.resolve(result)
             return
         }
 
-        val isRegistered = registrationState is RegistrationState.Registered
-        if (!isRegistered) {
+        if (currentRegState !is RegistrationState.Registered) {
             val result = JSObject()
             result.put("success", false)
             result.put("error", "Not registered. Call register() first.")
@@ -355,47 +349,54 @@ class MetaGlassesPlugin : Plugin() {
         // Parse streaming options from JS
         val frameRate = call.getInt("frameRate", 24) ?: 24
         val resolution = call.getString("resolution", "720p") ?: "720p"
+        val quality = when (resolution) {
+            "1080p" -> VideoQuality.HIGH
+            "720p" -> VideoQuality.MEDIUM
+            else -> VideoQuality.LOW
+        }
 
-        pluginScope.launch {
-            try {
-                // Build streaming config
-                val config = StreamingConfig.Builder()
-                    .setFrameRate(frameRate)
-                    .build()
+        try {
+            // StreamConfiguration(videoQuality: VideoQuality, frameRate: Int)
+            val config = StreamConfiguration(quality, frameRate)
 
-                // Start the camera stream
-                CameraAccess.getInstance().startStreaming(config)
-                isStreaming = true
+            // AutoDeviceSelector() — no-arg constructor picks first available device
+            val selector = AutoDeviceSelector()
 
-                val result = JSObject()
-                result.put("success", true)
-                call.resolve(result)
-                Log.d(TAG, "Streaming started at " + frameRate + " fps")
+            // Extension function: Wearables.startStreamSession(context, selector, config)
+            // Returns StreamSession (not suspend — regular function)
+            val session = Wearables.startStreamSession(context, selector, config)
+            streamSession = session
+            isStreaming = true
 
-                // Collect frames in the background
-                collectFrames()
+            val result = JSObject()
+            result.put("success", true)
+            call.resolve(result)
+            Log.d(TAG, "Stream session started at $frameRate fps, quality=$resolution")
 
-            } catch (e: Exception) {
-                val result = JSObject()
-                result.put("success", false)
-                result.put("error", "startStreaming failed: " + e.message)
-                call.resolve(result)
-                Log.e(TAG, "startStreaming failed: " + e.message)
-            }
+            // Collect frames in the background
+            collectFrames(session)
+
+        } catch (e: Exception) {
+            val result = JSObject()
+            result.put("success", false)
+            result.put("error", "startStreamSession failed: ${e.message}")
+            call.resolve(result)
+            Log.e(TAG, "startStreamSession failed: ${e.message}")
         }
     }
 
     // ── Frame Collection (background coroutine) ──────────────────────
+    // VideoFrame has: buffer (ByteBuffer), width (Int), height (Int), presentationTimeUs (Long)
 
-    private fun collectFrames() {
+    private fun collectFrames(session: StreamSession) {
         pluginScope.launch {
             try {
-                CameraAccess.getInstance().videoFrameFlow().collectLatest { frame ->
+                session.videoStream.collectLatest { frame ->
                     if (!isStreaming) return@collectLatest
 
-                    // Store latest frame bytes for captureFrame() single-grab
-                    val bytes = frame.imageData
-                    if (bytes != null && bytes.isNotEmpty()) {
+                    // Convert ByteBuffer to ByteArray
+                    val bytes = byteBufferToArray(frame.buffer)
+                    if (bytes.isNotEmpty()) {
                         latestFrameBytes = bytes
                         latestFrameTimestamp = System.currentTimeMillis()
 
@@ -409,9 +410,9 @@ class MetaGlassesPlugin : Plugin() {
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Frame collection error: " + e.message)
+                Log.e(TAG, "Frame collection error: ${e.message}")
                 val errorData = JSObject()
-                errorData.put("error", "Frame collection stopped: " + e.message)
+                errorData.put("error", "Frame collection stopped: ${e.message}")
                 notifyListeners("onError", errorData)
             }
         }
@@ -422,14 +423,14 @@ class MetaGlassesPlugin : Plugin() {
     @PluginMethod
     fun stopSession(call: PluginCall) {
         try {
-            if (isStreaming) {
-                CameraAccess.getInstance().stopStreaming()
-                Log.d(TAG, "Streaming stopped")
-            }
+            // StreamSession.close() stops the stream
+            streamSession?.close()
+            Log.d(TAG, "Stream session closed")
         } catch (e: Exception) {
-            Log.e(TAG, "stopStreaming error: " + e.message)
+            Log.e(TAG, "stopSession error: ${e.message}")
         }
 
+        streamSession = null
         isStreaming = false
         latestFrameBytes = null
         latestFrameTimestamp = 0
@@ -440,7 +441,7 @@ class MetaGlassesPlugin : Plugin() {
 
     @PluginMethod
     fun captureFrame(call: PluginCall) {
-        if (!isStreaming) {
+        if (!isStreaming || streamSession == null) {
             call.reject("No active session. Call startSession() first.")
             return
         }
@@ -448,25 +449,28 @@ class MetaGlassesPlugin : Plugin() {
         val quality = call.getInt("quality", 75) ?: 75
         val maxWidth = call.getInt("maxWidth", 1280) ?: 1280
 
+        // Use latest frame from stream — already on device, no network needed
         val bytes = latestFrameBytes
         if (bytes != null && bytes.isNotEmpty()) {
             val compressed = compressFrameBytes(bytes, quality, maxWidth)
             call.resolve(compressed)
         } else {
-            // Try a direct photo capture as fallback
+            // Try capturePhoto as fallback
+            // NOTE: capturePhoto returns Result<PhotoData>, but PhotoData is
+            // an empty interface in 0.4.0. This fallback may not yield image bytes.
+            // Keeping it for forward-compatibility with future SDK versions.
             pluginScope.launch {
                 try {
-                    val photo = CameraAccess.getInstance().capturePhoto()
-                    val photoBytes = photo.imageData
-                    if (photoBytes != null && photoBytes.isNotEmpty()) {
-                        latestFrameBytes = photoBytes
-                        val compressed = compressFrameBytes(photoBytes, quality, maxWidth)
-                        call.resolve(compressed)
+                    val photoResult = streamSession?.capturePhoto()
+                    if (photoResult != null && photoResult.isSuccess) {
+                        // PhotoData is empty interface in 0.4.0 — no image bytes available
+                        // Future SDK versions may add getBytes() or similar
+                        call.reject("Photo capture succeeded but PhotoData has no image bytes in SDK 0.4.0. Use streaming frames instead.")
                     } else {
-                        call.reject("Photo capture returned no image data.")
+                        call.reject("Photo capture failed or returned null.")
                     }
                 } catch (e: Exception) {
-                    call.reject("capturePhoto failed: " + e.message)
+                    call.reject("capturePhoto failed: ${e.message}")
                 }
             }
         }
@@ -476,8 +480,7 @@ class MetaGlassesPlugin : Plugin() {
 
     @PluginMethod
     fun getBatteryLevel(call: PluginCall) {
-        // Battery level not directly exposed in current MWDAT SDK (0.4.x)
-        // Will be available in future SDK versions
+        // Battery level not directly exposed in MWDAT 0.4.x
         val result = JSObject()
         result.put("level", JSONObject.NULL)
         call.resolve(result)
@@ -486,6 +489,19 @@ class MetaGlassesPlugin : Plugin() {
     // ═════════════════════════════════════════════════════════════════
     // HELPERS
     // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Convert a ByteBuffer (from VideoFrame) to a ByteArray.
+     * VideoFrame.buffer is java.nio.ByteBuffer, not byte[].
+     */
+    private fun byteBufferToArray(buffer: ByteBuffer): ByteArray {
+        // Rewind to read from start
+        val buf = buffer.duplicate()
+        buf.rewind()
+        val bytes = ByteArray(buf.remaining())
+        buf.get(bytes)
+        return bytes
+    }
 
     /**
      * Compress and resize raw frame bytes to a JPEG base64 string.
@@ -497,7 +513,7 @@ class MetaGlassesPlugin : Plugin() {
      *   - Network upload size (720p JPEG @ 60% is approx 40-80KB vs 1MB+ raw)
      *   - Server CPU (no resize/compress needed server-side)
      *
-     * @param bytes    Raw image bytes from the SDK (JPEG or raw)
+     * @param bytes    Raw image bytes (JPEG or decoded video frame)
      * @param quality  JPEG compression quality 0-100 (60 for streaming, 75 for single capture)
      * @param maxWidth Maximum width in pixels — images wider than this are downscaled
      * @return         JSObject with base64, width, height, timestamp, byteSize
@@ -520,9 +536,8 @@ class MetaGlassesPlugin : Plugin() {
             // Resize if wider than maxWidth (device does the work, not the server)
             if (bitmap.width > maxWidth) {
                 val scale = maxWidth.toFloat() / bitmap.width.toFloat()
-                val newWidth = maxWidth
                 val newHeight = (bitmap.height * scale).toInt()
-                bitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+                bitmap = Bitmap.createScaledBitmap(bitmap, maxWidth, newHeight, true)
             }
 
             // Compress to JPEG
@@ -540,7 +555,7 @@ class MetaGlassesPlugin : Plugin() {
             result.put("byteSize", jpegBytes.size)
 
         } catch (e: Exception) {
-            Log.e(TAG, "Frame compression failed: " + e.message)
+            Log.e(TAG, "Frame compression failed: ${e.message}")
             result.put("base64", "")
             result.put("width", 0)
             result.put("height", 0)
@@ -557,12 +572,10 @@ class MetaGlassesPlugin : Plugin() {
         super.handleOnNewIntent(intent)
         val uri: Uri? = intent.data
         if (uri != null && uri.scheme == "tagnetiq") {
-            Log.d(TAG, "Received callback URI: " + uri.toString())
-            try {
-                Wearables.getInstance().handleUrl(uri)
-            } catch (e: Exception) {
-                Log.e(TAG, "handleUrl error: " + e.message)
-            }
+            Log.d(TAG, "Received callback URI: $uri")
+            // The SDK's registrationState flow will update automatically
+            // when the Meta AI app completes the registration flow.
+            // No explicit handleUrl call needed — the SDK observes the intent.
         }
     }
 
@@ -572,14 +585,13 @@ class MetaGlassesPlugin : Plugin() {
         super.handleOnDestroy()
         pluginScope.cancel()
 
-        if (isStreaming) {
-            try {
-                CameraAccess.getInstance().stopStreaming()
-            } catch (e: Exception) {
-                Log.e(TAG, "Cleanup stopStreaming error: " + e.message)
-            }
+        try {
+            streamSession?.close()
+        } catch (e: Exception) {
+            Log.e(TAG, "Cleanup close error: ${e.message}")
         }
 
+        streamSession = null
         isStreaming = false
         latestFrameBytes = null
         Log.d(TAG, "Plugin destroyed, resources cleaned up")

@@ -2,5 +2,5 @@
 include ':capacitor-android'
 project(':capacitor-android').projectDir = new File('../node_modules/@capacitor/android/capacitor')
 
-include ':capacitor-meta-glasses-plugin'
-project(':capacitor-meta-glasses-plugin').projectDir = new File('../plugins/meta-glasses/android')
+// Removed: plugin is inside :app module
+// Removed: plugin is inside :app module
