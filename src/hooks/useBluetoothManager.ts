@@ -3,32 +3,32 @@
 // Mobile-first with battery optimization and connection persistence
 //
 // ENHANCED: Meta Smart Glasses support via Capacitor native plugin.
-// When running in Capacitor shell Ã¢â€ â€™ MetaGlasses plugin is available.
-// When running in browser (Vercel) Ã¢â€ â€™ graceful fallback, glasses show
+// When running in Capacitor shell -> MetaGlasses plugin is available.
+// When running in browser (Vercel) -> graceful fallback, glasses show
 // "use mobile app" message. ALL existing Bluetooth functionality is UNCHANGED.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Meta Glasses Plugin (lazy import Ã¢â‚¬â€ only loads in Capacitor) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// --- Meta Glasses Plugin (lazy import - only loads in Capacitor) ------------
 
 let MetaGlasses: any = null;
 let metaGlassesLoaded = false;
 
-async function loadMetaGlassesPlugin() {
-  if (metaGlassesLoaded) return MetaGlasses || null;
+async function loadMetaGlassesPlugin(): Promise<boolean> {
+  if (metaGlassesLoaded) return MetaGlasses != null;
   metaGlassesLoaded = true;
   try {
     const { registerPlugin } = await import(/* @vite-ignore */ '@capacitor/core');
     MetaGlasses = registerPlugin('MetaGlasses');
-    return MetaGlasses; // Don't await the plugin proxy
-    const { available } = await MetaGlasses.isAvailable();
-    if (!available) MetaGlasses = null;
+    const result = await MetaGlasses.isAvailable();
+    if (!result.available) MetaGlasses = null;
   } catch {
-    // Not in Capacitor shell Ã¢â‚¬â€ plugin not available, that's fine
+    // Not in Capacitor shell - plugin not available, that's fine
     MetaGlasses = null;
   }
-  return MetaGlasses || null;
+  // Return boolean, not the proxy (proxy.then() crashes Capacitor)
+  return MetaGlasses != null;
 }
 
 // =============================================================================
@@ -67,7 +67,7 @@ export interface MetaGlassesState {
 }
 
 export interface UseBluetoothManagerReturn {
-  // Ã¢â€â‚¬Ã¢â€â‚¬ Existing Bluetooth (UNCHANGED) Ã¢â€â‚¬Ã¢â€â‚¬
+  // -- Existing Bluetooth (UNCHANGED) --
   isSupported: boolean;
   isEnabled: boolean;
   isScanning: boolean;
@@ -82,7 +82,7 @@ export interface UseBluetoothManagerReturn {
   forgetDevice: (deviceId: string) => void;
   requestDevice: () => Promise<BluetoothDevice | null>;
 
-  // Ã¢â€â‚¬Ã¢â€â‚¬ Meta Glasses (NEW) Ã¢â€â‚¬Ã¢â€â‚¬
+  // -- Meta Glasses (NEW) --
   metaGlasses: MetaGlassesState;
   registerMetaGlasses: () => Promise<boolean>;
   requestGlassesCameraPermission: () => Promise<boolean>;
@@ -137,7 +137,7 @@ function saveRememberedDevice(deviceId: string, deviceName: string): void {
     const devices = stored.filter(id => id !== deviceId);
     devices.unshift(deviceId);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(devices.slice(0, 10)));
-    
+
     const names = JSON.parse(localStorage.getItem(`${STORAGE_KEY}_names`) || '{}');
     names[deviceId] = deviceName;
     localStorage.setItem(`${STORAGE_KEY}_names`, JSON.stringify(names));
@@ -151,7 +151,7 @@ function removeRememberedDevice(deviceId: string): void {
     const stored = loadRememberedDevices();
     const devices = stored.filter(id => id !== deviceId);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(devices));
-    
+
     const names = JSON.parse(localStorage.getItem(`${STORAGE_KEY}_names`) || '{}');
     delete names[deviceId];
     localStorage.setItem(`${STORAGE_KEY}_names`, JSON.stringify(names));
@@ -181,19 +181,19 @@ const INITIAL_META_STATE: MetaGlassesState = {
 // =============================================================================
 
 export function useBluetoothManager(): UseBluetoothManagerReturn {
-  // Ã¢â€â‚¬Ã¢â€â‚¬ Existing Bluetooth state (UNCHANGED) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  // -- Existing Bluetooth state (UNCHANGED) --
   const [isSupported] = useState<boolean>(checkBluetoothSupport());
   const [isEnabled, setIsEnabled] = useState<boolean>(true);
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [availableDevices, setAvailableDevices] = useState<BluetoothDevice[]>([]);
   const [connectedDevices, setConnectedDevices] = useState<BluetoothDevice[]>([]);
   const [error, setError] = useState<string | null>(null);
-  
+
   const isMountedRef = useRef(true);
   const scanAbortController = useRef<AbortController | null>(null);
   const deviceRefs = useRef<Map<string, globalThis.BluetoothDevice>>(new Map());
 
-  // Ã¢â€â‚¬Ã¢â€â‚¬ Meta Glasses state (NEW) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  // -- Meta Glasses state (NEW) --
   const [metaGlasses, setMetaGlasses] = useState<MetaGlassesState>(INITIAL_META_STATE);
 
   // ---------------------------------------------------------------------------
@@ -201,13 +201,13 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   // ---------------------------------------------------------------------------
   useEffect(() => {
     isMountedRef.current = true;
-    
+
     // Check Meta glasses plugin availability
-    loadMetaGlassesPlugin().then(async (plugin) => {
+    loadMetaGlassesPlugin().then(async (available) => {
       if (!isMountedRef.current) return;
-      if (plugin) {
+      if (available && MetaGlasses) {
         try {
-          const status = await plugin.getStatus();
+          const status = await MetaGlasses.getStatus();
           setMetaGlasses({
             pluginAvailable: true,
             isRegistered: status.isRegistered,
@@ -292,7 +292,7 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   const handleDeviceDisconnected = useCallback((deviceId: string) => {
     if (!isMountedRef.current) return;
     setConnectedDevices(prev => prev.filter(d => d.id !== deviceId));
-    setAvailableDevices(prev => 
+    setAvailableDevices(prev =>
       prev.map(d => d.id === deviceId ? { ...d, connected: false } : d)
     );
     toast.info('Bluetooth device disconnected');
@@ -480,7 +480,7 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   const captureGlassesFrame = useCallback(async () => {
     if (!MetaGlasses) return null;
     try {
-      return await MetaGlasses.captureFrame({ quality: 0.75, maxWidth: 1280 });
+      return await MetaGlasses.captureFrame({ quality: 75, maxWidth: 1280 });
     } catch {
       return null;
     }
@@ -544,4 +544,3 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
 }
 
 export default useBluetoothManager;
-
