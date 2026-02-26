@@ -1,22 +1,20 @@
 // FILE: src/components/SmartGlassesShopSheet.tsx
 // Bottom sheet for smart glasses — pair existing glasses OR shop for new ones
 //
-// CONTEXT-AWARE:
-//   In Capacitor app + supported brand → "Pair My Glasses" starts SDK registration
-//   In Capacitor app + coming soon brand → "Pair (Coming Soon)" disabled
-//   In browser + supported brand → "Pair in App" with app download hint
-//   In browser + coming soon brand → "Coming Soon" disabled
-//   Shop button → always active, opens affiliate link
+// ASYNC PAIR FLOW — sheet stays open during pairing:
+//   1. User taps "Pair My Glasses" → card shows spinner
+//   2. registerMetaGlasses() fires async → Meta AI deep-link opens
+//   3. Success → card shows "Connected ✓" with "Unpair" option
+//   4. Failure → card shows error with retry
+//   5. Sheet stays open the entire time — user closes manually
+//
+// UNPAIR FLOW:
+//   Connected card shows "Unpair" → calls forgetMetaGlasses()
+//   → stops session, resets local state → card returns to "Pair My Glasses"
 //
 // Each brand card has TWO clear paths:
 //   🔗 "Pair My Glasses" → owners with glasses → starts pairing
 //   🛒 "Shop" → future buyers → affiliate link (commission opportunity)
-//
-// AFFILIATE STRATEGY:
-//   Meta Ray-Ban → meta.com / ray-ban.com affiliate program
-//   XREAL → xreal.com affiliate (ShareASale / direct)
-//   RayNeo → rayneo.com affiliate (direct partner program)
-//   Even Realities → evenrealities.com (founding partner opportunity)
 //
 // Mobile-first: Sheet slides up, one-thumb reachable, touch-friendly targets
 
@@ -29,8 +27,19 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
-import { ExternalLink, Bluetooth, Glasses, Sparkles, ShoppingCart, Smartphone } from 'lucide-react';
+import {
+  ExternalLink,
+  Bluetooth,
+  Glasses,
+  Sparkles,
+  ShoppingCart,
+  Smartphone,
+  Loader2,
+  Check,
+  Unplug,
+} from 'lucide-react';
 import { toast } from 'sonner';
+import type { MetaGlassesState } from './GlassesStatusIcon';
 
 // =============================================================================
 // TYPES
@@ -55,16 +64,32 @@ export interface GlassesVendor {
 export interface SmartGlassesShopSheetProps {
   isOpen: boolean;
   onClose: () => void;
-  onPairBrand?: (vendorId: string) => void;
+  /** Live glasses state from useBluetoothManager — drives card UI */
+  metaGlasses?: MetaGlassesState;
+  /** Async register function — returns true on success */
+  onRegisterGlasses?: () => Promise<boolean>;
+  /** Async forget/unpair function */
+  onForgetGlasses?: () => Promise<void>;
 }
 
 // =============================================================================
 // HELPERS
 // =============================================================================
 
-/** Detect if running inside Capacitor native shell */
 const isCapacitorApp = (): boolean =>
   typeof (window as any)?.Capacitor !== 'undefined';
+
+const DEFAULT_GLASSES: MetaGlassesState = {
+  pluginAvailable: false,
+  isRegistered: false,
+  isConnected: false,
+  isSessionActive: false,
+  cameraPermissionGranted: false,
+  batteryLevel: null,
+  deviceName: null,
+  isLoading: false,
+  error: null,
+};
 
 // =============================================================================
 // VENDOR CATALOG
@@ -141,17 +166,21 @@ const StatusBadge: React.FC<{ status: GlassesVendorStatus }> = ({ status }) => {
 };
 
 // =============================================================================
-// VENDOR CARD
+// VENDOR CARD — context-aware pair/unpair/shop
 // =============================================================================
 
 const VendorCard: React.FC<{
   vendor: GlassesVendor;
   isInApp: boolean;
+  /** Is this specific vendor currently connected/registered? */
+  isConnected: boolean;
+  isRegistered: boolean;
+  isLoading: boolean;
+  error: string | null;
   onPair?: () => void;
-}> = ({ vendor, isInApp, onPair }) => {
+  onUnpair?: () => void;
+}> = ({ vendor, isInApp, isConnected, isRegistered, isLoading, error, onPair, onUnpair }) => {
   const handleShop = () => {
-    // TODO: Track affiliate click for analytics
-    // trackEvent('glasses_shop_click', 'affiliate', { vendor: vendor.id });
     window.open(vendor.affiliateUrl, '_blank', 'noopener,noreferrer');
   };
 
@@ -161,38 +190,72 @@ const VendorCard: React.FC<{
     if (!canPair) return;
 
     if (isInApp && onPair) {
-      // In Capacitor app — actually start pairing
       onPair();
     } else if (!isInApp) {
-      // In browser — helpful message, not "download the app"
       toast.info(`Pair ${vendor.model} in the TagnetIQ app`, {
         description: 'Open TagnetIQ on your phone to connect your glasses',
       });
     }
   };
 
-  // Button label based on context
-  const getPairLabel = (): string => {
-    if (!canPair) return 'Coming Soon';
-    if (isInApp) return 'Pair My Glasses';
-    return 'Pair in App';
+  // Determine left button state
+  const getPairContent = () => {
+    if (isLoading) {
+      return (
+        <>
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          Connecting...
+        </>
+      );
+    }
+
+    if (isConnected || isRegistered) {
+      return (
+        <>
+          <Check className="w-3.5 h-3.5 text-green-500" />
+          Connected
+        </>
+      );
+    }
+
+    if (!canPair) {
+      return (
+        <>
+          <Bluetooth className="w-3.5 h-3.5 opacity-40" />
+          Coming Soon
+        </>
+      );
+    }
+
+    if (isInApp) {
+      return (
+        <>
+          <Bluetooth className="w-3.5 h-3.5" />
+          Pair My Glasses
+        </>
+      );
+    }
+
+    return (
+      <>
+        <Smartphone className="w-3.5 h-3.5" />
+        Pair in App
+      </>
+    );
   };
 
-  const getPairIcon = () => {
-    if (!canPair) return <Bluetooth className="w-3.5 h-3.5 opacity-40" />;
-    if (isInApp) return <Bluetooth className="w-3.5 h-3.5" />;
-    return <Smartphone className="w-3.5 h-3.5" />;
-  };
+  // Should the left button be clickable?
+  const isPairClickable = canPair && !isLoading && !isConnected && !isRegistered;
 
   return (
     <div className="rounded-lg border bg-card overflow-hidden">
       {/* Top row: brand info + status */}
       <div className="flex items-start gap-3 p-3 pb-2">
         <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
-          canPair ? 'bg-green-500/20' : 'bg-muted'
+          isConnected || isRegistered ? 'bg-green-500/20' : canPair ? 'bg-blue-500/10' : 'bg-muted'
         }`}>
           <Glasses className={`w-5 h-5 ${
-            canPair ? 'text-green-500' : 'text-muted-foreground'
+            isConnected || isRegistered ? 'text-green-500' : canPair ? 'text-blue-500' : 'text-muted-foreground'
           }`} />
         </div>
 
@@ -203,6 +266,10 @@ const VendorCard: React.FC<{
           </div>
           <p className="text-xs text-muted-foreground">{vendor.tagline}</p>
           <p className="text-[11px] text-muted-foreground/60 mt-0.5">{vendor.specs}</p>
+          {/* Error message */}
+          {error && (
+            <p className="text-[11px] text-red-400 mt-1">{error}</p>
+          )}
         </div>
 
         <div className="flex-shrink-0 text-right">
@@ -210,21 +277,35 @@ const VendorCard: React.FC<{
         </div>
       </div>
 
-      {/* Bottom row: Pair (owners) | Shop (buyers) */}
+      {/* Bottom row: Pair/Connected/Unpair | Shop */}
       <div className="flex border-t divide-x">
-        {/* Left: Pair — context-aware */}
-        <button
-          onClick={handlePairClick}
-          disabled={!canPair}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors touch-manipulation ${
-            canPair
-              ? 'hover:bg-accent text-foreground'
-              : 'text-muted-foreground/40 cursor-not-allowed'
-          }`}
-        >
-          {getPairIcon()}
-          {getPairLabel()}
-        </button>
+        {/* Left: Pair or Connected status */}
+        {(isConnected || isRegistered) && onUnpair ? (
+          // CONNECTED — show Unpair button
+          <button
+            onClick={onUnpair}
+            disabled={isLoading}
+            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium text-red-400 hover:bg-red-500/10 transition-colors touch-manipulation"
+          >
+            <Unplug className="w-3.5 h-3.5" />
+            Unpair
+          </button>
+        ) : (
+          // NOT CONNECTED — show Pair button
+          <button
+            onClick={isPairClickable ? handlePairClick : undefined}
+            disabled={!isPairClickable}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors touch-manipulation ${
+              isPairClickable
+                ? 'hover:bg-accent text-foreground'
+                : isLoading
+                  ? 'text-foreground'
+                  : 'text-muted-foreground/40 cursor-not-allowed'
+            }`}
+          >
+            {getPairContent()}
+          </button>
+        )}
 
         {/* Right: Shop — always works */}
         <button
@@ -247,15 +328,36 @@ const VendorCard: React.FC<{
 const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
   isOpen,
   onClose,
-  onPairBrand,
+  metaGlasses = DEFAULT_GLASSES,
+  onRegisterGlasses,
+  onForgetGlasses,
 }) => {
   const isInApp = isCapacitorApp();
 
-  // Mark Meta as SDK-available if we detect Capacitor runtime
   const vendors = GLASSES_VENDORS.map(v => ({
     ...v,
     sdkAvailable: v.id === 'meta_rayban' && isInApp,
   }));
+
+  // Determine Meta-specific state for the Meta card
+  const isMetaConnected = metaGlasses.isConnected;
+  const isMetaRegistered = metaGlasses.isRegistered;
+  const isMetaLoading = metaGlasses.isLoading;
+  const metaError = metaGlasses.error;
+
+  const handlePairMeta = async () => {
+    if (onRegisterGlasses) {
+      await onRegisterGlasses();
+      // Sheet stays open — user sees result in card
+    }
+  };
+
+  const handleUnpairMeta = async () => {
+    if (onForgetGlasses) {
+      await onForgetGlasses();
+      // Card reverts to "Pair My Glasses"
+    }
+  };
 
   return (
     <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -282,11 +384,12 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
                 key={vendor.id}
                 vendor={vendor}
                 isInApp={isInApp}
-                onPair={
-                  vendor.status === 'supported' && onPairBrand
-                    ? () => onPairBrand(vendor.id)
-                    : undefined
-                }
+                isConnected={vendor.id === 'meta_rayban' ? isMetaConnected : false}
+                isRegistered={vendor.id === 'meta_rayban' ? isMetaRegistered : false}
+                isLoading={vendor.id === 'meta_rayban' ? isMetaLoading : false}
+                error={vendor.id === 'meta_rayban' ? metaError : null}
+                onPair={vendor.id === 'meta_rayban' ? handlePairMeta : undefined}
+                onUnpair={vendor.id === 'meta_rayban' ? handleUnpairMeta : undefined}
               />
             ))}
 
@@ -303,11 +406,10 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
                     key={vendor.id}
                     vendor={vendor}
                     isInApp={isInApp}
-                    onPair={
-                      vendor.status === 'supported' && onPairBrand
-                        ? () => onPairBrand(vendor.id)
-                        : undefined
-                    }
+                    isConnected={false}
+                    isRegistered={false}
+                    isLoading={false}
+                    error={null}
                   />
                 ))}
             </>

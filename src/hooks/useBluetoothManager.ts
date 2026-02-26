@@ -6,6 +6,8 @@
 // When running in Capacitor shell -> MetaGlasses plugin is available.
 // When running in browser (Vercel) -> graceful fallback, glasses show
 // "use mobile app" message. ALL existing Bluetooth functionality is UNCHANGED.
+//
+// Sprint F: Added forgetMetaGlasses() — resets local + native state
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
@@ -85,6 +87,7 @@ export interface UseBluetoothManagerReturn {
   // -- Meta Glasses (NEW) --
   metaGlasses: MetaGlassesState;
   registerMetaGlasses: () => Promise<boolean>;
+  forgetMetaGlasses: () => Promise<void>;
   requestGlassesCameraPermission: () => Promise<boolean>;
   startGlassesSession: () => Promise<boolean>;
   stopGlassesSession: () => Promise<void>;
@@ -423,6 +426,28 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
     }
   }, []);
 
+  const forgetMetaGlasses = useCallback(async (): Promise<void> => {
+    if (!MetaGlasses) {
+      // Not in Capacitor — just reset local state
+      setMetaGlasses(INITIAL_META_STATE);
+      return;
+    }
+    setMetaGlasses(prev => ({ ...prev, isLoading: true, error: null }));
+    try {
+      await MetaGlasses.unregister();
+      setMetaGlasses({
+        ...INITIAL_META_STATE,
+        pluginAvailable: true, // SDK is still available, just reset
+      });
+      toast.info('Glasses disconnected from TagnetIQ', {
+        description: 'To fully unregister, use the Meta AI app',
+      });
+    } catch (e: any) {
+      setMetaGlasses(prev => ({ ...prev, isLoading: false, error: e.message }));
+      toast.error('Failed to disconnect glasses');
+    }
+  }, []);
+
   const requestGlassesCameraPermission = useCallback(async (): Promise<boolean> => {
     if (!MetaGlasses) return false;
     setMetaGlasses(prev => ({ ...prev, isLoading: true, error: null }));
@@ -535,6 +560,7 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
     // Meta Glasses (NEW)
     metaGlasses,
     registerMetaGlasses,
+    forgetMetaGlasses,
     requestGlassesCameraPermission,
     startGlassesSession,
     stopGlassesSession,

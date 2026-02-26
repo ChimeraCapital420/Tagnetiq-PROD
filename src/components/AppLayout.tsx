@@ -7,8 +7,8 @@
 //
 // Sprint E: data-tour="voice-settings" on OracleVoiceButton wrapper
 // Sprint E+: useAnalytics for scanner open tracking
-// Sprint F: useBluetoothManager lifted here to wire metaGlasses → nav glasses icon
-// Sprint F: SmartGlassesShopSheet — affiliate-ready brand discovery sheet
+// Sprint F: useBluetoothManager lifted here to wire metaGlasses → nav + shop sheet
+// Sprint F: SmartGlassesShopSheet — async pair flow, sheet stays open during pairing
 
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -33,7 +33,7 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const [isGlassesShopOpen, setIsGlassesShopOpen] = useState(false);
   const { trackFeature } = useAnalytics();
 
-  // Lifted here so metaGlasses state flows to nav bar + scanner via props
+  // Lifted here so metaGlasses state flows to nav bar + shop sheet
   const bluetooth = useBluetoothManager();
 
   const isHomePage = location.pathname === '/';
@@ -50,16 +50,6 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
       handleScannerOpen();
     }
   }, [appContext.isScannerOpen]);
-
-  // Handle "Pair" button from shop sheet — starts registration for that brand
-  const handlePairBrand = (vendorId: string) => {
-    setIsGlassesShopOpen(false);
-    if (vendorId === 'meta_rayban') {
-      // Trigger Meta registration flow
-      bluetooth.registerMetaGlasses();
-    }
-    // Future: other brand registration flows
-  };
 
   return (
     <div className="relative z-10">
@@ -80,11 +70,15 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
         onClose={() => setIsDevicePairingOpen(false)}
       />
 
-      {/* Smart Glasses Shop Sheet — affiliate links + pair options */}
+      {/* Smart Glasses Shop Sheet — pair flow + affiliate links
+          Sheet manages its own lifecycle during async pairing.
+          Passes metaGlasses state so sheet can show connection status. */}
       <SmartGlassesShopSheet
         isOpen={isGlassesShopOpen}
         onClose={() => setIsGlassesShopOpen(false)}
-        onPairBrand={handlePairBrand}
+        metaGlasses={bluetooth.metaGlasses}
+        onRegisterGlasses={bluetooth.registerMetaGlasses}
+        onForgetGlasses={bluetooth.forgetMetaGlasses}
       />
 
       <main className={showAppNav ? "pt-14" : ""}>
