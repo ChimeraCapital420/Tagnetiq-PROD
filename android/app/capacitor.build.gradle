@@ -9,7 +9,7 @@ android {
 
 apply from: "../capacitor-cordova-android-plugins/cordova.variables.gradle"
 dependencies {
-    // MetaGlassesPlugin lives inside :app module, registered in MainActivity.java
+
 
 }
 

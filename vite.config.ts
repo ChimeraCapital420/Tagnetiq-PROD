@@ -62,7 +62,7 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
-    minify: 'terser',
+    minify: 'esbuild',
     chunkSizeWarningLimit: 600, // Raise from default 500 to reduce noise
     rollupOptions: {
       output: {
@@ -100,6 +100,6 @@ export default defineConfig({
     'process.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
     'process.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
     'process.env.VITE_VERCEL_URL': JSON.stringify(process.env.VITE_VERCEL_URL),
-    'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV),
+    // NODE_ENV is auto-set by Vite - do not override
   }
 });
