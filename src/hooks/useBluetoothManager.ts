@@ -3,31 +3,32 @@
 // Mobile-first with battery optimization and connection persistence
 //
 // ENHANCED: Meta Smart Glasses support via Capacitor native plugin.
-// When running in Capacitor shell → MetaGlasses plugin is available.
-// When running in browser (Vercel) → graceful fallback, glasses show
+// When running in Capacitor shell Ã¢â€ â€™ MetaGlasses plugin is available.
+// When running in browser (Vercel) Ã¢â€ â€™ graceful fallback, glasses show
 // "use mobile app" message. ALL existing Bluetooth functionality is UNCHANGED.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 
-// ─── Meta Glasses Plugin (lazy import — only loads in Capacitor) ────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Meta Glasses Plugin (lazy import Ã¢â‚¬â€ only loads in Capacitor) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 let MetaGlasses: any = null;
 let metaGlassesLoaded = false;
 
 async function loadMetaGlassesPlugin() {
-  if (metaGlassesLoaded) return MetaGlasses;
+  if (metaGlassesLoaded) return MetaGlasses || null;
   metaGlassesLoaded = true;
   try {
     const { registerPlugin } = await import(/* @vite-ignore */ '@capacitor/core');
     MetaGlasses = registerPlugin('MetaGlasses');
+    return MetaGlasses; // Don't await the plugin proxy
     const { available } = await MetaGlasses.isAvailable();
     if (!available) MetaGlasses = null;
   } catch {
-    // Not in Capacitor shell — plugin not available, that's fine
+    // Not in Capacitor shell Ã¢â‚¬â€ plugin not available, that's fine
     MetaGlasses = null;
   }
-  return MetaGlasses;
+  return MetaGlasses || null;
 }
 
 // =============================================================================
@@ -66,7 +67,7 @@ export interface MetaGlassesState {
 }
 
 export interface UseBluetoothManagerReturn {
-  // ── Existing Bluetooth (UNCHANGED) ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Existing Bluetooth (UNCHANGED) Ã¢â€â‚¬Ã¢â€â‚¬
   isSupported: boolean;
   isEnabled: boolean;
   isScanning: boolean;
@@ -81,7 +82,7 @@ export interface UseBluetoothManagerReturn {
   forgetDevice: (deviceId: string) => void;
   requestDevice: () => Promise<BluetoothDevice | null>;
 
-  // ── Meta Glasses (NEW) ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Meta Glasses (NEW) Ã¢â€â‚¬Ã¢â€â‚¬
   metaGlasses: MetaGlassesState;
   registerMetaGlasses: () => Promise<boolean>;
   requestGlassesCameraPermission: () => Promise<boolean>;
@@ -180,7 +181,7 @@ const INITIAL_META_STATE: MetaGlassesState = {
 // =============================================================================
 
 export function useBluetoothManager(): UseBluetoothManagerReturn {
-  // ── Existing Bluetooth state (UNCHANGED) ──────────────────────────────
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Existing Bluetooth state (UNCHANGED) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const [isSupported] = useState<boolean>(checkBluetoothSupport());
   const [isEnabled, setIsEnabled] = useState<boolean>(true);
   const [isScanning, setIsScanning] = useState<boolean>(false);
@@ -192,7 +193,7 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   const scanAbortController = useRef<AbortController | null>(null);
   const deviceRefs = useRef<Map<string, globalThis.BluetoothDevice>>(new Map());
 
-  // ── Meta Glasses state (NEW) ──────────────────────────────────────────
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Meta Glasses state (NEW) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const [metaGlasses, setMetaGlasses] = useState<MetaGlassesState>(INITIAL_META_STATE);
 
   // ---------------------------------------------------------------------------
