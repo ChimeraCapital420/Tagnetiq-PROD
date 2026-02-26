@@ -1,8 +1,13 @@
 // FILE: src/components/DevicePairingModal.tsx
 // Bluetooth Device Pairing UI - Real Web Bluetooth integration
 // Mobile-first: touch-friendly, clear status, graceful degradation
+//
+// ENHANCED: Meta Smart Glasses section. When the Capacitor plugin is available,
+// shows a guided multi-step setup flow (Register → Permission → Connect).
+// When in browser (no plugin), shows "use mobile app" message.
+// ALL existing Bluetooth UI is UNCHANGED.
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -31,6 +36,9 @@ import {
   Trash2,
   RefreshCw,
   BatteryMedium,
+  Glasses,
+  ArrowRight,
+  Eye,
 } from 'lucide-react';
 import { useBluetoothManager, type BluetoothDevice } from '@/hooks/useBluetoothManager';
 
@@ -99,10 +107,23 @@ const DevicePairingModal: React.FC<DevicePairingModalProps> = ({
     connectDevice,
     disconnectDevice,
     forgetDevice,
+
+    // Meta Glasses (NEW)
+    metaGlasses,
+    registerMetaGlasses,
+    requestGlassesCameraPermission,
+    startGlassesSession,
+    stopGlassesSession,
+    refreshGlassesStatus,
   } = useBluetoothManager();
 
+  // Refresh glasses status when modal opens
+  useEffect(() => {
+    if (isOpen) refreshGlassesStatus();
+  }, [isOpen, refreshGlassesStatus]);
+
   // ---------------------------------------------------------------------------
-  // HANDLERS
+  // HANDLERS (existing — UNCHANGED)
   // ---------------------------------------------------------------------------
 
   const handleScan = useCallback(async () => {
@@ -132,7 +153,166 @@ const DevicePairingModal: React.FC<DevicePairingModalProps> = ({
   }, [forgetDevice]);
 
   // ---------------------------------------------------------------------------
-  // RENDER HELPERS
+  // META GLASSES SECTION (NEW)
+  // ---------------------------------------------------------------------------
+
+  const renderMetaGlassesSection = () => {
+    // ── Already connected and active ──
+    if (metaGlasses.isConnected && metaGlasses.isSessionActive) {
+      return (
+        <Card className="bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800 mb-4">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-green-100 dark:bg-green-900 rounded-full">
+                  <Eye className="w-5 h-5 text-green-600 dark:text-green-400" />
+                </div>
+                <div>
+                  <p className="font-medium flex items-center gap-2">
+                    {metaGlasses.deviceName || 'Smart Glasses'}
+                    <Badge variant="default" className="bg-green-600">Active</Badge>
+                  </p>
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    Camera session active
+                    {metaGlasses.batteryLevel !== null && (
+                      <span className="flex items-center gap-1">
+                        <BatteryMedium className="w-3 h-3" />
+                        {metaGlasses.batteryLevel}%
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <Button variant="outline" size="sm" onClick={stopGlassesSession}>
+                Disconnect
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    // ── Connected but session not started ──
+    if (metaGlasses.isConnected && !metaGlasses.isSessionActive) {
+      return (
+        <Card className="bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800 mb-4">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded-full">
+                  <Eye className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                </div>
+                <div>
+                  <p className="font-medium">{metaGlasses.deviceName || 'Smart Glasses'}</p>
+                  <p className="text-sm text-muted-foreground">Connected — ready to start</p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                onClick={startGlassesSession}
+                disabled={metaGlasses.isLoading}
+              >
+                {metaGlasses.isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  'Start Camera'
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    // ── Plugin available but not fully set up — show setup steps ──
+    if (metaGlasses.pluginAvailable) {
+      const currentStep = !metaGlasses.isRegistered ? 1
+        : !metaGlasses.cameraPermissionGranted ? 2
+        : 3; // Ready to connect
+
+      return (
+        <Card className="mb-4 border-primary/20">
+          <CardContent className="p-4 space-y-4">
+            <div className="flex items-center gap-2">
+              <Eye className="w-5 h-5 text-primary" />
+              <h4 className="font-semibold">Meta Smart Glasses</h4>
+              {metaGlasses.isLoading && (
+                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+              )}
+            </div>
+
+            {metaGlasses.error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="text-sm">{metaGlasses.error}</AlertDescription>
+              </Alert>
+            )}
+
+            {/* Step 1: Register with Meta AI */}
+            <SetupStep
+              step={1}
+              currentStep={currentStep}
+              title="Register with Meta AI"
+              description="One-time setup — connects TagnetIQ to your glasses through the Meta AI app"
+              completed={metaGlasses.isRegistered}
+              onAction={registerMetaGlasses}
+              actionLabel="Register"
+              isLoading={metaGlasses.isLoading && currentStep === 1}
+            />
+
+            {/* Step 2: Camera Permission */}
+            <SetupStep
+              step={2}
+              currentStep={currentStep}
+              title="Camera Permission"
+              description="Allow TagnetIQ to see through your glasses camera"
+              completed={metaGlasses.cameraPermissionGranted}
+              onAction={requestGlassesCameraPermission}
+              actionLabel="Allow Camera"
+              isLoading={metaGlasses.isLoading && currentStep === 2}
+              disabled={!metaGlasses.isRegistered}
+            />
+
+            {/* Step 3: Connect */}
+            <SetupStep
+              step={3}
+              currentStep={currentStep}
+              title="Connect & Start"
+              description="Start receiving camera frames from your glasses"
+              completed={metaGlasses.isSessionActive}
+              onAction={startGlassesSession}
+              actionLabel="Connect Glasses"
+              isLoading={metaGlasses.isLoading && currentStep === 3}
+              disabled={!metaGlasses.cameraPermissionGranted}
+            />
+          </CardContent>
+        </Card>
+      );
+    }
+
+    // ── Plugin not available (browser) — show info message ──
+    return (
+      <Card className="mb-4 border-dashed">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-muted rounded-full">
+              <Eye className="w-5 h-5 text-muted-foreground" />
+            </div>
+            <div>
+              <p className="font-medium text-sm">Meta Smart Glasses</p>
+              <p className="text-xs text-muted-foreground">
+                Smart glasses require the TagnetIQ mobile app.
+                Open TagnetIQ on your phone to pair glasses.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
+  // ---------------------------------------------------------------------------
+  // EXISTING RENDER HELPERS (UNCHANGED)
   // ---------------------------------------------------------------------------
 
   const renderSupportStatus = () => {
@@ -222,14 +402,11 @@ const DevicePairingModal: React.FC<DevicePairingModalProps> = ({
   };
 
   const renderAvailableDevices = () => {
-    // Filter out connected devices
     const unconnectedDevices = availableDevices.filter(
       (d) => !connectedDevices.some((c) => c.id === d.id)
     );
 
-    if (unconnectedDevices.length === 0 && !isScanning) {
-      return null;
-    }
+    if (unconnectedDevices.length === 0 && !isScanning) return null;
 
     return (
       <>
@@ -255,10 +432,7 @@ const DevicePairingModal: React.FC<DevicePairingModalProps> = ({
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => handleConnect(device.id)}
-                        >
+                        <Button size="sm" onClick={() => handleConnect(device.id)}>
                           Connect
                         </Button>
                         <Button
@@ -282,13 +456,7 @@ const DevicePairingModal: React.FC<DevicePairingModalProps> = ({
   };
 
   const renderEmptyState = () => {
-    if (
-      isScanning ||
-      availableDevices.length > 0 ||
-      connectedDevices.length > 0
-    ) {
-      return null;
-    }
+    if (isScanning || availableDevices.length > 0 || connectedDevices.length > 0) return null;
 
     return (
       <div className="text-center py-8">
@@ -321,6 +489,9 @@ const DevicePairingModal: React.FC<DevicePairingModalProps> = ({
             enhance your scanning.
           </DialogDescription>
         </DialogHeader>
+
+        {/* ═══ META SMART GLASSES SECTION (NEW) ═══ */}
+        {renderMetaGlassesSection()}
 
         {/* Support/Enable Status Alerts */}
         {renderSupportStatus()}
@@ -389,7 +560,7 @@ const DevicePairingModal: React.FC<DevicePairingModalProps> = ({
               <Camera className="w-3 h-3" /> GoPro cameras (HERO series)
             </li>
             <li className="flex items-center gap-2">
-              <Smartphone className="w-3 h-3" /> Ray-Ban Meta Smart Glasses
+              <Eye className="w-3 h-3" /> Ray-Ban Meta Smart Glasses
             </li>
             <li className="flex items-center gap-2">
               <Video className="w-3 h-3" /> DJI Pocket / Osmo cameras
@@ -414,6 +585,86 @@ const DevicePairingModal: React.FC<DevicePairingModalProps> = ({
         )}
       </DialogContent>
     </Dialog>
+  );
+};
+
+// =============================================================================
+// SETUP STEP SUB-COMPONENT (for Meta glasses multi-step flow)
+// =============================================================================
+
+interface SetupStepProps {
+  step: number;
+  currentStep: number;
+  title: string;
+  description: string;
+  completed: boolean;
+  onAction: () => Promise<boolean>;
+  actionLabel: string;
+  isLoading?: boolean;
+  disabled?: boolean;
+}
+
+const SetupStep: React.FC<SetupStepProps> = ({
+  step,
+  currentStep,
+  title,
+  description,
+  completed,
+  onAction,
+  actionLabel,
+  isLoading = false,
+  disabled = false,
+}) => {
+  const isActive = step === currentStep;
+  const isPast = step < currentStep || completed;
+  const isFuture = step > currentStep && !completed;
+
+  return (
+    <div className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
+      isActive ? 'bg-primary/5 border border-primary/20' :
+      isPast ? 'bg-green-50 dark:bg-green-950/30' :
+      'opacity-50'
+    }`}>
+      {/* Step indicator */}
+      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+        isPast ? 'bg-green-100 dark:bg-green-900 text-green-600 dark:text-green-400' :
+        isActive ? 'bg-primary/10 text-primary' :
+        'bg-muted text-muted-foreground'
+      }`}>
+        {isPast ? <CheckCircle className="w-4 h-4" /> : step}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <p className="font-medium text-sm">{title}</p>
+        <p className="text-xs text-muted-foreground">{description}</p>
+      </div>
+
+      {/* Action */}
+      {isActive && !completed && (
+        <Button
+          size="sm"
+          onClick={onAction}
+          disabled={disabled || isLoading}
+          className="shrink-0"
+        >
+          {isLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <>
+              {actionLabel}
+              <ArrowRight className="w-3 h-3 ml-1" />
+            </>
+          )}
+        </Button>
+      )}
+
+      {isPast && (
+        <Badge variant="outline" className="text-green-600 border-green-300 shrink-0">
+          Done
+        </Badge>
+      )}
+    </div>
   );
 };
 

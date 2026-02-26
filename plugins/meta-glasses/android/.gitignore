@@ -1,0 +1,6 @@
+build/
+
+app/
+*.gradle
+src/main/java/
+*.properties

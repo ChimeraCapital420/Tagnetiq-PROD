@@ -15,6 +15,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.60.0",
+    "@capacitor/android": "^8.1.0",
+    "@capacitor/cli": "^8.1.0",
+    "@capacitor/core": "^8.1.0",
     "@google/generative-ai": "^0.24.1",
     "@hookform/resolvers": "^3.9.0",
     "@radix-ui/react-accordion": "^1.2.12",
@@ -53,6 +56,7 @@
     "@types/uuid": "^10.0.0",
     "@vercel/node": "^2.3.0",
     "axios": "^1.11.0",
+    "capacitor-meta-glasses-plugin": "file:plugins/meta-glasses",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.0.0",

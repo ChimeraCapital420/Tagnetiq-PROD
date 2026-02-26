@@ -1,0 +1,25 @@
+{
+  "name": "capacitor-meta-glasses-plugin",
+  "version": "0.1.0",
+  "description": "Capacitor plugin wrapping Meta MWDAT SDK for Ray-Ban smart glasses",
+  "main": "dist/index.js",
+  "types": "dist/definitions.d.ts",
+  "files": ["dist/", "ios/", "android/"],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "peerDependencies": {
+    "@capacitor/core": "^6.0.0"
+  },
+  "capacitor": {
+    "ios": { "src": "ios" },
+    "android": { "src": "android" }
+  }
+}
