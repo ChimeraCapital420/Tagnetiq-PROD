@@ -1,4 +1,4 @@
-﻿package com.tagnetiq.app;
+package com.tagnetiq.app;
 
 import com.getcapacitor.BridgeActivity;
 import android.os.Bundle;
