@@ -515,7 +515,7 @@ const CameraSettingsModal: React.FC<CameraSettingsModalProps> = ({
                     <h3 className="font-semibold text-lg">Bluetooth Devices</h3>
                   </div>
 
-                  {!btSupported && (
+                  {!btSupported && typeof (window as any).Capacitor === "undefined" && (
                     <Alert variant="destructive">
                       <AlertCircle className="h-4 w-4" />
                       <AlertDescription>
