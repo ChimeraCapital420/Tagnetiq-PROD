@@ -1,6 +1,10 @@
 // FILE: src/components/scanner/components/ScannerHeader.tsx
 // Extracted from DualScanner.tsx — top toolbar
 // Mobile-first: Touch-friendly 44px targets, haptic feedback
+//
+// Sprint F: Added GlassesStatusIcon next to Bluetooth
+//   Glasses icon shows connection state with colored lenses
+//   Green tap → Hunt Mode (glasses camera feed)
 
 import React from 'react';
 import {
@@ -14,6 +18,8 @@ import {
   Focus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import GlassesStatusIcon from '@/components/GlassesStatusIcon';
+import type { MetaGlassesState } from '@/components/GlassesStatusIcon';
 
 // =============================================================================
 // TYPES
@@ -26,7 +32,7 @@ export interface ScannerHeaderProps {
   onGhostToggle: () => void;
   /** Open settings modal */
   onSettingsOpen: () => void;
-  /** Open device pairing modal */
+  /** Open device pairing modal (barcode scanners) */
   onBluetoothOpen: () => void;
   /** Toggle grid overlay */
   onGridToggle: () => void;
@@ -44,7 +50,26 @@ export interface ScannerHeaderProps {
   isTorchOn: boolean;
   /** Camera supports torch */
   hasTorch: boolean;
+  /** Meta glasses state — drives glasses icon in toolbar */
+  metaGlasses?: MetaGlassesState;
+  /** Called when user taps red glasses icon to register */
+  onRegisterGlasses?: () => void;
+  /** Called when user taps green glasses icon — Hunt Mode */
+  onHuntMode?: () => void;
 }
+
+// Default glasses state for when prop isn't passed
+const DEFAULT_GLASSES: MetaGlassesState = {
+  pluginAvailable: false,
+  isRegistered: false,
+  isConnected: false,
+  isSessionActive: false,
+  cameraPermissionGranted: false,
+  batteryLevel: null,
+  deviceName: null,
+  isLoading: false,
+  error: null,
+};
 
 // =============================================================================
 // COMPONENT
@@ -63,10 +88,13 @@ export const ScannerHeader: React.FC<ScannerHeaderProps> = ({
   isGridEnabled,
   isTorchOn,
   hasTorch,
+  metaGlasses = DEFAULT_GLASSES,
+  onRegisterGlasses,
+  onHuntMode,
 }) => {
   return (
     <div className="dual-scanner-header flex items-center justify-between px-3 py-2 bg-black/80 backdrop-blur-sm z-20">
-      {/* Left: Ghost + Settings */}
+      {/* Left: Ghost + Settings + Bluetooth + Glasses */}
       <div className="flex items-center gap-1">
         <Button
           variant="ghost"
@@ -95,10 +123,19 @@ export const ScannerHeader: React.FC<ScannerHeaderProps> = ({
           size="icon"
           onClick={onBluetoothOpen}
           className="text-white touch-manipulation w-10 h-10"
-          title="Pair Device"
+          title="Pair Barcode Scanner"
         >
           <Bluetooth className="w-5 h-5" />
         </Button>
+
+        {/* Glasses Status — colored lenses show connection state */}
+        <GlassesStatusIcon
+          metaGlasses={metaGlasses}
+          onRegister={onRegisterGlasses}
+          onHuntMode={onHuntMode}
+          variant="scanner"
+          className="text-white hover:bg-white/10"
+        />
       </div>
 
       {/* Center: Grid + Torch + Focus */}

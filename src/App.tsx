@@ -5,6 +5,8 @@
 //   - Replaces the dead 15-second screen with live progress visualization
 // v2.2 CHANGES:
 //   - Added /voices route for Oracle voice picker page
+// v2.3 CHANGES:
+//   - Added /hunt route for Smart Glasses Hunt Mode (SmartGlassesControl)
 
 import React, { useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
@@ -53,6 +55,9 @@ import DualScanner from '@/components/scanner';
 
 // UPDATED: Import from refactored oracle module
 import { OraclePage } from '@/components/oracle';
+
+// NEW: Smart Glasses Hunt Mode
+import SmartGlassesControl from '@/components/SmartGlassesControl';
 
 // NEW: Oracle Thinking Overlay — replaces the dead screen during analysis
 import OracleThinkingOverlay from '@/components/analysis/OracleThinkingOverlay';
@@ -126,6 +131,14 @@ const AppRoutes: React.FC = () => {
                     <OnboardingGuard><VoicesPage /></OnboardingGuard>
                 </ProtectedRoute>
             } />
+
+            {/* Hunt Mode — Smart Glasses camera feed + continuous scanning */}
+            <Route path="/hunt" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><SmartGlassesControl /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+
             <Route path="/beta/welcome" element={
                 <ProtectedRoute isAllowed={!!user} to="/login">
                     <OnboardingGuard><BetaWelcome /></OnboardingGuard>

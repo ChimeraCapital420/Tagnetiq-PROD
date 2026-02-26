@@ -2,8 +2,14 @@
 // Mobile-first responsive navigation with Oracle
 // Oracle replaces Arena in primary nav — it's the AI brain users come back to daily
 //
+// Sprint F: Glasses status icon replaces redundant Dashboard button on mobile
+//   Mobile: Logo → /dashboard, Glasses icon in nav (Dashboard hidden)
+//   Desktop: Logo → /dashboard, Dashboard button visible, Glasses icon near alerts
+//   Gray icon → SmartGlassesShopSheet (affiliate links)
+//
 // Sprint E: data-tour attributes added for guided tour targeting
-//   data-tour="dashboard-tab"   → Dashboard button
+//   data-tour="dashboard-tab"   → Dashboard button (desktop only)
+//   data-tour="glasses-status"  → Glasses status icon
 //   data-tour="scanner-button"  → Scan button (primary action)
 //   data-tour="oracle-tab"      → Oracle button
 //   data-tour="market-tab"      → Market button
@@ -12,18 +18,43 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import SettingsDropdown from './SettingsDropdown.js';
+import GlassesStatusIcon from './GlassesStatusIcon';
 import { Button } from '@/components/ui/button';
 import { Shield, Scan, Store, LayoutDashboard, Zap } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import AlertsDropdown from '@/components/arena/AlertsDropdown';
 import MessagesDropdown from '@/components/arena/MessagesDropdown';
+import type { MetaGlassesState } from './GlassesStatusIcon';
 
 interface ResponsiveNavigationProps {
   onOpenDevicePairing?: () => void;
+  /** Meta glasses state from useBluetoothManager — drives glasses icon */
+  metaGlasses?: MetaGlassesState;
+  /** Called when user taps red glasses icon to register */
+  onRegisterGlasses?: () => void;
+  /** Called when user taps gray glasses icon — open shop sheet */
+  onShopGlasses?: () => void;
 }
 
-const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevicePairing }) => {
+const INITIAL_GLASSES_STATE: MetaGlassesState = {
+  pluginAvailable: false,
+  isRegistered: false,
+  isConnected: false,
+  isSessionActive: false,
+  cameraPermissionGranted: false,
+  batteryLevel: null,
+  deviceName: null,
+  isLoading: false,
+  error: null,
+};
+
+const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({
+  onOpenDevicePairing,
+  metaGlasses = INITIAL_GLASSES_STATE,
+  onRegisterGlasses,
+  onShopGlasses,
+}) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { profile } = useAuth();
@@ -40,6 +71,10 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
     showArenaWelcome(() => navigate('/arena/marketplace'));
   };
 
+  const handleHuntMode = () => {
+    navigate('/hunt');
+  };
+
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container flex h-14 items-center">
@@ -51,21 +86,21 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
         </div>
 
         <div className="flex flex-1 items-center justify-between space-x-1 sm:space-x-2 md:justify-end">
-            {/* Mobile Logo */}
+            {/* Mobile Logo — links to dashboard (replaces need for Dashboard button) */}
             <div className="w-full flex-1 md:w-auto md:flex-none">
                 <Link to="/dashboard" className="flex items-center md:hidden">
                     <img src="/images/logo-main.jpg" alt="TagnetIQ Logo" className="h-8 sm:h-10 w-auto" />
                 </Link>
             </div>
-            
-            {/* Navigation Buttons — 5 primary actions */}
+
+            {/* Navigation Buttons */}
             <nav className="flex items-center gap-0.5 sm:gap-1 md:gap-2">
-                {/* Dashboard */}
-                <Button 
-                  asChild 
-                  variant={isDashboardActive ? 'secondary' : 'ghost'} 
+                {/* Dashboard — DESKTOP ONLY (on mobile, logo serves this purpose) */}
+                <Button
+                  asChild
+                  variant={isDashboardActive ? 'secondary' : 'ghost'}
                   size="sm"
-                  className="touch-manipulation px-2 sm:px-3"
+                  className="hidden md:inline-flex touch-manipulation px-2 sm:px-3"
                   data-tour="dashboard-tab"
                 >
                     <Link to="/dashboard" className="flex items-center gap-1">
@@ -73,10 +108,20 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                         <span className="hidden sm:inline-block">Dashboard</span>
                     </Link>
                 </Button>
-                
+
+                {/* Glasses Status — MOBILE: replaces Dashboard slot, shows on all screens */}
+                <GlassesStatusIcon
+                  metaGlasses={metaGlasses}
+                  onRegister={onRegisterGlasses}
+                  onHuntMode={handleHuntMode}
+                  onShopGlasses={onShopGlasses}
+                  variant="nav"
+                  className="hover:bg-accent hover:text-accent-foreground"
+                />
+
                 {/* Scan — Primary action, always visible */}
-                <Button 
-                  onClick={() => setIsScannerOpen(true)} 
+                <Button
+                  onClick={() => setIsScannerOpen(true)}
                   size="sm"
                   className="touch-manipulation px-2 sm:px-3"
                   data-tour="scanner-button"
@@ -86,9 +131,9 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                 </Button>
 
                 {/* Oracle — AI Assistant */}
-                <Button 
-                  asChild 
-                  variant={isOracleActive ? 'secondary' : 'ghost'} 
+                <Button
+                  asChild
+                  variant={isOracleActive ? 'secondary' : 'ghost'}
                   size="sm"
                   className="touch-manipulation px-2 sm:px-3"
                   data-tour="oracle-tab"
@@ -98,11 +143,11 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                         <span className="hidden sm:inline-block">Oracle</span>
                     </Link>
                 </Button>
-                
+
                 {/* Market */}
-                <Button 
-                  asChild 
-                  variant={isMarketplaceActive ? 'secondary' : 'ghost'} 
+                <Button
+                  asChild
+                  variant={isMarketplaceActive ? 'secondary' : 'ghost'}
                   size="sm"
                   className="touch-manipulation px-2 sm:px-3"
                   data-tour="market-tab"
@@ -112,11 +157,11 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                         <span className="hidden sm:inline-block">Market</span>
                     </Link>
                 </Button>
-                
+
                 {/* Vault */}
-                <Button 
-                  asChild 
-                  variant={isVaultActive ? 'secondary' : 'ghost'} 
+                <Button
+                  asChild
+                  variant={isVaultActive ? 'secondary' : 'ghost'}
                   size="sm"
                   className="touch-manipulation px-2 sm:px-3"
                   data-tour="vault-tab"
@@ -126,13 +171,13 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({ onOpenDevic
                         <span className="hidden sm:inline-block">Vault</span>
                     </Link>
                 </Button>
-                
+
                 {/* Messages dropdown with unread badge */}
                 <MessagesDropdown />
-                
+
                 {/* Notifications */}
                 <AlertsDropdown />
-                
+
                 {/* Settings */}
                 <SettingsDropdown onOpenDevicePairing={onOpenDevicePairing} />
             </nav>

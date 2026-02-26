@@ -8,10 +8,15 @@
 // v3.4: Conditional modal rendering (kept)
 // v3.2: Healing haptics integration (kept)
 //
+// Sprint F: GlassesStatusIcon in ScannerHeader toolbar
+//   useBluetoothManager called here for metaGlasses state → ScannerHeader
+//   Module-level plugin guard prevents double-init with AppLayout instance
+//
 // All logic lives in hooks/, all UI in components/.
 // Mobile-first: Full viewport camera, device-side compression, haptic feedback
 
 import React, { useState, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { ScanMode, DualScannerProps } from './types';
 
 // Hooks
@@ -39,6 +44,9 @@ import {
 import CameraSettingsModal from '../CameraSettingsModal';
 import DevicePairingModal from '../DevicePairingModal';
 
+// Bluetooth — for Meta glasses state in scanner toolbar
+import { useBluetoothManager } from '@/hooks/useBluetoothManager';
+
 // Styles
 import '../DualScanner.css';
 
@@ -47,6 +55,8 @@ import '../DualScanner.css';
 // =============================================================================
 
 const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
+  const navigate = useNavigate();
+
   // -------------------------------------------------------------------------
   // LOCAL UI STATE
   // -------------------------------------------------------------------------
@@ -75,6 +85,10 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   // -------------------------------------------------------------------------
   const ghostMode = useGhostMode();
   const gridOverlay = useGridOverlay();
+
+  // Meta glasses state — drives GlassesStatusIcon in ScannerHeader
+  // Module-level metaGlassesLoaded flag prevents double plugin init
+  const bluetooth = useBluetoothManager();
 
   // Camera is active when: scanner is open AND mode is NOT barcode
   const cameraActive = isOpen && scanMode !== 'barcode';
@@ -191,6 +205,14 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
   );
 
   // -------------------------------------------------------------------------
+  // HUNT MODE — close scanner, navigate to glasses camera feed
+  // -------------------------------------------------------------------------
+  const handleHuntMode = useCallback(() => {
+    onClose();
+    navigate('/hunt');
+  }, [onClose, navigate]);
+
+  // -------------------------------------------------------------------------
   // RENDER
   // -------------------------------------------------------------------------
   if (!isOpen) return null;
@@ -210,6 +232,9 @@ const DualScanner: React.FC<DualScannerProps> = ({ isOpen, onClose }) => {
         isGridEnabled={gridOverlay.isEnabled}
         isTorchOn={camera.settings.torch}
         hasTorch={camera.capabilities.torch}
+        metaGlasses={bluetooth.metaGlasses}
+        onRegisterGlasses={bluetooth.registerMetaGlasses}
+        onHuntMode={handleHuntMode}
       />
 
       <ScannerViewport
