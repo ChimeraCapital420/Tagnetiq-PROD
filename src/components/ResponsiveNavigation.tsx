@@ -2,13 +2,14 @@
 // Mobile-first responsive navigation with Oracle
 // Oracle replaces Arena in primary nav — it's the AI brain users come back to daily
 //
-// Sprint F: Glasses status icon replaces redundant Dashboard button on mobile
-//   Mobile: Logo → /dashboard, Glasses icon in nav (Dashboard hidden)
-//   Desktop: Logo → /dashboard, Dashboard button visible, Glasses icon near alerts
-//   Gray icon → SmartGlassesShopSheet (affiliate links)
+// Sprint F: Smart conditional nav
+//   Mobile + ON dashboard  → Glasses icon (you're already home)
+//   Mobile + OFF dashboard → Dashboard button (need to get back)
+//   Desktop → Both Dashboard button + Glasses icon always visible
+//   Gray glasses icon → SmartGlassesShopSheet (pair or shop)
 //
 // Sprint E: data-tour attributes added for guided tour targeting
-//   data-tour="dashboard-tab"   → Dashboard button (desktop only)
+//   data-tour="dashboard-tab"   → Dashboard button
 //   data-tour="glasses-status"  → Glasses status icon
 //   data-tour="scanner-button"  → Scan button (primary action)
 //   data-tour="oracle-tab"      → Oracle button
@@ -66,6 +67,12 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({
   const isMarketplaceActive = location.pathname.includes('/marketplace') || location.pathname.startsWith('/arena');
   const isVaultActive = location.pathname.startsWith('/vault');
 
+  // Mobile nav logic:
+  //   ON dashboard  → hide dashboard button, show glasses icon
+  //   OFF dashboard → show dashboard button, hide glasses icon (glasses still in scanner toolbar)
+  const showGlassesInNav = isDashboardActive;
+  const showDashboardOnMobile = !isDashboardActive;
+
   const handleMarketClick = (e: React.MouseEvent) => {
     e.preventDefault();
     showArenaWelcome(() => navigate('/arena/marketplace'));
@@ -86,7 +93,7 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({
         </div>
 
         <div className="flex flex-1 items-center justify-between space-x-1 sm:space-x-2 md:justify-end">
-            {/* Mobile Logo — links to dashboard (replaces need for Dashboard button) */}
+            {/* Mobile Logo — links to dashboard */}
             <div className="w-full flex-1 md:w-auto md:flex-none">
                 <Link to="/dashboard" className="flex items-center md:hidden">
                     <img src="/images/logo-main.jpg" alt="TagnetIQ Logo" className="h-8 sm:h-10 w-auto" />
@@ -95,12 +102,17 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({
 
             {/* Navigation Buttons */}
             <nav className="flex items-center gap-0.5 sm:gap-1 md:gap-2">
-                {/* Dashboard — DESKTOP ONLY (on mobile, logo serves this purpose) */}
+
+                {/* Dashboard button:
+                    Desktop: always visible
+                    Mobile: visible on ALL screens EXCEPT dashboard */}
                 <Button
                   asChild
                   variant={isDashboardActive ? 'secondary' : 'ghost'}
                   size="sm"
-                  className="hidden md:inline-flex touch-manipulation px-2 sm:px-3"
+                  className={`touch-manipulation px-2 sm:px-3 ${
+                    showDashboardOnMobile ? '' : 'hidden md:inline-flex'
+                  }`}
                   data-tour="dashboard-tab"
                 >
                     <Link to="/dashboard" className="flex items-center gap-1">
@@ -109,15 +121,19 @@ const ResponsiveNavigation: React.FC<ResponsiveNavigationProps> = ({
                     </Link>
                 </Button>
 
-                {/* Glasses Status — MOBILE: replaces Dashboard slot, shows on all screens */}
-                <GlassesStatusIcon
-                  metaGlasses={metaGlasses}
-                  onRegister={onRegisterGlasses}
-                  onHuntMode={handleHuntMode}
-                  onShopGlasses={onShopGlasses}
-                  variant="nav"
-                  className="hover:bg-accent hover:text-accent-foreground"
-                />
+                {/* Glasses Status Icon:
+                    Desktop: always visible (next to dashboard)
+                    Mobile: only on dashboard screen (replaces dashboard button slot) */}
+                <div className={showGlassesInNav ? '' : 'hidden md:block'}>
+                  <GlassesStatusIcon
+                    metaGlasses={metaGlasses}
+                    onRegister={onRegisterGlasses}
+                    onHuntMode={handleHuntMode}
+                    onShopGlasses={onShopGlasses}
+                    variant="nav"
+                    className="hover:bg-accent hover:text-accent-foreground"
+                  />
+                </div>
 
                 {/* Scan — Primary action, always visible */}
                 <Button
