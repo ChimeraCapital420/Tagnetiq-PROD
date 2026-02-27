@@ -7,18 +7,17 @@
 // AFFILIATE TRACKING:
 //   Every "Shop" click logs vendor ID + timestamp for attribution.
 //   When affiliate accounts are live, append tracking params to affiliateUrl.
-//   Future: POST to /api/analytics/affiliate-click for server-side tracking.
 //
 // FULL META CATALOG: All models use the same MWDAT SDK.
 // ALL FEEDBACK INLINE — no toasts behind sheet z-index.
 // Mobile-first: Sheet slides up, one-thumb reachable, touch-friendly targets
 //
-// v8 FIX: isCapacitorApp() was checking `typeof window.Capacitor !== 'undefined'`
-//   which returns TRUE on Vercel because @capacitor/core JS is bundled.
-//   Fixed to use Capacitor.isNativePlatform() — only true inside real APK shell.
-//   Also added fallback: if onPair() returns false, show hint instead of nothing.
+// v9 FIX: import { Capacitor } from '@capacitor/core' for isNativePlatform().
+//   window.Capacitor global does NOT have isNativePlatform — only the ES module does.
+//   v8 tried window.Capacitor.isNativePlatform which was undefined → always false.
 
 import React, { useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import {
   Sheet,
   SheetContent,
@@ -57,7 +56,6 @@ export interface GlassesVendor {
   model: string;
   tagline: string;
   specs: string;
-  /** Affiliate link — append tracking params when partnerships are live */
   affiliateUrl: string;
   status: GlassesVendorStatus;
   hasCamera: boolean;
@@ -78,12 +76,11 @@ export interface SmartGlassesShopSheetProps {
 // HELPERS
 // =============================================================================
 
-// v8 FIX: @capacitor/core sets window.Capacitor even in browser builds.
-// isNativePlatform() is the ONLY reliable check for running inside the APK.
+// v9 FIX: Use the ES module import — Capacitor.isNativePlatform()
+// returns true ONLY inside the real APK shell, false in any browser.
 const isCapacitorApp = (): boolean => {
   try {
-    const cap = (window as any)?.Capacitor;
-    return typeof cap?.isNativePlatform === 'function' && cap.isNativePlatform();
+    return Capacitor.isNativePlatform();
   } catch {
     return false;
   }
@@ -329,7 +326,6 @@ const VendorCard: React.FC<{
       try {
         const success = await onPair();
         if (!success) {
-          // Plugin returned false — show helpful hint
           setShowAppHint(true);
           setTimeout(() => setShowAppHint(false), 6000);
         }
@@ -346,7 +342,6 @@ const VendorCard: React.FC<{
     }
   };
 
-  // Use EITHER hook-level loading OR card-level loading for spinner
   const showSpinner = isLoading || localLoading;
 
   const getPairContent = () => {
@@ -369,7 +364,6 @@ const VendorCard: React.FC<{
 
   return (
     <div className={`rounded-lg border bg-card overflow-hidden ${vendor.featured ? 'ring-1 ring-green-500/30' : ''}`}>
-      {/* Top row */}
       <div className={`flex items-start gap-3 ${compact ? 'p-2.5 pb-1.5' : 'p-3 pb-2'}`}>
         <div className={`flex-shrink-0 ${compact ? 'w-8 h-8' : 'w-10 h-10'} rounded-full flex items-center justify-center ${
           isConnected || isRegistered ? 'bg-green-500/20' : canPair ? 'bg-blue-500/10' : 'bg-muted'
@@ -397,7 +391,6 @@ const VendorCard: React.FC<{
           )}
           {error && <p className="text-[11px] text-red-400 mt-1">{error}</p>}
 
-          {/* v8 FIX: Inline feedback — always visible inside the card, never behind sheet */}
           {showAppHint && (
             <div className="flex items-start gap-1.5 mt-2 p-2 rounded bg-blue-500/10 border border-blue-500/20">
               <Info className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mt-0.5" />
@@ -412,7 +405,6 @@ const VendorCard: React.FC<{
         </div>
       </div>
 
-      {/* Bottom: Pair | Shop */}
       <div className="flex border-t divide-x">
         {(isConnected || isRegistered) && onUnpair ? (
           <button
@@ -483,7 +475,6 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
   const isMetaLoading = metaGlasses.isLoading;
   const metaError = metaGlasses.error;
 
-  // Returns boolean so VendorCard can detect failure and show fallback hint
   const handlePairMeta = async (): Promise<boolean> => {
     if (onRegisterGlasses) return await onRegisterGlasses();
     return false;
@@ -493,7 +484,6 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
     if (onForgetGlasses) await onForgetGlasses();
   };
 
-  // Split vendors by category
   const metaFeatured = GLASSES_VENDORS.filter(v => v.usesMwdatSdk && v.featured);
   const metaGen2 = GLASSES_VENDORS.filter(v => v.brand === 'meta' && v.id.includes('gen2') && !v.featured);
   const oakley = GLASSES_VENDORS.filter(v => v.brand === 'oakley_meta');
