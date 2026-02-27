@@ -12,6 +12,11 @@
 // FULL META CATALOG: All models use the same MWDAT SDK.
 // ALL FEEDBACK INLINE — no toasts behind sheet z-index.
 // Mobile-first: Sheet slides up, one-thumb reachable, touch-friendly targets
+//
+// v8 FIX: isCapacitorApp() was checking `typeof window.Capacitor !== 'undefined'`
+//   which returns TRUE on Vercel because @capacitor/core JS is bundled.
+//   Fixed to use Capacitor.isNativePlatform() — only true inside real APK shell.
+//   Also added fallback: if onPair() returns false, show hint instead of nothing.
 
 import React, { useState } from 'react';
 import {
@@ -73,8 +78,16 @@ export interface SmartGlassesShopSheetProps {
 // HELPERS
 // =============================================================================
 
-const isCapacitorApp = (): boolean =>
-  typeof (window as any)?.Capacitor !== 'undefined';
+// v8 FIX: @capacitor/core sets window.Capacitor even in browser builds.
+// isNativePlatform() is the ONLY reliable check for running inside the APK.
+const isCapacitorApp = (): boolean => {
+  try {
+    const cap = (window as any)?.Capacitor;
+    return typeof cap?.isNativePlatform === 'function' && cap.isNativePlatform();
+  } catch {
+    return false;
+  }
+};
 
 const DEFAULT_GLASSES: MetaGlassesState = {
   pluginAvailable: false,
@@ -91,10 +104,8 @@ const DEFAULT_GLASSES: MetaGlassesState = {
 /** Track affiliate click — future: POST to server for attribution */
 function trackAffiliateClick(vendorId: string) {
   try {
-    // Local storage log for now — replace with API call when affiliate accounts are live
     const clicks = JSON.parse(localStorage.getItem('tagnetiq_affiliate_clicks') || '[]');
     clicks.push({ vendorId, timestamp: new Date().toISOString() });
-    // Keep last 100 clicks
     localStorage.setItem('tagnetiq_affiliate_clicks', JSON.stringify(clicks.slice(-100)));
 
     // TODO: When affiliate tracking is live, POST to server:
@@ -295,11 +306,12 @@ const VendorCard: React.FC<{
   isRegistered: boolean;
   isLoading: boolean;
   error: string | null;
-  onPair?: () => void;
+  onPair?: () => Promise<boolean>;
   onUnpair?: () => void;
   compact?: boolean;
 }> = ({ vendor, isInApp, isConnected, isRegistered, isLoading, error, onPair, onUnpair, compact }) => {
   const [showAppHint, setShowAppHint] = useState(false);
+  const [localLoading, setLocalLoading] = useState(false);
 
   const handleShop = () => {
     trackAffiliateClick(vendor.id);
@@ -308,18 +320,37 @@ const VendorCard: React.FC<{
 
   const canPair = vendor.status === 'supported' && vendor.usesMwdatSdk;
 
-  const handlePairClick = () => {
+  const handlePairClick = async () => {
     if (!canPair) return;
+
     if (isInApp && onPair) {
-      onPair();
+      // In APK — call native plugin, show spinner while waiting
+      setLocalLoading(true);
+      try {
+        const success = await onPair();
+        if (!success) {
+          // Plugin returned false — show helpful hint
+          setShowAppHint(true);
+          setTimeout(() => setShowAppHint(false), 6000);
+        }
+      } catch {
+        setShowAppHint(true);
+        setTimeout(() => setShowAppHint(false), 6000);
+      } finally {
+        setLocalLoading(false);
+      }
     } else {
+      // In browser — show "use the app" message inline on card
       setShowAppHint(true);
-      setTimeout(() => setShowAppHint(false), 5000);
+      setTimeout(() => setShowAppHint(false), 6000);
     }
   };
 
+  // Use EITHER hook-level loading OR card-level loading for spinner
+  const showSpinner = isLoading || localLoading;
+
   const getPairContent = () => {
-    if (isLoading) {
+    if (showSpinner) {
       return (<><Loader2 className="w-3.5 h-3.5 animate-spin" />Connecting...</>);
     }
     if (isConnected || isRegistered) {
@@ -334,7 +365,7 @@ const VendorCard: React.FC<{
     return (<><Smartphone className="w-3.5 h-3.5" />Pair in App</>);
   };
 
-  const isPairClickable = canPair && !isLoading && !isConnected && !isRegistered;
+  const isPairClickable = canPair && !showSpinner && !isConnected && !isRegistered;
 
   return (
     <div className={`rounded-lg border bg-card overflow-hidden ${vendor.featured ? 'ring-1 ring-green-500/30' : ''}`}>
@@ -365,11 +396,16 @@ const VendorCard: React.FC<{
             <p className="text-[11px] text-muted-foreground/60 mt-0.5">{vendor.specs}</p>
           )}
           {error && <p className="text-[11px] text-red-400 mt-1">{error}</p>}
-          {showAppHint && !isInApp && (
+
+          {/* v8 FIX: Inline feedback — always visible inside the card, never behind sheet */}
+          {showAppHint && (
             <div className="flex items-start gap-1.5 mt-2 p-2 rounded bg-blue-500/10 border border-blue-500/20">
               <Info className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mt-0.5" />
               <p className="text-[11px] text-blue-300">
-                Pairing requires the TagnetIQ mobile app. Open TagnetIQ on your Android phone to connect.
+                {isInApp
+                  ? 'Registration requires the Meta AI app. Make sure your glasses are powered on and nearby, then try again.'
+                  : 'Pairing requires the TagnetIQ mobile app. Open TagnetIQ on your Android phone to connect your glasses.'
+                }
               </p>
             </div>
           )}
@@ -381,7 +417,7 @@ const VendorCard: React.FC<{
         {(isConnected || isRegistered) && onUnpair ? (
           <button
             onClick={onUnpair}
-            disabled={isLoading}
+            disabled={showSpinner}
             className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium text-red-400 hover:bg-red-500/10 transition-colors touch-manipulation"
           >
             <Unplug className="w-3.5 h-3.5" />Unpair
@@ -393,7 +429,7 @@ const VendorCard: React.FC<{
             className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-colors touch-manipulation ${
               isPairClickable
                 ? 'hover:bg-accent text-foreground active:bg-accent/80'
-                : isLoading ? 'text-foreground' : 'text-muted-foreground/40 cursor-not-allowed'
+                : showSpinner ? 'text-foreground' : 'text-muted-foreground/40 cursor-not-allowed'
             }`}
           >
             {getPairContent()}
@@ -447,8 +483,10 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
   const isMetaLoading = metaGlasses.isLoading;
   const metaError = metaGlasses.error;
 
-  const handlePairMeta = async () => {
-    if (onRegisterGlasses) await onRegisterGlasses();
+  // Returns boolean so VendorCard can detect failure and show fallback hint
+  const handlePairMeta = async (): Promise<boolean> => {
+    if (onRegisterGlasses) return await onRegisterGlasses();
+    return false;
   };
 
   const handleUnpairMeta = async () => {
