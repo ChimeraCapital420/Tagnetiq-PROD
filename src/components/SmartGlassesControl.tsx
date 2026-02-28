@@ -11,6 +11,10 @@
 //   - Uses metaGlasses state from useBluetoothManager (Capacitor plugin bridge)
 //   - captureGlassesFrame() → base64 JPEG from glasses camera
 //   - Falls back gracefully in browser (shows "use mobile app" message)
+//
+// v12: Auto-requests camera permission before starting session.
+//   The Meta SDK requires requestCameraPermission() before startSession().
+//   handleStartSession now does both in sequence.
 
 import React, { useCallback, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -78,16 +82,17 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
   onCaptureItem,
   onBatchCapture,
 }) => {
-  // ── Hook ─────────────────────────────────────────────────────────────────
+  // — Hook ———————————————————————————————————————————————————
   const {
     metaGlasses,
+    requestGlassesCameraPermission,
     startGlassesSession,
     stopGlassesSession,
     captureGlassesFrame,
     refreshGlassesStatus,
   } = useBluetoothManager();
 
-  // ── Local state ──────────────────────────────────────────────────────────
+  // — Local state ————————————————————————————————————————————
   const [captureMode, setCaptureMode] = useState<'single' | 'batch' | 'continuous'>('single');
   const [batchImages, setBatchImages] = useState<string[]>([]);
   const [lastCapture, setLastCapture] = useState<CapturedFrame | null>(null);
@@ -95,20 +100,35 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
   const [isContinuous, setIsContinuous] = useState(false);
   const continuousRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Settings (stored on device, not server) ──────────────────────────────
+  // — Settings (stored on device, not server) ————————————————
   const [imageQuality, setImageQuality] = useState<'720p' | '1080p' | '480p'>('720p');
   const [realtimeAnalysis, setRealtimeAnalysis] = useState(true);
   const [voiceFeedback, setVoiceFeedback] = useState(true);
   const [autoCapture, setAutoCapture] = useState(false);
 
-  // ── Handlers ─────────────────────────────────────────────────────────────
+  // — Handlers ———————————————————————————————————————————————
 
+  // v12 FIX: Request camera permission THEN start session.
+  // Meta SDK requires requestCameraPermission() before startSession().
   const handleStartSession = useCallback(async () => {
+    // Step 1: Request camera permission if not already granted
+    if (!metaGlasses.cameraPermissionGranted) {
+      toast.info('Requesting camera permission...');
+      const granted = await requestGlassesCameraPermission();
+      if (!granted) {
+        toast.error('Camera permission denied', {
+          description: 'Grant camera access in the Meta AI app settings.',
+        });
+        return;
+      }
+    }
+
+    // Step 2: Start the session
     const success = await startGlassesSession();
     if (success) {
       toast.success('Glasses camera active');
     }
-  }, [startGlassesSession]);
+  }, [metaGlasses.cameraPermissionGranted, requestGlassesCameraPermission, startGlassesSession]);
 
   const handleStopSession = useCallback(async () => {
     // Stop continuous mode if running
@@ -192,7 +212,7 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
     }
   }, [isContinuous, captureGlassesFrame, onCaptureItem]);
 
-  // ── Not connected / not available states ──────────────────────────────────
+  // — Not connected / not available states ————————————————————
 
   // Plugin not available (browser)
   if (!metaGlasses.pluginAvailable) {
@@ -257,7 +277,7 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
     );
   }
 
-  // ── Active session ────────────────────────────────────────────────────────
+  // — Active session ————————————————————————————————————————
 
   return (
     <Card>
@@ -334,7 +354,7 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
 
-          {/* ── Capture Tab ──────────────────────────────────────────── */}
+          {/* — Capture Tab ———————————————————————————— */}
           <TabsContent value="capture" className="space-y-4">
             <div className="grid grid-cols-3 gap-2">
               <Button
@@ -441,7 +461,7 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
             )}
           </TabsContent>
 
-          {/* ── Commands Tab ──────────────────────────────────────────── */}
+          {/* — Commands Tab ———————————————————————————— */}
           <TabsContent value="commands" className="space-y-2">
             <p className="text-xs text-muted-foreground mb-3">
               Quick actions — capture + send to specific analysis pipeline.
@@ -496,7 +516,7 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
             </Button>
           </TabsContent>
 
-          {/* ── Settings Tab ─────────────────────────────────────────── */}
+          {/* — Settings Tab ——————————————————————————— */}
           <TabsContent value="settings" className="space-y-4">
             <div className="space-y-2">
               <Label>Capture Quality</Label>
