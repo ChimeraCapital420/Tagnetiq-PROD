@@ -6,18 +6,21 @@
 //
 // AFFILIATE TRACKING:
 //   Every "Shop" click logs vendor ID + timestamp for attribution.
-//   When affiliate accounts are live, append tracking params to affiliateUrl.
 //
 // FULL META CATALOG: All models use the same MWDAT SDK.
 // ALL FEEDBACK INLINE — no toasts behind sheet z-index.
 // Mobile-first: Sheet slides up, one-thumb reachable, touch-friendly targets
 //
-// v9 FIX: import { Capacitor } from '@capacitor/core' for isNativePlatform().
-//   window.Capacitor global does NOT have isNativePlatform — only the ES module does.
-//   v8 tried window.Capacitor.isNativePlatform which was undefined → always false.
+// v10 FIX: Deleted isCapacitorApp() entirely.
+//   Detection is now: metaGlasses.pluginAvailable
+//   This is TRUE only when the Kotlin MetaGlassesPlugin loaded + SDK init'd.
+//   In browser → false (plugin doesn't exist). In APK → true (plugin responds).
+//   No more guessing about Capacitor globals vs ES modules.
+//
+// v10 FIX: Supported badge now shows on ALL cards including compact.
+//   Gen 1 Headliner was missing it because compact skipped the badge.
 
 import React, { useState } from 'react';
-import { Capacitor } from '@capacitor/core';
 import {
   Sheet,
   SheetContent,
@@ -76,16 +79,6 @@ export interface SmartGlassesShopSheetProps {
 // HELPERS
 // =============================================================================
 
-// v9 FIX: Use the ES module import — Capacitor.isNativePlatform()
-// returns true ONLY inside the real APK shell, false in any browser.
-const isCapacitorApp = (): boolean => {
-  try {
-    return Capacitor.isNativePlatform();
-  } catch {
-    return false;
-  }
-};
-
 const DEFAULT_GLASSES: MetaGlassesState = {
   pluginAvailable: false,
   isRegistered: false,
@@ -104,13 +97,6 @@ function trackAffiliateClick(vendorId: string) {
     const clicks = JSON.parse(localStorage.getItem('tagnetiq_affiliate_clicks') || '[]');
     clicks.push({ vendorId, timestamp: new Date().toISOString() });
     localStorage.setItem('tagnetiq_affiliate_clicks', JSON.stringify(clicks.slice(-100)));
-
-    // TODO: When affiliate tracking is live, POST to server:
-    // fetch('/api/analytics/affiliate-click', {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({ vendorId, timestamp: Date.now() }),
-    // });
   } catch {
     // Silent fail — never block the shop link
   }
@@ -278,7 +264,7 @@ const GLASSES_VENDORS: GlassesVendor[] = [
 ];
 
 // =============================================================================
-// STATUS BADGE
+// STATUS BADGE — shown on ALL cards, compact or not
 // =============================================================================
 
 const StatusBadge: React.FC<{ status: GlassesVendorStatus }> = ({ status }) => {
@@ -293,12 +279,14 @@ const StatusBadge: React.FC<{ status: GlassesVendorStatus }> = ({ status }) => {
 };
 
 // =============================================================================
-// VENDOR CARD — no prices, inline feedback, affiliate tracking
+// VENDOR CARD
+// Detection: pluginAvailable (not Capacitor check)
+// Badge: always visible (not hidden on compact)
 // =============================================================================
 
 const VendorCard: React.FC<{
   vendor: GlassesVendor;
-  isInApp: boolean;
+  pluginAvailable: boolean;
   isConnected: boolean;
   isRegistered: boolean;
   isLoading: boolean;
@@ -306,8 +294,8 @@ const VendorCard: React.FC<{
   onPair?: () => Promise<boolean>;
   onUnpair?: () => void;
   compact?: boolean;
-}> = ({ vendor, isInApp, isConnected, isRegistered, isLoading, error, onPair, onUnpair, compact }) => {
-  const [showAppHint, setShowAppHint] = useState(false);
+}> = ({ vendor, pluginAvailable, isConnected, isRegistered, isLoading, error, onPair, onUnpair, compact }) => {
+  const [showHint, setShowHint] = useState(false);
   const [localLoading, setLocalLoading] = useState(false);
 
   const handleShop = () => {
@@ -320,25 +308,25 @@ const VendorCard: React.FC<{
   const handlePairClick = async () => {
     if (!canPair) return;
 
-    if (isInApp && onPair) {
-      // In APK — call native plugin, show spinner while waiting
+    if (pluginAvailable && onPair) {
+      // Plugin is loaded — we're in the APK, call native SDK
       setLocalLoading(true);
       try {
         const success = await onPair();
         if (!success) {
-          setShowAppHint(true);
-          setTimeout(() => setShowAppHint(false), 6000);
+          setShowHint(true);
+          setTimeout(() => setShowHint(false), 6000);
         }
       } catch {
-        setShowAppHint(true);
-        setTimeout(() => setShowAppHint(false), 6000);
+        setShowHint(true);
+        setTimeout(() => setShowHint(false), 6000);
       } finally {
         setLocalLoading(false);
       }
     } else {
-      // In browser — show "use the app" message inline on card
-      setShowAppHint(true);
-      setTimeout(() => setShowAppHint(false), 6000);
+      // Plugin not available — we're in the browser
+      setShowHint(true);
+      setTimeout(() => setShowHint(false), 6000);
     }
   };
 
@@ -354,7 +342,7 @@ const VendorCard: React.FC<{
     if (!canPair) {
       return (<><Bluetooth className="w-3.5 h-3.5 opacity-40" />Coming Soon</>);
     }
-    if (isInApp) {
+    if (pluginAvailable) {
       return (<><Bluetooth className="w-3.5 h-3.5" />Pair My Glasses</>);
     }
     return (<><Smartphone className="w-3.5 h-3.5" />Pair in App</>);
@@ -383,7 +371,7 @@ const VendorCard: React.FC<{
           <div className="flex items-center gap-2 mb-0.5">
             <span className={`font-medium ${compact ? 'text-xs' : 'text-sm'}`}>{vendor.model}</span>
             {vendor.featured && <Zap className="w-3 h-3 text-yellow-500" />}
-            {!compact && <StatusBadge status={vendor.status} />}
+            <StatusBadge status={vendor.status} />
           </div>
           <p className={`text-muted-foreground ${compact ? 'text-[11px]' : 'text-xs'}`}>{vendor.tagline}</p>
           {!compact && (
@@ -391,11 +379,11 @@ const VendorCard: React.FC<{
           )}
           {error && <p className="text-[11px] text-red-400 mt-1">{error}</p>}
 
-          {showAppHint && (
+          {showHint && (
             <div className="flex items-start gap-1.5 mt-2 p-2 rounded bg-blue-500/10 border border-blue-500/20">
               <Info className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mt-0.5" />
               <p className="text-[11px] text-blue-300">
-                {isInApp
+                {pluginAvailable
                   ? 'Registration requires the Meta AI app. Make sure your glasses are powered on and nearby, then try again.'
                   : 'Pairing requires the TagnetIQ mobile app. Open TagnetIQ on your Android phone to connect your glasses.'
                 }
@@ -468,7 +456,10 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
   onRegisterGlasses,
   onForgetGlasses,
 }) => {
-  const isInApp = isCapacitorApp();
+  // v10: pluginAvailable IS the detection.
+  // true = Kotlin plugin loaded = we're in the APK
+  // false = no plugin = we're in the browser
+  const pluginAvailable = metaGlasses.pluginAvailable;
 
   const isMetaConnected = metaGlasses.isConnected;
   const isMetaRegistered = metaGlasses.isRegistered;
@@ -494,7 +485,7 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
     <VendorCard
       key={vendor.id}
       vendor={vendor}
-      isInApp={isInApp}
+      pluginAvailable={pluginAvailable}
       isConnected={isMetaConnected}
       isRegistered={isMetaRegistered}
       isLoading={isMetaLoading}
@@ -514,7 +505,7 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
             Smart Glasses for TagnetIQ
           </SheetTitle>
           <SheetDescription>
-            {isInApp
+            {pluginAvailable
               ? 'Own a pair? Tap Pair to connect. Looking to buy? Tap Shop.'
               : 'Browse compatible smart glasses. Pair in the TagnetIQ mobile app.'
             }
@@ -528,21 +519,21 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
 
           {metaGen2.length > 0 && (
             <>
-              <SectionHeader title="Ray-Ban Meta Gen 2" subtitle="Same specs, different frame styles" />
+              <SectionHeader title="Ray-Ban Meta Gen 2" subtitle="Same specs, different frame styles" supported />
               {metaGen2.map(v => renderMetaCard(v, true))}
             </>
           )}
 
           {oakley.length > 0 && (
             <>
-              <SectionHeader title="Oakley Meta" subtitle="Sport frames — estate sales, flea markets, outdoors" />
+              <SectionHeader title="Oakley Meta" subtitle="Sport frames — estate sales, flea markets, outdoors" supported />
               {oakley.map(v => renderMetaCard(v, true))}
             </>
           )}
 
           {metaGen1.length > 0 && (
             <>
-              <SectionHeader title="Ray-Ban Meta Gen 1" subtitle="Best value — fully supported" />
+              <SectionHeader title="Ray-Ban Meta Gen 1" subtitle="Best value — fully supported" supported />
               {metaGen1.map(v => renderMetaCard(v, true))}
             </>
           )}
@@ -554,7 +545,7 @@ const SmartGlassesShopSheet: React.FC<SmartGlassesShopSheetProps> = ({
                 <VendorCard
                   key={vendor.id}
                   vendor={vendor}
-                  isInApp={isInApp}
+                  pluginAvailable={false}
                   isConnected={false}
                   isRegistered={false}
                   isLoading={false}
