@@ -8,6 +8,13 @@
 // "use mobile app" message. ALL existing Bluetooth functionality is UNCHANGED.
 //
 // Sprint F: Added forgetMetaGlasses() — resets local + native state
+//
+// v11 FIX: React StrictMode race condition.
+//   Old code used a boolean flag (metaGlassesLoaded). StrictMode mounts twice:
+//   Mount 1: starts async load, sets flag=true, unmounts before it resolves.
+//   Mount 2: sees flag=true, returns MetaGlasses (still null), pluginAvailable=false forever.
+//   Fix: shared Promise. All callers await the same load. Second mount waits for
+//   the first load to finish and gets the correct result.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
@@ -15,22 +22,27 @@ import { toast } from 'sonner';
 // --- Meta Glasses Plugin (lazy import - only loads in Capacitor) ------------
 
 let MetaGlasses: any = null;
-let metaGlassesLoaded = false;
+let metaGlassesLoadPromise: Promise<boolean> | null = null;
 
-async function loadMetaGlassesPlugin(): Promise<boolean> {
-  if (metaGlassesLoaded) return MetaGlasses != null;
-  metaGlassesLoaded = true;
-  try {
-    const { registerPlugin } = await import(/* @vite-ignore */ '@capacitor/core');
-    MetaGlasses = registerPlugin('MetaGlasses');
-    const result = await MetaGlasses.isAvailable();
-    if (!result.available) MetaGlasses = null;
-  } catch {
-    // Not in Capacitor shell - plugin not available, that's fine
-    MetaGlasses = null;
-  }
-  // Return boolean, not the proxy (proxy.then() crashes Capacitor)
-  return MetaGlasses != null;
+function loadMetaGlassesPlugin(): Promise<boolean> {
+  // If already loading or loaded, return the same promise.
+  // This way StrictMode's second mount waits for the first load to finish.
+  if (metaGlassesLoadPromise) return metaGlassesLoadPromise;
+
+  metaGlassesLoadPromise = (async () => {
+    try {
+      const { registerPlugin } = await import(/* @vite-ignore */ '@capacitor/core');
+      MetaGlasses = registerPlugin('MetaGlasses');
+      const result = await MetaGlasses.isAvailable();
+      if (!result.available) MetaGlasses = null;
+    } catch {
+      // Not in Capacitor shell - plugin not available, that's fine
+      MetaGlasses = null;
+    }
+    return MetaGlasses != null;
+  })();
+
+  return metaGlassesLoadPromise;
 }
 
 // =============================================================================
@@ -206,6 +218,7 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
     isMountedRef.current = true;
 
     // Check Meta glasses plugin availability
+    // v11: loadMetaGlassesPlugin returns a shared Promise — safe in StrictMode
     loadMetaGlassesPlugin().then(async (available) => {
       if (!isMountedRef.current) return;
       if (available && MetaGlasses) {
