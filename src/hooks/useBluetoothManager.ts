@@ -9,41 +9,19 @@
 //
 // Sprint F: Added forgetMetaGlasses() — resets local + native state
 //
-// v11 FIX: React StrictMode race condition.
-//   Old code used a boolean flag (metaGlassesLoaded). StrictMode mounts twice:
-//   Mount 1: starts async load, sets flag=true, unmounts before it resolves.
-//   Mount 2: sees flag=true, returns MetaGlasses (still null), pluginAvailable=false forever.
-//   Fix: shared Promise. All callers await the same load. Second mount waits for
-//   the first load to finish and gets the correct result.
+// v12 FINAL FIX: Static import. That's it.
+//   Every Capacitor plugin uses a static top-level registerPlugin().
+//   The dynamic await import() never resolved properly in the APK WebView.
+//   In browser: registerPlugin creates a web proxy that throws on call — we catch it.
+//   In APK: registerPlugin bridges to the native Kotlin class — it just works.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
+import { registerPlugin } from '@capacitor/core';
 
-// --- Meta Glasses Plugin (lazy import - only loads in Capacitor) ------------
+// --- Meta Glasses Plugin — STATIC registration (same pattern as every Capacitor plugin) ---
 
-let MetaGlasses: any = null;
-let metaGlassesLoadPromise: Promise<boolean> | null = null;
-
-function loadMetaGlassesPlugin(): Promise<boolean> {
-  // If already loading or loaded, return the same promise.
-  // This way StrictMode's second mount waits for the first load to finish.
-  if (metaGlassesLoadPromise) return metaGlassesLoadPromise;
-
-  metaGlassesLoadPromise = (async () => {
-    try {
-      const { registerPlugin } = await import(/* @vite-ignore */ '@capacitor/core');
-      MetaGlasses = registerPlugin('MetaGlasses');
-      const result = await MetaGlasses.isAvailable();
-      if (!result.available) MetaGlasses = null;
-    } catch {
-      // Not in Capacitor shell - plugin not available, that's fine
-      MetaGlasses = null;
-    }
-    return MetaGlasses != null;
-  })();
-
-  return metaGlassesLoadPromise;
-}
+const MetaGlassesPlugin = registerPlugin<any>('MetaGlasses');
 
 // =============================================================================
 // TYPES
@@ -208,7 +186,7 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   const scanAbortController = useRef<AbortController | null>(null);
   const deviceRefs = useRef<Map<string, globalThis.BluetoothDevice>>(new Map());
 
-  // -- Meta Glasses state (NEW) --
+  // -- Meta Glasses state --
   const [metaGlasses, setMetaGlasses] = useState<MetaGlassesState>(INITIAL_META_STATE);
 
   // ---------------------------------------------------------------------------
@@ -217,13 +195,14 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   useEffect(() => {
     isMountedRef.current = true;
 
-    // Check Meta glasses plugin availability
-    // v11: loadMetaGlassesPlugin returns a shared Promise — safe in StrictMode
-    loadMetaGlassesPlugin().then(async (available) => {
-      if (!isMountedRef.current) return;
-      if (available && MetaGlasses) {
-        try {
-          const status = await MetaGlasses.getStatus();
+    // v12: Static plugin — just call isAvailable(). If it throws, we're in browser.
+    (async () => {
+      try {
+        const result = await MetaGlassesPlugin.isAvailable();
+        if (!isMountedRef.current) return;
+        if (result.available) {
+          const status = await MetaGlassesPlugin.getStatus();
+          if (!isMountedRef.current) return;
           setMetaGlasses({
             pluginAvailable: true,
             isRegistered: status.isRegistered,
@@ -235,11 +214,11 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
             isLoading: false,
             error: null,
           });
-        } catch {
-          setMetaGlasses(prev => ({ ...prev, pluginAvailable: true }));
         }
+      } catch {
+        // Not in Capacitor / plugin not available — that's fine, stay at defaults
       }
-    });
+    })();
 
     if (!isSupported) return;
 
@@ -283,11 +262,11 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   // Meta Glasses listeners (connection changes)
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    if (!metaGlasses.pluginAvailable || !MetaGlasses) return;
+    if (!metaGlasses.pluginAvailable) return;
 
     let removeListener: (() => void) | null = null;
 
-    MetaGlasses.addListener('onConnectionChanged', (data: any) => {
+    MetaGlassesPlugin.addListener('onConnectionChanged', (data: any) => {
       if (!isMountedRef.current) return;
       setMetaGlasses(prev => ({
         ...prev,
@@ -415,14 +394,14 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
   }, [disconnectDevice]);
 
   // ---------------------------------------------------------------------------
-  // Meta Glasses methods (NEW)
+  // Meta Glasses methods
   // ---------------------------------------------------------------------------
 
   const registerMetaGlasses = useCallback(async (): Promise<boolean> => {
-    if (!MetaGlasses) return false;
+    if (!metaGlasses.pluginAvailable) return false;
     setMetaGlasses(prev => ({ ...prev, isLoading: true, error: null }));
     try {
-      const result = await MetaGlasses.register();
+      const result = await MetaGlassesPlugin.register();
       setMetaGlasses(prev => ({
         ...prev,
         isRegistered: result.success,
@@ -437,20 +416,19 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
       toast.error('Registration error', { description: e.message });
       return false;
     }
-  }, []);
+  }, [metaGlasses.pluginAvailable]);
 
   const forgetMetaGlasses = useCallback(async (): Promise<void> => {
-    if (!MetaGlasses) {
-      // Not in Capacitor — just reset local state
+    if (!metaGlasses.pluginAvailable) {
       setMetaGlasses(INITIAL_META_STATE);
       return;
     }
     setMetaGlasses(prev => ({ ...prev, isLoading: true, error: null }));
     try {
-      await MetaGlasses.unregister();
+      await MetaGlassesPlugin.unregister();
       setMetaGlasses({
         ...INITIAL_META_STATE,
-        pluginAvailable: true, // SDK is still available, just reset
+        pluginAvailable: true,
       });
       toast.info('Glasses disconnected from TagnetIQ', {
         description: 'To fully unregister, use the Meta AI app',
@@ -459,13 +437,13 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
       setMetaGlasses(prev => ({ ...prev, isLoading: false, error: e.message }));
       toast.error('Failed to disconnect glasses');
     }
-  }, []);
+  }, [metaGlasses.pluginAvailable]);
 
   const requestGlassesCameraPermission = useCallback(async (): Promise<boolean> => {
-    if (!MetaGlasses) return false;
+    if (!metaGlasses.pluginAvailable) return false;
     setMetaGlasses(prev => ({ ...prev, isLoading: true, error: null }));
     try {
-      const result = await MetaGlasses.requestCameraPermission();
+      const result = await MetaGlassesPlugin.requestCameraPermission();
       setMetaGlasses(prev => ({
         ...prev,
         cameraPermissionGranted: result.granted,
@@ -478,15 +456,15 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
       setMetaGlasses(prev => ({ ...prev, isLoading: false, error: e.message }));
       return false;
     }
-  }, []);
+  }, [metaGlasses.pluginAvailable]);
 
   const startGlassesSession = useCallback(async (): Promise<boolean> => {
-    if (!MetaGlasses) return false;
+    if (!metaGlasses.pluginAvailable) return false;
     setMetaGlasses(prev => ({ ...prev, isLoading: true, error: null }));
     try {
-      const result = await MetaGlasses.startSession({ resolution: '720p', frameRate: 30 });
+      const result = await MetaGlassesPlugin.startSession({ resolution: '720p', frameRate: 30 });
       if (result.success) {
-        const status = await MetaGlasses.getStatus();
+        const status = await MetaGlassesPlugin.getStatus();
         setMetaGlasses(prev => ({
           ...prev,
           isConnected: true,
@@ -503,31 +481,31 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
       setMetaGlasses(prev => ({ ...prev, isLoading: false, error: e.message }));
       return false;
     }
-  }, []);
+  }, [metaGlasses.pluginAvailable]);
 
   const stopGlassesSession = useCallback(async (): Promise<void> => {
-    if (!MetaGlasses) return;
+    if (!metaGlasses.pluginAvailable) return;
     try {
-      await MetaGlasses.stopSession();
+      await MetaGlassesPlugin.stopSession();
       setMetaGlasses(prev => ({ ...prev, isSessionActive: false }));
     } catch {
       // Best effort
     }
-  }, []);
+  }, [metaGlasses.pluginAvailable]);
 
   const captureGlassesFrame = useCallback(async () => {
-    if (!MetaGlasses) return null;
+    if (!metaGlasses.pluginAvailable) return null;
     try {
-      return await MetaGlasses.captureFrame({ quality: 75, maxWidth: 1280 });
+      return await MetaGlassesPlugin.captureFrame({ quality: 75, maxWidth: 1280 });
     } catch {
       return null;
     }
-  }, []);
+  }, [metaGlasses.pluginAvailable]);
 
   const refreshGlassesStatus = useCallback(async () => {
-    if (!MetaGlasses) return;
+    if (!metaGlasses.pluginAvailable) return;
     try {
-      const status = await MetaGlasses.getStatus();
+      const status = await MetaGlassesPlugin.getStatus();
       setMetaGlasses(prev => ({
         ...prev,
         isRegistered: status.isRegistered,
@@ -540,7 +518,7 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
     } catch {
       // Silent
     }
-  }, []);
+  }, [metaGlasses.pluginAvailable]);
 
   // ---------------------------------------------------------------------------
   // Cleanup on unmount
@@ -570,7 +548,7 @@ export function useBluetoothManager(): UseBluetoothManagerReturn {
     forgetDevice,
     requestDevice,
 
-    // Meta Glasses (NEW)
+    // Meta Glasses
     metaGlasses,
     registerMetaGlasses,
     forgetMetaGlasses,
