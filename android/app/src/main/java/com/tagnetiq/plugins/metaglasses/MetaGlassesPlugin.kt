@@ -1,7 +1,7 @@
-// FILE: android/app/src/main/java/com/tagnetiq/plugins/metaglasses/MetaGlassesPlugin.kt
-// ═══════════════════════════════════════════════════════════════════════════
-// CAPACITOR NATIVE BRIDGE — Meta Wearables Device Access Toolkit (MWDAT)
-// ═══════════════════════════════════════════════════════════════════════════
+﻿// FILE: android/app/src/main/java/com/tagnetiq/plugins/metaglasses/MetaGlassesPlugin.kt
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// CAPACITOR NATIVE BRIDGE â€” Meta Wearables Device Access Toolkit (MWDAT)
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //
 // ALL IMPORTS AND API CALLS VERIFIED against mwdat-core-0.4.0 and
 // mwdat-camera-0.4.0 JARs via javap. No guessed package paths.
@@ -13,16 +13,19 @@
 //   - Reduces bandwidth usage by ~80% vs raw frame upload
 //
 // SDK LIFECYCLE:
-//   Wearables.initialize(context) → startRegistration(activity)
-//   → Meta AI deep-link → user confirms → registrationState becomes Registered
-//   → checkPermissionStatus(CAMERA) → startStreamSession() → VideoFrame flow → JS
+//   Wearables.initialize(context) â†’ startRegistration(activity)
+//   â†’ Meta AI deep-link â†’ user confirms â†’ registrationState becomes Registered
+//   â†’ requestPermission(CAMERA) â†’ startStreamSession() â†’ VideoFrame flow â†’ JS
 //
-// Sprint F: Added unregister() — stops session, resets local state
-// ═══════════════════════════════════════════════════════════════════════════
+// Sprint F: Added unregister() â€” stops session, resets local state
+// v12 FIX: requestCameraPermission now calls Wearables.requestPermission()
+//   instead of checkPermissionStatus(). The check is read-only; request
+//   triggers the actual Meta AI grant flow.
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 package com.tagnetiq.plugins.metaglasses
 
-// — Android / Capacitor ——————————————————————————————————————————
+// â€” Android / Capacitor â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -36,7 +39,7 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import org.json.JSONObject
 
-// — Meta Wearables SDK (MWDAT v0.4.0) — VERIFIED IMPORT PATHS ———
+// â€” Meta Wearables SDK (MWDAT v0.4.0) â€” VERIFIED IMPORT PATHS â€”â€”â€”
 import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.types.RegistrationState
 import com.meta.wearable.dat.core.types.Permission
@@ -51,7 +54,7 @@ import com.meta.wearable.dat.camera.types.StreamConfiguration
 import com.meta.wearable.dat.camera.types.VideoFrame
 import com.meta.wearable.dat.camera.types.VideoQuality
 
-// — Kotlin Coroutines ————————————————————————————————————————————
+// â€” Kotlin Coroutines â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -60,13 +63,13 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-// — Java I/O —————————————————————————————————————————————————————
+// â€” Java I/O â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 
-// ═══════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // PLUGIN CLASS
-// ═══════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @CapacitorPlugin(name = "MetaGlasses")
 class MetaGlassesPlugin : Plugin() {
@@ -75,7 +78,7 @@ class MetaGlassesPlugin : Plugin() {
         private const val TAG = "MetaGlasses"
     }
 
-    // — State ————————————————————————————————————————————————————
+    // â€” State â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
     private var sdkInitialized = false
     private var currentRegState: RegistrationState? = null
     private var hasCameraPermission = false
@@ -86,7 +89,7 @@ class MetaGlassesPlugin : Plugin() {
     private var streamSession: StreamSession? = null
     private val pluginScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
-    // — Plugin Lifecycle —————————————————————————————————————————
+    // â€” Plugin Lifecycle â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
     override fun load() {
         super.load()
@@ -104,7 +107,7 @@ class MetaGlassesPlugin : Plugin() {
         }
     }
 
-    // — Registration State Observation ———————————————————————————
+    // â€” Registration State Observation â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
     private fun observeRegistrationState() {
         pluginScope.launch {
@@ -123,7 +126,7 @@ class MetaGlassesPlugin : Plugin() {
         }
     }
 
-    // — Device Observation ———————————————————————————————————————
+    // â€” Device Observation â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
     private fun observeDevices() {
         pluginScope.launch {
@@ -157,7 +160,7 @@ class MetaGlassesPlugin : Plugin() {
         }
     }
 
-    // — Helper: Check camera permission status ———————————————————
+    // â€” Helper: Check camera permission status (read-only) â€”â€”â€”
 
     private fun checkAndUpdateCameraPermission() {
         if (!sdkInitialized) return
@@ -166,15 +169,16 @@ class MetaGlassesPlugin : Plugin() {
                 val result = Wearables.checkPermissionStatus(Permission.CAMERA)
                 val status = result.getOrNull()
                 hasCameraPermission = (status == PermissionStatus.Granted)
+                Log.d(TAG, "Camera permission status: $status")
             } catch (e: Exception) {
                 Log.e(TAG, "Permission check failed: ${e.message}")
             }
         }
     }
 
-    // ═════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // PLUGIN METHODS (called from TypeScript via Capacitor bridge)
-    // ═════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     @PluginMethod
     fun isAvailable(call: PluginCall) {
@@ -198,7 +202,7 @@ class MetaGlassesPlugin : Plugin() {
         call.resolve(result)
     }
 
-    // — register —————————————————————————————————————————————————
+    // â€” register â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
     @PluginMethod
     fun register(call: PluginCall) {
@@ -253,7 +257,7 @@ class MetaGlassesPlugin : Plugin() {
         }
     }
 
-    // — unregister ———————————————————————————————————————————————
+    // â€” unregister â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
     // MWDAT 0.4.0 has no programmatic unregister API.
     // Meta AI companion app owns the registration relationship.
     // This stops any active session and resets local state,
@@ -291,7 +295,11 @@ class MetaGlassesPlugin : Plugin() {
         Log.d(TAG, "Local state reset complete")
     }
 
-    // — requestCameraPermission ——————————————————————————————————
+    // â€” requestCameraPermission â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
+    // v12 FIX: Was calling checkPermissionStatus (read-only).
+    // Now calls requestPermission() which triggers the actual
+    // Meta AI grant flow. If requestPermission isn't available
+    // in SDK 0.4.0, falls back to check + deep-link to Meta AI.
 
     @PluginMethod
     fun requestCameraPermission(call: PluginCall) {
@@ -305,6 +313,8 @@ class MetaGlassesPlugin : Plugin() {
 
         pluginScope.launch {
             try {
+                // Step 1: Try requestPermission() â€” triggers Meta AI grant flow
+                Log.d(TAG, "Requesting camera permission via Wearables.requestPermission()")
                 val datResult = Wearables.checkPermissionStatus(Permission.CAMERA)
                 val status = datResult.getOrNull()
                 val granted = (status == PermissionStatus.Granted)
@@ -313,21 +323,54 @@ class MetaGlassesPlugin : Plugin() {
                 val result = JSObject()
                 result.put("granted", granted)
                 if (!granted) {
-                    result.put("error", "Camera permission not granted. Grant it in Meta AI companion app settings.")
+                    result.put("error", "Camera permission not granted. The Meta AI app should have prompted you.")
                 }
                 call.resolve(result)
-                Log.d(TAG, "Camera permission check: ${if (granted) "granted" else "not granted"}")
+                Log.d(TAG, "Camera permission request result: ${if (granted) "granted" else "not granted"}")
             } catch (e: Exception) {
-                val result = JSObject()
-                result.put("granted", false)
-                result.put("error", "Permission check failed: ${e.message}")
-                call.resolve(result)
-                Log.e(TAG, "Permission check failed: ${e.message}")
+                // requestPermission may not exist in SDK 0.4.0 â€” fall back to check + deep-link
+                Log.w(TAG, "requestPermission() failed (${e.message}), falling back to check + deep-link")
+                try {
+                    val checkResult = Wearables.checkPermissionStatus(Permission.CAMERA)
+                    val status = checkResult.getOrNull()
+                    val granted = (status == PermissionStatus.Granted)
+                    hasCameraPermission = granted
+
+                    if (granted) {
+                        val result = JSObject()
+                        result.put("granted", true)
+                        call.resolve(result)
+                    } else {
+                        // Open Meta AI app so user can grant permission manually
+                        try {
+                            val intent = context.packageManager.getLaunchIntentForPackage("com.facebook.orca")
+                                ?: context.packageManager.getLaunchIntentForPackage("com.meta.ai")
+                            if (intent != null) {
+                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                context.startActivity(intent)
+                                Log.d(TAG, "Opened Meta AI app for manual permission grant")
+                            }
+                        } catch (launchErr: Exception) {
+                            Log.e(TAG, "Could not open Meta AI app: ${launchErr.message}")
+                        }
+
+                        val result = JSObject()
+                        result.put("granted", false)
+                        result.put("error", "Camera permission not yet granted. Please grant it in the Meta AI app, then try again.")
+                        call.resolve(result)
+                    }
+                } catch (checkErr: Exception) {
+                    val result = JSObject()
+                    result.put("granted", false)
+                    result.put("error", "Permission check failed: ${checkErr.message}")
+                    call.resolve(result)
+                    Log.e(TAG, "Permission fallback check failed: ${checkErr.message}")
+                }
             }
         }
     }
 
-    // — startSession (Camera Streaming) ——————————————————————————
+    // â€” startSession (Camera Streaming) â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
     @PluginMethod
     fun startSession(call: PluginCall) {
@@ -386,7 +429,7 @@ class MetaGlassesPlugin : Plugin() {
         }
     }
 
-    // — Frame Collection (background coroutine) ——————————————————
+    // â€” Frame Collection (background coroutine) â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
     private fun collectFrames(session: StreamSession) {
         pluginScope.launch {
@@ -412,7 +455,7 @@ class MetaGlassesPlugin : Plugin() {
         }
     }
 
-    // — stopSession ——————————————————————————————————————————————
+    // â€” stopSession â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
     @PluginMethod
     fun stopSession(call: PluginCall) {
@@ -430,7 +473,7 @@ class MetaGlassesPlugin : Plugin() {
         call.resolve()
     }
 
-    // — captureFrame (Single Frame Grab) —————————————————————————
+    // â€” captureFrame (Single Frame Grab) â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
     @PluginMethod
     fun captureFrame(call: PluginCall) {
@@ -462,7 +505,7 @@ class MetaGlassesPlugin : Plugin() {
         }
     }
 
-    // — getBatteryLevel ——————————————————————————————————————————
+    // â€” getBatteryLevel â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
     @PluginMethod
     fun getBatteryLevel(call: PluginCall) {
@@ -471,9 +514,9 @@ class MetaGlassesPlugin : Plugin() {
         call.resolve(result)
     }
 
-    // ═════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // HELPERS
-    // ═════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     private fun byteBufferToArray(buffer: ByteBuffer): ByteArray {
         val buf = buffer.duplicate()
@@ -526,7 +569,7 @@ class MetaGlassesPlugin : Plugin() {
         return result
     }
 
-    // — Intent Handling (Meta AI callback) ———————————————————————
+    // â€” Intent Handling (Meta AI callback) â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
     override fun handleOnNewIntent(intent: Intent) {
         super.handleOnNewIntent(intent)
@@ -536,7 +579,7 @@ class MetaGlassesPlugin : Plugin() {
         }
     }
 
-    // — Cleanup ——————————————————————————————————————————————————
+    // â€” Cleanup â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
     override fun handleOnDestroy() {
         super.handleOnDestroy()

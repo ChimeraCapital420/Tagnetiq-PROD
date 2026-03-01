@@ -6,6 +6,9 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   server: {
     androidScheme: 'https',
+    // APK loads from live site so /api/* calls hit Vercel serverless functions.
+    // Native plugins (MetaGlasses) still bridge through Capacitor normally.
+    url: 'https://tagnetiq.com',
   },
   ios: {
     contentInset: 'automatic',
