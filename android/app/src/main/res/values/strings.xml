@@ -4,4 +4,7 @@
     <string name="title_activity_main">TagnetIQ</string>
     <string name="package_name">com.tagnetiq.app</string>
     <string name="custom_url_scheme">com.tagnetiq.app</string>
+    <string name="mwdat_app_id">780827647920626</string>
+    <string name="mwdat_client_token">AR|780827647920626|29425bf2357a30dc40502893a7df83e6</string>
+    <string name="mwdat_app_id_dev">0</string>
 </resources>
