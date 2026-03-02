@@ -56,8 +56,8 @@ import DualScanner from '@/components/scanner';
 // UPDATED: Import from refactored oracle module
 import { OraclePage } from '@/components/oracle';
 
-// NEW: Smart Glasses Hunt Mode
-import SmartGlassesControl from '@/components/SmartGlassesControl';
+// NEW: Smart Glasses Hunt Mode  now wired to Oracle hunt pipeline
+import HuntPage from '@/pages/HuntPage';
 
 // NEW: Oracle Thinking Overlay — replaces the dead screen during analysis
 import OracleThinkingOverlay from '@/components/analysis/OracleThinkingOverlay';
@@ -135,7 +135,7 @@ const AppRoutes: React.FC = () => {
             {/* Hunt Mode — Smart Glasses camera feed + continuous scanning */}
             <Route path="/hunt" element={
                 <ProtectedRoute isAllowed={!!user} to="/login">
-                    <OnboardingGuard><SmartGlassesControl /></OnboardingGuard>
+                    <OnboardingGuard><HuntPage /></OnboardingGuard>
                 </ProtectedRoute>
             } />
 
