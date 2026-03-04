@@ -1,5 +1,7 @@
-// FILE: api/refine-analysis.ts
-// HYDRA Refinement Endpoint v3.2 — Sanitized + Authenticated + Rate Limited
+// ============================================================
+// FILE:  api/refine-analysis.ts
+// ============================================================
+// HYDRA Refinement Endpoint v3.3 — CI Engine Phase 1 Wired
 //
 // WHAT CHANGED (v3.1):
 //   - SECURITY: Added verifyUser() — no longer open to anonymous callers
@@ -9,8 +11,14 @@
 // WHAT CHANGED (v3.2):
 //   - SECURITY: Rate limiting wired in (10 req/60s per IP)
 //
+// WHAT CHANGED (v3.3):
+//   - CI ENGINE PHASE 1: recordCorrection() wired in after successful refinement
+//     Fire-and-forget. .catch() ensures failures are silent to the user.
+//     Zero risk to existing refinement flow.
+//
 // ARCHITECTURE:
-//   RateLimit → Auth → Sanitize → fetchMarketData(itemName, category) → buildPrompt → parallel AI → average → respond
+//   RateLimit → Auth → Sanitize → fetchMarketData(itemName, category)
+//   → buildPrompt → parallel AI → average → recordCorrection() → respond
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import type { AnalysisResult } from '../src/types';
@@ -33,11 +41,15 @@ import {
   sanitizeRefinementText,
   sanitizeCategoryHint,
   detectInjectionAttempt,
-  wrapUserInput,
 } from './_lib/sanitize.js';
 
 // v3.2: SECURITY — Rate limiting
 import { applyRateLimit, LIMITS } from './_lib/rateLimit.js';
+
+// v3.3: CI ENGINE — Phase 1 correction recorder
+// Fire-and-forget: called after successful refinement.
+// If this fails, the user's refinement STILL succeeds perfectly.
+import { recordCorrection } from '../src/lib/hydra/knowledge/index.js';
 
 // =============================================================================
 // AI CLIENT INITIALIZATION
@@ -344,13 +356,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const adjustment = calculateValueAdjustment(analysis.estimatedValue || 0, averageValue);
     console.log(`✅ Refinement: $${(analysis.estimatedValue || 0).toFixed(2)} → $${averageValue.toFixed(2)} (${adjustment})`);
 
-    // — Return updated analysis ——————————————————————————
-    return res.status(200).json({
+    // — Build refined result ——————————————————————————————
+    const refinedResult: AnalysisResult = {
       ...analysis,
       estimatedValue: averageValue,
       valuation_factors: uniqueFactors.slice(0, 5),
       summary_reasoning: newSummary,
-    } satisfies AnalysisResult);
+    };
+
+    // ========================================================================
+    // v3.3: CI ENGINE PHASE 1 — Record correction anonymously
+    //
+    // Fire-and-forget: .catch() ensures any failure is completely silent
+    // to the user. The refinement response is ALREADY built above.
+    // If recordCorrection throws, the user never knows — they get their
+    // refined analysis normally. We just lose that one correction's data.
+    //
+    // What gets recorded:
+    //   - original_name / corrected_name: the item identification
+    //   - original_value / corrected_value: the before/after dollar values
+    //   - item_category: for pattern grouping
+    //   - correction_type: derived from what changed (value, identity, etc.)
+    //   - provider_votes: which AI providers got the original wrong
+    //
+    // What is NEVER recorded: user_id, IP, device_id, session token.
+    //
+    // NOTE: In the current refine flow, itemName does not change (the AI
+    // updates value + factors, not identity). Value deltas >5% are captured.
+    // Full identity correction capture ships with Conversational Refinement
+    // (Liberation 11), which will pass a structured corrected.identification.
+    // ========================================================================
+    recordCorrection({
+      original: {
+        identification: analysis.itemName,
+        category: effectiveCategory,
+        estimatedValue: analysis.estimatedValue,
+        confidence: (analysis.confidenceScore || 70) / 100,
+        // Provider votes from the original HYDRA consensus run, if available
+        hydraConsensus: (analysis as any).hydraConsensus,
+        imageHash: (analysis as any).imageHash,
+      },
+      corrected: {
+        identification: analysis.itemName, // identity unchanged in current refine flow
+        category: effectiveCategory,
+        estimatedValue: averageValue,
+      },
+      authoritySource: 'user_explicit',
+    }).catch(err => console.warn('[CI-Engine] Correction recording failed (non-fatal):', err));
+    // ========================================================================
+
+    return res.status(200).json(refinedResult);
 
   } catch (error) {
     console.error('Error in /api/refine-analysis:', error);

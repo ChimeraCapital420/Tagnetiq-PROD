@@ -1,15 +1,25 @@
-// FILE: src/lib/hydra/prompts/analysis.ts
+// ============================================================
+// FILE:  src/lib/hydra/prompts/analysis.ts
+// ============================================================
 /**
- * HYDRA v6.1 - Analysis Prompts (Security Hardened)
+ * HYDRA v6.2 - Analysis Prompts (CI Engine Phase 3)
  *
  * v6.0: Extracted from analyze.ts
  * v6.1: SECURITY — Structural defense against prompt injection
  *       - User-provided hints wrapped in delimiters
  *       - additionalInstructions parameter REMOVED (was an open injection vector)
  *       - buildUserMessage wraps item descriptions in delimiters
+ * v6.2: CI ENGINE PHASE 3 — collectiveKnowledge parameter added
+ *       - buildAnalysisPrompt() now accepts CollectiveKnowledgeBlock
+ *       - If present, the verified correction patterns are appended to the
+ *         system prompt so ALL AI providers see them before analyzing
+ *       - If absent (no confirmed patterns yet), prompt is identical to v6.1
+ *         — zero risk, zero behavior change until patterns are confirmed
  *
  * @module hydra/prompts/analysis
  */
+
+import type { CollectiveKnowledgeBlock } from '../knowledge/types.js';
 
 /**
  * Main JSON analysis prompt for item identification and valuation
@@ -118,8 +128,15 @@ export interface AnalysisResponse {
  * Build the complete analysis prompt with optional context
  *
  * v6.1 SECURITY CHANGE:
- *   - Removed `additionalInstructions` parameter (was an open injection vector)
+ *   - Removed `additionalInstructions` parameter (was a direct injection vector)
  *   - User-provided hints wrapped in structural delimiters
+ *
+ * v6.2 CI ENGINE CHANGE:
+ *   - Added `collectiveKnowledge` parameter
+ *   - When present, the === COLLECTIVE KNOWLEDGE === block is appended AFTER
+ *     the security delimiter section so all AI providers receive it
+ *   - When absent (null/undefined), output is byte-for-byte identical to v6.1
+ *     — no behavior change, no risk, no prompt bloat
  *
  * @param context - Optional context to append to prompt
  * @returns Complete prompt string
@@ -128,6 +145,8 @@ export function buildAnalysisPrompt(context?: {
   categoryHint?: string;
   itemNameHint?: string;
   // v6.1: REMOVED additionalInstructions — was a direct injection vector
+  // v6.2: CI Engine — confirmed correction patterns from the knowledge base
+  collectiveKnowledge?: CollectiveKnowledgeBlock | null;
 }): string {
   let prompt = ANALYSIS_SYSTEM_PROMPT;
 
@@ -143,6 +162,14 @@ export function buildAnalysisPrompt(context?: {
     }
 
     prompt += `\n--- END USER CONTEXT ---`;
+  }
+
+  // v6.2: CI ENGINE PHASE 3 — append collective knowledge if confirmed patterns exist
+  // This block contains patterns that have been verified by 5+ independent human
+  // corrections with >80% agreement. It is NOT user input — it is aggregated
+  // ground truth from the correction ledger.
+  if (context?.collectiveKnowledge?.promptText) {
+    prompt += `\n\n${context.collectiveKnowledge.promptText}`;
   }
 
   return prompt;

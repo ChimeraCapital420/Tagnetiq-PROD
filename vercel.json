@@ -67,6 +67,10 @@
     {
       "path": "/api/cron/argos-scan?cron_secret=YOUR_CRON_SECRET_HERE",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/aggregate-corrections?cron_secret=YOUR_CRON_SECRET_HERE",
+      "schedule": "0 3 * * *"
     }
   ]
 }
