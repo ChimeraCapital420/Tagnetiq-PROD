@@ -1,10 +1,12 @@
-// FILE: api/seo/sitemap.ts
+// ============================================================
+// FILE:  api/seo/sitemap.ts
+// ============================================================
 // Dynamic XML Sitemap for Google Search Console
 // Kill switch: SEO_ENABLED environment variable
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { SEO_CONFIG, isFeatureEnabled, getDisabledResponse } from './config';
+import { SEO_CONFIG, isFeatureEnabled, getDisabledResponse } from './config.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -72,7 +74,7 @@ function generateSitemap(listings: any[]): string {
   const listingUrls = listings.map(listing => {
     const lastmod = listing.updated_at || now;
     const priority = listing.is_verified ? '0.8' : '0.7';
-    
+
     return `
   <url>
     <loc>${domain}/marketplace/${listing.id}</loc>
@@ -88,10 +90,10 @@ function generateSitemap(listings: any[]): string {
   }).join('');
 
   // Category pages
-  const categories = [...new Set(listings.map(l => l.category).filter(Boolean))];
+  const categories = [...new Set(listings.map((l: any) => l.category).filter(Boolean))];
   const categoryUrls = categories.map(cat => `
   <url>
-    <loc>${domain}/marketplace?category=${encodeURIComponent(cat)}</loc>
+    <loc>${domain}/marketplace?category=${encodeURIComponent(cat as string)}</loc>
     <lastmod>${now}</lastmod>
     <changefreq>hourly</changefreq>
     <priority>0.8</priority>

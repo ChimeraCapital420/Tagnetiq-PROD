@@ -1,11 +1,13 @@
-// FILE: api/seo/product-feed.ts
+// ============================================================
+// FILE:  api/seo/product-feed.ts
+// ============================================================
 // Google Merchant Center Product Feed (XML format)
 // Submit this URL to Google Merchant Center when SEO is enabled
 // Kill switch: SEO_ENABLED environment variable
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { SEO_CONFIG, isFeatureEnabled, getDisabledResponse } from './config';
+import { SEO_CONFIG, isFeatureEnabled, getDisabledResponse } from './config.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -69,7 +71,7 @@ function generateGoogleShoppingFeed(listings: any[]): string {
     const profile = listing.profiles;
     const location = profile?.location_text || 'United States';
     const price = listing.asking_price?.toFixed(2) || '0.00';
-    
+
     const description = escapeXml(
       (listing.description || listing.item_name || '').slice(0, 5000)
     );
@@ -97,11 +99,6 @@ function generateGoogleShoppingFeed(listings: any[]): string {
     };
     const googleCategory = categoryMap[listing.category?.toLowerCase()] || 'Collectibles';
 
-    // Use dynamic OG image if enabled
-    const imageUrl = isFeatureEnabled('ogImages')
-      ? `${domain}/api/seo/og-image/${listing.id}`
-      : (listing.primary_photo_url || `${domain}/placeholder.svg`);
-    
     const productImageUrl = listing.primary_photo_url || `${domain}/placeholder.svg`;
     const listingUrl = `${domain}/marketplace/${listing.id}`;
 
@@ -112,13 +109,13 @@ function generateGoogleShoppingFeed(listings: any[]): string {
       <g:description><![CDATA[${description}]]></g:description>
       <g:link>${listingUrl}</g:link>
       <g:image_link>${productImageUrl}</g:image_link>
-      ${listing.additional_photos?.length ? listing.additional_photos.slice(0, 9).map((url: string) => 
+      ${listing.additional_photos?.length ? listing.additional_photos.slice(0, 9).map((url: string) =>
         `<g:additional_image_link>${url}</g:additional_image_link>`
       ).join('\n      ') : ''}
       <g:condition>${googleCondition}</g:condition>
       <g:availability>in_stock</g:availability>
       <g:price>${price} USD</g:price>
-      ${listing.estimated_value && listing.estimated_value > listing.asking_price ? 
+      ${listing.estimated_value && listing.estimated_value > listing.asking_price ?
         `<g:sale_price>${price} USD</g:sale_price>` : ''}
       <g:brand>${siteName}</g:brand>
       <g:google_product_category>${googleCategory}</g:google_product_category>
