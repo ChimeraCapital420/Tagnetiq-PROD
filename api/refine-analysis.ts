@@ -1,7 +1,7 @@
 // ============================================================
 // FILE:  api/refine-analysis.ts
 // ============================================================
-// HYDRA Refinement Endpoint v3.4 — $0 Bug Fixed
+// HYDRA Refinement Endpoint v3.5 — Visual Evidence Support
 //
 // WHAT CHANGED (v3.1):
 //   - SECURITY: Added verifyUser() — no longer open to anonymous callers
@@ -30,10 +30,24 @@
 //     fetchMarketData and Perplexity is updated to find the CORRECT item.
 //     AI prompt includes an explicit vintage correction instruction block.
 //
+// WHAT CHANGED (v3.5):
+//   - FEATURE: Visual evidence images accepted from RefineDialog
+//     Body now accepts: refinement_images?: string[]  (base64 JPEG, device-compressed)
+//     Client compresses to max 1200px / 0.82q before sending — server receives
+//     ~180KB per image, never raw 8MP phone photos. Mobile-first by design.
+//   - FEATURE: All 3 vision AI providers receive images alongside text:
+//     • Anthropic — image content blocks (type: "image") before text block
+//     • OpenAI    — image_url content blocks with base64 data URIs, detail: "high"
+//     • Gemini    — inlineData parts alongside text part
+//   - FEATURE: When images provided, prompt explicitly instructs all providers
+//     to treat visual evidence as ground truth over original scan assumptions.
+//   - SURGICAL: Only 4 additions to v3.4. All existing logic preserved.
+//
 // ARCHITECTURE:
 //   RateLimit → Auth → Sanitize → detectCorrectionType
 //   → fetchMarketData(correctedQuery, category) + Perplexity(correctedQuery)
-//   → buildSingleSchemaPrompt → parallel AI → validate(newValue > 0)
+//   → buildSingleSchemaPrompt [+ image instruction if images present]
+//   → parallel multimodal AI → validate(newValue > 0)
 //   → average → recordCorrection() → respond
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -201,21 +215,9 @@ function detectCorrectionType(refinementText: string, originalName: string): Cor
 
 // =============================================================================
 // REFINEMENT PROMPT (v3.4 — single schema, no conflicts)
+// v3.5 ADDITION: hasImages param — prepends visual evidence instruction block
 // =============================================================================
 
-/**
- * Build the complete refinement prompt.
- *
- * v3.4 CRITICAL: This function does NOT call buildRefinementPrompt() from
- * refinement.ts. That function prepends REFINEMENT_SYSTEM_PROMPT, which
- * contains its own "Respond ONLY with JSON: { estimatedValue, ... }" schema.
- * Having two schema instructions in one prompt caused AI providers to follow
- * the first (returning estimatedValue, not newValue), which the aggregation
- * code read as undefined → $0.
- *
- * This function builds context from scratch and places exactly ONE output
- * schema at the very end. No ambiguity possible.
- */
 function buildRefinePrompt(
   analysis: AnalysisResult,
   refinementText: string,
@@ -223,9 +225,23 @@ function buildRefinePrompt(
   perplexityData: string | null,
   category: string,
   correctionType: CorrectionType,
+  hasImages: boolean = false,  // v3.5: new param, defaults false — zero impact on text-only path
 ): string {
-  let prompt = `You are a senior collectibles appraiser updating a valuation with new information.
+  let prompt = `You are a senior collectibles appraiser updating a valuation with new information.\n`;
 
+  // v3.5 ADDITION: visual evidence instruction block — only added when images present
+  if (hasImages) {
+    prompt += `
+⚠️ VISUAL EVIDENCE PROVIDED:
+The user has attached photos as proof of their correction.
+Treat the images as ground truth — they override assumptions from the original scan.
+Images may show: a copyright page proving year/edition, a PSA/CGC label proving grade,
+a brand marking proving model, a hallmark, a signature, or other identifying detail.
+Read every visible detail in the images carefully before forming your valuation.
+`;
+  }
+
+  prompt += `
 === ORIGINAL ANALYSIS ===
 Item Name: ${analysis.itemName || 'Unknown'}
 Category: ${category}
@@ -302,19 +318,14 @@ from reprints. Value the specific edition indicated by the user.
     prompt += `\n=== CURRENT MARKET INTELLIGENCE (live web search) ===\n${perplexityData}\n`;
   }
 
-  // ═════════════════════════════════════════════════════════════════════
-  // OUTPUT SCHEMA — appears EXACTLY ONCE in this prompt.
-  // v3.4 FIX: Previously REFINEMENT_SYSTEM_PROMPT included a conflicting
-  // schema that AIs followed instead, returning estimatedValue (not newValue).
-  // ═════════════════════════════════════════════════════════════════════
   prompt += `
 Your task:
 1. Apply the user's correction — treat it as authoritative about what the item is.
-2. Value the CORRECTED item using all market data above.
-3. For vintage/edition corrections: value the historical item, not a modern version.
-4. Determine a realistic market value as a number greater than zero.
-5. List exactly 5 valuation factors specific to the corrected item.
-6. Write a clear summary explaining what changed and why.
+${hasImages ? '2. Read ALL attached images — every visible detail (dates, labels, marks, stamps) is evidence.\n3.' : '2.'} Value the CORRECTED item using all market data above.
+${hasImages ? '4.' : '3.'} For vintage/edition corrections: value the historical item, not a modern version.
+${hasImages ? '5.' : '4.'} Determine a realistic market value as a number greater than zero.
+${hasImages ? '6.' : '5.'} List exactly 5 valuation factors specific to the corrected item.
+${hasImages ? '7.' : '6.'} Write a clear summary explaining what changed and why${hasImages ? ', noting what the images confirmed' : ''}.
 
 Respond with ONLY this exact JSON object — no other text, no markdown:
 {
@@ -324,6 +335,77 @@ Respond with ONLY this exact JSON object — no other text, no markdown:
 }`;
 
   return prompt;
+}
+
+// =============================================================================
+// v3.5 ADDITION: MULTIMODAL AI CALL FUNCTIONS
+// Separate functions per provider — each accepts the shared text prompt
+// plus base64 image strings, formats them per that provider's API spec.
+// Text-only path (images=[]) calls these identically — no branching needed.
+// =============================================================================
+
+async function callAnthropic(
+  client: Anthropic,
+  textPrompt: string,
+  images: string[],
+): Promise<any> {
+  // Images as content blocks BEFORE text — Anthropic reads left-to-right
+  const imageBlocks: Anthropic.ImageBlockParam[] = images.map(b64 => ({
+    type: 'image',
+    source: { type: 'base64', media_type: 'image/jpeg', data: b64 },
+  }));
+
+  const content: Anthropic.ContentBlockParam[] = [
+    ...imageBlocks,
+    { type: 'text', text: textPrompt },
+  ];
+
+  const r = await client.messages.create({
+    model: 'claude-3-5-sonnet-20240620',
+    max_tokens: 1024,
+    messages: [{ role: 'user', content }],
+  });
+
+  const block = r.content[0];
+  return safeJsonParse('type' in block && block.type === 'text' ? block.text : '');
+}
+
+async function callOpenAI(
+  client: OpenAI,
+  textPrompt: string,
+  images: string[],
+): Promise<any> {
+  const imageBlocks: OpenAI.Chat.ChatCompletionContentPart[] = images.map(b64 => ({
+    type: 'image_url',
+    image_url: { url: `data:image/jpeg;base64,${b64}`, detail: 'high' },
+  }));
+
+  const content: OpenAI.Chat.ChatCompletionContentPart[] = [
+    ...imageBlocks,
+    { type: 'text', text: textPrompt },
+  ];
+
+  const r = await client.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content }],
+    response_format: { type: 'json_object' },
+  });
+
+  return safeJsonParse(r.choices[0].message.content!);
+}
+
+async function callGoogle(
+  model: ReturnType<GoogleGenerativeAI['getGenerativeModel']>,
+  textPrompt: string,
+  images: string[],
+): Promise<any> {
+  // Gemini accepts inlineData parts mixed with text parts
+  const imageParts = images.map(b64 => ({
+    inlineData: { mimeType: 'image/jpeg' as const, data: b64 },
+  }));
+
+  const r = await model.generateContent([...imageParts, { text: textPrompt }]);
+  return safeJsonParse(r.response.text());
 }
 
 // =============================================================================
@@ -343,17 +425,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // v3.1: Authentication
     const user = await verifyUser(req);
 
-    const { original_analysis, refinement_text, category, subcategory } = req.body;
+    // v3.5: refinement_images added — base64 JPEG strings, device-compressed by RefineDialog
+    const { original_analysis, refinement_text, refinement_images, category, subcategory } = req.body;
 
-    if (!original_analysis || !refinement_text) {
+    // v3.5: valid if text OR images provided (not strictly both required)
+    if (!original_analysis || (!refinement_text && (!refinement_images?.length))) {
       return res.status(400).json({ error: 'Missing original_analysis or refinement_text' });
     }
 
     // v3.1: Sanitize
     const rawRefinement = refinement_text;
-    const cleanRefinement = sanitizeRefinementText(refinement_text);
+    const cleanRefinement = sanitizeRefinementText(refinement_text || '');
     const cleanCategory = category ? sanitizeCategoryHint(category) : undefined;
     const cleanSubcategory = subcategory ? sanitizeCategoryHint(subcategory) : undefined;
+
+    // v3.5: Validate images — must be array of strings, cap at 4 (matches RefineDialog MAX_IMAGES)
+    const images: string[] = Array.isArray(refinement_images)
+      ? refinement_images.filter((i: any) => typeof i === 'string').slice(0, 4)
+      : [];
 
     const analysis: AnalysisResult = {
       ...original_analysis,
@@ -363,7 +452,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     const injectionCheck = detectInjectionAttempt(
-      `${rawRefinement} ${original_analysis.itemName || ''}`
+      `${rawRefinement || ''} ${original_analysis.itemName || ''}`
     );
     if (injectionCheck.detected) {
       console.warn(
@@ -378,12 +467,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ── v3.4: Detect correction type, update search query if identity change ─
     const correctionInfo = detectCorrectionType(cleanRefinement, analysis.itemName || '');
     const searchQuery = correctionInfo.isIdentityCorrection
-      ? correctionInfo.suggestedSearchQuery  // fetch market data for the CORRECTED item
+      ? correctionInfo.suggestedSearchQuery
       : (analysis.itemName || cleanRefinement);
 
-    console.log(`🔍 Refining: "${analysis.itemName}" | Type: ${correctionInfo.correctionType} | User: ${user.id}`);
+    console.log(`🔍 Refining: "${analysis.itemName}" | Type: ${correctionInfo.correctionType} | Images: ${images.length} | User: ${user.id}`);
     if (correctionInfo.isIdentityCorrection) {
       console.log(`🔄 Identity correction — market search updated to: "${searchQuery.slice(0, 80)}"`);
+    }
+    if (images.length > 0) {
+      console.log(`📸 Visual evidence: ${images.length} image(s) — all 3 vision providers will analyze`);
     }
 
     // — Parallel: market data + Perplexity ———————————————————
@@ -398,7 +490,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const availableSources = marketResult.sources?.filter((s: any) => s.available) || [];
     console.log(`📊 Market: ${availableSources.length} sources (${availableSources.map((s: any) => s.source).join(', ') || 'none'})`);
 
-    // — Build single-schema prompt ————————————————————————————
+    // — Build prompt — v3.5: passes hasImages flag ————————————
     const prompt = buildRefinePrompt(
       analysis,
       cleanRefinement,
@@ -406,47 +498,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       perplexityData,
       effectiveCategory,
       correctionInfo.correctionType,
+      images.length > 0,  // v3.5: new arg
     );
 
-    // — Parallel AI consensus ————————————————————————————
+    // — v3.5: Parallel multimodal AI consensus ————————————————
+    // All three calls now go through typed functions that accept images[].
+    // When images=[], each function falls back to text-only format naturally —
+    // empty imageBlocks array means only the text content block is sent.
     const aiPromises: Promise<any>[] = [];
 
     if (anthropic) {
-      aiPromises.push(
-        anthropic.messages
-          .create({
-            model: 'claude-3-5-sonnet-20240620',
-            max_tokens: 1024,
-            messages: [{ role: 'user', content: prompt }],
-          })
-          .then(r => {
-            const text = r.content[0];
-            return safeJsonParse('type' in text && text.type === 'text' ? text.text : '');
-          })
-          .catch(() => null)
-      );
+      aiPromises.push(callAnthropic(anthropic, prompt, images).catch(() => null));
     }
 
     if (openai) {
-      aiPromises.push(
-        openai.chat.completions
-          .create({
-            model: 'gpt-4o',
-            messages: [{ role: 'user', content: prompt }],
-            response_format: { type: 'json_object' },
-          })
-          .then(r => safeJsonParse(r.choices[0].message.content!))
-          .catch(() => null)
-      );
+      aiPromises.push(callOpenAI(openai, prompt, images).catch(() => null));
     }
 
     if (googleModel) {
-      aiPromises.push(
-        googleModel
-          .generateContent(prompt)
-          .then(r => safeJsonParse(r.response.text()))
-          .catch(() => null)
-      );
+      aiPromises.push(callGoogle(googleModel, prompt, images).catch(() => null));
     }
 
     if (aiPromises.length === 0) {
@@ -464,10 +534,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ── v3.4: Validated averaging — reject $0 responses ─────────────────────
-    // Only count responses where newValue is a real positive number.
-    // Previously: (undefined || 0) per provider → $0 average.
-    // Now: zero-value responses are excluded from the average.
-    // If ALL providers return 0/undefined, fall back to original value with warning.
     const validResponses = successfulResponses.filter(
       r => typeof r.newValue === 'number' && r.newValue > 0
     );
@@ -492,7 +558,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const adjustment = calculateValueAdjustment(analysis.estimatedValue || 0, averageValue);
     console.log(
-      `✅ Refinement [${correctionInfo.correctionType}]:` +
+      `✅ Refinement [${correctionInfo.correctionType}] [${images.length} img]:` +
       ` $${(analysis.estimatedValue || 0).toFixed(2)} → $${averageValue.toFixed(2)}` +
       ` (${adjustment}) | Valid: ${validResponses.length}/${successfulResponses.length}`
     );
