@@ -43,12 +43,22 @@
 //     to treat visual evidence as ground truth over original scan assumptions.
 //   - SURGICAL: Only 4 additions to v3.4. All existing logic preserved.
 //
+// WHAT CHANGED (v3.6):
+//   - FIX: CI Engine collective knowledge now injected into refine prompt.
+//     Initial scan injects confirmed patterns — refine was skipping this step.
+//     lookupPatterns() added to the existing Promise.all (zero added latency).
+//   - FIX: correctedItemName added to output schema. When user corrects identity
+//     (e.g. "Green Line" → "Green Bull"), the AI now returns the correct name
+//     and refinedResult.itemName is updated. Card title shows corrected name.
+//     Also wired into recordCorrection() so the CI Engine captures the identity
+//     delta, not just the value delta.
+//
 // ARCHITECTURE:
 //   RateLimit → Auth → Sanitize → detectCorrectionType
-//   → fetchMarketData(correctedQuery, category) + Perplexity(correctedQuery)
-//   → buildSingleSchemaPrompt [+ image instruction if images present]
+//   → fetchMarketData(correctedQuery) + Perplexity(correctedQuery) + lookupPatterns(category)
+//   → buildSingleSchemaPrompt [+ collectiveKnowledge + image instruction]
 //   → parallel multimodal AI → validate(newValue > 0)
-//   → average → recordCorrection() → respond
+//   → apply correctedItemName → average → recordCorrection() → respond
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import type { AnalysisResult } from '../src/types';
@@ -75,8 +85,8 @@ import {
 // v3.2: Rate limiting
 import { applyRateLimit, LIMITS } from './_lib/rateLimit.js';
 
-// v3.3: CI Engine
-import { recordCorrection } from '../src/lib/hydra/knowledge/index.js';
+// v3.3: CI Engine record + v3.6: pattern lookup for prompt injection
+import { recordCorrection, lookupPatterns } from '../src/lib/hydra/knowledge/index.js';
 
 // =============================================================================
 // AI CLIENT INITIALIZATION
@@ -226,6 +236,7 @@ function buildRefinePrompt(
   category: string,
   correctionType: CorrectionType,
   hasImages: boolean = false,  // v3.5: new param, defaults false — zero impact on text-only path
+  collectiveKnowledge: { promptText: string } | null = null,  // v3.6: CI Engine injection
 ): string {
   let prompt = `You are a senior collectibles appraiser updating a valuation with new information.\n`;
 
@@ -318,6 +329,12 @@ from reprints. Value the specific edition indicated by the user.
     prompt += `\n=== CURRENT MARKET INTELLIGENCE (live web search) ===\n${perplexityData}\n`;
   }
 
+  // v3.6: CI Engine collective knowledge — confirmed patterns from verified corrections
+  // Same block injected into the initial scan. Now applied to refinement too.
+  if (collectiveKnowledge) {
+    prompt += `\n${collectiveKnowledge.promptText}\n`;
+  }
+
   prompt += `
 Your task:
 1. Apply the user's correction — treat it as authoritative about what the item is.
@@ -326,12 +343,14 @@ ${hasImages ? '4.' : '3.'} For vintage/edition corrections: value the historical
 ${hasImages ? '5.' : '4.'} Determine a realistic market value as a number greater than zero.
 ${hasImages ? '6.' : '5.'} List exactly 5 valuation factors specific to the corrected item.
 ${hasImages ? '7.' : '6.'} Write a clear summary explaining what changed and why${hasImages ? ', noting what the images confirmed' : ''}.
+${hasImages ? '8.' : '7.'} If the item's NAME or IDENTITY changed (brand, model, edition, year), provide the corrected name. Otherwise return null.
 
 Respond with ONLY this exact JSON object — no other text, no markdown:
 {
   "newValue": <number greater than 0>,
   "newFactors": ["<factor 1>", "<factor 2>", "<factor 3>", "<factor 4>", "<factor 5>"],
-  "newSummary": "<string explaining the correction and new valuation>"
+  "newSummary": "<string explaining the correction and new valuation>",
+  "correctedItemName": "<corrected item name string, or null if name is unchanged>"
 }`;
 
   return prompt;
@@ -478,19 +497,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`📸 Visual evidence: ${images.length} image(s) — all 3 vision providers will analyze`);
     }
 
-    // — Parallel: market data + Perplexity ———————————————————
-    const [marketResult, perplexityData] = await Promise.all([
+    // — Parallel: market data + Perplexity + CI Engine pattern lookup ————————
+    // v3.6: lookupPatterns added to existing Promise.all — zero added latency.
+    // Graceful: if DB is down, collectiveKnowledge is null, scan proceeds normally.
+    const [marketResult, perplexityData, collectiveKnowledge] = await Promise.all([
       fetchMarketData(searchQuery, effectiveCategory).catch(err => {
         console.error('Market data fetch error:', err);
         return { sources: [], primaryAuthority: null };
       }),
       searchPerplexity(searchQuery, effectiveCategory),
+      lookupPatterns(effectiveCategory).catch(err => {
+        console.warn('[CI-Engine] Pattern lookup failed (non-fatal):', err);
+        return null;
+      }),
     ]);
 
     const availableSources = marketResult.sources?.filter((s: any) => s.available) || [];
     console.log(`📊 Market: ${availableSources.length} sources (${availableSources.map((s: any) => s.source).join(', ') || 'none'})`);
+    if (collectiveKnowledge) {
+      console.log(`🧠 CI Engine: ${collectiveKnowledge.items.length} confirmed patterns injected for '${effectiveCategory}'`);
+    }
 
-    // — Build prompt — v3.5: passes hasImages flag ————————————
+    // — Build prompt — v3.5: passes hasImages flag, v3.6: passes collectiveKnowledge
     const prompt = buildRefinePrompt(
       analysis,
       cleanRefinement,
@@ -498,7 +526,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       perplexityData,
       effectiveCategory,
       correctionInfo.correctionType,
-      images.length > 0,  // v3.5: new arg
+      images.length > 0,
+      collectiveKnowledge,
     );
 
     // — v3.5: Parallel multimodal AI consensus ————————————————
@@ -556,21 +585,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const newSummary = successfulResponses[0]?.newSummary ||
       `Value updated based on user correction (${correctionInfo.correctionType}).`;
 
+    // v3.6: Apply correctedItemName if any provider returned one
+    // Consensus: use the first non-null correctedItemName from valid responses.
+    // If all return null, item name is unchanged — preserve original.
+    const correctedItemName: string | null =
+      validResponses.find((r: any) => r.correctedItemName && typeof r.correctedItemName === 'string')
+        ?.correctedItemName ?? null;
+
     const adjustment = calculateValueAdjustment(analysis.estimatedValue || 0, averageValue);
     console.log(
       `✅ Refinement [${correctionInfo.correctionType}] [${images.length} img]:` +
       ` $${(analysis.estimatedValue || 0).toFixed(2)} → $${averageValue.toFixed(2)}` +
-      ` (${adjustment}) | Valid: ${validResponses.length}/${successfulResponses.length}`
+      ` (${adjustment}) | Valid: ${validResponses.length}/${successfulResponses.length}` +
+      (correctedItemName ? ` | Name: "${analysis.itemName}" → "${correctedItemName}"` : '')
     );
 
     const refinedResult: AnalysisResult = {
       ...analysis,
+      itemName: correctedItemName ?? analysis.itemName,  // v3.6: update name if corrected
       estimatedValue: averageValue,
       valuation_factors: uniqueFactors.slice(0, 5),
       summary_reasoning: newSummary,
     };
 
     // ── v3.3: CI Engine — fire-and-forget ────────────────────────────────────
+    // v3.6: corrected.identification now uses correctedItemName when available
     recordCorrection({
       original: {
         identification: analysis.itemName,
@@ -581,7 +620,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         imageHash: (analysis as any).imageHash,
       },
       corrected: {
-        identification: analysis.itemName,
+        identification: correctedItemName ?? analysis.itemName,
         category: effectiveCategory,
         estimatedValue: averageValue,
       },

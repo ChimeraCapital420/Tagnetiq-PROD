@@ -4,6 +4,13 @@
 //
 // v1.1: SECURITY — Added Bearer auth to refine-analysis call
 //       (server now requires verifyUser)
+//
+// v1.2: FEATURE — Visual evidence images wired into refinement
+//       - refinementImages state added (base64 string array)
+//       - setRefinementImages exposed for RefineDialog
+//       - refinement_images included in API body
+//       - Validation accepts images OR text (not strictly both)
+//       - Images cleared on successful refinement alongside text
 
 import { useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -47,10 +54,13 @@ export function useFeedback(analysisId: string, isViewingHistory: boolean) {
   const [isRefineOpen, setIsRefineOpen] = useState(false);
   const [refinementText, setRefinementText] = useState('');
   const [isRefineSubmitting, setIsRefineSubmitting] = useState(false);
+  // v1.2: Visual evidence — base64 JPEG strings, compressed on device by RefineDialog
+  const [refinementImages, setRefinementImages] = useState<string[]>([]);
 
   const submitRefinement = useCallback(async () => {
-    if (!refinementText.trim()) {
-      toast.error('Please enter your refinement details.');
+    // v1.2: Accept text OR images — not strictly both required
+    if (!refinementText.trim() && refinementImages.length === 0) {
+      toast.error('Please enter a correction or attach evidence photos.');
       return;
     }
 
@@ -68,6 +78,8 @@ export function useFeedback(analysisId: string, isViewingHistory: boolean) {
         body: JSON.stringify({
           original_analysis: lastAnalysisResult,
           refinement_text: refinementText,
+          // v1.2: Images sent only when present — empty array omitted to keep payload clean
+          ...(refinementImages.length > 0 && { refinement_images: refinementImages }),
         }),
       });
       if (!response.ok) {
@@ -79,12 +91,13 @@ export function useFeedback(analysisId: string, isViewingHistory: boolean) {
       toast.success('Analysis has been successfully refined.');
       setIsRefineOpen(false);
       setRefinementText('');
+      setRefinementImages([]); // v1.2: Clear images on success
     } catch (err: any) {
       toast.error(err.message || 'Refinement failed');
     } finally {
       setIsRefineSubmitting(false);
     }
-  }, [refinementText, lastAnalysisResult, setLastAnalysisResult, session]);
+  }, [refinementText, refinementImages, lastAnalysisResult, setLastAnalysisResult, session]);
 
   return {
     // Rating
@@ -100,5 +113,8 @@ export function useFeedback(analysisId: string, isViewingHistory: boolean) {
     setRefinementText,
     isRefineSubmitting,
     submitRefinement,
+    // v1.2: Images
+    refinementImages,
+    setRefinementImages,
   };
 }

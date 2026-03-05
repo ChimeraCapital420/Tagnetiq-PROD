@@ -1,5 +1,5 @@
 // FILE: src/components/analysis/AnalysisResult.tsx
-// STATUS: HYDRA v10.2 — Modular + eBay Display + Agreement Fix + Watch Auth Fix
+// STATUS: HYDRA v10.3 — Visual Evidence Wired to RefineDialog
 // Thin orchestrator that composes hooks + components.
 //
 // v10.1 CHANGES:
@@ -10,6 +10,10 @@
 // v10.2 CHANGES:
 //   - FIX: Watch button now sends Authorization header (was 401ing)
 //   - Added `session` from useAuth() for Bearer token
+//
+// v10.3 CHANGES:
+//   - RefineDialog receives refinementImages + onImagesChange props
+//     (state lives in useFeedback v1.2, wired here with 2 new props)
 
 import React, { useState, Component, ErrorInfo, ReactNode } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
@@ -249,12 +253,14 @@ const AnalysisResultContent: React.FC = () => {
         </CardFooter>
       </Card>
 
-      {/* Refine Dialog */}
+      {/* Refine Dialog — v10.3: images props wired */}
       <RefineDialog
         isOpen={feedback.isRefineOpen}
         onOpenChange={feedback.setIsRefineOpen}
         refinementText={feedback.refinementText}
         onTextChange={feedback.setRefinementText}
+        refinementImages={feedback.refinementImages}
+        onImagesChange={feedback.setRefinementImages}
         isSubmitting={feedback.isRefineSubmitting}
         onSubmit={feedback.submitRefinement}
       />
