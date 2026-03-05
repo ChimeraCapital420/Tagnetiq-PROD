@@ -7,6 +7,13 @@
  * Layer 3: Pre-Scan Knowledge → injected into HYDRA prompts
  *
  * Privacy: NO user_id anywhere in this module. Anonymous by design.
+ *
+ * CHANGELOG:
+ * v1.0: Initial types
+ * v1.1: AggregationResult — added processedConfirmations field to reflect
+ *       bidirectional aggregator reading both corrections and confirmed_accurate rows.
+ *       CorrectionRow.correction_type — added inline comment documenting
+ *       'confirmed_accurate' as a valid value written by recordConfirmation().
  */
 
 // ─── Layer 1: Raw Correction ────────────────────────────────────────────────
@@ -96,6 +103,20 @@ export interface CorrectionRow {
   corrected_name: string;
   corrected_category: string | null;
   corrected_value: number | null;
+  /**
+   * The type of signal this row represents.
+   *
+   * Standard correction types (original_name !== corrected_name):
+   *   'brand_confusion' | 'size_error' | 'category_misclass' | 'model_confusion'
+   *   'condition_error' | 'grade_error' | 'identity' | 'identity_error' | 'value_correction'
+   *
+   * Positive trust signal (original_name === corrected_name):
+   *   'confirmed_accurate' — written by recordConfirmation().
+   *   Sources: 'high_consensus' (analyze.ts OPTIMAL + confidence>=0.85)
+   *            'user_rating' (feedback.ts 4+ star ratings)
+   *   The aggregator reads these to boost pattern confidence and improve
+   *   provider trust weights. They do NOT anchor new pattern rows.
+   */
   correction_type: string;
   correction_fields: CorrectionField[];
   item_category: string;
@@ -183,7 +204,15 @@ export interface CollectiveKnowledgeBlock {
 // ─── Aggregation Job ────────────────────────────────────────────────────────
 
 export interface AggregationResult {
+  /** Correction rows processed (correction_type !== 'confirmed_accurate') */
   processedCorrections: number;
+  /**
+   * Confirmation rows processed (correction_type === 'confirmed_accurate').
+   * Positive trust signals from high-consensus scans and 4+★ user ratings.
+   * They blend into pattern confidence and provider error rates but cannot
+   * anchor new pattern rows on their own (no wrong_value to key on).
+   */
+  processedConfirmations: number;
   upsertedPatterns: number;
   promoted: number;
   retired: number;

@@ -1,7 +1,7 @@
 // ============================================================
 // FILE:  api/analyze.ts
 // ============================================================
-// HYDRA v9.7 — CI Engine Phase 3 Wired
+// HYDRA v9.8 — Bidirectional CI Engine: Corrections + Confirmations
 // Evidence-based pipeline: IDENTIFY → FETCH → REASON → VALIDATE
 //
 // CHANGELOG:
@@ -13,6 +13,14 @@
 //       - collectiveKnowledge passed into runPipeline() options
 //       - If lookup fails: graceful degradation, scan proceeds normally
 //       - If no patterns confirmed yet: null, prompt is unchanged
+// v9.8: CI ENGINE — High-consensus confirmation signal
+//       When HYDRA reaches analysisQuality=OPTIMAL + confidence≥0.85,
+//       recordConfirmation() fires fire-and-forget after response is built.
+//       Source: 'high_consensus' — strongest automated trust signal.
+//       Bidirectional CI: corrections flag what HYDRA gets wrong,
+//       confirmations reinforce what it gets right. Aggregator uses both
+//       to accelerate pattern promotion and improve provider trust weights.
+//       Zero latency impact — runs after res.status(200) is queued.
 //
 // ⚠️  PIPELINE NOTE (one field to add):
 //     src/lib/hydra/pipeline/index.ts — add to the options type:
@@ -60,11 +68,8 @@ import {
 // v9.6: SECURITY — Rate limiting
 import { applyRateLimit, LIMITS } from './_lib/rateLimit.js';
 
-// v9.7: CI ENGINE PHASE 3 — Pre-scan collective knowledge lookup
-// Queries confirmed correction patterns for the detected category.
-// These patterns are injected into every AI provider's prompt.
-// Mobile-first: <5ms server-side query, zero device impact.
-import { lookupPatterns } from '../src/lib/hydra/knowledge/index.js';
+// v9.7+v9.8: CI ENGINE — pattern lookup + high-consensus confirmation signal
+import { lookupPatterns, recordConfirmation } from '../src/lib/hydra/knowledge/index.js';
 import type { CollectiveKnowledgeBlock } from '../src/lib/hydra/knowledge/types.js';
 
 // =============================================================================
@@ -289,7 +294,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Either an image or item name is required');
     }
 
-    console.log(`\n📥 === HYDRA v9.7 ANALYSIS START ===`);
+    console.log(`\n📥 === HYDRA v9.8 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
     console.log(`🖼️ Images: ${hasImage ? 1 + (request.additionalImages?.length || 0) : 0}`);
@@ -453,7 +458,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       thumbnailUrl: request.originalImageUrls?.[0] || null,
       ebayMarketData: pipelineResult.ebayData,
       marketSources: pipelineResult.marketSources,
-      pipelineVersion: '9.7',
+      pipelineVersion: '9.8',
       pipelineTiming: pipelineResult.timing,
       nexus: nexusDecision ? {
         nudge: nexusDecision.nudge,
@@ -484,6 +489,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         collectiveKnowledgeActive: !!collectiveKnowledge,
         collectivePatternCount: collectiveKnowledge?.items.length ?? 0,
         collectiveCategory: request.categoryHint || null,
+        // v9.8: confirmation signal diagnostics
+        highConsensusConfirmation: (
+          pipelineResult.analysisQuality === 'OPTIMAL' &&
+          pipelineResult.confidence >= 0.85
+        ),
       },
     };
 
@@ -522,6 +532,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
         request.originalImageUrls?.[0] || null
       ).then(() => {}, () => {});
+    }
+
+    // ========================================================================
+    // 7.6 v9.8: CI ENGINE — High-consensus positive confirmation signal
+    //
+    // Fires when ALL three conditions are true:
+    //   1. analysisQuality === 'OPTIMAL'  (all providers responded cleanly)
+    //   2. confidence >= 0.85             (strong agreement on value + identity)
+    //   3. pipelineResult.itemName exists (we actually identified something)
+    //
+    // providerVotes captured so the aggregator knows WHICH providers agreed —
+    // providers that frequently agree on correct IDs earn higher trust weights.
+    //
+    // Fire-and-forget: .catch() ensures DB failure is completely silent.
+    // Response is already committed — this never affects scan latency.
+    // ========================================================================
+    if (
+      pipelineResult.analysisQuality === 'OPTIMAL' &&
+      pipelineResult.confidence >= 0.85 &&
+      pipelineResult.itemName
+    ) {
+      recordConfirmation({
+        itemName: pipelineResult.itemName,
+        category: pipelineResult.category,
+        estimatedValue: pipelineResult.finalPrice,
+        confidence: pipelineResult.confidence,
+        providerVotes: pipelineResult.allVotes ?? null,
+        consensusAgreement: pipelineResult.confidence,
+        confirmationSource: 'high_consensus',
+      }).catch(err =>
+        console.warn('[CI-Engine] High-consensus confirmation failed (non-fatal):', err)
+      );
+
+      console.log(
+        `[CI-Engine] ⭐ High-consensus confirmation queued: "${pipelineResult.itemName}"` +
+        ` [${pipelineResult.category}] confidence=${(pipelineResult.confidence * 100).toFixed(0)}%`
+      );
     }
 
     console.log(`\n  ✅ Complete in ${processingTime}ms${nexusDecision ? ` | Nexus: ${nexusDecision.nudge}` : ''}${collectiveKnowledge ? ` | CI: ${collectiveKnowledge.items.length} patterns` : ''}\n`);

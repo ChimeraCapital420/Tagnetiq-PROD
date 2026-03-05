@@ -3,6 +3,7 @@
  * Codename: The Hive Mind
  *
  * recordCorrection() — writes one anonymous row to hydra_corrections.
+ * recordConfirmation() — writes one anonymous positive signal to hydra_corrections.
  *
  * Design principles:
  * - Fire-and-forget: caller uses .catch() so failures are silent
@@ -12,6 +13,14 @@
  *
  * Mobile-first: this runs server-side only. Device sends the refined
  * analysis; the server records the delta. No extra round-trips.
+ *
+ * CONFIRMATION SIGNALS (added alongside corrections):
+ * Two sources write confirmation rows:
+ *   1. User rates analysis 4+ stars → recordConfirmation(source='user_rating')
+ *   2. HYDRA providers reach high consensus → recordConfirmation(source='high_consensus')
+ * The aggregator weighs both: corrections flag patterns, confirmations reinforce them.
+ * A pattern confirmed 50 times with 0 corrections is far stronger than
+ * one corrected 5 times with 0 confirmations.
  */
 
 import { createClient } from '@supabase/supabase-js';
@@ -140,10 +149,6 @@ function toCorrectionPatternType(correctionType: string): PatternType {
 
 /**
  * Heuristic confidence: higher if the user was specific, lower if vague.
- * - Both fields present = 0.9
- * - Only corrected name = 0.75
- * - Category correction only = 0.7
- * - Fallback = 0.8
  */
 function computeConfidence(
   fields: CorrectionField[],
@@ -151,7 +156,6 @@ function computeConfidence(
   corrected: CorrectionInput['corrected'],
   authoritySource?: string
 ): number {
-  // Authoritative source (barcode, serial, explicit user confirmation)
   if (authoritySource && authoritySource !== 'user_explicit') return 0.95;
 
   const hasBoth =
@@ -159,7 +163,6 @@ function computeConfidence(
     (corrected.identification || corrected.itemName);
   if (!hasBoth) return 0.7;
 
-  // More specific correction fields = higher confidence
   if (fields.length >= 2) return 0.9;
   if (fields.length === 1) return 0.8;
 
@@ -168,11 +171,6 @@ function computeConfidence(
 
 // ─── Provider Error Rate Capture ─────────────────────────────────────────────
 
-/**
- * Given provider votes (what each AI said originally) and the corrected name,
- * build a provider_votes record that preserves what each provider said.
- * The aggregator later computes error rates from these.
- */
 function captureProviderVotes(
   providerVotes: Record<string, string> | undefined,
   _correctedName: string
@@ -181,22 +179,13 @@ function captureProviderVotes(
   return providerVotes;
 }
 
-// ─── Main Export ─────────────────────────────────────────────────────────────
+// ─── Main Export: recordCorrection ───────────────────────────────────────────
 
 /**
  * recordCorrection(input)
  *
- * Writes one anonymous row to hydra_corrections.
- * Returns a Promise — caller should use .catch() to swallow errors.
- *
- * Example usage in api/refine-analysis.ts:
- *
- *   recordCorrection({
- *     original: analysisContext,
- *     corrected: refinedResult,
- *     providerVotes: analysisContext.hydraConsensus?.votes,
- *     imageHash: analysisContext.imageHash,
- *   }).catch(err => console.warn('Correction recording failed:', err));
+ * Writes one anonymous correction row to hydra_corrections.
+ * Fire-and-forget — caller uses .catch() to swallow errors.
  */
 export async function recordCorrection(input: CorrectionInput): Promise<void> {
   const { original, corrected, corrections, providerVotes, imageHash, authoritySource } = input;
@@ -204,19 +193,16 @@ export async function recordCorrection(input: CorrectionInput): Promise<void> {
   const originalName = original.identification || original.itemName || '';
   const correctedName = corrected.identification || corrected.itemName || '';
 
-  // If nothing meaningful changed, skip
   if (!originalName || !correctedName) {
     console.warn('[CI-Engine] recordCorrection: missing name data, skipping');
     return;
   }
 
-  // Derive changed fields
   const fields: CorrectionField[] =
     corrections && corrections.length > 0
       ? corrections
       : extractCorrectionFields(original, corrected);
 
-  // If literally nothing changed, skip (refinement that didn't change identity)
   if (
     fields.length === 0 &&
     originalName.toLowerCase() === correctedName.toLowerCase()
@@ -250,7 +236,6 @@ export async function recordCorrection(input: CorrectionInput): Promise<void> {
   };
 
   const supabase = getSupabaseClient();
-
   const { error } = await supabase.from('hydra_corrections').insert(row);
 
   if (error) {
@@ -259,5 +244,140 @@ export async function recordCorrection(input: CorrectionInput): Promise<void> {
 
   console.log(
     `[CI-Engine] ✅ Correction recorded: "${originalName}" → "${correctedName}" (${correctionType}, confidence=${confidence})`
+  );
+}
+
+// =============================================================================
+// CONFIRMATION SIGNALS
+// =============================================================================
+
+/**
+ * ConfirmationInput — what we need to record a positive signal.
+ *
+ * Two sources call this:
+ *   1. api/nexus/feedback.ts  — user rates 4+ stars
+ *   2. api/analyze.ts         — HYDRA providers reach high consensus (≥0.85)
+ */
+export interface ConfirmationInput {
+  itemName: string;
+  category: string;
+  estimatedValue?: number | null;
+  confidence?: number | null;
+  // Which AI providers participated — from hydraConsensus.votes
+  providerVotes?: Record<string, string> | null;
+  // Agreement score 0–1 from HYDRA consensus
+  consensusAgreement?: number | null;
+  imageHash?: string | null;
+  confirmationSource: 'user_rating' | 'high_consensus' | 'authority_match';
+  // Star rating 1–5 — present when source = 'user_rating'
+  rating?: number;
+}
+
+/**
+ * recordConfirmation(input)
+ *
+ * Records a POSITIVE signal — "HYDRA got this right."
+ *
+ * Written to the same hydra_corrections table:
+ *   correction_type  = 'confirmed_accurate'
+ *   original_name    = corrected_name   ← same name, no change
+ *   correction_fields = []              ← nothing changed
+ *
+ * The aggregator uses correction_type = 'confirmed_accurate' to distinguish
+ * these from error corrections. Confirmations:
+ *   - Increase pattern confidence when the same ID is repeatedly confirmed
+ *   - Down-weight provider error rates for providers that got it right
+ *   - Accelerate pattern promotion when confirmations > corrections
+ *
+ * Zero schema changes — uses existing hydra_corrections table.
+ * Fire-and-forget — caller uses .catch() to swallow errors silently.
+ *
+ * Confidence scale:
+ *   user_rating 5★      = 0.95  (explicit human verification)
+ *   user_rating 4★      = 0.85  (human satisfied, implicit)
+ *   high_consensus 0.9+ = 0.90  (3 AIs agreed strongly)
+ *   authority_match     = 0.95  (authority DB confirmed)
+ *
+ * Usage in api/nexus/feedback.ts:
+ *
+ *   if (rating >= 4 && item_context) {
+ *     recordConfirmation({
+ *       itemName: item_context.itemName,
+ *       category: item_context.category,
+ *       estimatedValue: item_context.estimatedValue,
+ *       confirmationSource: 'user_rating',
+ *       rating,
+ *     }).catch(err => console.warn('[CI-Engine] Confirmation failed (non-fatal):', err));
+ *   }
+ *
+ * Usage in api/analyze.ts (high-consensus path):
+ *
+ *   if (consensus.agreementScore >= 0.85 && quality === 'OPTIMAL') {
+ *     recordConfirmation({
+ *       itemName: result.itemName,
+ *       category: result.category,
+ *       estimatedValue: result.estimatedValue,
+ *       consensusAgreement: consensus.agreementScore,
+ *       providerVotes: consensus.votes,
+ *       confirmationSource: 'high_consensus',
+ *     }).catch(err => console.warn('[CI-Engine] Confirmation failed (non-fatal):', err));
+ *   }
+ */
+export async function recordConfirmation(input: ConfirmationInput): Promise<void> {
+  const {
+    itemName, category, estimatedValue, confidence, providerVotes,
+    consensusAgreement, imageHash, confirmationSource, rating,
+  } = input;
+
+  if (!itemName || !category) {
+    console.warn('[CI-Engine] recordConfirmation: missing itemName or category, skipping');
+    return;
+  }
+
+  // Confidence per source
+  let confirmationConfidence: number;
+  if (confirmationSource === 'user_rating') {
+    confirmationConfidence = rating === 5 ? 0.95 : 0.85;
+  } else if (confirmationSource === 'high_consensus' && consensusAgreement != null) {
+    confirmationConfidence = Math.min(0.95, consensusAgreement);
+  } else if (confirmationSource === 'authority_match') {
+    confirmationConfidence = 0.95;
+  } else {
+    confirmationConfidence = 0.80;
+  }
+
+  // original_name === corrected_name is the signal — "nothing needed to change"
+  const row: Partial<CorrectionRow> = {
+    original_name: itemName,
+    original_category: category,
+    original_value: estimatedValue ?? null,
+    original_confidence: confidence ?? null,
+    corrected_name: itemName,
+    corrected_category: category,
+    corrected_value: estimatedValue ?? null,
+    correction_type: 'confirmed_accurate',
+    correction_fields: [],
+    item_category: category,
+    item_subcategory: null,
+    image_hash: imageHash ?? null,
+    provider_votes: providerVotes ?? null,
+    authority_source: confirmationSource,
+    confidence: confirmationConfidence,
+    // NO user_id — anonymous by design
+  };
+
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('hydra_corrections').insert(row);
+
+  if (error) {
+    throw new Error(`[CI-Engine] Failed to record confirmation: ${error.message}`);
+  }
+
+  console.log(
+    `[CI-Engine] ⭐ Confirmation recorded: "${itemName}" [${category}]` +
+    ` source=${confirmationSource}` +
+    (rating ? ` rating=${rating}★` : '') +
+    (consensusAgreement != null ? ` agreement=${(consensusAgreement * 100).toFixed(0)}%` : '') +
+    ` confidence=${confirmationConfidence}`
   );
 }

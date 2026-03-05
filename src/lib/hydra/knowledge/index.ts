@@ -5,11 +5,16 @@
  * Follows the same pattern as src/lib/hydra/benchmarks/index.ts
  *
  * Import from here throughout the codebase:
- *   import { recordCorrection, lookupPatterns, aggregatePatterns } from '../src/lib/hydra/knowledge/index.js';
+ *   import { recordCorrection, recordConfirmation, lookupPatterns, aggregatePatterns }
+ *     from '../src/lib/hydra/knowledge/index.js';
+ *
+ * CHANGELOG:
+ * v1.0: Initial — recordCorrection, aggregatePatterns, lookupPatterns
+ * v1.1: Added recordConfirmation export (required by analyze.ts v9.8 and feedback.ts v1.1)
  */
 
 // Layer 1 — Correction Recorder
-export { recordCorrection } from './recorder.js';
+export { recordCorrection, recordConfirmation } from './recorder.js';
 
 // Layer 2 — Pattern Aggregator
 export { aggregatePatterns } from './aggregator.js';

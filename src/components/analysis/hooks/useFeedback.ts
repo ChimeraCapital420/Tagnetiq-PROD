@@ -39,7 +39,19 @@ export function useFeedback(analysisId: string, isViewingHistory: boolean) {
             ? { Authorization: `Bearer ${session.access_token}` }
             : {}),
         },
-        body: JSON.stringify({ analysis_id: analysisId, user_id: user.id, rating }),
+        body: JSON.stringify({
+          analysis_id: analysisId,
+          user_id: user.id,
+          rating,
+          // v1.2: item_context enables CI Engine confirmation on server for 4+ stars
+          // Server fires recordConfirmation() fire-and-forget — zero client impact
+          item_context: lastAnalysisResult ? {
+            itemName: lastAnalysisResult.itemName,
+            category: lastAnalysisResult.category,
+            estimatedValue: lastAnalysisResult.estimatedValue,
+            hydraConsensus: lastAnalysisResult.hydraConsensus ?? null,
+          } : undefined,
+        }),
       });
       if (!response.ok) throw new Error('Failed to submit feedback.');
       setFeedbackSubmitted(true);
