@@ -55,3 +55,12 @@ export type {
   GhostData, 
   GhostModeState 
 } from './useGhostMode';
+
+// =============================================================================
+// ORACLE HOOKS
+// =============================================================================
+
+// Oracle Voice — TTS output for the user's AI partner.
+// Each user names their Oracle through learning (e.g. "Dash").
+// This hook is name-agnostic — it knows nothing about that name.
+export { useOracleVoice } from './useOracleVoice';

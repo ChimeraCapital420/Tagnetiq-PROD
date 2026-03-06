@@ -50,9 +50,9 @@ export function useFeedback(conversationId: string | null) {
 
       if (res.ok) {
         if (rating === 'up') {
-          toast.success('Thanks! This helps Dash learn.', { duration: 2000 });
+          toast.success('Thanks! This helps your Oracle learn.', { duration: 2000 });
         } else {
-          toast('Got it — Dash will calibrate.', { duration: 2000 });
+          toast('Got it — your Oracle will calibrate.', { duration: 2000 });
         }
       }
     } catch {
