@@ -20,20 +20,40 @@
 //     post-call, response-builder
 //
 // ═══════════════════════════════════════════════════════════════════════
-// THE NINE LIBERATIONS — FULLY WIRED
+// THE ELEVEN LIBERATIONS — FULLY WIRED
 // ═══════════════════════════════════════════════════════════════════════
 // L1:  Kill the Fossil        L6:  Oracle-Voiced Push
 // L2:  Client-Side Intel      L7:  Market-Aware Chat
 // L3:  Emotional Memory       L8:  Conversational HYDRA
 // L4:  Personal Concierge     L9:  Adaptive Token Depth
 // L5:  Self-Aware Oracle      L10: How-To Teaching
+//                             L11: Conversational Refinement ← NEW
 // ═══════════════════════════════════════════════════════════════════════
 //
 // v11.0: Added providerReportEvent pass-through from client → prompt
-//        assembler. When user taps a provider report card, the event
-//        flows: sessionStorage → useSendMessage → request body → here
-//        → assembleSystemPrompt Step 8 → Oracle awareness.
-//        Zero new dependencies. Zero logic changes to Steps 1–10.
+//        assembler. Zero new dependencies. Zero logic changes to Steps 1–10.
+//
+// v11.1: Liberation 11 — Conversational Refinement (4 Phases):
+//
+//   Phase 1 (ZERO risk): detectRefinementIntent() fires in Step 2.
+//     When analysisContext exists and message scores >= 0.6, REFINEMENT
+//     MODE is injected into the system prompt in Step 5. Oracle responds
+//     conversationally and embeds structured hidden JSON.
+//
+//   Phase 2 (LOW risk): response-pipeline strips hidden JSON.
+//     parseCorrectionsFromResponse() runs on every response (no-op when
+//     no corrections block). Returns cleanResponse + extractedCorrections.
+//
+//   Phase 3 (LOW risk): Refinement bridge between Steps 7 and 8.
+//     If extractedCorrections found, callRefinementBridge() fires async
+//     (5s timeout, non-blocking, non-fatal). Result flows to Step 10.
+//
+//   Phase 4 (LOW risk): Hunt mode buffer in Steps 2 and 5.
+//     Client sends huntBuffer. Assembler injects it. Oracle waits for
+//     sufficient specificity before triggering HYDRA.
+//
+//   Zero new endpoints. Zero new DB tables. refine-analysis untouched.
+//   recordCorrection() already wired in refine-analysis v3.6.
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -50,13 +70,16 @@ import { detectTrustSignals } from '../../src/lib/oracle/trust/tracker.js';
 
 // ── Chat Module (Phases 1–5) ────────────────────────────
 import { validateIntent, validateEnergy } from '../../src/lib/oracle/chat/validators.js';
-import { isContentCreationRequest } from '../../src/lib/oracle/chat/detectors.js';
+import { isContentCreationRequest, detectRefinementIntent } from '../../src/lib/oracle/chat/detectors.js';
 import { fetchLightweightContext, fetchFullContext } from '../../src/lib/oracle/chat/data-fetchers.js';
 import { assembleSystemPrompt } from '../../src/lib/oracle/chat/prompt-assembler.js';
 import { executeResponsePipeline } from '../../src/lib/oracle/chat/response-pipeline.js';
 import { persistConversation } from '../../src/lib/oracle/chat/persistence.js';
 import { runPostCallTasks } from '../../src/lib/oracle/chat/post-call.js';
 import { buildChatResponse } from '../../src/lib/oracle/chat/response-builder.js';
+
+// ── Liberation 11: Refinement Bridge (Phase 3) ──────────
+import { callRefinementBridge } from '../../src/lib/oracle/chat/refinement-bridge.js';
 
 export const config = {
   maxDuration: 60,
@@ -71,7 +94,7 @@ const supabaseAdmin = createClient(
 );
 
 // =============================================================================
-// HANDLER — 10 steps, each one line of orchestration
+// HANDLER — 10 steps + L11 bridge between Steps 7 and 8
 // =============================================================================
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -89,7 +112,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       analysisContext = null,
       clientContext = null,
       cachedMarketData = null,
-      providerReportEvent = null,  // v11.0: provider report card context
+      providerReportEvent = null,       // v11.0: provider report card context
+      clientCorrections = null,          // v11.1 L11 Phase 2: regex hints from client
+      huntBuffer = null,                 // v11.1 L11 Phase 4: hunt mode buffer
     } = req.body;
 
     if (!message || typeof message !== 'string') {
@@ -122,6 +147,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const trustSignal = detectTrustSignals(message);
     const deviceType = clientContext?.deviceType || 'unknown';
 
+    // v11.1 L11 Phase 1: Detect refinement intent
+    // CRITICAL: detectRefinementIntent guards itself — returns score:0 when
+    // analysisContext is null. Zero false positives guaranteed.
+    const refinementIntent = detectRefinementIntent(message, analysisContext);
+
+    if (refinementIntent.isRefinement) {
+      console.log(
+        `[L11] Refinement intent detected (score: ${refinementIntent.score.toFixed(2)}, ` +
+        `patterns: ${refinementIntent.matchedPatterns.join(', ')})`
+      );
+    }
+
     // ── 3. FETCH DATA ────────────────────────────────────
     const ctx = lightweight
       ? await fetchLightweightContext(supabaseAdmin, user.id, message, access)
@@ -139,7 +176,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const systemPrompt = assembleSystemPrompt({
       ctx, analysisContext, safetyScan, lightweight,
       currentEnergy, energyArc, messageExpertise,
-      providerReportEvent,  // v11.0: flows to Step 8 in assembler
+      providerReportEvent,                  // v11.0
+      refinementIntent,                     // v11.1 L11 Phase 1
+      clientCorrections,                    // v11.1 L11 Phase 2 hint
+      huntBuffer,                           // v11.1 L11 Phase 4
     });
 
     // ── 6. ROUTE ─────────────────────────────────────────
@@ -149,7 +189,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       intentHint: validatedIntentHint || undefined,
     });
 
-    // ── 7. EXECUTE PIPELINE (L7 + L8 + L9) ──────────────
+    // ── 7. EXECUTE PIPELINE (L7 + L8 + L9 + L11 Phase 2) ──
+    // response-pipeline now strips <!--CORRECTIONS:--> from responseText
+    // and returns extractedCorrections (null when absent — zero cost).
     const pipeline = await executeResponsePipeline({
       systemPrompt, message, conversationHistory, routing,
       identity: ctx.identity, lightweight, userTier,
@@ -157,6 +199,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       vaultItems: ctx.vaultItems, scanHistory: ctx.scanHistory,
       cachedMarketData,
     });
+
+    // ── 7.5 REFINEMENT BRIDGE (L11 Phase 3) ─────────────
+    // Fires only when:
+    //   a) Oracle extracted structured corrections (Phase 2 found hidden JSON)
+    //   b) We have an analysisContext to refine against
+    //
+    // 5s timeout. Non-blocking. Non-fatal.
+    // User already has Oracle's conversational response.
+    // Bridge makes it official in the database + feeds CI Engine.
+    let refinementResult = null;
+
+    if (pipeline.extractedCorrections && analysisContext) {
+      const authToken = req.headers.authorization || '';
+
+      refinementResult = await callRefinementBridge({
+        corrections: pipeline.extractedCorrections,
+        analysisContext,
+        authToken,
+      });
+
+      if (refinementResult?.success) {
+        console.log(
+          `[L11] Bridge success: "${refinementResult.correctedItemName}" ` +
+          `$${refinementResult.estimatedValue} ` +
+          `(CI recorded: ${refinementResult.ciRecorded})`
+        );
+      }
+    }
 
     // ── 8. POST-CALL (fire & forget) ─────────────────────
     runPostCallTasks({
@@ -184,6 +254,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       pipeline, ctx, activeConversationId, routingIntent: routing.intent,
       lightweight, currentEnergy, energyArc, contentDetection,
       deviceType, access, userTier,
+      refinementResult,                     // v11.1 L11 Phase 3
     }));
 
   } catch (error: any) {

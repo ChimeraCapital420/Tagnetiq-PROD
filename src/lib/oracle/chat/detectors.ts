@@ -6,9 +6,10 @@
 // Pure functions — no side effects, no DB calls.
 //
 // Contains:
-//   - isRecallQuestion()      — visual memory recall detection
-//   - isContentCreationRequest() — listing/video/brag card detection
-//   - isMarketQuery()         — Liberation 7 market query detection
+//   - isRecallQuestion()          — visual memory recall detection
+//   - isContentCreationRequest()  — listing/video/brag card detection
+//   - isMarketQuery()             — Liberation 7 market query detection
+//   - detectRefinementIntent()    — Liberation 11: correction intent
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { ContentDetectionResult } from './types.js';
@@ -129,4 +130,96 @@ export function isMarketQuery(message: string, intent: string): boolean {
   ];
 
   return marketPatterns.some(p => p.test(lower));
+}
+
+// =============================================================================
+// REFINEMENT INTENT DETECTION (Liberation 11)
+// =============================================================================
+
+export interface RefinementIntentResult {
+  isRefinement: boolean;
+  score: number;
+  matchedPatterns: string[];
+}
+
+/**
+ * Detect if the user is correcting a scan result conversationally.
+ *
+ * CRITICAL GUARD: Only fires when analysisContext is not null.
+ * Without a scan in context, "it's actually a Rolex" is a general
+ * question, NOT a refinement. This prevents false positives on every
+ * message that contains "actually."
+ *
+ * Score >= 0.6 = refinement intent confirmed.
+ *
+ * Examples (with analysisContext present):
+ *   "That's actually a 4ft Green Bull ladder, not Green Line" → ~0.9
+ *   "The brand should be Pyrex not Anchor Hocking" → ~0.85
+ *   "Wrong size — it's a 6 not 4 foot" → ~0.8
+ *   "What's this worth?" → 0 (no correction patterns match)
+ *
+ * Examples (WITHOUT analysisContext):
+ *   "It's actually a Rolex" → 0 (guard fires, skipped immediately)
+ */
+export function detectRefinementIntent(
+  message: string,
+  analysisContext: any | null
+): RefinementIntentResult {
+  // ── CRITICAL GUARD ─────────────────────────────────────────────────
+  // No scan context = no refinement. Period.
+  if (!analysisContext) {
+    return { isRefinement: false, score: 0, matchedPatterns: [] };
+  }
+
+  const lower = message.toLowerCase();
+  const matchedPatterns: string[] = [];
+  let score = 0;
+
+  const patterns: Array<{ pattern: RegExp; label: string; weight: number }> = [
+    // "actually" — soft correction signal
+    { pattern: /\bactually\b/i,                                            label: 'actually',             weight: 0.35 },
+    // "not X" — negation of current value
+    { pattern: /\bnot\s+(?:a\s+|an\s+|the\s+)?\w+/i,                     label: 'negation',             weight: 0.45 },
+    // "it's X not Y" or "that's X not Y"
+    { pattern: /(?:it'?s?|that'?s?)\s+.+?\bnot\b/i,                       label: 'its_not',              weight: 0.70 },
+    // "wrong / incorrect / mistaken"
+    { pattern: /\b(?:wrong|incorrect|mistaken|inaccurate)\b/i,             label: 'explicit_wrong',       weight: 0.65 },
+    // "should be / supposed to be"
+    { pattern: /\b(?:should\s+be|supposed\s+to\s+be)\b/i,                 label: 'should_be',            weight: 0.65 },
+    // Numeric size correction (4 foot, 6ft, 12oz, etc.)
+    { pattern: /\b\d+\s*(?:foot|feet|ft|inch(?:es)?|in|gallon|oz|lb|cm)\b/i, label: 'size_correction',  weight: 0.30 },
+    // Explicit field update request
+    { pattern: /\b(?:update|fix|correct|change)\s+(?:the\s+)?(?:title|name|brand|size|model|description|year|color|type)\b/i,
+                                                                            label: 'explicit_update',      weight: 0.80 },
+    // "the [field] is [value]" — direct assignment
+    { pattern: /\bthe\s+(?:brand|make|model|size|color|type|year)\s+is\b/i, label: 'field_assignment',   weight: 0.60 },
+    // Trailing "not [thing]" — common correction tail
+    { pattern: /,?\s+not\s+(?:a\s+|an\s+|the\s+)?\w+(?:\s+\w+)?[.!]?\s*$/i, label: 'trailing_not',    weight: 0.55 },
+  ];
+
+  for (const { pattern, label, weight } of patterns) {
+    if (pattern.test(lower)) {
+      matchedPatterns.push(label);
+      score = Math.min(1, score + weight);
+    }
+  }
+
+  // Bonus: message references a word from the current scan item name
+  if (analysisContext.itemName) {
+    const contextWords = analysisContext.itemName
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w: string) => w.length > 3);
+    const hasContextRef = contextWords.some((w: string) => lower.includes(w));
+    if (hasContextRef) {
+      score = Math.min(1, score + 0.20);
+      matchedPatterns.push('context_reference');
+    }
+  }
+
+  return {
+    isRefinement: score >= 0.6,
+    score,
+    matchedPatterns,
+  };
 }

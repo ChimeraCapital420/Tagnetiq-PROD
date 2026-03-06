@@ -1,18 +1,22 @@
 // FILE: src/lib/oracle/chat/response-builder.ts
 // ═══════════════════════════════════════════════════════════════════════
-// Oracle Chat Module — Response Builder (Phase 5 Extraction)
+// Oracle Chat Module — Response Builder
 // ═══════════════════════════════════════════════════════════════════════
 //
-// Extracted from api/oracle/chat.ts — the ~50-line response JSON block.
-// Pure function: takes all gathered data, returns the final response shape.
+// Pure function. No side effects, no async.
+// Takes all gathered data, returns the final response shape.
 //
-// Also includes the quickChips call (previously step 10 in the handler).
-//
-// ZERO LOGIC CHANGES — pure code movement from chat.ts handler.
+// v11.1 Liberation 11 Phase 3:
+//   Added `refinementResult` to response shape.
+//   When Oracle corrected a scan result conversationally, the bridge
+//   result flows back to the client so useSendMessage can update
+//   the displayed AnalysisResult card in real-time — no page reload.
+//   Field is undefined when no refinement occurred (zero impact).
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { ChatContext, ChatResponse, ContentDetectionResult } from './types.js';
 import type { PipelineResult } from './response-pipeline.js';
+import type { RefinementResult } from './refinement-bridge.js';
 import { getQuickChips } from '../index.js';
 
 // =============================================================================
@@ -42,6 +46,8 @@ export interface ResponseBuilderInput {
   access: any;
   /** User tier string */
   userTier: string;
+  /** v11.1 L11 Phase 3: Refinement bridge result (null if no correction occurred) */
+  refinementResult?: RefinementResult | null;
 }
 
 // =============================================================================
@@ -52,14 +58,19 @@ export interface ResponseBuilderInput {
  * Build the final chat response JSON.
  *
  * Pure function — no side effects, no async.
- * Takes all gathered data and assembles the response shape
- * that the client expects.
+ * Takes all gathered data and assembles the response shape the client expects.
+ *
+ * When refinementResult is present, the client (useSendMessage) uses it
+ * to update the displayed AnalysisResult card in real-time:
+ *   correctedItemName → replaces card title
+ *   estimatedValue    → replaces displayed price
  */
 export function buildChatResponse(input: ResponseBuilderInput): ChatResponse {
   const {
     pipeline, ctx, activeConversationId, routingIntent,
     lightweight, currentEnergy, energyArc, contentDetection,
     deviceType, access, userTier,
+    refinementResult,
   } = input;
 
   const quickChips = lightweight
@@ -95,6 +106,11 @@ export function buildChatResponse(input: ResponseBuilderInput): ChatResponse {
       itemName: pipeline.marketItemRef?.itemName,
       cachedAt: pipeline.marketData.fetchedAt,
     } : undefined,
+    // ── v11.1 Liberation 11 Phase 3 ─────────────────────────────────
+    // Present when Oracle processed a scan correction conversationally.
+    // Client uses correctedItemName + estimatedValue to update the card.
+    // Omitted entirely when undefined — no impact on non-refinement calls.
+    ...(refinementResult ? { refinementResult } : {}),
     _provider: {
       used: pipeline.providerId,
       model: pipeline.model,

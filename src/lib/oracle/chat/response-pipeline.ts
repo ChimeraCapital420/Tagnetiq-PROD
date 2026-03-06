@@ -1,6 +1,6 @@
 // FILE: src/lib/oracle/chat/response-pipeline.ts
 // ═══════════════════════════════════════════════════════════════════════
-// Oracle Chat Module — Response Pipeline (Phase 3 Extraction)
+// Oracle Chat Module — Response Pipeline
 // ═══════════════════════════════════════════════════════════════════════
 //
 // Extracted from api/oracle/chat.ts — the ~140-line response pipeline:
@@ -10,11 +10,11 @@
 //   Std: Standard single-model call
 //   L9:  Adaptive token depth (truncation continuation)
 //
-// One function: executeResponsePipeline()
-// Takes the assembled system prompt and returns the final response text
-// plus all metadata needed for the response JSON.
-//
-// ZERO LOGIC CHANGES — pure code movement from chat.ts handler.
+// v11.1 Liberation 11 Phase 2:
+//   After Oracle responds, strip <!--CORRECTIONS:{...}--> from response
+//   text before it reaches the user. Parse and return structured
+//   corrections for refinement-bridge to act on.
+//   Zero impact when no corrections block is present (99% of messages).
 // ═══════════════════════════════════════════════════════════════════════
 
 import { hasFeature } from '../tier.js';
@@ -30,6 +30,8 @@ import {
   buildMarketDataBlock,
   extractItemReference,
 } from '../market/quick-fetch.js';
+import { parseCorrectionsFromResponse } from './correction-extractor.js';
+import type { CorrectionInput } from './correction-extractor.js';
 
 // =============================================================================
 // TYPES
@@ -61,7 +63,7 @@ export interface PipelineInput {
 }
 
 export interface PipelineResult {
-  /** Final response text (may include L9 continuation) */
+  /** Final response text — clean, no hidden JSON */
   responseText: string;
   /** Provider that generated the response */
   providerId: string;
@@ -79,6 +81,8 @@ export interface PipelineResult {
   marketData: any | null;
   /** L7 market item reference (null if not fetched) */
   marketItemRef: any | null;
+  /** L11 Phase 2: Structured corrections parsed from hidden JSON (null if none) */
+  extractedCorrections: CorrectionInput | null;
 }
 
 // =============================================================================
@@ -91,6 +95,7 @@ export interface PipelineResult {
  *   2. Assemble conversation messages
  *   3. L8 HYDRA or standard call
  *   4. L9 adaptive continuation if truncated
+ *   5. L11 strip hidden corrections JSON (Phase 2) — zero cost if absent
  *
  * Returns everything needed for the response JSON.
  */
@@ -183,7 +188,6 @@ export async function executeResponsePipeline(input: PipelineInput): Promise<Pip
     };
     usedMultiCall = !multiResult.isFallback;
   } else {
-    // ── Standard single-model call ────────────────────────
     result = await callOracle(routing, messages);
   }
 
@@ -246,9 +250,29 @@ export async function executeResponsePipeline(input: PipelineInput): Promise<Pip
     console.log(`Oracle routed: ${routing.reason} → FALLBACK to ${result.providerId} (${result.responseTime}ms)`);
   }
 
-  // ── Return pipeline result ──────────────────────────────
+  // ══════════════════════════════════════════════════════
+  // LIBERATION 11 PHASE 2: STRIP HIDDEN CORRECTIONS JSON
+  // ══════════════════════════════════════════════════════
+  // parseCorrectionsFromResponse() is a no-op when no <!--CORRECTIONS:-->
+  // block is present — which is 99% of messages. Zero performance cost.
+  //
+  // When present:
+  //   cleanResponse → what the user sees (no JSON)
+  //   corrections   → structured data for refinement-bridge
+
+  const { cleanResponse, corrections: extractedCorrections } =
+    parseCorrectionsFromResponse(responseText);
+
+  if (extractedCorrections) {
+    console.log(
+      `[L11] Corrections extracted: ${extractedCorrections.corrections.length} field(s), ` +
+      `changeType: ${extractedCorrections.changeType}, ` +
+      `correctedTitle: ${extractedCorrections.correctedTitle || 'none'}`
+    );
+  }
+
   return {
-    responseText,
+    responseText: cleanResponse,
     providerId: result.providerId,
     model: result.model,
     responseTime: result.responseTime,
@@ -257,5 +281,6 @@ export async function executeResponsePipeline(input: PipelineInput): Promise<Pip
     didContinue,
     marketData,
     marketItemRef,
+    extractedCorrections,
   };
 }

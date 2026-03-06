@@ -5,8 +5,20 @@
 //   - Added scanProgress state (real-time SSE progress from analyze-stream)
 //   - Added oracleEngagement preference (ambient | guided | conversational)
 //   - Both consumed by OracleThinkingOverlay during analysis wait
+//
+// v2.4 CHANGES — Liberation 11:
+//   - Added OracleAnalysisContext interface (shape Oracle's detector expects)
+//   - Added oracleAnalysisContext — DERIVED from existing lastAnalysisResult.
+//     Zero new state. Auto-updates on scan, history nav, clear.
+//   - Added applyOracleCorrection(correctedItemName, estimatedValue) —
+//     patches lastAnalysisResult AND liveAnalysisResult to the SAME new
+//     object reference so the history useEffect guard
+//     (lastAnalysisResult !== liveAnalysisResult) stays FALSE and
+//     addAnalysisToHistory does NOT fire a duplicate save.
+//   - Added useCallback to React imports.
+//   - ZERO changes to any existing state, actions, effects, or consumers.
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { useAuth } from './AuthContext.js';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
 import { supabase } from '@/lib/supabase';
@@ -103,6 +115,22 @@ export interface ScanProgress {
 }
 // --- END ORACLE THINKING ---
 
+// --- LIBERATION 11: Oracle analysis context shape ---
+// Derived from lastAnalysisResult — not new state.
+// This is exactly what Oracle's refinement intent detector needs to know
+// what item is currently being discussed. Null when no scan is active.
+export interface OracleAnalysisContext {
+  /** The analysis record ID — required by refinement-bridge → refine-analysis */
+  analysisId: string;
+  /** Item name as HYDRA identified it — Oracle corrects against this */
+  itemName: string;
+  /** Estimated value string (matches AnalysisResult.estimatedValue shape) */
+  estimatedValue: string;
+  /** Category for CI Engine routing */
+  category: string;
+}
+// --- END LIBERATION 11 ---
+
 interface AppContextType {
   // Theme state
   theme: Theme;
@@ -162,6 +190,27 @@ interface AppContextType {
   viewHistoryItem: (index: number) => void;
   returnToLiveAnalysis: () => void;
   // --- END CHRONOS ---
+
+  // --- LIBERATION 11 ---
+  /**
+   * Derived from lastAnalysisResult — always in sync, zero manual wiring.
+   * null when no scan is active or result has been cleared.
+   * Read by useOracleChat → useSendMessage → api/oracle/chat.
+   */
+  oracleAnalysisContext: OracleAnalysisContext | null;
+  /**
+   * Called by useOracleChat when Oracle confirms a conversational correction.
+   *
+   * Patches both lastAnalysisResult AND liveAnalysisResult to the SAME new
+   * object so the history useEffect guard
+   * (lastAnalysisResult !== liveAnalysisResult) evaluates FALSE and
+   * addAnalysisToHistory does NOT fire a duplicate save.
+   *
+   * The AnalysisResult card re-renders immediately because useAnalysisData
+   * reads from lastAnalysisResult as its source of truth.
+   */
+  applyOracleCorrection: (correctedItemName: string, estimatedValue: string) => void;
+  // --- END LIBERATION 11 ---
 }
 
 const defaultAppContext: AppContextType = {
@@ -216,6 +265,11 @@ const defaultAppContext: AppContextType = {
   viewHistoryItem: () => {},
   returnToLiveAnalysis: () => {},
   // --- END CHRONOS ---
+
+  // --- LIBERATION 11 DEFAULTS ---
+  oracleAnalysisContext: null,
+  applyOracleCorrection: () => {},
+  // --- END LIBERATION 11 ---
 };
 
 const AppContext = createContext<AppContextType>(defaultAppContext);
@@ -268,6 +322,57 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const { profile, setProfile } = useAuth();
   const { data: session } = supabase.auth.getSession();
+
+  // --- LIBERATION 11: Derive oracleAnalysisContext from lastAnalysisResult ─
+  // Pure derivation — no useState, no useEffect, no new renders.
+  // Recomputes inline whenever lastAnalysisResult changes.
+  // null when no scan active → refinement intent detector guard fires → safe.
+  const oracleAnalysisContext: OracleAnalysisContext | null = lastAnalysisResult
+    ? {
+        analysisId:     lastAnalysisResult.id,
+        itemName:       lastAnalysisResult.itemName,
+        estimatedValue: String(lastAnalysisResult.estimatedValue),
+        category:       lastAnalysisResult.category || 'general',
+      }
+    : null;
+
+  // --- LIBERATION 11: Apply Oracle correction atomically ──────────────────
+  // WHY both lastAnalysisResult AND liveAnalysisResult must be the same ref:
+  //
+  //   The history useEffect fires when:
+  //     lastAnalysisResult && currentAnalysisIndex === null
+  //     && lastAnalysisResult !== liveAnalysisResult   ← reference equality
+  //
+  //   If we only update lastAnalysisResult → new object ref →
+  //   liveAnalysisResult is still the old ref → !== is TRUE →
+  //   addAnalysisToHistory fires → DUPLICATE history entry. Bad.
+  //
+  //   Solution: update both to the same `patched` object inside one
+  //   setLastAnalysisResult call. After the update:
+  //     lastAnalysisResult ref === liveAnalysisResult ref → guard FALSE →
+  //   effect does not fire. The card re-renders because lastAnalysisResult
+  //   changed. useAnalysisData picks up itemName + estimatedValue. Done.
+  const applyOracleCorrection = useCallback((
+    correctedItemName: string,
+    estimatedValue: string,
+  ) => {
+    setLastAnalysisResult(prev => {
+      if (!prev) return null;
+
+      const patched: AnalysisResult = {
+        ...prev,
+        itemName:       correctedItemName || prev.itemName,
+        estimatedValue: estimatedValue    || prev.estimatedValue,
+      };
+
+      // Point liveAnalysisResult at the SAME object so the history effect
+      // guard (lastAnalysisResult !== liveAnalysisResult) stays FALSE.
+      setLiveAnalysisResult(patched);
+
+      return patched;
+    });
+  }, []); // no deps — only touches setters, never reads state directly
+  // --- END LIBERATION 11 ---
 
   // --- ORACLE THINKING: Persist engagement preference ---
   const setOracleEngagement = (mode: OracleEngagement) => {
@@ -422,7 +527,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [session, historyFilter]);
 
-  // When a new analysis is completed, add it to history
+  // When a new analysis is completed, add it to history.
+  // GUARD: lastAnalysisResult !== liveAnalysisResult prevents double-saves.
+  // applyOracleCorrection updates both to the same object ref so this
+  // guard is FALSE after a conversational correction — no duplicate entry.
   useEffect(() => {
     if (lastAnalysisResult && currentAnalysisIndex === null && lastAnalysisResult !== liveAnalysisResult) {
       addAnalysisToHistory(lastAnalysisResult);
@@ -547,6 +655,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     viewHistoryItem,
     returnToLiveAnalysis,
     // --- END CHRONOS ---
+
+    // --- LIBERATION 11 ---
+    oracleAnalysisContext,
+    applyOracleCorrection,
+    // --- END LIBERATION 11 ---
   };
 
   return (
