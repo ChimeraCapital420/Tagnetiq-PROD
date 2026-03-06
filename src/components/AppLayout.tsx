@@ -5,30 +5,36 @@
 //   Having it in BOTH files mounted TWO instances → two camera streams → black screen.
 //   DualScanner lives in App.tsx only. Do NOT re-add it here.
 //
-// Sprint E: data-tour="voice-settings" on OracleVoiceButton wrapper
 // Sprint E+: useAnalytics for scanner open tracking
 // Sprint F: useBluetoothManager lifted here to wire metaGlasses → nav + shop sheet
 // Sprint F: SmartGlassesShopSheet — async pair flow, sheet stays open during pairing
+//
+// v4.1 — OracleBar replaces OracleVoiceButton:
+//   REMOVED: OracleVoiceButton (blue circle, always-on, no context awareness)
+//   REMOVED: data-tour="voice-settings" wrapper (tied to OracleVoiceButton)
+//   ADDED:   OracleBar — slim 52px persistent bar at bottom of every screen.
+//            Context-aware chips, voice-first, hides only on /oracle.
+//   CHANGED: <main> gets pb-[52px] when user is logged in so page content
+//            is never hidden behind the bar.
 
 import React, { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
 import ResponsiveNavigation from './ResponsiveNavigation.js';
 import NewMarketingNavigation from './NewMarketingNavigation.js';
 import OracleVisualizer from './OracleVisualizer.js';
 import OracleResponseDisplay from './OracleResponseDisplay.js';
-import OracleVoiceButton from './oracle/OracleVoiceButton';
+import OracleBar from './OracleBar';
 import DevicePairingModal from './DevicePairingModal.js';
 import SmartGlassesShopSheet from './SmartGlassesShopSheet';
 import { useBluetoothManager } from '@/hooks/useBluetoothManager';
 import { useAnalytics } from '@/hooks/useAnalytics';
 
 const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const appContext = useAppContext();
   const location = useLocation();
-  const navigate = useNavigate();
   const [isDevicePairingOpen, setIsDevicePairingOpen] = useState(false);
   const [isGlassesShopOpen, setIsGlassesShopOpen] = useState(false);
   const { trackFeature } = useAnalytics();
@@ -40,14 +46,10 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const showAppNav = user && !isHomePage;
   const showMarketingNav = !user || isHomePage;
 
-  const handleScannerOpen = () => {
-    trackFeature('scanner_open');
-  };
-
   // Track scanner opens via context watcher
   React.useEffect(() => {
     if (appContext.isScannerOpen) {
-      handleScannerOpen();
+      trackFeature('scanner_open');
     }
   }, [appContext.isScannerOpen]);
 
@@ -70,9 +72,6 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
         onClose={() => setIsDevicePairingOpen(false)}
       />
 
-      {/* Smart Glasses Shop Sheet — pair flow + affiliate links
-          Sheet manages its own lifecycle during async pairing.
-          Passes metaGlasses state so sheet can show connection status. */}
       <SmartGlassesShopSheet
         isOpen={isGlassesShopOpen}
         onClose={() => setIsGlassesShopOpen(false)}
@@ -81,20 +80,24 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
         onForgetGlasses={bluetooth.forgetMetaGlasses}
       />
 
-      <main className={showAppNav ? "pt-14" : ""}>
+      {/* pb-[52px] when logged in — OracleBar is 52px fixed at bottom.
+          Without this, the bar covers the last ~52px of every page. */}
+      <main className={[
+        showAppNav ? 'pt-14' : '',
+        user ? 'pb-[52px]' : '',
+      ].filter(Boolean).join(' ')}>
         {children}
       </main>
 
-      {/* Oracle UI Components */}
+      {/* Oracle UI — only for authenticated users */}
       {user && (
         <>
           <OracleVisualizer />
           <OracleResponseDisplay />
-          {profile?.settings?.tts_enabled && (
-            <div data-tour="voice-settings">
-              <OracleVoiceButton />
-            </div>
-          )}
+          {/* OracleBar replaces OracleVoiceButton.
+              Slim persistent bar. Always available. Never intrusive.
+              Self-hides on /oracle. Voice-first with permission gate. */}
+          <OracleBar />
         </>
       )}
     </div>
