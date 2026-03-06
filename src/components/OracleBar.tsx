@@ -166,9 +166,9 @@ const OracleBar: React.FC = () => {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
 
-  // Hide on /oracle — user is already there
+  // All hooks must run before any conditional return — Rules of Hooks.
+  // isOnOracle is computed here but the return null is AFTER all hooks.
   const isOnOracle = location.pathname.startsWith('/oracle');
-  if (isOnOracle) return null;
 
   const itemName = oracleAnalysisContext?.itemName ?? null;
   const estimatedValue = oracleAnalysisContext?.estimatedValue ?? null;
@@ -240,6 +240,11 @@ const OracleBar: React.FC = () => {
       handleSend();
     }
   };
+
+  // ── Early return AFTER all hooks ──────────────────────────────────
+  // Rules of Hooks: never return before a hook call.
+  // All useState/useRef/useVoiceInput/useCallback/useEffect are above.
+  if (isOnOracle) return null;
 
   const displayText = inputText || voice.interimTranscript || '';
   const canSend = displayText.trim().length > 0;
