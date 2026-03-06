@@ -12,6 +12,24 @@
 //   - Visual evidence is passed to all 3 vision AI providers
 //   - The 1978 copyright stamp / PSA label / brand marking can now be
 //     shown directly to HYDRA instead of described in words
+//
+// v2.1 — Mobile camera fix:
+//   BUG: On Android Chrome, combining capture="environment" + multiple
+//   on the same <input> causes the browser to silently drop the capture
+//   attribute and open the file picker instead of the camera. This is a
+//   known Android WebView/Chrome bug — multiple signals "I want many files"
+//   which conflicts with the single-shot camera flow.
+//
+//   FIX: Two completely separate hidden inputs:
+//     cameraInputRef  — capture="environment", NO multiple (single shot)
+//     fileInputRef    — multiple, NO capture (file picker, multi-select)
+//
+//   The "Take Photo" button triggers cameraInputRef. After each capture
+//   the input value is cleared so the same shot can be retaken if needed.
+//   Users wanting multiple camera shots tap the button again — matches
+//   native mobile camera UX exactly.
+//
+//   "Choose File" triggers fileInputRef — unchanged, multi-select works.
 
 import React, { useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
@@ -116,8 +134,12 @@ const RefineDialog: React.FC<RefineDialogProps> = ({
   isSubmitting,
   onSubmit,
 }) => {
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // v2.1: Two separate refs — never combine capture + multiple on one input.
+  //   cameraInputRef — capture="environment", single shot, no multiple.
+  //   fileInputRef   — multiple, no capture, standard file picker.
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [compressing, setCompressing] = React.useState(false);
   const [compressionError, setCompressionError] = React.useState<string | null>(null);
 
@@ -214,17 +236,27 @@ const RefineDialog: React.FC<RefineDialogProps> = ({
               proves your correction. All 3 vision AIs will analyze your photos.
             </p>
 
-            {/* Hidden inputs — camera and file picker */}
+            {/* ── Hidden inputs — MUST stay separate (v2.1 fix) ────────── */}
+            {/*
+              CAMERA: capture="environment" with NO multiple.
+              Adding multiple to this input breaks camera on Android —
+              the browser drops capture and opens the file picker instead.
+              Single-shot by design. User taps "Take Photo" again for more.
+            */}
             <input
               ref={cameraInputRef}
               type="file"
               accept="image/*"
               capture="environment"
-              multiple
               className="hidden"
               onChange={handleFileChange}
               disabled={!canAddMore || isSubmitting}
             />
+            {/*
+              FILE PICKER: multiple with NO capture.
+              Standard multi-select from photo library or file system.
+              Completely separate from the camera input above.
+            */}
             <input
               ref={fileInputRef}
               type="file"
@@ -317,7 +349,7 @@ const RefineDialog: React.FC<RefineDialogProps> = ({
                   </div>
                 ))}
 
-                {/* Add more slot */}
+                {/* Add more slot — opens file picker (not camera) for consistency */}
                 {canAddMore && (
                   <button
                     type="button"
@@ -351,13 +383,19 @@ const RefineDialog: React.FC<RefineDialogProps> = ({
             <div className="rounded-md bg-muted/50 border px-3 py-2.5 text-xs text-muted-foreground">
               {refinementImages.length > 0 && refinementText.trim().length > 0 ? (
                 <>
-                  HYDRA will re-analyze using your <strong className="text-foreground">text correction</strong> and{' '}
-                  <strong className="text-foreground">{refinementImages.length} photo{refinementImages.length > 1 ? 's' : ''}</strong>.
+                  HYDRA will re-analyze using your{' '}
+                  <strong className="text-foreground">text correction</strong> and{' '}
+                  <strong className="text-foreground">
+                    {refinementImages.length} photo{refinementImages.length > 1 ? 's' : ''}
+                  </strong>.
                   Visual evidence takes priority over the original scan.
                 </>
               ) : refinementImages.length > 0 ? (
                 <>
-                  HYDRA will re-analyze your <strong className="text-foreground">{refinementImages.length} evidence photo{refinementImages.length > 1 ? 's' : ''}</strong>.
+                  HYDRA will re-analyze your{' '}
+                  <strong className="text-foreground">
+                    {refinementImages.length} evidence photo{refinementImages.length > 1 ? 's' : ''}
+                  </strong>.
                   Adding a text description improves accuracy further.
                 </>
               ) : (

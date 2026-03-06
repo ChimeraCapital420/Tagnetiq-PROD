@@ -1,6 +1,23 @@
 // FILE: src/features/boardroom/hooks/useVoiceInput.ts
 // Voice input hook using Web Speech API
 // Supports continuous listening, interim results, and multiple callback modes
+//
+// v2.0 — Microphone permission fix:
+//   Web Speech API does NOT reliably trigger the OS permission prompt on
+//   mobile (Android Chrome, iOS Safari). The browser silently fails with
+//   NotAllowedError instead of showing the "Allow microphone?" dialog.
+//
+//   Fix: explicitly call navigator.mediaDevices.getUserMedia({ audio: true })
+//   BEFORE starting recognition. This forces the OS permission dialog.
+//   Once the user grants access we immediately release the stream —
+//   recognition manages its own audio capture internally.
+//
+//   This pattern is the same used by Google Meet, WhatsApp Web, and every
+//   production voice app. Without it, the first mic tap always fails on
+//   a fresh install or after permissions are reset.
+//
+//   startListening() is now async. The public API (toggleListening etc.)
+//   wraps it transparently — no callers need to change.
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 
@@ -96,7 +113,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     if (!isSupported) return;
 
     const recognition = new SpeechRecognition();
-    
+
     // Configure
     recognition.continuous = continuous;
     recognition.interimResults = interimResults;
@@ -120,9 +137,9 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
 
     recognition.onerror = (event: any) => {
       setIsProcessing(false);
-      
+
       let errorMessage: string;
-      
+
       switch (event.error) {
         case 'no-speech':
           errorMessage = 'No speech detected. Please try again.';
@@ -131,7 +148,10 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
           errorMessage = 'No microphone found. Please connect one.';
           break;
         case 'not-allowed':
-          errorMessage = 'Microphone access denied. Please enable permissions.';
+          // v2.0: This should no longer fire in normal flow because we gate
+          // on getUserMedia first. If it does fire, it means the user denied
+          // the OS prompt. Give a direct instruction, not a vague message.
+          errorMessage = 'Microphone blocked. Go to Settings → Site Settings → Microphone and allow this app.';
           break;
         case 'network':
           errorMessage = 'Network error. Please check your connection.';
@@ -149,13 +169,13 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
         default:
           errorMessage = `Speech recognition error: ${event.error}`;
       }
-      
+
       if (errorMessage) {
         setError(errorMessage);
         onError?.(errorMessage);
         console.warn('Speech recognition error:', event.error);
       }
-      
+
       setIsListening(false);
     };
 
@@ -188,8 +208,8 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
         });
       } else if (interimText) {
         // For interim results, call onTranscript with combined text
-        const combinedText = transcriptRef.current 
-          ? `${transcriptRef.current} ${interimText}`.trim() 
+        const combinedText = transcriptRef.current
+          ? `${transcriptRef.current} ${interimText}`.trim()
           : interimText.trim();
         onTranscript?.(combinedText);
       }
@@ -223,8 +243,26 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     };
   }, [continuous, interimResults, language, isSupported]);
 
-  // Start listening
-  const startListening = useCallback(() => {
+  // ── Start listening ──────────────────────────────────────────────────────
+  //
+  // v2.0: Gate on getUserMedia BEFORE starting recognition.
+  //
+  // WHY: Web Speech API on Android Chrome and iOS Safari does not reliably
+  // trigger the OS "Allow microphone?" dialog when you call recognition.start()
+  // directly. On a fresh install or after permission reset, it silently fires
+  // onerror with 'not-allowed' instead of showing the prompt. The user never
+  // gets a chance to grant access.
+  //
+  // HOW: Call getUserMedia({ audio: true }) first. This IS guaranteed to show
+  // the OS dialog. Once the user taps Allow, we immediately stop all tracks
+  // (we don't need the stream — recognition manages its own capture) and then
+  // call recognition.start(). The permission is now cached by the browser for
+  // the session, so subsequent taps skip the dialog entirely.
+  //
+  // WHAT IF getUserMedia fails: The user denied or the device has no mic.
+  // We set a clear error and return early. recognition.start() never fires.
+  //
+  const startListening = useCallback(async () => {
     if (!isSupported) {
       setError('Speech recognition not supported in this browser');
       return;
@@ -232,6 +270,36 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
 
     if (!recognitionRef.current) return;
 
+    // ── Permission gate (mobile-first) ──────────────────
+    if (navigator.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Permission granted. Release the stream immediately —
+        // Web Speech API manages its own audio capture internally.
+        stream.getTracks().forEach(track => track.stop());
+      } catch (err: any) {
+        let msg: string;
+
+        if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+          msg = 'Microphone blocked. Go to Settings → Site Settings → Microphone and allow this app.';
+        } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
+          msg = 'No microphone found on this device.';
+        } else if (err?.name === 'NotReadableError') {
+          msg = 'Microphone is in use by another app. Close it and try again.';
+        } else {
+          msg = 'Could not access microphone. Check device permissions.';
+        }
+
+        setError(msg);
+        onError?.(msg);
+        console.warn('[useVoiceInput] getUserMedia failed:', err?.name, err?.message);
+        return;
+      }
+    }
+    // Fallback: getUserMedia not available (old browser / insecure context).
+    // Try recognition anyway — the onerror handler will catch it.
+
+    // ── Start recognition ────────────────────────────────
     try {
       setError(null);
       setIsProcessing(true);
@@ -239,14 +307,15 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     } catch (err: any) {
       // Handle "already started" error
       if (err.name === 'InvalidStateError') {
-        console.warn('Recognition already started');
+        console.warn('[useVoiceInput] Recognition already started');
+        setIsProcessing(false);
       } else {
-        console.error('Failed to start recognition:', err);
+        console.error('[useVoiceInput] Failed to start recognition:', err);
         setError('Failed to start voice recognition');
         setIsProcessing(false);
       }
     }
-  }, [isSupported]);
+  }, [isSupported, onError]);
 
   // Stop listening
   const stopListening = useCallback(() => {
@@ -261,12 +330,12 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     setIsProcessing(false);
   }, []);
 
-  // Toggle listening
+  // Toggle listening — wraps async startListening transparently
   const toggleListening = useCallback(() => {
     if (isListening) {
       stopListening();
     } else {
-      startListening();
+      void startListening();
     }
   }, [isListening, startListening, stopListening]);
 
@@ -291,7 +360,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     error,
     transcript,
     interimTranscript,
-    startListening,
+    startListening: () => { void startListening(); },
     stopListening,
     toggleListening,
     clearTranscript,
