@@ -17,12 +17,20 @@
 //     addAnalysisToHistory does NOT fire a duplicate save.
 //   - Added useCallback to React imports.
 //   - ZERO changes to any existing state, actions, effects, or consumers.
+//
+// v2.5 CHANGES — Trust Escalation:
+//   - Added trustLevel (1–4), trustLevelName, isEstateTrust to context.
+//   - Derived via useTrustLevel() — ZERO new useState calls.
+//     useTrustLevel reads AuthContext.profile + useBehavioralSignals.
+//   - Zero server calls. Runs entirely on device.
+//   - FROZEN: All v2.4 / Liberation 11 code untouched.
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { useAuth } from './AuthContext.js';
 import { ArenaWelcomeAlert } from '@/components/arena/ArenaWelcomeAlert';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
+import { useTrustLevel } from '@/hooks/useTrustLevel'; // v2.5
 
 type Theme = 'executive' | 'matrix' | 'safari' | 'darkKnight' | 'cyberpunk' | 'ocean' | 'forest' | 'sunset';
 type ThemeMode = 'light' | 'dark';
@@ -211,6 +219,15 @@ interface AppContextType {
    */
   applyOracleCorrection: (correctedItemName: string, estimatedValue: string) => void;
   // --- END LIBERATION 11 ---
+
+  // --- TRUST ESCALATION v2.5 ---
+  /** Computed trust level 1–4. Derived from profile + behavioral signals. Zero server calls. */
+  trustLevel: number;
+  /** Human-readable level name (Explorer, Dealer, Pro, Autonomous) */
+  trustLevelName: string;
+  /** Estate persona active — Oracle uses softer language, no urgency */
+  isEstateTrust: boolean;
+  // --- END TRUST ESCALATION ---
 }
 
 const defaultAppContext: AppContextType = {
@@ -270,6 +287,12 @@ const defaultAppContext: AppContextType = {
   oracleAnalysisContext: null,
   applyOracleCorrection: () => {},
   // --- END LIBERATION 11 ---
+
+  // --- TRUST ESCALATION DEFAULTS ---
+  trustLevel: 1,
+  trustLevelName: 'Explorer',
+  isEstateTrust: false,
+  // --- END TRUST ESCALATION ---
 };
 
 const AppContext = createContext<AppContextType>(defaultAppContext);
@@ -322,6 +345,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const { profile, setProfile } = useAuth();
   const { data: session } = supabase.auth.getSession();
+
+  // --- TRUST ESCALATION v2.5 ---
+  // useTrustLevel calls useBehavioralSignals internally.
+  // Zero new useState. Zero server calls.
+  const trustResult = useTrustLevel();
+  // --- END TRUST ESCALATION ---
 
   // --- LIBERATION 11: Derive oracleAnalysisContext from lastAnalysisResult ─
   // Pure derivation — no useState, no useEffect, no new renders.
@@ -660,6 +689,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     oracleAnalysisContext,
     applyOracleCorrection,
     // --- END LIBERATION 11 ---
+
+    // --- TRUST ESCALATION v2.5 ---
+    trustLevel: trustResult.level,
+    trustLevelName: trustResult.name,
+    isEstateTrust: trustResult.isEstate,
+    // --- END TRUST ESCALATION ---
   };
 
   return (

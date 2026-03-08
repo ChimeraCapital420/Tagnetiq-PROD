@@ -174,7 +174,14 @@ export function assembleSystemPrompt(input: PromptAssemblyInput): string {
 //             messages, Oracle sees the accumulated context and waits
 //             for sufficient specificity before firing HYDRA.
 //
-// ZERO LOGIC CHANGES to Steps 1–8. Purely additive.
+// v11.2: Trust Escalation — Added Step 11:
+//   Step 11 — Trust level context injection.
+//             Oracle knows the user's trust level (1–4) and adapts
+//             personality, complexity, options, language, urgency cues.
+//             Estate persona override already baked into trustInstructions.
+//             Cost: $0 — purely string append, zero new server calls.
+//
+// ZERO LOGIC CHANGES to Steps 1–10. Purely additive.
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { ChatContext } from './types.js';
@@ -226,6 +233,12 @@ export interface PromptAssemblyInput {
   clientCorrections?: any | null;
   /** v11.1 L11 Phase 4: Hunt mode accumulation buffer */
   huntBuffer?: HuntBuffer | null;
+  /** v11.2 Trust Escalation: User trust level 1–4 */
+  trustLevel?: number | null;
+  /** v11.2 Trust Escalation: Human-readable trust level name */
+  trustLevelName?: string | null;
+  /** v11.2 Trust Escalation: Full instruction block from trust-level.ts */
+  trustInstructions?: string | null;
 }
 
 // =============================================================================
@@ -340,6 +353,33 @@ RULES:
 }
 
 // =============================================================================
+// TRUST CONTEXT BLOCK (Trust Escalation v11.2 — Step 11)
+// =============================================================================
+
+/**
+ * Inject trust level context into the system prompt.
+ *
+ * trustInstructions already contains the estate persona override when active
+ * (baked in by trust-level.ts calculateTrustLevel). No separate flag needed.
+ *
+ * Cost: $0. Pure string append. Zero server calls.
+ */
+function buildTrustContextBlock(
+  trustLevel: number,
+  trustLevelName: string,
+  trustInstructions: string,
+): string {
+  return `
+
+================================================================================
+USER TRUST LEVEL: ${trustLevel} (${trustLevelName})
+================================================================================
+${trustInstructions}
+================================================================================
+`;
+}
+
+// =============================================================================
 // ASSEMBLER
 // =============================================================================
 
@@ -357,6 +397,7 @@ RULES:
  *   8.  Inject provider report context (v11.0)
  *   9.  Inject REFINEMENT MODE block (v11.1 L11 Phase 1)
  *   10. Inject Hunt Mode buffer (v11.1 L11 Phase 4)
+ *   11. Inject Trust Level context (v11.2 Trust Escalation)
  *
  * Returns the fully assembled system prompt string.
  */
@@ -368,6 +409,9 @@ export function assembleSystemPrompt(input: PromptAssemblyInput): string {
     refinementIntent,
     clientCorrections,
     huntBuffer,
+    trustLevel,
+    trustLevelName,
+    trustInstructions,
   } = input;
 
   const {
@@ -455,6 +499,16 @@ export function assembleSystemPrompt(input: PromptAssemblyInput): string {
   // Oracle uses this to pace HYDRA calls (minimum server cost).
   if (huntBuffer && huntBuffer.baseIdentity) {
     systemPrompt += buildHuntBufferBlock(huntBuffer);
+  }
+
+  // ── 11. Trust Level context (v11.2 Trust Escalation) ────
+  // Injects only when trust data is present in the request body.
+  // Client sends trustLevel + trustInstructions from AppContext.
+  // Oracle adapts personality, complexity, and tone to match user's level.
+  // Estate persona override is already baked into trustInstructions by
+  // trust-level.ts — no separate flag needed here.
+  if (trustLevel && trustLevelName && trustInstructions) {
+    systemPrompt += buildTrustContextBlock(trustLevel, trustLevelName, trustInstructions);
   }
 
   return systemPrompt;
