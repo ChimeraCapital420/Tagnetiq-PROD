@@ -16,6 +16,11 @@
 //            Context-aware chips, voice-first, hides only on /oracle.
 //   CHANGED: <main> gets pb-[52px] when user is logged in so page content
 //            is never hidden behind the bar.
+//
+// v4.2 — Trust Escalation: GuidedOverlay wired:
+//   ADDED: GuidedOverlay — spotlight onboarding for Trust Level 1 users.
+//          Renders after OracleBar. Self-hides at Level 2+. No props needed —
+//          reads trustLevel from AppContext internally.
 
 import React, { useState } from 'react';
 import { useLocation } from 'react-router-dom';
@@ -26,6 +31,7 @@ import NewMarketingNavigation from './NewMarketingNavigation.js';
 import OracleVisualizer from './OracleVisualizer.js';
 import OracleResponseDisplay from './OracleResponseDisplay.js';
 import OracleBar from './OracleBar';
+import GuidedOverlay from './onboarding/GuidedOverlay'; // v4.2
 import DevicePairingModal from './DevicePairingModal.js';
 import SmartGlassesShopSheet from './SmartGlassesShopSheet';
 import { useBluetoothManager } from '@/hooks/useBluetoothManager';
@@ -98,6 +104,10 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
               Slim persistent bar. Always available. Never intrusive.
               Self-hides on /oracle. Voice-first with permission gate. */}
           <OracleBar />
+          {/* v4.2: GuidedOverlay — Trust Level 1 spotlight onboarding.
+              Reads trustLevel from AppContext. Self-hides at Level 2+.
+              No props needed. Zero impact on Level 3+ users. */}
+          <GuidedOverlay />
         </>
       )}
     </div>

@@ -14,6 +14,13 @@
 // v10.3 CHANGES:
 //   - RefineDialog receives refinementImages + onImagesChange props
 //     (state lives in useFeedback v1.2, wired here with 2 new props)
+//
+// v10.4 CHANGES — Trust Escalation:
+//   - ActionFork imported and rendered after NexusDecisionCard dismissal
+//     for Trust Level 1–2 users. Trust Level 3+ continue to see the
+//     existing ActionHub. NexusDecisionCard logic untouched.
+//   - useAppContext read for trustLevel to decide which post-scan UI shows.
+//   - ZERO changes to any existing imports, hooks, or render logic.
 
 import React, { useState, Component, ErrorInfo, ReactNode } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
@@ -40,6 +47,7 @@ import {
   RefineDialog,
   EbayMarketDisplay,
 } from './components/index.js';
+import ActionFork from './ActionFork.js'; // v10.4
 
 // =============================================================================
 // ERROR BOUNDARY
@@ -93,7 +101,7 @@ class AnalysisErrorBoundary extends Component<
 // =============================================================================
 
 const AnalysisResultContent: React.FC = () => {
-  const { setLastAnalysisResult, deleteFromHistory } = useAppContext();
+  const { setLastAnalysisResult, deleteFromHistory, trustLevel } = useAppContext(); // v10.4: trustLevel
   // v10.2: Added `session` — needed for Bearer token on argos/watch calls
   const { user, session } = useAuth();
   const { raw, data, history, ebayData, marketSources } = useAnalysisData();
@@ -143,6 +151,10 @@ const AnalysisResultContent: React.FC = () => {
       toast.error('Could not add to watchlist. Try again.');
     }
   };
+
+  // v10.4: ActionFork shown instead of ActionHub for Trust Level 1–2 users
+  // after Nexus is dismissed (or absent). Level 3+ keep the existing ActionHub.
+  const showActionFork = !history.isViewingHistory && (trustLevel ?? 3) <= 2;
 
   return (
     <>
@@ -216,7 +228,7 @@ const AnalysisResultContent: React.FC = () => {
 
         {/* — Footer: Actions + Feedback — */}
         <CardFooter className="flex flex-col gap-4">
-          {/* Nexus Decision Tree OR fallback Action Hub */}
+          {/* Nexus Decision Tree OR ActionFork (L1–2) OR ActionHub (L3+) */}
           {!history.isViewingHistory && data.nexusData && !nexusDismissed ? (
             <NexusDecisionCard
               nexus={data.nexusData}
@@ -227,7 +239,20 @@ const AnalysisResultContent: React.FC = () => {
               onDismiss={() => setNexusDismissed(true)}
               onScanMore={handleNexusScanMore}
             />
+          ) : showActionFork ? (
+            /* v10.4: Trust Level 1–2 — adaptive single/dual action */
+            <ActionFork
+              result={raw}
+              onList={handleNexusList}
+              onVault={handleNexusVault}
+              onWatch={handleNexusWatch}
+              onAskOracle={() => {}} // OracleBar handles this
+              onScanMore={handleNexusScanMore}
+              onDeleteFromHistory={handleDeleteFromHistory}
+              isViewingHistory={history.isViewingHistory}
+            />
           ) : (
+            /* Trust Level 3+ — full ActionHub */
             <ActionHub
               analysisResult={raw}
               marketplaceItem={data.marketplaceItem}
