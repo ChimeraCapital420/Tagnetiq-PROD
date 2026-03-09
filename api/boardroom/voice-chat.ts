@@ -4,7 +4,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { buildBoardMemberPrompt } from './lib/prompt-builder';
+import { buildBoardMemberPrompt } from './lib/prompt-builder.js';
 
 export const config = {
   maxDuration: 60,

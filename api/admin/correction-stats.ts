@@ -11,20 +11,15 @@
 // AUTH: Same pattern as api/admin/provider-benchmarks.ts
 //   Bearer token → supabase.auth.getUser() → profiles.role === 'admin'
 //
-// GET /api/admin/correction-stats
+// TABLE NAMES:
+//   hydra_corrections          — all correction + confirmation rows
+//   hydra_correction_patterns  — aggregated patterns (candidate/confirmed/retired)
+//   provider_benchmarks        — provider performance data
 //
-// RESPONSE:
-//   {
-//     corrections_today:        number,
-//     corrections_this_week:    number,
-//     confirmations_today:      number,
-//     confirmations_this_week:  number,
-//     top_categories:           [{category, count}],
-//     confirmed_patterns:       number,
-//     candidate_patterns:       number,
-//     provider_error_leaders:   [{provider, error_rate}],
-//     as_of:                    ISO timestamp
-//   }
+// Corrections:    correction_type != 'confirmed_accurate'
+// Confirmations:  correction_type  = 'confirmed_accurate'
+//
+// GET /api/admin/correction-stats
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -102,51 +97,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       providerErrors,
     ] = await Promise.allSettled([
 
-      // corrections_today
+      // corrections_today (everything that is NOT a confirmation)
       supabase
-        .from('correction_signals')
+        .from('hydra_corrections')
         .select('id', { count: 'exact', head: true })
+        .neq('correction_type', 'confirmed_accurate')
         .gte('created_at', todayStart.toISOString()),
 
       // corrections_this_week
       supabase
-        .from('correction_signals')
+        .from('hydra_corrections')
         .select('id', { count: 'exact', head: true })
+        .neq('correction_type', 'confirmed_accurate')
         .gte('created_at', weekStart.toISOString()),
 
-      // confirmations_today
+      // confirmations_today (only confirmed_accurate rows)
       supabase
-        .from('confirmation_signals')
+        .from('hydra_corrections')
         .select('id', { count: 'exact', head: true })
+        .eq('correction_type', 'confirmed_accurate')
         .gte('created_at', todayStart.toISOString()),
 
       // confirmations_this_week
       supabase
-        .from('confirmation_signals')
+        .from('hydra_corrections')
         .select('id', { count: 'exact', head: true })
+        .eq('correction_type', 'confirmed_accurate')
         .gte('created_at', weekStart.toISOString()),
 
-      // top_categories — from correction_patterns aggregated table
+      // top_categories — from hydra_correction_patterns aggregated table
       supabase
-        .from('correction_patterns')
+        .from('hydra_correction_patterns')
         .select('category, occurrence_count')
         .order('occurrence_count', { ascending: false })
         .limit(10),
 
       // confirmed_patterns (status = 'confirmed')
       supabase
-        .from('correction_patterns')
+        .from('hydra_correction_patterns')
         .select('id', { count: 'exact', head: true })
         .eq('status', 'confirmed'),
 
       // candidate_patterns (status = 'candidate')
       supabase
-        .from('correction_patterns')
+        .from('hydra_correction_patterns')
         .select('id', { count: 'exact', head: true })
         .eq('status', 'candidate'),
 
       // provider_error_leaders — providers with highest error rates from benchmarks
-      // Uses provider_benchmarks table (same source as provider-benchmarks.ts)
       supabase
         .from('provider_benchmarks')
         .select('provider_id, error_rate')

@@ -4,7 +4,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { SEO_CONFIG } from './config';
+import { SEO_CONFIG } from './config.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
