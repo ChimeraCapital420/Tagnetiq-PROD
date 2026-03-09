@@ -28,6 +28,12 @@
 //
 //   Hunt endpoint accepts: { image: "base64...", deviceType: "glasses" }
 //   Hunt endpoint returns: { verdict, itemName, estimatedValue, reason, ... }
+//
+// v13.1: DIAGNOSTIC — Added safeCapture() wrapper with try/catch around
+//   captureGlassesFrame(). v13 had NO catch block — if the Capacitor plugin
+//   threw instead of returning null, the error was silently swallowed. Now
+//   every capture failure shows the REAL error message in an 8-second toast.
+//   Also extracted handleCommandCapture() to DRY up the Commands tab.
 
 import React, { useCallback, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -224,7 +230,35 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
   }, [session?.access_token]);
 
   // ═══════════════════════════════════════════════════════════
-  // Capture + Analyze handlers (v13 wired)
+  // v13.1: Safe capture wrapper — shows REAL errors
+  //
+  // v13 had NO catch block around captureGlassesFrame(). If the
+  // Capacitor plugin threw (instead of returning null), the error
+  // was silently swallowed. This wrapper catches, logs, and shows
+  // the actual error message in an 8-second toast for diagnosis.
+  // ═══════════════════════════════════════════════════════════
+
+  const safeCapture = useCallback(async (): Promise<CapturedFrame | null> => {
+    try {
+      console.log('[Glasses v13.1] captureGlassesFrame() calling...');
+      const frame = await captureGlassesFrame();
+      if (frame) {
+        console.log('[Glasses v13.1] Got frame:', frame.width, 'x', frame.height, 'base64 length:', frame.base64?.length);
+      } else {
+        console.warn('[Glasses v13.1] captureGlassesFrame() returned null/undefined');
+      }
+      return frame;
+    } catch (err: any) {
+      // THIS is the v13.1 diagnostic. v13 had no catch here.
+      const msg = err?.message || err?.toString?.() || 'Unknown capture error';
+      console.error('[Glasses v13.1] captureGlassesFrame() THREW:', msg, err);
+      toast.error('Capture error', { description: msg, duration: 8000 });
+      return null;
+    }
+  }, [captureGlassesFrame]);
+
+  // ═══════════════════════════════════════════════════════════
+  // Capture + Analyze handlers (v13 wired, v13.1 safe)
   // ═══════════════════════════════════════════════════════════
 
   // v12 FIX: Request camera permission THEN start session.
@@ -255,13 +289,13 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
     await stopGlassesSession();
   }, [stopGlassesSession]);
 
-  // v13: Single capture now calls analyzeImage() directly
+  // v13.1: Single capture uses safeCapture() wrapper
   const handleSingleCapture = useCallback(async () => {
     if (isCapturing || isAnalyzing) return;
     setIsCapturing(true);
 
     try {
-      const frame = await captureGlassesFrame();
+      const frame = await safeCapture();
       if (frame) {
         setLastCapture({ ...frame, timestamp: Date.now() });
 
@@ -271,28 +305,40 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
         // Also fire parent callback if provided (backward compat)
         onCaptureItem?.(frame.base64);
       } else {
-        toast.error('Capture failed \u2014 try again');
+        // safeCapture already showed a toast if it threw.
+        // This branch = returned null without throwing (plugin said "no frame").
+        toast.error('Capture returned empty \u2014 try again');
       }
+    } catch (err: any) {
+      // Catch anything analyzeImage or onCaptureItem might throw
+      console.error('[Glasses v13.1] handleSingleCapture outer error:', err);
+      toast.error('Capture pipeline error', { description: err?.message || 'Unknown' });
     } finally {
       setIsCapturing(false);
     }
-  }, [captureGlassesFrame, analyzeImage, onCaptureItem, isCapturing, isAnalyzing]);
+  }, [safeCapture, analyzeImage, onCaptureItem, isCapturing, isAnalyzing]);
 
+  // v13.1: Batch capture uses safeCapture() wrapper
   const handleBatchCapture = useCallback(async () => {
     if (isCapturing || batchImages.length >= MAX_BATCH_SIZE) return;
     setIsCapturing(true);
 
     try {
-      const frame = await captureGlassesFrame();
+      const frame = await safeCapture();
       if (frame) {
         setBatchImages(prev => [...prev, frame.base64]);
         setLastCapture({ ...frame, timestamp: Date.now() });
         toast.info(`Batch: ${batchImages.length + 1} items`);
+      } else {
+        toast.error('Batch capture returned empty');
       }
+    } catch (err: any) {
+      console.error('[Glasses v13.1] handleBatchCapture error:', err);
+      toast.error('Batch capture error', { description: err?.message || 'Unknown' });
     } finally {
       setIsCapturing(false);
     }
-  }, [captureGlassesFrame, batchImages.length, isCapturing]);
+  }, [safeCapture, batchImages.length, isCapturing]);
 
   // v13: Batch process calls hunt with images array
   const handleFinishBatch = useCallback(async () => {
@@ -332,7 +378,7 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
       // Also fire parent callback if provided
       onBatchCapture?.(batchImages);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('[Glasses] Batch hunt failed:', error);
       toast.error('Connection error during batch processing');
     } finally {
@@ -347,7 +393,7 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
     setLastCapture(null);
   }, []);
 
-  // v13: Continuous mode calls analyzeImage per frame
+  // v13.1: Continuous mode uses safeCapture() wrapper
   const handleToggleContinuous = useCallback(() => {
     if (isContinuous) {
       if (continuousRef.current) {
@@ -361,7 +407,7 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
       toast.success('Continuous capture started');
 
       continuousRef.current = setInterval(async () => {
-        const frame = await captureGlassesFrame();
+        const frame = await safeCapture();
         if (frame) {
           setLastCapture({ ...frame, timestamp: Date.now() });
           // v13: Each frame goes to hunt API
@@ -370,7 +416,17 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
         }
       }, CONTINUOUS_INTERVAL_MS);
     }
-  }, [isContinuous, captureGlassesFrame, analyzeImage, onCaptureItem]);
+  }, [isContinuous, safeCapture, analyzeImage, onCaptureItem]);
+
+  // v13.1: Extracted shared handler for Commands tab (DRY)
+  const handleCommandCapture = useCallback(async () => {
+    const frame = await safeCapture();
+    if (frame) {
+      setLastCapture({ ...frame, timestamp: Date.now() });
+      await analyzeImage(frame.base64);
+      onCaptureItem?.(frame.base64);
+    }
+  }, [safeCapture, analyzeImage, onCaptureItem]);
 
   // — Not connected / not available states ————————————————————
 
@@ -685,20 +741,13 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
             )}
           </TabsContent>
 
-          {/* — Commands Tab ———————————————————————————— */}
+          {/* — Commands Tab (v13.1: uses handleCommandCapture) ——— */}
           <TabsContent value="commands" className="space-y-2">
             <p className="text-xs text-muted-foreground mb-3">
               Quick actions \u2014 capture + send to analysis pipeline.
             </p>
             <Button
-              onClick={async () => {
-                const frame = await captureGlassesFrame();
-                if (frame) {
-                  setLastCapture({ ...frame, timestamp: Date.now() });
-                  await analyzeImage(frame.base64);
-                  onCaptureItem?.(frame.base64);
-                }
-              }}
+              onClick={handleCommandCapture}
               className="w-full justify-start"
               variant="outline"
               disabled={isAnalyzing}
@@ -711,14 +760,7 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
               Identify Item
             </Button>
             <Button
-              onClick={async () => {
-                const frame = await captureGlassesFrame();
-                if (frame) {
-                  setLastCapture({ ...frame, timestamp: Date.now() });
-                  await analyzeImage(frame.base64);
-                  onCaptureItem?.(frame.base64);
-                }
-              }}
+              onClick={handleCommandCapture}
               className="w-full justify-start"
               variant="outline"
               disabled={isAnalyzing}
@@ -731,14 +773,7 @@ const SmartGlassesControl: React.FC<SmartGlassesControlProps> = ({
               Estimate Value
             </Button>
             <Button
-              onClick={async () => {
-                const frame = await captureGlassesFrame();
-                if (frame) {
-                  setLastCapture({ ...frame, timestamp: Date.now() });
-                  await analyzeImage(frame.base64);
-                  onCaptureItem?.(frame.base64);
-                }
-              }}
+              onClick={handleCommandCapture}
               className="w-full justify-start"
               variant="outline"
               disabled={isAnalyzing}
