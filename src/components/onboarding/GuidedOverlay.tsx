@@ -3,20 +3,13 @@
 // Guided Overlay — Spotlight System for Trust Level 1 Users
 // ═══════════════════════════════════════════════════════════════════════
 //
-// Oracle says "tap that camera icon" AND the camera icon pulses.
-// Visual + verbal guidance. One step at a time.
+// v1.0: Spotlight + Oracle bottom sheet + voice guidance
 //
-// Only renders for Trust Level 1 users (checked via AppContext).
-// Auto-dismisses at Trust Level 2+.
-//
-// ARCHITECTURE:
-//   - Reads guidance steps from guidance-config.ts
-//   - Finds the spotlight target element in the DOM via querySelector
-//   - Renders a glowing ring around the target element
-//   - Displays Oracle's message in a bottom sheet
-//   - Speaks the message via useOracleVoice (respects mute)
-//   - Marks step as shown in sessionStorage on display
-//   - Marks step as complete when completedBy action fires
+// v1.1 CHANGES — Hardening Sprint #8:
+//   - Wrapped default export with ErrorBoundary (fallback: null).
+//     A render error in GuidedOverlay silently removes the overlay
+//     rather than crashing the page the user is on.
+//   - Zero changes to spotlight, voice, or guidance logic.
 // ═══════════════════════════════════════════════════════════════════════
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -30,6 +23,7 @@ import {
   type GuidanceStep,
 } from '@/lib/oracle/trust/guidance-config';
 import { cn } from '@/lib/utils';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 // =============================================================================
 // SPOTLIGHT POSITION
@@ -55,10 +49,10 @@ function getElementRect(selector: string): SpotlightRect | null {
 }
 
 // =============================================================================
-// COMPONENT
+// INNER COMPONENT
 // =============================================================================
 
-const GuidedOverlay: React.FC = () => {
+const GuidedOverlayInner: React.FC = () => {
   const location = useLocation();
   const { trustLevel, isEstateTrust } = useAppContext();
   const voice = useOracleVoice();
@@ -71,7 +65,6 @@ const GuidedOverlay: React.FC = () => {
   // Only show for Trust Level 1
   if (trustLevel > 1) return null;
 
-  // ── Find and show next step for this route ─────────────────────────
   const showStep = useCallback((step: GuidanceStep, isEstate: boolean) => {
     markStepShown(step.id);
 
@@ -87,10 +80,8 @@ const GuidedOverlay: React.FC = () => {
       ? step.estateMessage
       : step.message;
 
-    // Speak with a slight delay so the overlay animation finishes first
     setTimeout(() => voice.speak(message), 400);
 
-    // Auto-advance if configured
     if (step.completedBy === 'timer' && step.autoAdvanceMs) {
       autoAdvanceRef.current = setTimeout(dismissStep, step.autoAdvanceMs);
     }
@@ -103,19 +94,16 @@ const GuidedOverlay: React.FC = () => {
     setTimeout(() => setActiveStep(null), 300);
   }, [voice]);
 
-  // ── Check for guidance on route change ────────────────────────────
   useEffect(() => {
     if (trustLevel > 1) return;
 
     const step = getNextGuidanceStep(location.pathname, 'route_enter');
     if (step) {
-      // Small delay — let the page render first so querySelector finds elements
       const timer = setTimeout(() => showStep(step, isEstateTrust ?? false), 800);
       return () => clearTimeout(timer);
     }
   }, [location.pathname, trustLevel]);
 
-  // ── Listen for scan_complete events ──────────────────────────────
   useEffect(() => {
     const handleScanComplete = () => {
       if (trustLevel > 1) return;
@@ -127,7 +115,6 @@ const GuidedOverlay: React.FC = () => {
     return () => window.removeEventListener('tagnetiq:scan-complete', handleScanComplete);
   }, [location.pathname, trustLevel, showStep, isEstateTrust]);
 
-  // ── Handle tap on spotlight target ───────────────────────────────
   useEffect(() => {
     if (!activeStep || activeStep.completedBy !== 'tap_target') return;
     if (!activeStep.spotlightTarget) return;
@@ -152,13 +139,13 @@ const GuidedOverlay: React.FC = () => {
 
   return (
     <>
-      {/* ── Dark backdrop with spotlight cutout ───────────────────── */}
+      {/* Dark backdrop */}
       <div
         className="fixed inset-0 z-[60] pointer-events-none"
         style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
       />
 
-      {/* ── Spotlight ring around target element ──────────────────── */}
+      {/* Spotlight ring */}
       {spotlightRect && (
         <div
           className="fixed z-[61] pointer-events-none"
@@ -174,7 +161,7 @@ const GuidedOverlay: React.FC = () => {
         />
       )}
 
-      {/* ── Oracle message sheet ───────────────────────────────────── */}
+      {/* Oracle message sheet */}
       <div
         className={cn(
           'fixed bottom-[calc(52px+env(safe-area-inset-bottom,0px))] left-0 right-0 z-[62]',
@@ -183,14 +170,12 @@ const GuidedOverlay: React.FC = () => {
           visible ? 'translate-y-0' : 'translate-y-full',
         )}
       >
-        {/* Drag handle */}
         <div className="flex justify-center pt-2.5 pb-1">
           <div className="w-8 h-1 rounded-full bg-muted-foreground/25" />
         </div>
 
         <div className="px-4 pb-5 pt-2">
           <div className="flex items-start gap-3">
-            {/* Oracle icon */}
             <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center shrink-0 mt-0.5">
               <Zap className="h-4 w-4 text-primary" />
             </div>
@@ -212,7 +197,6 @@ const GuidedOverlay: React.FC = () => {
         </div>
       </div>
 
-      {/* CSS pulse animation */}
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }
@@ -222,5 +206,16 @@ const GuidedOverlay: React.FC = () => {
     </>
   );
 };
+
+// =============================================================================
+// EXPORTED COMPONENT — wrapped with ErrorBoundary (#8)
+// A crash in GuidedOverlay disappears silently instead of crashing the page.
+// =============================================================================
+
+const GuidedOverlay: React.FC = () => (
+  <ErrorBoundary fallback={null}>
+    <GuidedOverlayInner />
+  </ErrorBoundary>
+);
 
 export default GuidedOverlay;

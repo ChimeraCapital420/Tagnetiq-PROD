@@ -3,15 +3,13 @@
 // ActionFork — Adaptive Post-Scan Decision Screen
 // ═══════════════════════════════════════════════════════════════════════
 //
-// The decision screen after a scan adapts to trust level.
+// v1.0: Trust-level adaptive action buttons (L1–L4, estate persona)
 //
-// Level 1 (Explorer):  One big obvious action. No decision paralysis.
-// Level 2 (Dealer):    Two options. Starting to see the toolkit.
-// Level 3 (Pro):       Full action set. They know what they want.
-// Level 4 (Autonomous): Everything + proactive Oracle suggestions.
-//
-// Estate persona: "Document" instead of "List". "Save" not "Sell".
-// Urgency language removed entirely for estate users.
+// v1.1 CHANGES — Hardening Sprint #8:
+//   - Wrapped default export with ErrorBoundary (fallback: null).
+//     A render error in ActionFork silently removes the component
+//     rather than crashing the scan result page.
+//   - Zero changes to Level1Fork, Level2Fork, Level3Fork, or any logic.
 // ═══════════════════════════════════════════════════════════════════════
 
 import React from 'react';
@@ -20,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { useAppContext } from '@/contexts/AppContext';
 import { cn } from '@/lib/utils';
 import type { AnalysisResult } from '@/contexts/AppContext';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 // =============================================================================
 // TYPES
@@ -40,9 +39,9 @@ interface ActionForkProps {
 // LEVEL 1 — ONE BIG ACTION
 // =============================================================================
 
-const Level1Fork: React.FC<ActionForkProps> = ({
+const Level1Fork: React.FC<ActionForkProps & { isEstate: boolean }> = ({
   result, onVault, onAskOracle, isEstate,
-}: ActionForkProps & { isEstate: boolean }) => {
+}) => {
   const isBuy = result.decision === 'BUY';
   const value = result.estimatedValue;
 
@@ -155,7 +154,6 @@ const Level3Fork: React.FC<ActionForkProps & { isEstate: boolean; level: number 
 
   return (
     <div className="flex flex-col gap-3 w-full">
-      {/* Primary row */}
       <div className="grid grid-cols-3 gap-2">
         <Button
           onClick={onVault}
@@ -189,30 +187,17 @@ const Level3Fork: React.FC<ActionForkProps & { isEstate: boolean; level: number 
         </Button>
       </div>
 
-      {/* Secondary row */}
       <div className="grid grid-cols-2 gap-2">
-        <Button
-          onClick={onAskOracle}
-          size="sm"
-          className="h-10 gap-1.5"
-          variant="ghost"
-        >
+        <Button onClick={onAskOracle} size="sm" className="h-10 gap-1.5" variant="ghost">
           <Zap className="h-3.5 w-3.5" />
           Ask Oracle
         </Button>
-
-        <Button
-          onClick={onScanMore}
-          size="sm"
-          className="h-10 gap-1.5"
-          variant="ghost"
-        >
+        <Button onClick={onScanMore} size="sm" className="h-10 gap-1.5" variant="ghost">
           <TrendingUp className="h-3.5 w-3.5" />
           Scan another
         </Button>
       </div>
 
-      {/* Level 4: Oracle proactive suggestion */}
       {level >= 4 && (
         <div className="rounded-lg bg-primary/5 border border-primary/15 px-3 py-2.5">
           <p className="text-xs text-muted-foreground">
@@ -226,10 +211,10 @@ const Level3Fork: React.FC<ActionForkProps & { isEstate: boolean; level: number 
 };
 
 // =============================================================================
-// MAIN COMPONENT
+// INNER COMPONENT
 // =============================================================================
 
-const ActionFork: React.FC<ActionForkProps> = (props) => {
+const ActionForkInner: React.FC<ActionForkProps> = (props) => {
   const { trustLevel, isEstateTrust } = useAppContext();
   const isEstate = isEstateTrust ?? false;
   const level = trustLevel ?? 1;
@@ -238,5 +223,16 @@ const ActionFork: React.FC<ActionForkProps> = (props) => {
   if (level === 2) return <Level2Fork {...props} isEstate={isEstate} />;
   return <Level3Fork {...props} isEstate={isEstate} level={level} />;
 };
+
+// =============================================================================
+// EXPORTED COMPONENT — wrapped with ErrorBoundary (#8)
+// A crash in ActionFork silently removes it rather than killing the result page.
+// =============================================================================
+
+const ActionFork: React.FC<ActionForkProps> = (props) => (
+  <ErrorBoundary fallback={null}>
+    <ActionForkInner {...props} />
+  </ErrorBoundary>
+);
 
 export default ActionFork;

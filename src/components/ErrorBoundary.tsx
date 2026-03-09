@@ -1,55 +1,67 @@
 // FILE: src/components/ErrorBoundary.tsx
+// ═══════════════════════════════════════════════════════════════════════
+// Reusable Error Boundary — Hardening Sprint #8
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Wraps new components (ActionFork, GuidedOverlay, MarketplacePairing)
+// so a runtime error in one component does not crash the page.
+//
+// Usage:
+//   <ErrorBoundary>               ← fallback defaults to null (silent)
+//     <ActionFork ... />
+//   </ErrorBoundary>
+//
+//   <ErrorBoundary fallback={<p>Something went wrong</p>}>
+//     <GuidedOverlay />
+//   </ErrorBoundary>
+//
+// Behavior:
+//   - Catches render errors in any child component tree
+//   - Renders fallback (null by default — component disappears silently)
+//   - Logs to console in development; silenced in production
+//   - Does NOT catch: event handlers, async errors, SSR errors
+// ═══════════════════════════════════════════════════════════════════════
 
-import React, { Component, ErrorInfo, ReactNode } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { AlertTriangle } from "lucide-react";
+import React, { Component, ErrorInfo, ReactNode } from 'react';
 
-interface Props {
+interface ErrorBoundaryProps {
   children: ReactNode;
+  /** Rendered when an error is caught. Defaults to null (silent fail). */
+  fallback?: ReactNode;
+  /** Called when error is caught — for external error reporting */
+  onError?: (error: Error, info: ErrorInfo) => void;
 }
 
-interface State {
+interface ErrorBoundaryState {
   hasError: boolean;
 }
 
-class ErrorBoundary extends Component<Props, State> {
-  public state: State = {
-    hasError: false
-  };
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
 
-  public static getDerivedStateFromError(_: Error): State {
+  static getDerivedStateFromError(): ErrorBoundaryState {
     return { hasError: true };
   }
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("Uncaught error:", error, errorInfo);
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    // Log for debugging — in production this goes to your error tracker
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[ErrorBoundary] Caught render error:', error, info.componentStack);
+    } else {
+      console.error('[ErrorBoundary] Component render failed:', error.message);
+    }
+    this.props.onError?.(error, info);
   }
 
-  public render() {
+  render() {
     if (this.state.hasError) {
-      return (
-        <div className="min-h-screen flex items-center justify-center p-4">
-            <Card className="w-full max-w-lg text-center">
-                <CardHeader>
-                    <div className="mx-auto bg-destructive/10 p-3 rounded-full w-fit">
-                        <AlertTriangle className="h-8 w-8 text-destructive" />
-                    </div>
-                    <CardTitle className="mt-4">Application Error</CardTitle>
-                    <CardDescription>
-                        Sorry, something went wrong. Please try refreshing the page.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <Button onClick={() => window.location.reload()}>
-                        Refresh Page
-                    </Button>
-                </CardContent>
-            </Card>
-        </div>
-      );
+      // Default fallback is null — the component disappears silently.
+      // The page keeps working. A bug in GuidedOverlay doesn't kill the scan.
+      return this.props.fallback ?? null;
     }
-
     return this.props.children;
   }
 }

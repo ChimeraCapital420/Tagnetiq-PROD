@@ -1,26 +1,19 @@
 // FILE: src/components/analysis/AnalysisResult.tsx
-// STATUS: HYDRA v10.3 — Visual Evidence Wired to RefineDialog
+// STATUS: HYDRA v10.5 — Hardening Sprint
 // Thin orchestrator that composes hooks + components.
 //
-// v10.1 CHANGES:
-//   - Renders EbayMarketDisplay showing median/low/high/sample from eBay
-//   - Agreement factor post-processing in useAnalysisData
-//   - eBay price range bar with HYDRA estimate marker
+// v10.1: eBay market display + HYDRA estimate marker
+// v10.2: Watch button Authorization header fix
+// v10.3: RefineDialog visual evidence props
+// v10.4: ActionFork for Trust Level 1–2 users
 //
-// v10.2 CHANGES:
-//   - FIX: Watch button now sends Authorization header (was 401ing)
-//   - Added `session` from useAuth() for Bearer token
-//
-// v10.3 CHANGES:
-//   - RefineDialog receives refinementImages + onImagesChange props
-//     (state lives in useFeedback v1.2, wired here with 2 new props)
-//
-// v10.4 CHANGES — Trust Escalation:
-//   - ActionFork imported and rendered after NexusDecisionCard dismissal
-//     for Trust Level 1–2 users. Trust Level 3+ continue to see the
-//     existing ActionHub. NexusDecisionCard logic untouched.
-//   - useAppContext read for trustLevel to decide which post-scan UI shows.
-//   - ZERO changes to any existing imports, hooks, or render logic.
+// v10.5 CHANGES — Hardening Sprint #1:
+//   - Refinement consensus badge. After refinement, when the API returns
+//     refinementConsensus { validProviders, totalProviders }, the card
+//     header shows "Refined — 3/3 providers agreed" (or 2/3, etc.).
+//     Reads from raw?.refinementConsensus — no hook changes required.
+//   - Badge only renders when refinementConsensus is present (post-refinement).
+//   - Zero changes to any existing render paths, hooks, or ActionFork logic.
 
 import React, { useState, Component, ErrorInfo, ReactNode } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
@@ -29,7 +22,7 @@ import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Ghost, AlertTriangle } from 'lucide-react';
+import { Ghost, AlertTriangle, Sparkles } from 'lucide-react';
 import { HydraConsensusDisplay } from '@/components/HydraConsensusDisplay.js';
 import { AnalysisHistoryNavigator } from '@/components/AnalysisHistoryNavigator.js';
 import { AuthorityReportCard } from '@/components/AuthorityReportCard.js';
@@ -101,8 +94,7 @@ class AnalysisErrorBoundary extends Component<
 // =============================================================================
 
 const AnalysisResultContent: React.FC = () => {
-  const { setLastAnalysisResult, deleteFromHistory, trustLevel } = useAppContext(); // v10.4: trustLevel
-  // v10.2: Added `session` — needed for Bearer token on argos/watch calls
+  const { setLastAnalysisResult, deleteFromHistory, trustLevel } = useAppContext();
   const { user, session } = useAuth();
   const { raw, data, history, ebayData, marketSources } = useAnalysisData();
   const handleListOnTagnetiq = useListingSubmit(data);
@@ -130,7 +122,6 @@ const AnalysisResultContent: React.FC = () => {
   const handleNexusWatch = async () => {
     if (!user) { toast.error('Please log in to watch prices'); return; }
     try {
-      // v10.2: Added Authorization header — endpoint requires verifyUser()
       const res = await fetch('/api/oracle/argos', {
         method: 'POST',
         headers: {
@@ -152,9 +143,16 @@ const AnalysisResultContent: React.FC = () => {
     }
   };
 
-  // v10.4: ActionFork shown instead of ActionHub for Trust Level 1–2 users
-  // after Nexus is dismissed (or absent). Level 3+ keep the existing ActionHub.
+  // v10.4: ActionFork for Trust Level 1–2 users
   const showActionFork = !history.isViewingHistory && (trustLevel ?? 3) <= 2;
+
+  // v10.5 #1: Refinement consensus badge data
+  // Cast through any — refinementConsensus is added to AnalysisResult in v2.6
+  const refinementConsensus = (raw as any)?.refinementConsensus as {
+    validProviders: number;
+    totalProviders: number;
+    agreementRate: number;
+  } | undefined;
 
   return (
     <>
@@ -182,9 +180,24 @@ const AnalysisResultContent: React.FC = () => {
                 )}
               </CardDescription>
             </div>
-            <Badge className={`${data.confidenceColor} text-white`}>
-              Confidence: {data.confidenceScore.toFixed(0)}%
-            </Badge>
+
+            {/* Confidence + refinement consensus badges */}
+            <div className="flex flex-col items-end gap-1.5">
+              <Badge className={`${data.confidenceColor} text-white`}>
+                Confidence: {data.confidenceScore.toFixed(0)}%
+              </Badge>
+
+              {/* v10.5 #1: Refinement consensus — only shown post-refinement */}
+              {refinementConsensus && (
+                <Badge
+                  variant="outline"
+                  className="text-xs border-primary/40 text-primary flex items-center gap-1"
+                >
+                  <Sparkles className="h-3 w-3" />
+                  Refined — {refinementConsensus.validProviders}/{refinementConsensus.totalProviders} agreed
+                </Badge>
+              )}
+            </div>
           </div>
 
           {/* HYDRA Consensus */}
@@ -216,7 +229,7 @@ const AnalysisResultContent: React.FC = () => {
             />
           </div>
 
-          {/* — eBay Market Data (was always fetched, now displayed) — */}
+          {/* eBay Market Data */}
           {ebayData && typeof ebayData === 'object' && (
             <EbayMarketDisplay
               ebayData={ebayData}
@@ -228,7 +241,6 @@ const AnalysisResultContent: React.FC = () => {
 
         {/* — Footer: Actions + Feedback — */}
         <CardFooter className="flex flex-col gap-4">
-          {/* Nexus Decision Tree OR ActionFork (L1–2) OR ActionHub (L3+) */}
           {!history.isViewingHistory && data.nexusData && !nexusDismissed ? (
             <NexusDecisionCard
               nexus={data.nexusData}
@@ -240,19 +252,17 @@ const AnalysisResultContent: React.FC = () => {
               onScanMore={handleNexusScanMore}
             />
           ) : showActionFork ? (
-            /* v10.4: Trust Level 1–2 — adaptive single/dual action */
             <ActionFork
               result={raw}
               onList={handleNexusList}
               onVault={handleNexusVault}
               onWatch={handleNexusWatch}
-              onAskOracle={() => {}} // OracleBar handles this
+              onAskOracle={() => {}}
               onScanMore={handleNexusScanMore}
               onDeleteFromHistory={handleDeleteFromHistory}
               isViewingHistory={history.isViewingHistory}
             />
           ) : (
-            /* Trust Level 3+ — full ActionHub */
             <ActionHub
               analysisResult={raw}
               marketplaceItem={data.marketplaceItem}
@@ -264,7 +274,6 @@ const AnalysisResultContent: React.FC = () => {
             />
           )}
 
-          {/* Feedback Stars */}
           {!history.isViewingHistory && (
             <FeedbackStars
               hoveredRating={feedback.hoveredRating}

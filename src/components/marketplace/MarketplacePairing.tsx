@@ -3,27 +3,13 @@
 // Marketplace Pairing — Conversational Connection Flow
 // ═══════════════════════════════════════════════════════════════════════
 //
-// This is NOT a settings page with OAuth buttons.
-// Oracle asks where you sell, guides you through the connection,
-// and drafts your first listing. Pairing happens conversationally.
+// v1.0: Conversational marketplace connection + listing draft flow
 //
-// FLOW:
-//   Step 1: Oracle asks "Where do you usually sell things?"
-//           Shows marketplace icons as tappable choices.
-//   Step 2: User selects marketplace. Oracle checks if already paired.
-//   Step 3 (not paired): Oracle asks "Do you have an account there?"
-//   Step 4a (yes): Oracle highlights connect button, guides through OAuth.
-//   Step 4b (no): Oracle provides signup link, saves item to vault,
-//                 sets reminder to continue when account is ready.
-//   Step 5 (paired): Oracle drafts listing, shows preview, user approves.
-//
-// SUPPORTED MARKETPLACES (Phase 1):
-//   eBay — OAuth (primary)
-//   Facebook Marketplace — link out (no API)
-//   Mercari — link out
-//   Poshmark — link out
-//   OfferUp — link out
-//   Craigslist — link out (local only)
+// v1.1 CHANGES — Hardening Sprint #8:
+//   - Wrapped default export with ErrorBoundary (fallback: null).
+//     A render error in MarketplacePairing silently removes the component
+//     rather than crashing the flow it's embedded in.
+//   - Zero changes to flow steps, marketplace config, or Oracle messages.
 // ═══════════════════════════════════════════════════════════════════════
 
 import React, { useState } from 'react';
@@ -33,6 +19,7 @@ import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import type { AnalysisResult } from '@/contexts/AppContext';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 // =============================================================================
 // MARKETPLACE CONFIG
@@ -45,7 +32,6 @@ interface Marketplace {
   hasOAuth: boolean;
   signupUrl: string;
   oauthPath?: string;
-  /** Best for these categories */
   bestFor: string[];
   trustLevelMin: number;
 }
@@ -121,17 +107,16 @@ type FlowStep =
   | 'complete';
 
 // =============================================================================
-// COMPONENT
+// INNER COMPONENT
 // =============================================================================
 
 interface MarketplacePairingProps {
-  /** Analysis result to list (optional — can pair without active result) */
   result?: AnalysisResult | null;
   onComplete?: () => void;
   onDismiss?: () => void;
 }
 
-const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
+const MarketplacePairingInner: React.FC<MarketplacePairingProps> = ({
   result,
   onComplete,
   onDismiss,
@@ -147,14 +132,11 @@ const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
   const level = trustLevel ?? 1;
   const isEstate = isEstateTrust ?? false;
 
-  // Filter marketplaces to trust level appropriate ones
   const availableMarkets = MARKETPLACES.filter(m => m.trustLevelMin <= level);
 
-  // Check if marketplace is already paired
   const marketplaceAccounts = (profile as any)?.marketplace_accounts ?? {};
   const isPaired = (marketId: string) => !!marketplaceAccounts[marketId];
 
-  // ── Oracle message per step ────────────────────────────────────────
   const getOracleMessage = (): string => {
     switch (step) {
       case 'select_marketplace':
@@ -180,11 +162,9 @@ const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
     }
   };
 
-  // ── Generate listing draft ─────────────────────────────────────────
   const generateDraft = async (market: Marketplace) => {
     if (!result) return;
     setIsGenerating(true);
-    // Draft is generated from analysis result data
     const salesCopy = result.resale_toolkit?.sales_copy;
     const draft = salesCopy
       ? salesCopy
@@ -194,11 +174,9 @@ const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
     setStep('draft_listing');
   };
 
-  // ── Step: Select marketplace ───────────────────────────────────────
   const handleSelectMarket = (market: Marketplace) => {
     setSelected(market);
     if (isPaired(market.id)) {
-      // Already connected — go straight to listing
       if (result) generateDraft(market);
       else setStep('complete');
     } else {
@@ -206,7 +184,6 @@ const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
     }
   };
 
-  // ── Step: Has account? ─────────────────────────────────────────────
   const handleHasAccount = (has: boolean) => {
     if (has) {
       setStep(selected?.hasOAuth ? 'connecting' : 'draft_listing');
@@ -218,7 +195,6 @@ const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
 
   return (
     <div className="flex flex-col gap-4 p-4">
-
       {/* Oracle message */}
       <div className="flex items-start gap-3">
         <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
@@ -234,7 +210,7 @@ const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
         )}
       </div>
 
-      {/* ── Step: Select Marketplace ─────────────────────────────── */}
+      {/* Select Marketplace */}
       {step === 'select_marketplace' && (
         <div className="grid grid-cols-2 gap-2">
           {availableMarkets.map(market => (
@@ -264,7 +240,7 @@ const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
         </div>
       )}
 
-      {/* ── Step: Has Account? ───────────────────────────────────── */}
+      {/* Has Account? */}
       {step === 'has_account' && selected && (
         <div className="flex gap-3">
           <Button onClick={() => handleHasAccount(true)} className="flex-1">
@@ -276,7 +252,7 @@ const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
         </div>
       )}
 
-      {/* ── Step: Connect OAuth ──────────────────────────────────── */}
+      {/* Connect OAuth */}
       {step === 'connecting' && selected?.hasOAuth && (
         <div className="flex flex-col gap-3">
           <p className="text-xs text-muted-foreground">
@@ -299,7 +275,7 @@ const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
         </div>
       )}
 
-      {/* ── Step: No account ─────────────────────────────────────── */}
+      {/* No account */}
       {step === 'no_account' && selected && (
         <div className="flex flex-col gap-3">
           <p className="text-xs text-muted-foreground">
@@ -326,7 +302,7 @@ const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
         </div>
       )}
 
-      {/* ── Step: Draft listing ──────────────────────────────────── */}
+      {/* Draft listing */}
       {step === 'draft_listing' && (
         <div className="flex flex-col gap-3">
           {isGenerating ? (
@@ -362,7 +338,7 @@ const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
         </div>
       )}
 
-      {/* ── Step: Complete ───────────────────────────────────────── */}
+      {/* Complete */}
       {step === 'complete' && (
         <div className="flex flex-col items-center gap-3 py-2">
           <CheckCircle className="h-10 w-10 text-green-500" />
@@ -379,5 +355,15 @@ const MarketplacePairing: React.FC<MarketplacePairingProps> = ({
     </div>
   );
 };
+
+// =============================================================================
+// EXPORTED COMPONENT — wrapped with ErrorBoundary (#8)
+// =============================================================================
+
+const MarketplacePairing: React.FC<MarketplacePairingProps> = (props) => (
+  <ErrorBoundary fallback={null}>
+    <MarketplacePairingInner {...props} />
+  </ErrorBoundary>
+);
 
 export default MarketplacePairing;

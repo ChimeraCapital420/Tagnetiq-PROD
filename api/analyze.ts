@@ -1,62 +1,37 @@
 // ============================================================
 // FILE:  api/analyze.ts
 // ============================================================
-// HYDRA v9.8 — Bidirectional CI Engine: Corrections + Confirmations
-// Evidence-based pipeline: IDENTIFY → FETCH → REASON → VALIDATE
+// HYDRA v9.8.1 — Hardening Sprint
 //
 // CHANGELOG:
 // v9.4: FIX — require() → ESM import
-// v9.5: SECURITY — Input sanitization + injection detection at entry point
-// v9.6: SECURITY — Rate limiting wired in (10 req/60s per IP)
-// v9.7: CI ENGINE PHASE 3 — Pattern lookup wired in before AI pipeline
-//       - lookupPatterns() runs speculatively using categoryHint
-//       - collectiveKnowledge passed into runPipeline() options
-//       - If lookup fails: graceful degradation, scan proceeds normally
-//       - If no patterns confirmed yet: null, prompt is unchanged
-// v9.8: CI ENGINE — High-consensus confirmation signal
-//       When HYDRA reaches analysisQuality=OPTIMAL + confidence≥0.85,
-//       recordConfirmation() fires fire-and-forget after response is built.
-//       Source: 'high_consensus' — strongest automated trust signal.
-//       Bidirectional CI: corrections flag what HYDRA gets wrong,
-//       confirmations reinforce what it gets right. Aggregator uses both
-//       to accelerate pattern promotion and improve provider trust weights.
-//       Zero latency impact — runs after res.status(200) is queued.
+// v9.5: SECURITY — Input sanitization + injection detection
+// v9.6: SECURITY — Rate limiting (10 req/60s per IP)
+// v9.7: CI ENGINE PHASE 3 — Pattern lookup before AI pipeline
+// v9.8: CI ENGINE — High-consensus confirmation signal (bidirectional)
 //
-// ⚠️  PIPELINE NOTE (one field to add):
-//     src/lib/hydra/pipeline/index.ts — add to the options type:
-//       collectiveKnowledge?: CollectiveKnowledgeBlock | null;
-//     Then thread it through to buildAnalysisPrompt() inside the pipeline.
-//     Until that field is added, collectiveKnowledge is silently ignored
-//     (TypeScript will warn). The scan still works perfectly either way.
+// v9.8.1 CHANGES — Hardening Sprint #2:
+//   - imageHash wired into recordConfirmation() when the pipeline exposes it.
+//     Allows the CI Engine to cluster visually similar confirmed items and
+//     detect duplicate scans of the same object. Zero impact if pipeline
+//     doesn't expose imageHash — safely reads via (pipelineResult as any).imageHash.
+//   - No other logic changes. All v9.8 code untouched.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-// v9.0: Pipeline orchestrator replaces manual stage management
 import { runPipeline } from '../src/lib/hydra/pipeline/index.js';
-
-// Self-heal: dynamic weights from benchmark data
 import { getDynamicWeights } from '../src/lib/hydra/self-heal/index.js';
-
-// Response formatting + storage (unchanged)
 import {
   formatAnalysisResponse,
   formatAPIResponse,
   formatErrorResponse,
   isSupabaseAvailable,
 } from '../src/lib/hydra/index.js';
-
-// v9.2: Use awaitable save instead of fire-and-forget
 import { saveAnalysisAwaited } from '../src/lib/hydra/storage/supabase.js';
-
-// v9.3: Sprint M — Nexus decision tree
 import { evaluateScan, logNexusDecision } from '../src/lib/oracle/nexus/index.js';
 import type { NexusDecision, ScanContext, UserContext } from '../src/lib/oracle/nexus/index.js';
-
-// v9.3: Sprint M — Oracle Eyes Tier 1 piggyback
 import { captureFromScan } from '../src/lib/oracle/eyes/index.js';
-
-// v9.5: SECURITY — Input sanitization
 import {
   sanitizeItemName,
   sanitizeCategoryHint,
@@ -64,11 +39,7 @@ import {
   sanitizeAdditionalContext,
   detectInjectionAttempt,
 } from './_lib/sanitize.js';
-
-// v9.6: SECURITY — Rate limiting
 import { applyRateLimit, LIMITS } from './_lib/rateLimit.js';
-
-// v9.7+v9.8: CI ENGINE — pattern lookup + high-consensus confirmation signal
 import { lookupPatterns, recordConfirmation } from '../src/lib/hydra/knowledge/index.js';
 import type { CollectiveKnowledgeBlock } from '../src/lib/hydra/knowledge/types.js';
 
@@ -124,7 +95,6 @@ function validateRequest(body: unknown): AnalyzeRequest {
     const items = rawBody.items as MultiModalItem[];
     const primaryItem = items[0];
 
-    // Extract primary image
     let imageBase64: string | undefined;
     if (primaryItem.data) {
       imageBase64 = primaryItem.data.includes('base64,')
@@ -132,7 +102,6 @@ function validateRequest(body: unknown): AnalyzeRequest {
         : primaryItem.data;
     }
 
-    // Collect additional images from other items and video frames
     const additionalImages: string[] = [];
     if (primaryItem.additionalFrames) {
       primaryItem.additionalFrames.forEach(frame => {
@@ -145,7 +114,6 @@ function validateRequest(body: unknown): AnalyzeRequest {
       }
     });
 
-    // Collect original image URLs for marketplace listings
     const originalImageUrls: string[] = [];
     items.forEach(item => {
       if (item.originalUrl && !item.originalUrl.startsWith('blob:')) {
@@ -160,7 +128,6 @@ function validateRequest(body: unknown): AnalyzeRequest {
       });
     }
 
-    // Extract raw barcodes from device scanner
     const scannedBarcodes: string[] = [];
     items.forEach(item => {
       if (item.metadata?.barcodes && Array.isArray(item.metadata.barcodes)) {
@@ -176,7 +143,6 @@ function validateRequest(body: unknown): AnalyzeRequest {
       console.log(`📊 Scanner barcodes extracted: ${scannedBarcodes.join(', ')}`);
     }
 
-    // Extract item name
     let itemName = '';
     if (primaryItem.name && !primaryItem.name.startsWith('Photo ') && !primaryItem.name.startsWith('Video ')) {
       itemName = primaryItem.name;
@@ -213,12 +179,14 @@ function validateRequest(body: unknown): AnalyzeRequest {
     analysisId: typeof analysisId === 'string' ? analysisId : `analysis_${Date.now()}`,
     categoryHint: typeof categoryHint === 'string' ? categoryHint : undefined,
     condition: typeof condition === 'string' ? condition : 'good',
-    originalImageUrls: Array.isArray(originalImageUrls) ? originalImageUrls.filter((u): u is string => typeof u === 'string' && !u.startsWith('blob:')) : undefined,
+    originalImageUrls: Array.isArray(originalImageUrls)
+      ? originalImageUrls.filter((u): u is string => typeof u === 'string' && !u.startsWith('blob:'))
+      : undefined,
   };
 }
 
 // =============================================================================
-// SUPABASE CLIENT (lazy, only created when needed for Nexus/Eyes)
+// SUPABASE CLIENT (lazy)
 // =============================================================================
 
 let _supabaseAdmin: any = null;
@@ -246,21 +214,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // v9.6: Rate limit — analyze is expensive (multi-AI + HYDRA calls)
   if (applyRateLimit(req, res, LIMITS.EXPENSIVE)) return;
 
   const startTime = Date.now();
   let analysisId = '';
 
   try {
-    // 1. Validate request
     const request = validateRequest(req.body);
     analysisId = request.analysisId!;
 
     // ========================================================================
-    // v9.5: SANITIZE ALL TEXT INPUTS BEFORE PIPELINE
-    // This is the primary prompt injection defense layer.
-    // Sanitization happens AFTER validation but BEFORE any AI prompt building.
+    // v9.5: SANITIZE ALL TEXT INPUTS
     // ========================================================================
     const rawItemName = request.itemName;
     const rawCategoryHint = request.categoryHint;
@@ -273,7 +237,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? sanitizeCondition(request.condition)
       : 'good';
 
-    // Detect and log injection attempts (for monitoring/alerting)
     const injectionCheck = detectInjectionAttempt(
       `${rawItemName} ${rawCategoryHint || ''}`
     );
@@ -283,7 +246,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         injectionCheck.patterns.join(', '),
         `| userId: ${request.userId || 'anonymous'}`
       );
-      // Don't reject — sanitized input is safe. But log for monitoring.
     }
     // ========================================================================
 
@@ -294,7 +256,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Either an image or item name is required');
     }
 
-    console.log(`\n📥 === HYDRA v9.8 ANALYSIS START ===`);
+    console.log(`\n📥 === HYDRA v9.8.1 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
     console.log(`🖼️ Images: ${hasImage ? 1 + (request.additionalImages?.length || 0) : 0}`);
@@ -302,34 +264,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`📊 Scanner barcodes: ${request.scannedBarcodes.join(', ')}`);
     }
 
-    // 2. Build images array
     const images: string[] = [];
     if (request.imageBase64) images.push(request.imageBase64);
     if (request.additionalImages) images.push(...request.additionalImages.slice(0, 3));
 
-    // 3. Build additionalContext from scanner barcodes (sanitized)
     let additionalContext: string | undefined;
     if (request.scannedBarcodes && request.scannedBarcodes.length > 0) {
       const rawContext = `UPC: ${request.scannedBarcodes[0]}`;
       additionalContext = sanitizeAdditionalContext(rawContext);
-      console.log(`🔗 Barcode context for fetchers: "${additionalContext}"`);
+      console.log(`🔗 Barcode context: "${additionalContext}"`);
     }
 
     // ========================================================================
-    // v9.7: CI ENGINE PHASE 3 — Pre-scan collective knowledge lookup
-    //
-    // Architecture note: runPipeline() wraps category detection internally,
-    // so we cannot know the confirmed category before AI calls begin.
-    // We run a speculative lookup using categoryHint (already sanitized above).
-    //
-    // Outcomes:
-    //   A) categoryHint present + confirmed patterns exist → knowledge injected ✅
-    //   B) categoryHint present + no confirmed patterns → null, scan normal ✅
-    //   C) categoryHint absent → null, scan normal ✅
-    //   D) DB down / lookup throws → null, scan normal ✅ (graceful degradation)
-    //
-    // Mobile-first: this is a <5ms server-side indexed query.
-    // Zero additional latency for the user — runs in parallel with getDynamicWeights.
+    // v9.7: CI ENGINE — Pre-scan collective knowledge lookup
     // ========================================================================
     const [dynamicWeights, collectiveKnowledge] = await Promise.all([
       getDynamicWeights().catch(() => null),
@@ -343,12 +290,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (collectiveKnowledge) {
       console.log(
-        `[CI-Engine] 📚 ${collectiveKnowledge.items.length} confirmed patterns injected for category "${request.categoryHint}"`
+        `[CI-Engine] 📚 ${collectiveKnowledge.items.length} confirmed patterns injected for "${request.categoryHint}"`
       );
     }
     // ========================================================================
 
-    // 5. Run the evidence-based pipeline (all inputs now sanitized)
     const pipelineResult = await runPipeline(images, request.itemName, {
       categoryHint: request.categoryHint,
       condition: request.condition,
@@ -356,12 +302,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       analysisId,
       hasImage,
       dynamicWeights: dynamicWeights || undefined,
-      // v9.7: Pass collective knowledge into pipeline so it reaches buildAnalysisPrompt().
-      // Requires one field addition in src/lib/hydra/pipeline/index.ts — see file header.
       collectiveKnowledge: collectiveKnowledge ?? undefined,
     });
 
-    // 6. Format response
     const processingTime = Date.now() - startTime;
 
     const blendedPrice = {
@@ -397,7 +340,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     );
 
     // ========================================================================
-    // 6.5 Sprint M: NEXUS DECISION TREE — Oracle evaluates the scan
+    // Sprint M: NEXUS DECISION TREE
     // ========================================================================
     let nexusDecision: NexusDecision | null = null;
 
@@ -458,7 +401,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       thumbnailUrl: request.originalImageUrls?.[0] || null,
       ebayMarketData: pipelineResult.ebayData,
       marketSources: pipelineResult.marketSources,
-      pipelineVersion: '9.8',
+      pipelineVersion: '9.8.1',
       pipelineTiming: pipelineResult.timing,
       nexus: nexusDecision ? {
         nudge: nexusDecision.nudge,
@@ -485,20 +428,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         dynamicWeightsActive: !!dynamicWeights,
         nexusNudge: nexusDecision?.nudge || null,
         injectionDetected: injectionCheck.detected,
-        // v9.7: CI Engine diagnostics
         collectiveKnowledgeActive: !!collectiveKnowledge,
         collectivePatternCount: collectiveKnowledge?.items.length ?? 0,
         collectiveCategory: request.categoryHint || null,
-        // v9.8: confirmation signal diagnostics
         highConsensusConfirmation: (
           pipelineResult.analysisQuality === 'OPTIMAL' &&
           pipelineResult.confidence >= 0.85
         ),
+        // v9.8.1 #2: indicate whether imageHash was available from pipeline
+        imageHashAvailable: !!(pipelineResult as any).imageHash,
       },
     };
 
     // ========================================================================
-    // 7. SAVE TO SUPABASE — AWAIT before response
+    // SAVE TO SUPABASE
     // ========================================================================
     if (isSupabaseAvailable()) {
       const saveResult = await saveAnalysisAwaited(
@@ -517,7 +460,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ========================================================================
-    // 7.5 Sprint M: Oracle Eyes Tier 1 — Piggyback visual memory
+    // Sprint M: Oracle Eyes Tier 1
     // ========================================================================
     if (request.userId && getSupabaseAdmin()) {
       captureFromScan(
@@ -535,18 +478,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ========================================================================
-    // 7.6 v9.8: CI ENGINE — High-consensus positive confirmation signal
-    //
-    // Fires when ALL three conditions are true:
-    //   1. analysisQuality === 'OPTIMAL'  (all providers responded cleanly)
-    //   2. confidence >= 0.85             (strong agreement on value + identity)
-    //   3. pipelineResult.itemName exists (we actually identified something)
-    //
-    // providerVotes captured so the aggregator knows WHICH providers agreed —
-    // providers that frequently agree on correct IDs earn higher trust weights.
-    //
-    // Fire-and-forget: .catch() ensures DB failure is completely silent.
-    // Response is already committed — this never affects scan latency.
+    // v9.8: CI ENGINE — High-consensus positive confirmation signal
+    // v9.8.1 #2: imageHash wired in from pipelineResult when available.
+    //   Allows the aggregator to cluster visually similar confirmed items
+    //   (same item photographed repeatedly) to avoid inflating pattern counts.
+    //   Safe read via (pipelineResult as any).imageHash — null if not present.
     // ========================================================================
     if (
       pipelineResult.analysisQuality === 'OPTIMAL' &&
@@ -561,13 +497,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         providerVotes: pipelineResult.allVotes ?? null,
         consensusAgreement: pipelineResult.confidence,
         confirmationSource: 'high_consensus',
+        imageHash: (pipelineResult as any).imageHash ?? null, // v9.8.1 #2
       }).catch(err =>
         console.warn('[CI-Engine] High-consensus confirmation failed (non-fatal):', err)
       );
 
       console.log(
         `[CI-Engine] ⭐ High-consensus confirmation queued: "${pipelineResult.itemName}"` +
-        ` [${pipelineResult.category}] confidence=${(pipelineResult.confidence * 100).toFixed(0)}%`
+        ` [${pipelineResult.category}] confidence=${(pipelineResult.confidence * 100).toFixed(0)}%` +
+        ((pipelineResult as any).imageHash ? ' | imageHash: ✓' : '')
       );
     }
 

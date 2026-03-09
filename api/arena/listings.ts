@@ -1,6 +1,14 @@
 // FILE: api/arena/listings.ts
 // Create arena listing endpoint with Ghost Protocol support
 // UPDATED: Handles ghost listings with location data and handling time
+//
+// v2.1 CHANGES — Hardening Sprint #7 + #4:
+//   - #7: total_listings counter incremented atomically after successful
+//         listing creation. Only fires on NEW listings — not edits or re-lists.
+//         Fire-and-forget: counter failure never blocks the listing response.
+//   - #4: Input validation hardening on getListings — status, limit, and
+//         offset query params are now validated/sanitized before DB use.
+//         limit capped at 100, offset floor at 0, status checked against enum.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supaAdmin } from '../_lib/supaAdmin.js';
@@ -70,6 +78,9 @@ const createListingSchema = z.object({
   offers_local_pickup: z.boolean().optional().default(true),
 });
 
+// #4: Allowed status values for getListings — prevents arbitrary DB filter injection
+const ALLOWED_LISTING_STATUSES = ['active', 'sold', 'expired', 'draft', 'cancelled'] as const;
+
 // =============================================================================
 // MAIN HANDLER
 // =============================================================================
@@ -84,7 +95,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).end();
   }
 
-  // Route to appropriate handler
   switch (req.method) {
     case 'POST':
       return createListing(req, res);
@@ -101,13 +111,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 async function createListing(req: VercelRequest, res: VercelResponse) {
   try {
-    // Authenticate user
     const user = await verifyUser(req);
     if (!user) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // Validate request body
     const validatedData = createListingSchema.parse(req.body);
     const isGhostListing = validatedData.is_ghost && !!validatedData.ghost_data;
     
@@ -156,32 +164,19 @@ async function createListing(req: VercelRequest, res: VercelResponse) {
 
     // Set expiration
     if (isGhostListing && validatedData.ghost_data) {
-      // Ghost listings use the timer from ghost_data
       listingData.expires_at = validatedData.ghost_data.timer.expires_at;
       listingData.is_ghost = true;
       listingData.handling_time_hours = validatedData.ghost_data.timer.handling_hours;
-      
-      // Store ghost data in metadata
-      listingData.metadata = {
-        ghost_data: validatedData.ghost_data,
-      };
-      
-      // Use ghost location
+      listingData.metadata = { ghost_data: validatedData.ghost_data };
       listingData.location_lat = validatedData.ghost_data.location.lat;
       listingData.location_lng = validatedData.ghost_data.location.lng;
       listingData.location_text = validatedData.ghost_data.store.name;
-      
-      // Ghost listings default to shipping only
       listingData.offers_local_pickup = false;
-      
     } else {
-      // Standard listing - 30 days expiration
       listingData.expires_at = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       listingData.vault_item_id = validatedData.vault_item_id;
       listingData.is_ghost = false;
-      listingData.handling_time_hours = 24; // Standard 1-day handling
-      
-      // Use provided location if any
+      listingData.handling_time_hours = 24;
       if (validatedData.location_text) {
         listingData.location_text = validatedData.location_text;
       }
@@ -204,6 +199,31 @@ async function createListing(req: VercelRequest, res: VercelResponse) {
     }
 
     console.log(`✅ Listing created: ${listing.id}`);
+
+    // =========================================================================
+    // HARDENING SPRINT #7 — total_listings counter
+    //
+    // Fires ONLY on new listing creation — not edits or re-lists.
+    // Uses Supabase RPC for atomic increment (no read-modify-write race).
+    // Fire-and-forget: counter failure never blocks the listing response.
+    //
+    // SQL to create the RPC if it doesn't exist:
+    //   CREATE OR REPLACE FUNCTION increment_total_listings(p_user_id uuid)
+    //   RETURNS void AS $$
+    //     UPDATE profiles SET total_listings = COALESCE(total_listings, 0) + 1
+    //     WHERE id = p_user_id;
+    //   $$ LANGUAGE sql SECURITY DEFINER;
+    // =========================================================================
+    supaAdmin
+      .rpc('increment_total_listings', { p_user_id: user.id })
+      .then(() => {
+        console.log(`[Trust] total_listings incremented for user: ${user.id}`);
+      })
+      .catch((err: any) => {
+        // Off by 1 is acceptable — never block or surface to user
+        console.warn('[Trust] total_listings increment failed (non-fatal):', err?.message);
+      });
+    // =========================================================================
 
     // For standard listings, update vault item status
     if (!isGhostListing && validatedData.vault_item_id) {
@@ -274,15 +294,26 @@ async function getListings(req: VercelRequest, res: VercelResponse) {
       is_ghost,
       status,
       category,
-      limit = '20',
-      offset = '0',
+      limit: limitRaw = '20',
+      offset: offsetRaw = '0',
     } = req.query;
+
+    // #4: Validate and sanitize query params before use in DB query
+    if (status && !ALLOWED_LISTING_STATUSES.includes(status as any)) {
+      return res.status(400).json({
+        error: 'Invalid status value',
+        allowed: ALLOWED_LISTING_STATUSES,
+      });
+    }
+
+    // #4: Clamp limit (1–100) and floor offset at 0
+    const limitNum = Math.min(Math.max(parseInt(limitRaw as string, 10) || 20, 1), 100);
+    const offsetNum = Math.max(parseInt(offsetRaw as string, 10) || 0, 0);
 
     let query = supaAdmin
       .from('arena_listings')
       .select('*', { count: 'exact' });
 
-    // Filters
     if (seller_id) {
       query = query.eq('seller_id', seller_id);
     }
@@ -296,7 +327,6 @@ async function getListings(req: VercelRequest, res: VercelResponse) {
     if (status) {
       query = query.eq('status', status);
     } else {
-      // Default to active listings
       query = query.eq('status', 'active');
     }
     
@@ -304,10 +334,9 @@ async function getListings(req: VercelRequest, res: VercelResponse) {
       query = query.eq('category', category);
     }
 
-    // Pagination
     query = query
       .order('created_at', { ascending: false })
-      .range(parseInt(offset as string), parseInt(offset as string) + parseInt(limit as string) - 1);
+      .range(offsetNum, offsetNum + limitNum - 1);
 
     const { data, error, count } = await query;
 
@@ -316,8 +345,8 @@ async function getListings(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       listings: data,
       total: count,
-      limit: parseInt(limit as string),
-      offset: parseInt(offset as string),
+      limit: limitNum,
+      offset: offsetNum,
     });
 
   } catch (error) {
