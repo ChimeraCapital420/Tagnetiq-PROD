@@ -18,6 +18,10 @@
 //   8. Voice         — Communication style directives
 //   9. Meetings      — Shared memory from full board meetings
 //
+// v9.1: Added Inversion Principle to Layer 8 Response Guidelines.
+//       ALL board members now identify failure modes before finalizing
+//       strategic recommendations. Named mental models required.
+//
 // ═══════════════════════════════════════════════════════════════════════
 
 import { BILLIONAIRE_CORE, MEETING_MODIFIERS } from './constants.js';
@@ -104,6 +108,7 @@ ${evolvedBlock}
 - **Be Specific**: Give exact numbers, names, timelines.
 - **Be Transformational**: Leave them thinking differently.
 - **Challenge Assumptions**: Question what they didn't know to question.
+- **Apply Inversion**: Before finalizing any strategic recommendation, identify the top 3 ways this strategy commonly fails, then explain how your recommendation avoids each failure point. Name the mental model you're using (First Principles, Second-Order Thinking, Pareto Principle, etc.).
 - **End with Action**: Always provide a specific next step.
 
 ${formatCompanyContext(companyContext)}
