@@ -1,7 +1,7 @@
 // ============================================================
 // FILE:  api/refine-analysis.ts
 // ============================================================
-// HYDRA Refinement Endpoint v3.7 — Hardening Sprint
+// HYDRA Refinement Endpoint v3.8 — Authority Re-query
 //
 // WHAT CHANGED (v3.1): SECURITY — verifyUser + sanitization + injection logging
 // WHAT CHANGED (v3.2): SECURITY — Rate limiting (10 req/60s per IP)
@@ -23,12 +23,24 @@
 //         trigger 3 vision AI calls at 3–5x the cost of text-only refinements.
 //         Text-only path is unchanged.
 //
+// WHAT CHANGED (v3.8) — Authority Re-query:
+//   - BUG: After identity corrections (e.g. "this is issue #6 from 1977"),
+//     fetchMarketData re-ran with the corrected search query and returned
+//     updated primaryAuthority (ComicVine, Colnect, TCGdex, etc.) — but
+//     that authority data was NEVER written into the response. The refined
+//     result spread ...analysis which carried the STALE authority from the
+//     original scan. User corrects "Star Wars #6 1977" but still sees the
+//     2025 issue in the authority card.
+//   - FIX: If fetchMarketData returns a new primaryAuthority, it replaces
+//     the old one in the refined result. If no authority found, original stays.
+//     One line added to refinedResult construction.
+//
 // ARCHITECTURE:
 //   RateLimit(vision|text) → Auth → Sanitize → detectCorrectionType
 //   → fetchMarketData(correctedQuery) + Perplexity + lookupPatterns(category)
 //   → buildSingleSchemaPrompt [+ collectiveKnowledge + image instruction]
 //   → parallel multimodal AI → validate(newValue > 0)
-//   → apply correctedItemName → average → recordCorrection(agreementRate) → respond
+//   → apply correctedItemName + authority → average → recordCorrection(agreementRate) → respond
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import type { AnalysisResult } from '../src/types';
@@ -469,6 +481,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`🧠 CI Engine: ${collectiveKnowledge.items.length} patterns injected`);
     }
 
+    // v3.8: Log authority re-query result
+    if (marketResult.primaryAuthority) {
+      console.log(`🏛️ Authority re-queried: ${marketResult.primaryAuthority.source} — match found for corrected item`);
+    } else if (correctionInfo.isIdentityCorrection) {
+      console.log(`🏛️ Authority re-query: no match found for corrected search — keeping original`);
+    }
+
     const prompt = buildRefinePrompt(
       analysis,
       cleanRefinement,
@@ -561,6 +580,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       estimatedValue: averageValue,
       valuation_factors: uniqueFactors.slice(0, 5),
       summary_reasoning: newSummary,
+      // v3.8: If re-query found updated authority for corrected item, use it.
+      // Otherwise the original authority from ...analysis stays via spread.
+      ...(marketResult.primaryAuthority ? { authorityData: marketResult.primaryAuthority } : {}),
     };
 
     // v3.3+v3.7: CI Engine — fire-and-forget
