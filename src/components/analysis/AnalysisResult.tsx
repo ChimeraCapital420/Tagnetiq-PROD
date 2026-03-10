@@ -14,6 +14,11 @@
 //     Reads from raw?.refinementConsensus — no hook changes required.
 //   - Badge only renders when refinementConsensus is present (post-refinement).
 //   - Zero changes to any existing render paths, hooks, or ActionFork logic.
+//
+// v10.6: Trust gates Oracle autonomy, NOT user buttons.
+//   ActionFork disabled — all users see full ActionHub with export/list/vault.
+//   Trust level controls what Oracle does automatically, not what the user
+//   can manually choose to do.
 
 import React, { useState, Component, ErrorInfo, ReactNode } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
@@ -143,8 +148,9 @@ const AnalysisResultContent: React.FC = () => {
     }
   };
 
-  // v10.4: ActionFork for Trust Level 1–2 users
-  const showActionFork = !history.isViewingHistory && (trustLevel ?? 3) <= 2;
+  // v10.6: Trust gates Oracle autonomy, NOT user manual actions.
+  // All users see full ActionHub with export/list/vault buttons.
+  const showActionFork = false;
 
   // v10.5 #1: Refinement consensus badge data
   // Cast through any — refinementConsensus is added to AnalysisResult in v2.6
