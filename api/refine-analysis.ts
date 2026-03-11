@@ -1,7 +1,7 @@
 // ============================================================
 // FILE:  api/refine-analysis.ts
 // ============================================================
-// HYDRA Refinement Endpoint v3.8 — Authority Re-query
+// HYDRA Refinement Endpoint v3.8 — Authority Refresh
 //
 // WHAT CHANGED (v3.1): SECURITY — verifyUser + sanitization + injection logging
 // WHAT CHANGED (v3.2): SECURITY — Rate limiting (10 req/60s per IP)
@@ -23,24 +23,20 @@
 //         trigger 3 vision AI calls at 3–5x the cost of text-only refinements.
 //         Text-only path is unchanged.
 //
-// WHAT CHANGED (v3.8) — Authority Re-query:
-//   - BUG: After identity corrections (e.g. "this is issue #6 from 1977"),
-//     fetchMarketData re-ran with the corrected search query and returned
-//     updated primaryAuthority (ComicVine, Colnect, TCGdex, etc.) — but
-//     that authority data was NEVER written into the response. The refined
-//     result spread ...analysis which carried the STALE authority from the
-//     original scan. User corrects "Star Wars #6 1977" but still sees the
-//     2025 issue in the authority card.
-//   - FIX: If fetchMarketData returns a new primaryAuthority, it replaces
-//     the old one in the refined result. If no authority found, original stays.
-//     One line added to refinedResult construction.
+// WHAT CHANGED (v3.8) — Authority Refresh:
+//   When an identity correction changes the item (vintage, brand, edition, grade),
+//   fetchMarketData returns fresh primaryAuthority from the corrected search query.
+//   Previously this was fetched but NEVER included in the response — the refined
+//   result just spread ...analysis which carried the OLD stale authority data.
+//   Now: on identity corrections, if fresh authority data exists, it overwrites
+//   the stale data in the response. ComicVine, Colnect, TCGdex etc. now update.
 //
 // ARCHITECTURE:
 //   RateLimit(vision|text) → Auth → Sanitize → detectCorrectionType
 //   → fetchMarketData(correctedQuery) + Perplexity + lookupPatterns(category)
 //   → buildSingleSchemaPrompt [+ collectiveKnowledge + image instruction]
 //   → parallel multimodal AI → validate(newValue > 0)
-//   → apply correctedItemName + authority → average → recordCorrection(agreementRate) → respond
+//   → apply correctedItemName → average → recordCorrection(agreementRate) → respond
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import type { AnalysisResult } from '../src/types';
@@ -481,11 +477,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`🧠 CI Engine: ${collectiveKnowledge.items.length} patterns injected`);
     }
 
-    // v3.8: Log authority re-query result
-    if (marketResult.primaryAuthority) {
-      console.log(`🏛️ Authority re-queried: ${marketResult.primaryAuthority.source} — match found for corrected item`);
-    } else if (correctionInfo.isIdentityCorrection) {
-      console.log(`🏛️ Authority re-query: no match found for corrected search — keeping original`);
+    // v3.8: Log authority refresh status
+    if (correctionInfo.isIdentityCorrection && marketResult.primaryAuthority) {
+      console.log(`🏛️ Fresh authority data from corrected search: ${marketResult.primaryAuthority.source}`);
     }
 
     const prompt = buildRefinePrompt(
@@ -559,10 +553,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // =========================================================================
     // v3.7 HARDENING #1 — refinementConsensus
-    // Agreement rate = validProviders / totalProviders.
-    // Passed as confidence weight into recordCorrection() so the CI Engine
-    // captures "how many providers agreed on this correction."
-    // A 3/3 correction is higher signal than 1/3.
     // =========================================================================
     const agreementRate = validResponses.length / Math.max(totalProvidersAttempted, 1);
 
@@ -574,19 +564,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       (correctedItemName ? ` | Name → "${correctedItemName}"` : '')
     );
 
+    // =========================================================================
+    // v3.8: AUTHORITY REFRESH ON IDENTITY CORRECTIONS
+    //
+    // Previously: refinedResult spread ...analysis which carried the OLD stale
+    // authority data (e.g. ComicVine showing Issue #6 from 2025 when user
+    // corrected to Issue #6 from 1977).
+    //
+    // Now: when it's an identity correction and fetchMarketData returned fresh
+    // primaryAuthority, we include it. The AnalysisResult component reads
+    // authorityData to render the AuthorityReportCard.
+    //
+    // Also include fresh market sources so the HYDRA consensus display updates.
+    // =========================================================================
+    const authorityOverride: Record<string, any> = {};
+
+    if (correctionInfo.isIdentityCorrection) {
+      // Fresh authority data from the corrected search (ComicVine, Colnect, TCGdex, etc.)
+      if (marketResult.primaryAuthority) {
+        authorityOverride.authorityData = marketResult.primaryAuthority;
+        console.log(`🏛️ Authority refreshed: ${marketResult.primaryAuthority.source}`);
+      }
+
+      // Fresh market sources so HYDRA consensus display updates
+      if (availableSources.length > 0) {
+        authorityOverride.marketSources = availableSources;
+      }
+    }
+
     const refinedResult: AnalysisResult = {
       ...analysis,
+      ...authorityOverride,  // v3.8: fresh authority + market data on identity corrections
       itemName: correctedItemName ?? analysis.itemName,
       estimatedValue: averageValue,
       valuation_factors: uniqueFactors.slice(0, 5),
       summary_reasoning: newSummary,
-      // v3.8: If re-query found updated authority for corrected item, use it.
-      // Otherwise the original authority from ...analysis stays via spread.
-      ...(marketResult.primaryAuthority ? { authorityData: marketResult.primaryAuthority } : {}),
     };
 
     // v3.3+v3.7: CI Engine — fire-and-forget
-    // #1: agreementRate now passed as corrected.confidence for CI pattern weighting
     recordCorrection({
       original: {
         identification: analysis.itemName,
@@ -600,13 +615,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         identification: correctedItemName ?? analysis.itemName,
         category: effectiveCategory,
         estimatedValue: averageValue,
-        confidence: agreementRate, // v3.7 #1: refinement agreement rate as confidence weight
+        confidence: agreementRate,
       },
       authoritySource: 'user_explicit',
     }).catch(err => console.warn('[CI-Engine] Correction recording failed (non-fatal):', err));
 
-    // v3.7 #1: Return refinementConsensus alongside the refined result
-    // The card reads this to display "Refined — 3/3 providers agreed"
+    // v3.7 #1 + v3.8: Return refinementConsensus alongside the refined result
     return res.status(200).json({
       ...refinedResult,
       refinementConsensus: {
