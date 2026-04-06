@@ -1,7 +1,7 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "installCommand": "npm install",
+  "installCommand": "npm install --legacy-peer-deps",
   "rewrites": [
     {
       "source": "/sitemap.xml",
@@ -41,35 +41,35 @@
   ],
   "crons": [
     {
-      "path": "/api/admin/kpis?cron_secret=YOUR_CRON_SECRET_HERE",
+      "path": "/api/admin/kpis",
       "schedule": "0 6 * * *"
     },
     {
-      "path": "/api/boardroom/oracle-bridge?cron_secret=YOUR_CRON_SECRET_HERE",
+      "path": "/api/boardroom/oracle-bridge",
       "schedule": "30 6 * * *"
     },
     {
-      "path": "/api/notifications/daily-digest?cron_secret=YOUR_CRON_SECRET_HERE",
+      "path": "/api/notifications/daily-digest",
       "schedule": "0 13 * * *"
     },
     {
-      "path": "/api/boardroom/scheduler?type=morning_briefing&cron_secret=YOUR_CRON_SECRET_HERE",
+      "path": "/api/boardroom/scheduler?type=morning_briefing",
       "schedule": "0 14 * * *"
     },
     {
-      "path": "/api/boardroom/scheduler?type=standup&cron_secret=YOUR_CRON_SECRET_HERE",
+      "path": "/api/boardroom/scheduler?type=standup",
       "schedule": "0 16 * * *"
     },
     {
-      "path": "/api/boardroom/scheduler?type=evening_debrief&cron_secret=YOUR_CRON_SECRET_HERE",
+      "path": "/api/boardroom/scheduler?type=evening_debrief",
       "schedule": "0 1 * * *"
     },
     {
-      "path": "/api/cron/argos-scan?cron_secret=YOUR_CRON_SECRET_HERE",
+      "path": "/api/cron/argos-scan",
       "schedule": "0 */6 * * *"
     },
     {
-      "path": "/api/cron/aggregate-corrections?cron_secret=YOUR_CRON_SECRET_HERE",
+      "path": "/api/cron/aggregate-corrections",
       "schedule": "0 3 * * *"
     }
   ]
