@@ -1,6 +1,9 @@
 // FILE: api/arena/marketplace.ts
 // Marketplace listings endpoint - PUBLIC for browsing
 // Supports filtering by seller_id (My Listings), status, category, price
+//
+// v1.1 CHANGES — War Room Audit:
+//   - UUID validation on seller_id filter to prevent filter manipulation.
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -11,6 +14,9 @@ export const config = {
   runtime: 'nodejs',
   maxDuration: 15,
 };
+
+// UUID v4 format validation — prevents injection via query param filters
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface MarketplaceFilters {
   searchQuery?: string;
@@ -55,6 +61,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       limit: Math.min(MAX_LIMIT, Math.max(1, Number(req.query.limit) || DEFAULT_LIMIT)),
       include_categories: req.query.include_categories === 'true',
     };
+
+    // v1.1: Validate seller_id is a UUID if provided — prevents filter manipulation
+    if (filters.seller_id && !UUID_REGEX.test(filters.seller_id)) {
+      return res.status(400).json({ error: 'Invalid seller_id format.' });
+    }
 
     // Validate price range
     if (filters.minPrice && filters.maxPrice && filters.minPrice > filters.maxPrice) {

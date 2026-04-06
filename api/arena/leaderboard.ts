@@ -1,27 +1,13 @@
+// FILE: api/arena/leaderboard.ts
+// Leaderboard endpoint - requires authentication
+//
+// v1.1 CHANGES — War Room Audit:
+//   - Replaced inline supaAdmin and verifyUser with shared _lib imports.
+//     Security patches to _lib/security.js now propagate automatically.
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
-
-// Create Supabase admin client
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supaAdmin = createClient(supabaseUrl, supabaseServiceKey);
-
-// Simple auth check using Supabase directly
-async function verifyUser(req: VercelRequest) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    throw new Error('Authentication required');
-  }
-
-  const token = authHeader.split(' ')[1];
-  const { data: { user }, error } = await supaAdmin.auth.getUser(token);
-  
-  if (error || !user) {
-    throw new Error('Authentication failed');
-  }
-
-  return user;
-}
+import { supaAdmin } from '../_lib/supaAdmin.js';
+import { verifyUser } from '../_lib/security.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
@@ -29,7 +15,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    await verifyUser(req); // SECURITY: Verify user is authenticated to view leaderboards
+    await verifyUser(req);
     
     const { data, error } = await supaAdmin
       .from('leaderboards')

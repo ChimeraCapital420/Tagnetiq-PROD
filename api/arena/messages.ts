@@ -1,9 +1,16 @@
 // FILE: api/arena/messages.ts
 // Updated to support P2P conversations + blocked user filtering
+// HARDENED: UUID validation on .or() filters to prevent injection
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUser } from '../_lib/security.js';
+
+// UUID v4 format validation — prevents injection via .or() PostgREST filters
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUUID(id: unknown): id is string {
+  return typeof id === 'string' && UUID_REGEX.test(id);
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
@@ -32,8 +39,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(403).json({ error: 'Access denied.' });
       }
 
-      // Get blocked status
+      // Get blocked status — validate UUIDs before interpolation
       const otherUserId = convo.buyer_id === user.id ? convo.seller_id : convo.buyer_id;
+
+      if (!isValidUUID(user.id) || !isValidUUID(otherUserId)) {
+        return res.status(400).json({ error: 'Invalid user identifier.' });
+      }
+
       const { data: blocked } = await supaAdmin
         .from('blocked_users')
         .select('id')
@@ -126,8 +138,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(403).json({ error: 'Access denied.' });
       }
 
-      // Check if blocked
+      // Check if blocked — validate UUIDs before interpolation
       const otherUserId = convo.buyer_id === user.id ? convo.seller_id : convo.buyer_id;
+
+      if (!isValidUUID(user.id) || !isValidUUID(otherUserId)) {
+        return res.status(400).json({ error: 'Invalid user identifier.' });
+      }
+
       const { data: blocked } = await supaAdmin
         .from('blocked_users')
         .select('id')

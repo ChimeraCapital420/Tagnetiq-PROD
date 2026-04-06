@@ -9,6 +9,9 @@
 //   - #4: Input validation hardening on getListings — status, limit, and
 //         offset query params are now validated/sanitized before DB use.
 //         limit capped at 100, offset floor at 0, status checked against enum.
+//
+// v2.2 CHANGES — War Room Audit:
+//   - GET: UUID validation on seller_id filter to prevent filter manipulation.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supaAdmin } from '../_lib/supaAdmin.js';
@@ -19,6 +22,9 @@ export const config = {
   runtime: 'nodejs',
   maxDuration: 10,
 };
+
+// UUID v4 format validation — prevents injection via query param filters
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // =============================================================================
 // VALIDATION SCHEMAS
@@ -304,6 +310,11 @@ async function getListings(req: VercelRequest, res: VercelResponse) {
         error: 'Invalid status value',
         allowed: ALLOWED_LISTING_STATUSES,
       });
+    }
+
+    // v2.2: Validate seller_id is a UUID if provided — prevents filter manipulation
+    if (seller_id && typeof seller_id === 'string' && !UUID_REGEX.test(seller_id)) {
+      return res.status(400).json({ error: 'Invalid seller_id format.' });
     }
 
     // #4: Clamp limit (1–100) and floor offset at 0

@@ -1,14 +1,28 @@
 // FILE: api/arena/conversations.ts
 // Updated to support P2P direct messaging + listing-based conversations
 // BACKWARD COMPATIBLE - returns array at top level
+//
+// v1.1 CHANGES — War Room Audit:
+//   - UUID validation on all .or() PostgREST filters to prevent injection.
 
 import { supaAdmin } from '../_lib/supaAdmin.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUser } from '../_lib/security.js';
 
+// UUID v4 format validation — prevents injection via .or() PostgREST filters
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUUID(id: unknown): id is string {
+  return typeof id === 'string' && UUID_REGEX.test(id);
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const user = await verifyUser(req);
+
+    // Validate authenticated user ID before any .or() usage
+    if (!isValidUUID(user.id)) {
+      return res.status(400).json({ error: 'Invalid user identifier.' });
+    }
 
     // GET - Fetch all conversations
     if (req.method === 'GET') {
@@ -184,6 +198,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (otherUserId === user.id) {
           return res.status(400).json({ error: 'Cannot message yourself.' });
         }
+      }
+
+      // Validate otherUserId is a UUID before any .or() usage
+      if (!isValidUUID(otherUserId)) {
+        return res.status(400).json({ error: 'Invalid user identifier.' });
       }
 
       // Check if other user exists
