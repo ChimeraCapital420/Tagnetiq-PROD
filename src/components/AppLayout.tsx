@@ -21,13 +21,8 @@
 //   ADDED: GuidedOverlay — spotlight onboarding for Trust Level 1 users.
 //          Renders after OracleBar. Self-hides at Level 2+. No props needed —
 //          reads trustLevel from AppContext internally.
-//
-// v4.3 — Proactive microphone permission (one-and-done):
-//   ADDED: On first login ever, request mic permission so the OS toast appears
-//          immediately. Tracks in localStorage — never asks again after the user
-//          grants or denies. Toast confirms result with Settings path for changes.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppContext } from '@/contexts/AppContext';
@@ -41,10 +36,6 @@ import DevicePairingModal from './DevicePairingModal.js';
 import SmartGlassesShopSheet from './SmartGlassesShopSheet';
 import { useBluetoothManager } from '@/hooks/useBluetoothManager';
 import { useAnalytics } from '@/hooks/useAnalytics';
-import { toast } from 'sonner';
-
-// localStorage key — once set, never ask again on this device
-const MIC_PERMISSION_ASKED_KEY = 'tagnetiq_mic_permission_asked';
 
 const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
@@ -62,62 +53,11 @@ const AppLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const showMarketingNav = !user || isHomePage;
 
   // Track scanner opens via context watcher
-  useEffect(() => {
+  React.useEffect(() => {
     if (appContext.isScannerOpen) {
       trackFeature('scanner_open');
     }
   }, [appContext.isScannerOpen]);
-
-  // v4.3: One-and-done microphone permission request.
-  //
-  // Fires once, ever, on first login on this device.
-  // localStorage flag prevents it from ever firing again after the user
-  // makes their choice — grant or deny.
-  //
-  // On grant: success toast tells user they can change it in Settings.
-  // On deny:  info toast tells user exactly where to enable it if they change
-  //           their mind. No pressure. No repeat asks.
-  //
-  // This is the same UX pattern used by Google Meet, Zoom, WhatsApp Web.
-  useEffect(() => {
-    if (!user) return;
-    if (!navigator.mediaDevices?.getUserMedia) return;
-
-    // Already asked on this device — never ask again
-    if (localStorage.getItem(MIC_PERMISSION_ASKED_KEY)) return;
-
-    // Small delay so the app is fully loaded before the OS dialog appears
-    const timer = setTimeout(async () => {
-      // Mark as asked immediately — even if something throws
-      localStorage.setItem(MIC_PERMISSION_ASKED_KEY, 'true');
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Release immediately — we only needed the permission grant
-        stream.getTracks().forEach(track => track.stop());
-
-        // Friendly confirmation toast
-        toast.success('Microphone enabled for Oracle voice', {
-          description: 'You can change this anytime in your device Settings → Apps → TagnetIQ → Permissions.',
-          duration: 6000,
-        });
-
-      } catch (err: any) {
-        const isDenied = err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError';
-
-        if (isDenied) {
-          // Informational — no pressure, just let them know where to change it
-          toast.info('Microphone permission not granted', {
-            description: 'To use Oracle voice, go to Settings → Apps → TagnetIQ → Permissions → Microphone → Allow.',
-            duration: 8000,
-          });
-        }
-        // Any other error (no mic hardware etc.) — silent fail
-      }
-    }, 1500);
-
-    return () => clearTimeout(timer);
-  }, [user?.id]); // Tied to user login, but localStorage prevents repeat asks
 
   return (
     <div className="relative z-10">
