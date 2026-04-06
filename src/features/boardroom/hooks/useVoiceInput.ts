@@ -9,6 +9,10 @@
 //   denied → show exact Android Settings path, return false immediately.
 //   prompt → getUserMedia triggers the OS dialog. ✅
 //   granted → getUserMedia succeeds silently. ✅
+//
+// v2.2 — Added reset() to return interface.
+//   OracleBar calls voice.reset() on route change and collapse.
+//   reset() = stopListening() + clearTranscript(). No other changes.
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
@@ -44,6 +48,7 @@ export interface UseVoiceInputReturn extends VoiceInputState {
   toggleListening: () => void;
   clearTranscript: () => void;
   requestPermission: () => Promise<boolean>;
+  reset: () => void;
 }
 
 // ============================================================================
@@ -370,6 +375,13 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     setState(prev => ({ ...prev, transcript: '', interimTranscript: '' }));
   }, []);
 
+  // v2.2: reset() — stopListening + clearTranscript in one call.
+  // Required by OracleBar on route change and bar collapse.
+  const reset = useCallback(() => {
+    stopListening();
+    clearTranscript();
+  }, [stopListening, clearTranscript]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -387,6 +399,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     toggleListening,
     clearTranscript,
     requestPermission,
+    reset,
   };
 }
 
