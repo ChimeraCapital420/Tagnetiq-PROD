@@ -17,7 +17,7 @@
 //   "Open full chat →" link if they want deeper conversation.
 //
 // MUTE TOGGLE:
-//   Speaker icon in collapsed bar. One tap → Dash goes silent.
+//   Speaker icon in collapsed bar. One tap → Oracle goes silent.
 //   Persisted to localStorage — survives page refresh.
 //   Use case: auction floor, private home, competitors nearby.
 //
@@ -31,7 +31,7 @@
 // HIDDEN ON: /oracle (user is already in full chat)
 //
 // API: Calls /api/oracle/chat directly. Same body shape as useSendMessage.
-//      Maintains its own lightweight conversationId so Dash has context
+//      Maintains its own lightweight conversationId so Oracle has context
 //      across bar interactions. Full conversation lives on /oracle.
 //
 // RULES OF HOOKS: All hooks declared before any conditional return.
@@ -46,7 +46,7 @@ import {
   Volume2, VolumeX, Loader2, ExternalLink,
 } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
-import { useVoiceInput } from '@/features/boardroom/hooks/useVoiceInput';
+import { useVoiceInput } from '@/hooks/useVoiceInput';
 import { useOracleVoice } from '@/hooks/useOracleVoice';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
@@ -187,7 +187,7 @@ const OracleBar: React.FC = () => {
     },
   });
 
-  // ── Dash voice output (text → speech) ──────────────────────────────
+  // ── Oracle voice output (text → speech) ──────────────────────────────
   const oracle = useOracleVoice();
 
   // ── Computed values (no hooks below this line) ──────────────────────
@@ -236,7 +236,7 @@ const OracleBar: React.FC = () => {
   };
 
   // ── Call Oracle API inline ──────────────────────────────────────────
-  const askDash = async (text: string) => {
+  const askOracle = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || isLoading) return;
 
@@ -305,13 +305,13 @@ const OracleBar: React.FC = () => {
     const text = (inputText || voice.interimTranscript).trim();
     if (text) {
       voice.stopListening();
-      askDash(text);
+      askOracle(text);
       setInputText('');
     }
   };
 
   const handleChip = (chip: string) => {
-    askDash(chip);
+    askOracle(chip);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -422,7 +422,7 @@ const OracleBar: React.FC = () => {
             </div>
           )}
 
-          {/* Dash response */}
+          {/* Oracle response */}
           {oracleResponse && !isLoading && (
             <div className="space-y-3">
               <div className="rounded-xl bg-muted/60 border border-border/30 px-3 py-3">
@@ -594,7 +594,7 @@ const OracleBar: React.FC = () => {
           {barLabel}
         </button>
 
-        {/* Mute toggle — one tap silences Dash */}
+        {/* Mute toggle — one tap silences Oracle */}
         <button
           onClick={oracle.toggleMute}
           className={cn(
