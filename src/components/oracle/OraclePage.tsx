@@ -4,6 +4,11 @@
 // Enhanced: camera/vision, content creation, energy tracking
 // Sprint N gaps: learning, introductions, push prompt, smart chip routing
 // Sprint N+: Voice-only mode — cymatics only, no text bubbles
+//
+// v2.0 — OracleBar thread handoff:
+//   useOraclePrefill wired in. When user taps "Full conversation" in
+//   OracleBar, the last message is written to sessionStorage and picked
+//   up here automatically. Thread continues seamlessly.
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTts, useOracleSpeakingState } from '@/hooks/useTts';
@@ -11,6 +16,7 @@ import { usePushNotifications } from '@/hooks/usePushNotifications';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOracleChat, useConversationMode } from './hooks';
 import { useOracleExtras } from './hooks/useOracleExtras';
+import { useOraclePrefill } from './hooks/useOraclePrefill';
 import {
   OracleHeader,
   OracleChatMessages,
@@ -81,6 +87,12 @@ export default function OraclePage() {
   // ── Chat hook ─────────────────────────────────────────
   const chat = useOracleChat();
 
+  // ── v2.0: OracleBar thread handoff ───────────────────
+  // When user taps "Full conversation" in OracleBar, the last message
+  // is stored in sessionStorage('oracle_prefill'). This picks it up
+  // automatically after Oracle's greeting loads.
+  useOraclePrefill(chat.sendMessage);
+
   // ── Extras hook (learning, introductions, content) ────
   const extras = useOracleExtras({
     appendMessage: chat.appendMessage,
@@ -134,8 +146,6 @@ export default function OraclePage() {
   }, [convo.conversationMode]);
 
   // ── Display mode sync ─────────────────────────────────
-  // When switching to voice mode, enable auto-speak
-  // When switching to silent, disable auto-speak
   useEffect(() => {
     if (displayMode === 'voice') {
       setAutoSpeak(true);
@@ -148,7 +158,6 @@ export default function OraclePage() {
   // ── Hide peek overlay when speaking ends ──────────────
   useEffect(() => {
     if (!globalSpeaking && peekMessage) {
-      // Keep peek visible for 3s after speech ends, then fade
       const timer = setTimeout(() => setPeekMessage(false), 3000);
       return () => clearTimeout(timer);
     }
@@ -189,15 +198,13 @@ export default function OraclePage() {
     }
   }, [chat.sendHunt, autoSpeak, speak, voiceURI, premiumVoiceId, chat.currentEnergy]);
 
-  // ── Smart chip handler (routes to correct handler) ────
+  // ── Smart chip handler ────────────────────────────────
   const handleChipClick = useCallback(async (message: string) => {
     const intent = detectChipIntent(message);
-
     let response: string | null = null;
 
     switch (intent) {
       case 'learn': {
-        // Extract topic from message
         const topicMatch = message.match(/(?:teach me (?:about |how )?)?(.+)/i);
         const topic = topicMatch?.[1] || message;
         response = await extras.sendLearn(topic);
@@ -205,10 +212,9 @@ export default function OraclePage() {
       }
       case 'intro': {
         await extras.findMatches();
-        return; // findMatches appends its own messages
+        return;
       }
       case 'listing': {
-        // Extract item and platform from message
         const platformMatch = message.match(/on\s+(ebay|mercari|poshmark|facebook|amazon|whatnot)/i);
         const platform = platformMatch?.[1]?.toLowerCase() || 'ebay';
         const itemMatch = message.match(/(?:list|listing for)\s+(?:my\s+)?["']?(.+?)["']?\s+(?:on|$)/i);
@@ -216,7 +222,6 @@ export default function OraclePage() {
         if (itemName) {
           await extras.createListing(itemName, platform);
         } else {
-          // Fallback: send as regular chat, Oracle will handle it
           response = await chat.sendMessage(message);
         }
         break;
@@ -257,7 +262,7 @@ export default function OraclePage() {
     if (ok) setShowHistory(false);
   }, []);
 
-  // ── Auto-speak toggle ────────────────────────────────
+  // ── Auto-speak toggle ─────────────────────────────────
   const handleToggleAutoSpeak = useCallback(() => {
     setAutoSpeak(prev => {
       if (isSpeaking) cancelSpeech();
@@ -277,16 +282,12 @@ export default function OraclePage() {
   // ── Push notification helpers ─────────────────────────
   const handleEnablePush = useCallback(async () => {
     const success = await push.subscribe();
-    if (success) {
-      setPushPromptDismissed(true);
-    }
+    if (success) setPushPromptDismissed(true);
   }, [push.subscribe]);
 
   // ── Build augmented quick chips ───────────────────────
   const augmentedChips = React.useMemo(() => {
     const chips = [...(chat.quickChips || [])];
-
-    // Add push notification chip if eligible
     if (
       push.supported
       && push.permission === 'default'
@@ -294,16 +295,12 @@ export default function OraclePage() {
       && !pushPromptDismissed
       && chat.messages.length >= 6
     ) {
-      chips.push({
-        label: '🔔 Enable alerts',
-        message: '__ENABLE_PUSH__', // Special sentinel
-      });
+      chips.push({ label: '🔔 Enable alerts', message: '__ENABLE_PUSH__' });
     }
-
-    return chips.slice(0, 5); // Allow up to 5 with the push chip
+    return chips.slice(0, 5);
   }, [chat.quickChips, push.supported, push.permission, push.subscribed, pushPromptDismissed, chat.messages.length]);
 
-  // ── Augmented chip handler (intercepts push sentinel) ─
+  // ── Augmented chip handler ────────────────────────────
   const handleAugmentedChipClick = useCallback(async (message: string) => {
     if (message === '__ENABLE_PUSH__') {
       await handleEnablePush();
@@ -312,7 +309,7 @@ export default function OraclePage() {
     await handleChipClick(message);
   }, [handleChipClick, handleEnablePush]);
 
-  // ── Get last assistant message for voice-only peek ────
+  // ── Last assistant message for voice-only peek ────────
   const lastAssistantMessage = React.useMemo(() => {
     for (let i = chat.messages.length - 1; i >= 0; i--) {
       if (chat.messages[i].role === 'assistant') return chat.messages[i].content;
@@ -357,17 +354,15 @@ export default function OraclePage() {
         onDelete={chat.deleteConversation}
       />
 
-      {/* ── Voice-Only Mode: Cymatics + tap-to-peek ────── */}
+      {/* ── Voice-Only Mode ───────────────────────────── */}
       {displayMode === 'voice' ? (
         <div
           className="flex-1 flex flex-col items-center justify-center relative overflow-hidden"
           onClick={() => setPeekMessage(prev => !prev)}
         >
-          {/* Cymatic visualization area — takes full space */}
           <div className="flex-1 flex items-center justify-center w-full">
             {globalSpeaking ? (
               <div className="relative">
-                {/* Animated cymatics rings */}
                 <div className="w-48 h-48 rounded-full border-2 border-primary/30 animate-ping absolute inset-0" />
                 <div className="w-48 h-48 rounded-full border border-primary/20 animate-pulse" />
                 <div className="w-36 h-36 rounded-full border-2 border-primary/50 animate-pulse absolute top-6 left-6" />
@@ -392,7 +387,6 @@ export default function OraclePage() {
             )}
           </div>
 
-          {/* Peek overlay — shows last message on tap */}
           {peekMessage && lastAssistantMessage && (
             <div className="absolute inset-x-0 bottom-0 bg-background/95 backdrop-blur border-t p-4 max-h-[40vh] overflow-y-auto animate-in slide-in-from-bottom-4 duration-200">
               <p className="text-sm leading-relaxed whitespace-pre-wrap">
@@ -405,7 +399,7 @@ export default function OraclePage() {
           )}
         </div>
       ) : (
-        /* ── Full/Silent Mode: Normal chat messages ────── */
+        /* ── Full/Silent Mode ────────────────────────── */
         <OracleChatMessages
           messages={chat.messages}
           isLoading={chat.isLoading}

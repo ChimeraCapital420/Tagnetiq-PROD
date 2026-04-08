@@ -46,6 +46,7 @@ import {
   Volume2, VolumeX, Loader2, ExternalLink,
 } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
 import { useOracleVoice } from '@/hooks/useOracleVoice';
 import { supabase } from '@/lib/supabase';
@@ -168,6 +169,9 @@ const OracleBar: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { isScannerOpen, isAnalyzing, oracleAnalysisContext } = useAppContext();
+  const { profile } = useAuth();
+  const voiceURI = profile?.settings?.tts_voice_uri || null;
+  const premiumVoiceId = profile?.settings?.premium_voice_id || null;
 
   // ── All state/refs declared first — Rules of Hooks ─────────────────
   const [isExpanded, setIsExpanded] = useState(false);
@@ -291,7 +295,7 @@ const OracleBar: React.FC = () => {
       setOracleResponse(response);
 
       // Oracle speaks — unless muted
-      oracle.speak(response);
+      oracle.speak(response, voiceURI, premiumVoiceId);
 
     } catch (err: any) {
       const msg = err?.message || 'Something went wrong. Try again.';
@@ -324,6 +328,8 @@ const OracleBar: React.FC = () => {
   const goToFullChat = () => {
     if (oracleResponse) {
       // Carry the thread into the full Oracle page
+      // Write last message to oracle_prefill so Oracle page picks it up via useOraclePrefill
+      sessionStorage.setItem('oracle_prefill', lastMessage || '');
       sessionStorage.setItem('oracle_bar_thread', JSON.stringify({
         conversationId,
         lastMessage: inputText || voice.interimTranscript,
@@ -435,7 +441,7 @@ const OracleBar: React.FC = () => {
               <div className="flex items-center justify-between">
                 <button
                   onClick={() => {
-                    oracle.isSpeaking ? oracle.stop() : oracle.speak(oracleResponse);
+                    oracle.isSpeaking ? oracle.stop() : oracle.speak(oracleResponse, voiceURI, premiumVoiceId);
                   }}
                   className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
