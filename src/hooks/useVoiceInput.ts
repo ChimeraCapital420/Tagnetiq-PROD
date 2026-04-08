@@ -268,36 +268,17 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     if (!recognitionRef.current) return;
 
     // ── Permission gate (mobile-first) ──────────────────
+    // Call getUserMedia directly — the ONLY reliable way to trigger the OS
+    // permission dialog on Android PWAs. No pre-checks. No shortcuts.
+    // Never-asked: OS dialog appears. Granted: silent. Denied by user: caught below.
     if (navigator.mediaDevices?.getUserMedia) {
-
-      // v2.1: Pre-check — is mic already hard-denied at browser level?
-      // Catches Smart Switch "denied" transfer before getUserMedia throws.
-      if (navigator.permissions?.query) {
-        try {
-          const micPermission = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-          if (micPermission.state === 'denied') {
-            const msg = 'Microphone blocked. Android Settings → Apps → TagnetIQ → Permissions → Microphone → Allow';
-            setError(msg);
-            onError?.(msg);
-            console.warn('[useVoiceInput] Microphone permission pre-check: denied');
-            return;
-          }
-          // 'granted' or 'prompt' — proceed to getUserMedia below
-        } catch {
-          // permissions.query not available — fall through to getUserMedia
-        }
-      }
-
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Permission granted. Release the stream immediately —
-        // Web Speech API manages its own audio capture internally.
         stream.getTracks().forEach(track => track.stop());
       } catch (err: any) {
         let msg: string;
-
         if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-          msg = 'Microphone blocked. Android Settings → Apps → TagnetIQ → Permissions → Microphone → Allow';
+          msg = 'Tap Allow when your browser asks to use the microphone.';
         } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
           msg = 'No microphone found on this device.';
         } else if (err?.name === 'NotReadableError') {
@@ -305,7 +286,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
         } else {
           msg = 'Could not access microphone. Check device permissions.';
         }
-
         setError(msg);
         onError?.(msg);
         console.warn('[useVoiceInput] getUserMedia failed:', err?.name, err?.message);
