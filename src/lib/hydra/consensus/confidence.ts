@@ -1,6 +1,11 @@
 // FILE: src/lib/hydra/consensus/confidence.ts
 // Confidence Calculation for HYDRA Consensus Engine
 // Extracted from hydra-engine.ts calculateConsensus()
+//
+// v1.1 FIX: targetAICount corrected from 10 → 8 (actual provider count)
+//   Was: participationRate = 8/10 = 0.80 max → contribution capped at 0.12
+//   Now: participationRate = 8/8  = 1.00 max → contribution reaches full 0.15
+//   Effect: +3 points on every full-participation scan. Immediate confidence lift.
 
 import type { ModelVote, AuthorityData, ConsensusMetrics } from '../types.js';
 import { CONFIDENCE_THRESHOLDS, CONFIDENCE_WEIGHTS } from '../config/constants.js';
@@ -41,7 +46,7 @@ export interface ConfidenceBreakdown {
 }
 
 export interface ConfidenceOptions {
-  /** Target number of AI providers for participation rate (default: 10) */
+  /** Target number of AI providers for participation rate (default: 8) */
   targetAICount?: number;
   /** Authority data if available */
   authorityData?: AuthorityData | null;
@@ -59,14 +64,14 @@ export interface ConfidenceOptions {
 
 /**
  * Calculate comprehensive confidence score for consensus
- * 
+ *
  * This matches the ENHANCED CONFIDENCE CALCULATION in hydra-engine.ts:
  * - avgConfidence * 0.35           (35% weight on average AI confidence)
  * - decisionAgreement * 0.25       (25% weight on decision consensus)
  * - valueAgreement * 0.25          (25% weight on value consensus)
  * - participationRate * 0.15       (15% weight on AI participation)
  * - authorityBoost (+5% if verified)
- * 
+ *
  * @param votes - Array of ModelVote objects
  * @param options - Configuration options
  * @returns ConfidenceResult with score, quality, and metrics
@@ -76,7 +81,7 @@ export function calculateConfidence(
   options: ConfidenceOptions = {}
 ): ConfidenceResult {
   const {
-    targetAICount = 10, // Updated target for 8 core AIs + authority sources
+    targetAICount = 8, // FIX v1.1: was 10 — actual provider count is 8
     authorityData = null,
     minVotesForFullConfidence = 3,
     lowVoteCap = 75,
@@ -94,19 +99,20 @@ export function calculateConfidence(
   // Calculate component metrics (matches hydra-engine.ts exactly)
   const voteStats = calculateVoteStats(votes);
   const tally = tallyVotes(votes);
-  
+
   // Average AI confidence
   const avgAIConfidence = voteStats.avgConfidence;
-  
+
   // Decision agreement (how strongly AIs agree on BUY vs SELL)
   const decisionAgreement = voteStats.decisionAgreement;
-  
+
   // Value agreement (how closely values align using coefficient of variation)
   const valueAgreement = voteStats.valueAgreement;
-  
+
   // Participation rate (more AIs = higher confidence)
+  // FIX v1.1: targetAICount = 8 so full participation now reaches 1.0
   const participationRate = Math.min(1, votes.length / targetAICount);
-  
+
   // Authority boost (+5% if authority data exists)
   const authorityBoost = authorityData ? 0.05 : 0;
 
@@ -117,7 +123,7 @@ export function calculateConfidence(
   const participationContribution = participationRate * 0.15;
 
   // Calculate base confidence (0-1 scale)
-  const baseConfidence = 
+  const baseConfidence =
     aiScoreContribution +
     decisionAgreementContribution +
     valueAgreementContribution +
@@ -239,7 +245,7 @@ export function applyConfidencePenalty(
     single_provider: 50,
     tiebreaker_used: 5,
   };
-  
+
   const penalty = penalties[reason] ?? severity;
   return Math.max(0, confidence - penalty);
 }
@@ -257,7 +263,7 @@ export function applyConfidenceBonus(
     high_agreement: 3,
     many_votes: 2,
   };
-  
+
   const bonusAmount = bonuses[reason] ?? bonus;
   return Math.min(99, confidence + bonusAmount);
 }
@@ -322,11 +328,11 @@ function logConfidenceCalculation(
   console.log(`   Decision Agreement: ${(metrics.decisionAgreement * 100).toFixed(1)}%`);
   console.log(`   Value Agreement: ${(metrics.valueAgreement * 100).toFixed(1)}%`);
   console.log(`   AI Participation: ${(metrics.participationRate * targetAICount).toFixed(0)}/${targetAICount} (${(metrics.participationRate * 100).toFixed(1)}%)`);
-  
+
   if (authorityData) {
     console.log(`   Authority Verification: ✅ +5% boost`);
   }
-  
+
   console.log(`   Final Confidence: ${finalConfidence}% (Target: 70%+)`);
 }
 
@@ -341,7 +347,7 @@ function logConfidenceCalculation(
 export function estimateConfidence(
   availableProviderCount: number,
   hasAuthoritySource: boolean,
-  targetAICount: number = 10
+  targetAICount: number = 8  // FIX v1.1: was 10 — matches actual provider count
 ): {
   estimatedConfidence: number;
   quality: AnalysisQuality;
@@ -351,21 +357,21 @@ export function estimateConfidence(
   const assumedAvgConfidence = 0.75;
   const assumedAgreement = 0.80;
   const participationRate = Math.min(1, availableProviderCount / targetAICount);
-  
-  const baseEstimate = 
+
+  const baseEstimate =
     assumedAvgConfidence * 0.35 +
     assumedAgreement * 0.25 +
     assumedAgreement * 0.25 +
     participationRate * 0.15;
-  
+
   let estimatedConfidence = Math.round(baseEstimate * 100);
-  
+
   if (hasAuthoritySource) {
     estimatedConfidence += 5;
   }
-  
+
   const quality = determineQuality(estimatedConfidence, availableProviderCount < 3);
-  
+
   let recommendation: string;
   if (quality === 'OPTIMAL') {
     recommendation = 'Good to proceed with analysis';
@@ -374,7 +380,7 @@ export function estimateConfidence(
   } else {
     recommendation = 'Consider adding more providers or authority sources';
   }
-  
+
   return {
     estimatedConfidence,
     quality,

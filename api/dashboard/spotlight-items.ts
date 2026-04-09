@@ -1,6 +1,12 @@
 // FILE: api/dashboard/spotlight-items.ts
 // Personalized Spotlight Items API
 // Features: Onboarding interests, Watchlist boost, Hidden items filter, Category filter
+//
+// v2.1 FIX:
+//   - NEXT_PUBLIC_SUPABASE_URL → SUPABASE_URL (was undefined in Vercel, killing all queries)
+//   - Added is_ghost = false filter (ghost listings have no public photos)
+//   - location column → location_text, location_lat, location_lng (matches schema)
+//   - Added offers_shipping column (was shipping_included — matches listings.ts schema)
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -10,16 +16,15 @@ export const config = {
   maxDuration: 10,
 };
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+// FIX: was NEXT_PUBLIC_SUPABASE_URL — not set in Vercel for server functions
+const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supaAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 // Auth verification (optional - allows anonymous browsing)
 async function verifyUser(req: VercelRequest) {
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    return null;
-  }
+  if (!authHeader?.startsWith('Bearer ')) return null;
 
   const token = authHeader.split(' ')[1];
   try {
@@ -100,23 +105,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'POST' && req.body) {
       preferences = req.body;
     } else {
-      // Category filter (single category from chips)
       if (req.query.category_filter) {
         preferences.category_filter = req.query.category_filter as string;
       }
-      
-      // Multiple categories (from preferences)
       if (req.query.categories) {
         preferences.viewed_categories = (req.query.categories as string).split(',');
       }
-      
       if (req.query.min_price || req.query.max_price) {
         preferences.price_range = {
           min: parseInt(req.query.min_price as string) || 0,
           max: parseInt(req.query.max_price as string) || 100000,
         };
       }
-      
       if (req.query.lat && req.query.lng) {
         preferences.location = {
           lat: parseFloat(req.query.lat as string),
@@ -125,18 +125,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           state: req.query.state as string,
         };
       }
-
-      // Hidden items
       if (req.query.hidden) {
         preferences.hidden_item_ids = (req.query.hidden as string).split(',');
       }
-
-      // Onboarding interests
       if (req.query.interests) {
         preferences.onboarding_interests = (req.query.interests as string).split(',');
       }
-
-      // Watchlist keywords
       if (req.query.watchlist_keywords) {
         preferences.watchlist_keywords = (req.query.watchlist_keywords as string).split(',');
       }
@@ -145,7 +139,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // If logged in, fetch user profile data
     if (userId) {
       try {
-        // Fetch user's profile with interests and spotlight preferences
         const { data: profile } = await supaAdmin
           .from('profiles')
           .select('interests, spotlight_preferences')
@@ -153,16 +146,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .single();
 
         if (profile) {
-          // Use onboarding interests if not already set
           if (!preferences.onboarding_interests && profile.interests) {
             preferences.onboarding_interests = profile.interests;
           }
-
-          // Use profile spotlight preferences
           if (profile.spotlight_preferences) {
             const profilePrefs = profile.spotlight_preferences as any;
-            
-            // Merge hidden items
             if (profilePrefs.hidden_item_ids) {
               preferences.hidden_item_ids = [
                 ...(preferences.hidden_item_ids || []),
@@ -172,7 +160,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
 
-        // Fetch purchase history
+        // Purchase history
         const { data: purchases } = await supaAdmin
           .from('arena_listings')
           .select('category')
@@ -187,7 +175,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           preferences.purchased_categories = [...new Set(purchasedCategories)] as string[];
         }
 
-        // Fetch watchlist if not already provided
+        // Watchlist keywords if not already provided
         if (!preferences.watchlist_keywords?.length) {
           const { data: watchlists } = await supaAdmin
             .from('watchlists')
@@ -204,7 +192,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Build query with category filter
+    // ── Build query ────────────────────────────────────────────────────────
     let query = supaAdmin
       .from('arena_listings')
       .select(`
@@ -218,18 +206,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         category,
         images,
         status,
-        shipping_included,
-        location,
+        offers_shipping,
+        offers_local_pickup,
+        location_text,
+        location_lat,
+        location_lng,
         created_at,
         expires_at
       `)
       .eq('status', 'active')
+      .eq('is_ghost', false)                              // FIX: exclude ghost listings
       .gt('expires_at', new Date().toISOString())
       .order('created_at', { ascending: false });
 
-    // Apply category filter if specified (from chips)
+    // Category filter from chips
     if (preferences.category_filter && preferences.category_filter !== 'all') {
-      // Use ilike for flexible matching
       query = query.ilike('category', `%${preferences.category_filter}%`);
     }
 
@@ -245,11 +236,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         items: [],
         total: 0,
         personalized: false,
-        message: 'No active listings available'
+        message: 'No active listings available',
       });
     }
 
-    // Filter out hidden items
+    // Filter hidden items
     const hiddenSet = new Set(preferences.hidden_item_ids || []);
     const visibleListings = listings.filter((l: any) => !hiddenSet.has(l.id));
 
@@ -258,7 +249,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         items: [],
         total: 0,
         personalized: false,
-        message: 'All items hidden'
+        message: 'All items hidden',
       });
     }
 
@@ -286,12 +277,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const sellerIds = [...new Set(visibleListings.map((l: any) => l.seller_id))];
     let profilesMap: Record<string, any> = {};
     if (sellerIds.length > 0) {
-      const { data: profiles, error: profileError } = await supaAdmin
+      const { data: profiles } = await supaAdmin
         .from('profiles')
-        .select('id, screen_name, email, location')
+        .select('id, display_name, username, location_text')
         .in('id', sellerIds);
 
-      if (!profileError && profiles) {
+      if (profiles) {
         profilesMap = profiles.reduce((acc: any, p: any) => {
           acc[p.id] = p;
           return acc;
@@ -308,7 +299,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // Transform and score items
+    // ── Score items ────────────────────────────────────────────────────────
     const scoredItems: SpotlightItem[] = visibleListings.map((listing: any) => {
       const vaultItem = vaultItemsMap[listing.vault_item_id];
       const profile = profilesMap[listing.seller_id];
@@ -317,9 +308,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const itemCategory = (vaultItem?.category || listing.category || '').toLowerCase();
       const itemName = (vaultItem?.item_name || listing.title || '').toLowerCase();
-      const hasShipping = listing.shipping_included === true;
 
-      // ====== CATEGORY SCORING ======
+      // FIX: was shipping_included — schema uses offers_shipping
+      const hasShipping = listing.offers_shipping === true;
+
+      // FIX: was listing.location — schema uses location_text
+      const sellerLocation = listing.location_text
+        || profile?.location_text
+        || '';
 
       // Viewed categories (+25)
       if (preferences.viewed_categories?.length && itemCategory) {
@@ -342,20 +338,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      // ====== WATCHLIST MATCHING (+35) ======
+      // Watchlist match (+35)
       if (preferences.watchlist_keywords?.length) {
         const matchedKeywords = preferences.watchlist_keywords.filter(keyword => {
           const kw = keyword.toLowerCase();
           return itemName.includes(kw) || itemCategory.includes(kw);
         });
-        
         if (matchedKeywords.length > 0) {
-          // More matched keywords = higher score
           relevanceScore += 35 + (matchedKeywords.length * 5);
         }
       }
 
-      // ====== PRICE RANGE (+15) ======
+      // Price range (+15)
       if (preferences.price_range) {
         const price = listing.price;
         if (price >= preferences.price_range.min && price <= preferences.price_range.max) {
@@ -363,44 +357,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      // ====== QUALITY SIGNALS ======
+      // Quality signals
       if (vaultItem?.is_verified) relevanceScore += 12;
       if (vaultItem?.confidence_score > 0.8) relevanceScore += 8;
 
-      // ====== LOCATION BOOST (+15) ======
-      const sellerLocation = profile?.location || listing.location || '';
+      // Location boost (+15)
       if (preferences.location?.state && sellerLocation) {
-        const userState = preferences.location.state.toLowerCase();
-        if (sellerLocation.toLowerCase().includes(userState)) {
+        if (sellerLocation.toLowerCase().includes(preferences.location.state.toLowerCase())) {
           relevanceScore += 15;
         }
       }
 
-      // ====== SHIPPING (+10) ======
+      // Shipping (+10)
       if (hasShipping) relevanceScore += 10;
 
-      // ====== RECENCY (0-10) ======
+      // Recency (0–10)
       const ageInDays = (Date.now() - new Date(listing.created_at).getTime()) / (1000 * 60 * 60 * 24);
       relevanceScore += Math.max(0, 10 - ageInDays);
 
-      // ====== GOOD DEAL (+10) ======
+      // Good deal (+10)
       if (vaultItem?.estimated_value && listing.price < vaultItem.estimated_value * 0.85) {
         relevanceScore += 10;
       }
 
-      // ====== PENALTIES ======
-      if (preferences.viewed_item_ids?.includes(listing.id)) {
-        relevanceScore -= 15;
-      }
-      if (userId && listing.seller_id === userId) {
-        relevanceScore -= 100;
-      }
+      // Penalties
+      if (preferences.viewed_item_ids?.includes(listing.id)) relevanceScore -= 15;
+      if (userId && listing.seller_id === userId) relevanceScore -= 100;
 
       const primaryImage = vaultItem?.primary_image_url
         || (listing.images && listing.images[0])
         || '/placeholder.svg';
 
-      const sellerName = profile?.screen_name || null;
+      const sellerName = profile?.display_name || profile?.username || null;
 
       return {
         id: vaultItem?.id || listing.vault_item_id || listing.id,
@@ -414,16 +402,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         is_verified: vaultItem?.is_verified || false,
         seller_id: listing.seller_id,
         seller_name: sellerName,
-        seller_location: sellerLocation,
+        seller_location: sellerLocation || undefined,
         shipping_available: hasShipping,
         created_at: listing.created_at,
         relevance_score: relevanceScore,
       };
     });
 
-    // Filter and sort
+    // Sort + slice
     const validItems = scoredItems.filter(item => (item.relevance_score || 0) > -50);
-
     const sortedItems = validItems
       .sort((a, b) => {
         const randomFactor = (Math.random() - 0.5) * 8;
@@ -454,7 +441,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.error('Spotlight API error:', error);
     return res.status(500).json({
       error: 'Failed to fetch spotlight items',
-      details: error.message
+      details: error.message,
     });
   }
 }
