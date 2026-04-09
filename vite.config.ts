@@ -27,14 +27,11 @@ export default defineConfig({
           }
         ]
       },
-      // FIX: Raise precache limit so the SW doesn't choke on large chunks
       workbox: {
-        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4MB limit
-        // Don't precache source maps or huge chunks — fetch on demand instead
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {
-            // Cache API calls with network-first strategy
             urlPattern: /^https:\/\/.*\/api\//,
             handler: 'NetworkFirst',
             options: {
@@ -43,7 +40,6 @@ export default defineConfig({
             },
           },
           {
-            // Cache fonts/images with cache-first
             urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp|woff2)$/,
             handler: 'CacheFirst',
             options: {
@@ -60,46 +56,61 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  optimizeDeps: {
+    // Pre-bundle heavy deps so Vite doesn't re-process on every cold start
+    include: [
+      'pdfjs-dist',
+      'mammoth',
+    ],
+    // pdfjs ships its own worker — exclude it from the bundle
+    exclude: [
+      'pdfjs-dist/build/pdf.worker.min.mjs',
+    ],
+  },
   build: {
     target: 'esnext',
     minify: 'esbuild',
-    chunkSizeWarningLimit: 600, // Raise from default 500 to reduce noise
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
-        manualChunks: {
-          // ── Framework ─────────────────────────────────
-          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+        manualChunks(id) {
+          // ── pdfjs + mammoth — large, infrequently used
+          // Split into their own chunks so main bundle stays lean.
+          // They only load when user attaches a document.
+          if (id.includes('pdfjs-dist')) return 'pdf-worker';
+          if (id.includes('mammoth'))    return 'doc-parser';
 
-          // ── UI libraries ──────────────────────────────
-          'ui-vendor': [
-            '@radix-ui/react-dialog',
-            '@radix-ui/react-dropdown-menu',
-            '@radix-ui/react-tabs',
-          ],
-          'animation': ['framer-motion'],
+          // ── Framework ────────────────────────────────
+          if (id.includes('react-dom') ||
+              id.includes('react-router') ||
+              id.includes('node_modules/react/')) return 'react-vendor';
 
-          // ── Data layer ────────────────────────────────
-          'supabase': ['@supabase/supabase-js'],
+          // ── UI libraries ─────────────────────────────
+          if (id.includes('@radix-ui')) return 'ui-vendor';
+          if (id.includes('framer-motion')) return 'animation';
 
-          // ── AI SDKs (server-side, but imported in shared types)
-          'ai-vendors': ['@anthropic-ai/sdk', '@google/generative-ai', 'openai'],
+          // ── Data layer ───────────────────────────────
+          if (id.includes('@supabase')) return 'supabase';
+
+          // ── AI SDKs ──────────────────────────────────
+          if (id.includes('@anthropic-ai') ||
+              id.includes('@google/generative-ai') ||
+              id.includes('openai')) return 'ai-vendors';
 
           // ── Utilities ─────────────────────────────────
-          'i18n': ['i18next', 'react-i18next'],
-          'charts': ['recharts'],
-        }
-      }
-    }
+          if (id.includes('i18next')) return 'i18n';
+          if (id.includes('recharts')) return 'charts';
+        },
+      },
+    },
   },
   server: {
     port: 5173,
-    host: true
+    host: true,
   },
   define: {
-    // Only expose specific env vars that are safe for client-side
-    'process.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
+    'process.env.VITE_SUPABASE_URL':      JSON.stringify(process.env.VITE_SUPABASE_URL),
     'process.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
-    'process.env.VITE_VERCEL_URL': JSON.stringify(process.env.VITE_VERCEL_URL),
-    // NODE_ENV is auto-set by Vite - do not override
-  }
+    'process.env.VITE_VERCEL_URL':        JSON.stringify(process.env.VITE_VERCEL_URL),
+  },
 });

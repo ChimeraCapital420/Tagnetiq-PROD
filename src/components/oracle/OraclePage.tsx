@@ -1,14 +1,8 @@
 // FILE: src/components/oracle/OraclePage.tsx
 // Thin orchestrator — wires hooks to components
-// All logic lives in hooks/, all UI lives in components/
-// Enhanced: camera/vision, content creation, energy tracking
-// Sprint N gaps: learning, introductions, push prompt, smart chip routing
-// Sprint N+: Voice-only mode — cymatics only, no text bubbles
 //
-// v2.0 — OracleBar thread handoff:
-//   useOraclePrefill wired in. When user taps "Full conversation" in
-//   OracleBar, the last message is written to sessionStorage and picked
-//   up here automatically. Thread continues seamlessly.
+// v2.0 — OracleBar thread handoff
+// v2.1 — Universal media ingestion: handleSendDocument + handleSendUrl
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTts, useOracleSpeakingState } from '@/hooks/useTts';
@@ -27,40 +21,23 @@ import {
 import type { ChatMessage, VisionMode, CameraCapture } from './types';
 
 // =============================================================================
-// DISPLAY MODE — controls what the user sees
+// DISPLAY MODE
 // =============================================================================
 
-// 'full'   = text bubbles + voice + cymatics (default)
-// 'voice'  = cymatics visualization only, no text. Tap to peek last message
-// 'silent' = text only, no voice, no cymatics
 type DisplayMode = 'full' | 'voice' | 'silent';
 
 // =============================================================================
-// SMART CHIP DETECTION — routes special chips to the right handler
+// CHIP INTENT DETECTION
 // =============================================================================
 
-const LEARN_TRIGGERS = [
-  /^teach me/i,
-  /^authentication 101/i,
-  /^how.*(grading|authentication|negotiat)/i,
-];
+const LEARN_TRIGGERS   = [/^teach me/i, /^authentication 101/i, /^how.*(grading|authentication|negotiat)/i];
+const INTRO_TRIGGERS   = [/collectors.*connect/i, /find.*collectors/i, /similar interests/i];
+const LISTING_TRIGGERS = [/^(write|create|make).*(listing|description)/i, /^list.*(on|my)\s+(ebay|mercari|poshmark|facebook|amazon|whatnot)/i, /^list it/i];
 
-const INTRO_TRIGGERS = [
-  /collectors.*connect/i,
-  /find.*collectors/i,
-  /similar interests/i,
-];
-
-const LISTING_TRIGGERS = [
-  /^(write|create|make).*(listing|description)/i,
-  /^list.*(on|my)\s+(ebay|mercari|poshmark|facebook|amazon|whatnot)/i,
-  /^list it/i,
-];
-
-function detectChipIntent(message: string): 'learn' | 'intro' | 'listing' | 'chat' {
-  if (LEARN_TRIGGERS.some(r => r.test(message))) return 'learn';
-  if (INTRO_TRIGGERS.some(r => r.test(message))) return 'intro';
-  if (LISTING_TRIGGERS.some(r => r.test(message))) return 'listing';
+function detectChipIntent(msg: string): 'learn' | 'intro' | 'listing' | 'chat' {
+  if (LEARN_TRIGGERS.some(r   => r.test(msg))) return 'learn';
+  if (INTRO_TRIGGERS.some(r   => r.test(msg))) return 'intro';
+  if (LISTING_TRIGGERS.some(r => r.test(msg))) return 'listing';
   return 'chat';
 }
 
@@ -69,37 +46,29 @@ function detectChipIntent(message: string): 'learn' | 'intro' | 'listing' | 'cha
 // =============================================================================
 
 export default function OraclePage() {
-  const [autoSpeak, setAutoSpeak] = useState(true);
-  const [showHistory, setShowHistory] = useState(false);
-  const [playingIdx, setPlayingIdx] = useState<number | null>(null);
+  const [autoSpeak,           setAutoSpeak]          = useState(true);
+  const [showHistory,         setShowHistory]        = useState(false);
+  const [playingIdx,          setPlayingIdx]         = useState<number | null>(null);
   const [pushPromptDismissed, setPushPromptDismissed] = useState(false);
-  const [displayMode, setDisplayMode] = useState<DisplayMode>('full');
-  const [peekMessage, setPeekMessage] = useState(false);
+  const [displayMode,         setDisplayMode]        = useState<DisplayMode>('full');
+  const [peekMessage,         setPeekMessage]        = useState(false);
 
-  const { profile } = useAuth();
+  const { profile }     = useAuth();
   const { speak, isSpeaking, cancel: cancelSpeech } = useTts();
-  const globalSpeaking = useOracleSpeakingState();
-  const push = usePushNotifications();
+  const globalSpeaking  = useOracleSpeakingState();
+  const push            = usePushNotifications();
 
-  const voiceURI = profile?.settings?.tts_voice_uri || null;
-  const premiumVoiceId = profile?.settings?.premium_voice_id || null;
+  const voiceURI        = profile?.settings?.tts_voice_uri    || null;
+  const premiumVoiceId  = profile?.settings?.premium_voice_id || null;
 
-  // ── Chat hook ─────────────────────────────────────────
   const chat = useOracleChat();
-
-  // ── v2.0: OracleBar thread handoff ───────────────────
-  // When user taps "Full conversation" in OracleBar, the last message
-  // is stored in sessionStorage('oracle_prefill'). This picks it up
-  // automatically after Oracle's greeting loads.
   useOraclePrefill(chat.sendMessage);
 
-  // ── Extras hook (learning, introductions, content) ────
   const extras = useOracleExtras({
     appendMessage: chat.appendMessage,
     setLoading: chat.setIsLoading,
   });
 
-  // ── Conversation mode hook ────────────────────────────
   const convo = useConversationMode({
     isLoading: chat.isLoading,
     onTranscript: async (text) => {
@@ -113,39 +82,24 @@ export default function OraclePage() {
     },
   });
 
-  // ── Init ──────────────────────────────────────────────
+  // ── Init ──────────────────────────────────────────────────────────────
   useEffect(() => {
     chat.loadRecentConversation().then(greeting => {
-      if (greeting && autoSpeak) {
-        speak(greeting, voiceURI, premiumVoiceId);
-      }
+      if (greeting && autoSpeak) speak(greeting, voiceURI, premiumVoiceId);
     });
   }, []);
 
-  // ── Push notification prompt (after 3rd message) ──────
-  useEffect(() => {
-    if (
-      push.supported
-      && push.permission === 'default'
-      && !push.subscribed
-      && !pushPromptDismissed
-      && chat.messages.length >= 6 // ~3 exchanges
-    ) {
-      // Don't auto-prompt — will show a subtle chip instead
-    }
-  }, [chat.messages.length, push.supported, push.permission, push.subscribed, pushPromptDismissed]);
-
-  // ── Clear playing state when speech ends ──────────────
+  // ── Global speaking state cleanup ─────────────────────────────────────
   useEffect(() => {
     if (!globalSpeaking && playingIdx !== null) setPlayingIdx(null);
   }, [globalSpeaking]);
 
-  // ── Force auto-speak on when entering conversation mode
+  // ── Conversation mode forces auto-speak ───────────────────────────────
   useEffect(() => {
     if (convo.conversationMode) setAutoSpeak(true);
   }, [convo.conversationMode]);
 
-  // ── Display mode sync ─────────────────────────────────
+  // ── Display mode side-effects ─────────────────────────────────────────
   useEffect(() => {
     if (displayMode === 'voice') {
       setAutoSpeak(true);
@@ -155,15 +109,15 @@ export default function OraclePage() {
     }
   }, [displayMode]);
 
-  // ── Hide peek overlay when speaking ends ──────────────
+  // ── Hide peek overlay when speaking ends ──────────────────────────────
   useEffect(() => {
     if (!globalSpeaking && peekMessage) {
-      const timer = setTimeout(() => setPeekMessage(false), 3000);
-      return () => clearTimeout(timer);
+      const t = setTimeout(() => setPeekMessage(false), 3000);
+      return () => clearTimeout(t);
     }
   }, [globalSpeaking, peekMessage]);
 
-  // ── Text send handler ─────────────────────────────────
+  // ── Text send ─────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     if (!chat.inputValue.trim()) return;
     const response = await chat.sendMessage(chat.inputValue);
@@ -173,7 +127,7 @@ export default function OraclePage() {
     }
   }, [chat.inputValue, autoSpeak, speak, voiceURI, premiumVoiceId, chat.currentEnergy]);
 
-  // ── Image/Vision send handler ─────────────────────────
+  // ── Image / vision send ───────────────────────────────────────────────
   const handleSendImage = useCallback(async (
     capture: CameraCapture,
     mode: VisionMode,
@@ -186,7 +140,7 @@ export default function OraclePage() {
     }
   }, [chat.sendImage, autoSpeak, speak, voiceURI, premiumVoiceId, chat.currentEnergy]);
 
-  // ── Hunt triage handler ───────────────────────────────
+  // ── Hunt triage ───────────────────────────────────────────────────────
   const handleSendHunt = useCallback(async (
     capture: CameraCapture,
     askingPrice?: number,
@@ -198,7 +152,31 @@ export default function OraclePage() {
     }
   }, [chat.sendHunt, autoSpeak, speak, voiceURI, premiumVoiceId, chat.currentEnergy]);
 
-  // ── Smart chip handler ────────────────────────────────
+  // ── v12.0: Document send ──────────────────────────────────────────────
+  const handleSendDocument = useCallback(async (
+    file: File,
+    question?: string,
+  ) => {
+    if (!chat.sendDocument) return;
+    const response = await chat.sendDocument(file, question);
+    if (response && autoSpeak) {
+      speak(response, voiceURI, premiumVoiceId, chat.currentEnergy);
+    }
+  }, [chat.sendDocument, autoSpeak, speak, voiceURI, premiumVoiceId, chat.currentEnergy]);
+
+  // ── v12.0: URL send ───────────────────────────────────────────────────
+  const handleSendUrl = useCallback(async (
+    url: string,
+    question?: string,
+  ) => {
+    if (!chat.sendUrl) return;
+    const response = await chat.sendUrl(url, question);
+    if (response && autoSpeak) {
+      speak(response, voiceURI, premiumVoiceId, chat.currentEnergy);
+    }
+  }, [chat.sendUrl, autoSpeak, speak, voiceURI, premiumVoiceId, chat.currentEnergy]);
+
+  // ── Smart chip handler ────────────────────────────────────────────────
   const handleChipClick = useCallback(async (message: string) => {
     const intent = detectChipIntent(message);
     let response: string | null = null;
@@ -206,8 +184,7 @@ export default function OraclePage() {
     switch (intent) {
       case 'learn': {
         const topicMatch = message.match(/(?:teach me (?:about |how )?)?(.+)/i);
-        const topic = topicMatch?.[1] || message;
-        response = await extras.sendLearn(topic);
+        response = await extras.sendLearn(topicMatch?.[1] || message);
         break;
       }
       case 'intro': {
@@ -228,16 +205,13 @@ export default function OraclePage() {
       }
       default: {
         response = await chat.sendMessage(message);
-        break;
       }
     }
 
-    if (response && autoSpeak) {
-      speak(response, voiceURI, premiumVoiceId);
-    }
+    if (response && autoSpeak) speak(response, voiceURI, premiumVoiceId);
   }, [autoSpeak, speak, voiceURI, premiumVoiceId, extras, chat]);
 
-  // ── Play/stop individual messages ─────────────────────
+  // ── Play individual messages ───────────────────────────────────────────
   const handlePlay = useCallback((msg: ChatMessage, idx: number) => {
     if (playingIdx === idx && isSpeaking) {
       cancelSpeech();
@@ -249,7 +223,7 @@ export default function OraclePage() {
     speak(msg.content, voiceURI, premiumVoiceId);
   }, [playingIdx, isSpeaking, cancelSpeech, speak, voiceURI, premiumVoiceId]);
 
-  // ── History panel ─────────────────────────────────────
+  // ── History panel ─────────────────────────────────────────────────────
   const handleToggleHistory = useCallback(() => {
     setShowHistory(prev => {
       if (!prev) chat.loadConversationHistory();
@@ -262,7 +236,7 @@ export default function OraclePage() {
     if (ok) setShowHistory(false);
   }, []);
 
-  // ── Auto-speak toggle ─────────────────────────────────
+  // ── Auto-speak toggle ─────────────────────────────────────────────────
   const handleToggleAutoSpeak = useCallback(() => {
     setAutoSpeak(prev => {
       if (isSpeaking) cancelSpeech();
@@ -270,46 +244,37 @@ export default function OraclePage() {
     });
   }, [isSpeaking, cancelSpeech]);
 
-  // ── Display mode cycle ────────────────────────────────
+  // ── Display mode cycle ────────────────────────────────────────────────
   const handleCycleDisplayMode = useCallback(() => {
-    setDisplayMode(prev => {
-      if (prev === 'full') return 'voice';
-      if (prev === 'voice') return 'silent';
-      return 'full';
-    });
+    setDisplayMode(prev =>
+      prev === 'full' ? 'voice' : prev === 'voice' ? 'silent' : 'full'
+    );
   }, []);
 
-  // ── Push notification helpers ─────────────────────────
+  // ── Push helpers ──────────────────────────────────────────────────────
   const handleEnablePush = useCallback(async () => {
     const success = await push.subscribe();
     if (success) setPushPromptDismissed(true);
   }, [push.subscribe]);
 
-  // ── Build augmented quick chips ───────────────────────
+  // ── Augmented chips ───────────────────────────────────────────────────
   const augmentedChips = React.useMemo(() => {
     const chips = [...(chat.quickChips || [])];
     if (
-      push.supported
-      && push.permission === 'default'
-      && !push.subscribed
-      && !pushPromptDismissed
-      && chat.messages.length >= 6
+      push.supported && push.permission === 'default' && !push.subscribed &&
+      !pushPromptDismissed && chat.messages.length >= 6
     ) {
       chips.push({ label: '🔔 Enable alerts', message: '__ENABLE_PUSH__' });
     }
     return chips.slice(0, 5);
   }, [chat.quickChips, push.supported, push.permission, push.subscribed, pushPromptDismissed, chat.messages.length]);
 
-  // ── Augmented chip handler ────────────────────────────
   const handleAugmentedChipClick = useCallback(async (message: string) => {
-    if (message === '__ENABLE_PUSH__') {
-      await handleEnablePush();
-      return;
-    }
+    if (message === '__ENABLE_PUSH__') { await handleEnablePush(); return; }
     await handleChipClick(message);
   }, [handleChipClick, handleEnablePush]);
 
-  // ── Last assistant message for voice-only peek ────────
+  // ── Last assistant message for voice-only peek ────────────────────────
   const lastAssistantMessage = React.useMemo(() => {
     for (let i = chat.messages.length - 1; i >= 0; i--) {
       if (chat.messages[i].role === 'assistant') return chat.messages[i].content;
@@ -317,7 +282,7 @@ export default function OraclePage() {
     return null;
   }, [chat.messages]);
 
-  // ── Render ────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-[calc(100dvh-3.5rem)] bg-background">
       <OracleHeader
@@ -354,7 +319,7 @@ export default function OraclePage() {
         onDelete={chat.deleteConversation}
       />
 
-      {/* ── Voice-Only Mode ───────────────────────────── */}
+      {/* ── Voice-Only Mode ──────────────────────────────────────────── */}
       {displayMode === 'voice' ? (
         <div
           className="flex-1 flex flex-col items-center justify-center relative overflow-hidden"
@@ -389,17 +354,13 @@ export default function OraclePage() {
 
           {peekMessage && lastAssistantMessage && (
             <div className="absolute inset-x-0 bottom-0 bg-background/95 backdrop-blur border-t p-4 max-h-[40vh] overflow-y-auto animate-in slide-in-from-bottom-4 duration-200">
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                {lastAssistantMessage}
-              </p>
-              <p className="text-xs text-muted-foreground mt-2 text-center">
-                Tap anywhere to dismiss
-              </p>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">{lastAssistantMessage}</p>
+              <p className="text-xs text-muted-foreground mt-2 text-center">Tap anywhere to dismiss</p>
             </div>
           )}
         </div>
       ) : (
-        /* ── Full/Silent Mode ────────────────────────── */
+        /* ── Full / Silent Mode ─────────────────────────────────────── */
         <OracleChatMessages
           messages={chat.messages}
           isLoading={chat.isLoading}
@@ -423,6 +384,8 @@ export default function OraclePage() {
         onEndConversation={convo.toggleConversationMode}
         onSendImage={handleSendImage}
         onSendHunt={handleSendHunt}
+        onSendDocument={handleSendDocument}
+        onSendUrl={handleSendUrl}
       />
     </div>
   );
