@@ -3,34 +3,9 @@
 // CHAT MODULE — Single Member Handler
 // ═══════════════════════════════════════════════════════════════════════
 //
-// The primary chat path: 1:1 conversations between the CEO and one
-// board member. This is the most common interaction pattern and the
-// only path with full conversation persistence.
-//
-// Pipeline:
-//   Load member → Load conversation → Fetch memory (parallel) →
-//   Build prompt (9 layers) → Cognitive bridge (enrich prompt) →
-//   Call provider → Persist exchange → Respond →
-//   Background tasks + cognitive postResponse (fire and forget)
-//
-// Sprint 3: Meeting summaries (Layer 9) fetched in parallel with
-// existing memory/feed/decisions. Zero added latency.
-//
-// Sprint 8: Cognitive Bridge wired in.
-//   preResponse() adds 3 layers on TOP of the 9-layer prompt:
-//     - Trust boundaries (behavioral guardrails per trust tier)
-//     - Room energy awareness (cross-member energy state)
-//     - Oracle user context (memory bridge — user data for this member)
-//   postResponse() runs fire-and-forget after response:
-//     - Detects trust signals from the interaction
-//     - Calibrates trust score (up or down)
-//     - Evolves AI DNA (provider/model affinity)
-//     - Persists energy state
-//
-//   SAFETY: Both hooks are wrapped in try/catch. If the bridge fails,
-//   the original 9-layer prompt still works. Bridge is additive, never
-//   required. The board never goes down because of Sprint 8.
-//
+// v10.0: mediaAttachments passed into buildBoardMemberPrompt as Layer 10.
+//        Each member receives documents/URLs/images domain-filtered
+//        through their expertise lens. Zero breaking changes.
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -56,7 +31,6 @@ import { runBackgroundTasks } from './background-tasks.js';
 import { MAX_CONTEXT_MESSAGES } from './types.js';
 import type { SingleChatParams, EnergyArc } from './types.js';
 
-// ── Sprint 8: Cognitive Bridge ──────────────────────────
 import {
   preResponse,
   postResponse,
@@ -78,6 +52,7 @@ export async function handleSingleMemberChat(
     userId, meetingId, memberSlug, message,
     conversationId, legacyHistory, meetingType,
     founderEnergy, founderArc, topicCategory,
+    mediaAttachments,   // v10.0
   } = params;
 
   // ── Load board member ─────────────────────────────────
@@ -99,19 +74,15 @@ export async function handleSingleMemberChat(
     supabaseAdmin, userId, memberSlug, meetingType, message, conversationId,
   );
 
-  // Use server-side messages if available, fall back to legacy client history
   const conversationHistory = conversation.messages.length > 0
     ? conversation.messages
     : legacyHistory;
 
-  // Re-detect energy arc from the full conversation (server-side messages)
   const effectiveArc: EnergyArc = conversationHistory.length > 2
     ? detectEnergyArc(conversationHistory)
     : founderArc;
 
   // ── Fetch memory + context (parallel) ─────────────────
-  // Sprint 3: meetingSummaries added — fetched alongside existing data.
-  // All 4 fetches run in parallel. Zero added latency.
   const [founderMemory, crossBoardFeed, recentDecisions, meetingSummaries] = await Promise.all([
     getFounderMemory(supabaseAdmin, userId, memberSlug).catch((err) => {
       console.warn(`[Chat] Memory fetch failed for ${memberSlug}:`, err.message);
@@ -122,7 +93,8 @@ export async function handleSingleMemberChat(
     getRecentMeetingSummaries(supabaseAdmin, userId, 3).catch(() => []),
   ]);
 
-  // ── Build rich prompt (9 layers) ──────────────────────
+  // ── Build rich prompt (10 layers) ─────────────────────
+  // v10.0: mediaAttachments injected as Layer 10
   const { systemPrompt, userPrompt } = buildBoardMemberPrompt({
     member: boardMember,
     userMessage: message,
@@ -134,11 +106,10 @@ export async function handleSingleMemberChat(
     crossBoardFeed,
     recentDecisions,
     meetingSummaries,
+    mediaAttachments: mediaAttachments || [],   // v10.0
   });
 
   // ── Sprint 8: Cognitive Bridge — preResponse ──────────
-  // Adds trust boundaries, room energy, and Oracle user context
-  // on TOP of the 9-layer prompt. If it fails, we use the original.
   let finalSystemPrompt = systemPrompt;
   let cognitiveState: CognitiveState | null = null;
 
@@ -156,10 +127,9 @@ export async function handleSingleMemberChat(
     finalSystemPrompt = cognitiveState.enrichedPrompt;
   } catch (err: any) {
     console.warn(`[CognitiveBridge] preResponse failed for ${memberSlug}:`, err.message);
-    // Falls back to the 9-layer systemPrompt — bridge is additive, not required
   }
 
-  // ── Call provider via gateway ─────────────────────────
+  // ── Call provider ─────────────────────────────────────
   const result = await callWithFallback(
     boardMember.dominant_provider || boardMember.ai_provider,
     boardMember.ai_model,
@@ -211,10 +181,9 @@ export async function handleSingleMemberChat(
       decisionsInPlay: recentDecisions.length,
       meetingSummariesLoaded: meetingSummaries.length,
       conversationMessageCount: newCount,
-      // Sprint 8: Cognitive bridge metadata
+      mediaAttachmentsProcessed: (mediaAttachments || []).length,  // v10.0
       cognitiveBridge: cognitiveState ? {
         routedTopic: cognitiveState.routing.topic,
-        routedPrimary: cognitiveState.routing.primaryMember,
         roomEnergyState: cognitiveState.roomEnergy.overall,
         trustTierFromBridge: cognitiveState.trustTier,
         oracleContextInjected: !!cognitiveState.memberContext,
@@ -222,7 +191,7 @@ export async function handleSingleMemberChat(
     },
   });
 
-  // ── Background tasks (fire and forget) ────────────────
+  // ── Background tasks ──────────────────────────────────
   runBackgroundTasks({
     userId,
     memberSlug,
@@ -243,8 +212,6 @@ export async function handleSingleMemberChat(
   });
 
   // ── Sprint 8: Cognitive Bridge — postResponse ─────────
-  // Runs AFTER response is sent. Detects trust signals, calibrates
-  // trust score, evolves AI DNA, persists energy. Fire and forget.
   if (cognitiveState) {
     postResponse(supabaseAdmin, {
       memberSlug,

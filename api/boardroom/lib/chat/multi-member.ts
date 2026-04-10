@@ -3,25 +3,10 @@
 // CHAT MODULE — Multi-Member Handlers
 // ═══════════════════════════════════════════════════════════════════════
 //
-// Committee meetings (2-4 members) and full board meetings (@all).
-// All members respond in parallel. Each gets their own memory context,
-// cross-board feed, and prompt customization.
-//
-// Sprint 3: Two additions:
-//   1. Meeting summaries (Layer 9) fetched and injected into each
-//      member's prompt — they know what happened in past @all meetings
-//   2. After @all meetings, triggers compression to build shared
-//      institutional memory for future Layer 9 injection
-//
-// Sprint 8: Cognitive Bridge wired in.
-//   Each member in parallel gets:
-//     preResponse() — trust boundaries + room energy + Oracle context
-//     postResponse() — trust calibration + DNA evolution (fire-and-forget)
-//
-//   SAFETY: Both hooks are per-member try/catch. One member's bridge
-//   failure doesn't affect the others. If bridge fails for a member,
-//   that member gets the original 9-layer prompt. The meeting continues.
-//
+// v10.0: mediaAttachments threaded through to every member's prompt.
+//        Each member in a committee or full board meeting sees the same
+//        document/URL/image but filtered through their domain lens.
+//        CFO extracts cash flow. Legal extracts risk. CSO extracts moat.
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -35,9 +20,13 @@ import {
 } from '../../../../src/lib/boardroom/memory/founder-memory.js';
 import { getRecentMeetingSummaries } from '../../../../src/lib/boardroom/memory/meeting-memory.js';
 import { runBackgroundTasks, runMeetingCompressionTask } from './background-tasks.js';
-import type { CommitteeParams, FullBoardParams, MemberResponse } from './types.js';
+import type {
+  CommitteeParams,
+  FullBoardParams,
+  MemberResponse,
+  MediaAttachment,
+} from './types.js';
 
-// ── Sprint 8: Cognitive Bridge ──────────────────────────
 import {
   preResponse,
   postResponse,
@@ -58,9 +47,9 @@ export async function handleCommitteeMeeting(
   const {
     userId, meetingId, committeeSlugs, message,
     meetingType, founderEnergy, founderArc, topicCategory,
+    mediaAttachments,   // v10.0
   } = params;
 
-  // Load committee members
   const { data: members } = await supabaseAdmin
     .from('boardroom_members')
     .select('*')
@@ -72,19 +61,18 @@ export async function handleCommitteeMeeting(
     return;
   }
 
-  // Shared context (fetched once, not per-member)
   const [recentDecisions, meetingSummaries] = await Promise.all([
     getRecentDecisions(supabaseAdmin, userId).catch(() => []),
     getRecentMeetingSummaries(supabaseAdmin, userId, 3).catch(() => []),
   ]);
 
-  // Each committee member responds in parallel
   const responses = await callMembersInParallel(
     members as BoardMember[],
     userId, message, meetingType || 'committee', meetingId,
     founderEnergy, founderArc, topicCategory,
     recentDecisions, meetingSummaries,
     { feedLimit: 5 },
+    mediaAttachments,   // v10.0
   );
 
   if (meetingId) persistMeetingTimestamp(meetingId);
@@ -101,6 +89,7 @@ export async function handleCommitteeMeeting(
       founderArc,
       memberCount: responses.length,
       errorCount: responses.filter(r => r.error).length,
+      mediaAttachmentsProcessed: (mediaAttachments || []).length,  // v10.0
     },
   });
 }
@@ -117,9 +106,9 @@ export async function handleFullBoardMeeting(
   const {
     userId, meetingId, message,
     meetingType, founderEnergy, founderArc, topicCategory,
+    mediaAttachments,   // v10.0
   } = params;
 
-  // Load all active members
   const { data: members } = await supabaseAdmin
     .from('boardroom_members')
     .select('*')
@@ -131,27 +120,23 @@ export async function handleFullBoardMeeting(
     return;
   }
 
-  // Shared context (fetched once)
   const [recentDecisions, meetingSummaries] = await Promise.all([
     getRecentDecisions(supabaseAdmin, userId).catch(() => []),
     getRecentMeetingSummaries(supabaseAdmin, userId, 3).catch(() => []),
   ]);
 
-  // All members respond in parallel
   const responses = await callMembersInParallel(
     members as BoardMember[],
     userId, message, meetingType || 'full_board', meetingId,
     founderEnergy, founderArc, topicCategory,
     recentDecisions, meetingSummaries,
     { feedLimit: 3 },
+    mediaAttachments,   // v10.0
   );
 
   if (meetingId) persistMeetingTimestamp(meetingId);
 
-  // ── Sprint 3: Compress meeting into shared memory (fire-and-forget) ──
-  // This runs AFTER all members respond. The meeting summary becomes
-  // Layer 9 in prompt-builder.ts — next time any member is consulted 1:1,
-  // they'll know what happened in this board meeting.
+  // Sprint 3: Compress meeting into shared memory
   runMeetingCompressionTask(userId, meetingId, message, responses);
 
   res.status(200).json({
@@ -167,6 +152,7 @@ export async function handleFullBoardMeeting(
       errorCount: responses.filter(r => r.error).length,
       respondedMembers: responses.filter(r => !r.error).map(r => r.member),
       failedMembers: responses.filter(r => r.error).map(r => r.member),
+      mediaAttachmentsProcessed: (mediaAttachments || []).length,  // v10.0
     },
   });
 }
@@ -175,18 +161,6 @@ export async function handleFullBoardMeeting(
 // SHARED: PARALLEL MEMBER CALLS
 // =============================================================================
 
-/**
- * Call multiple board members in parallel.
- * Shared between committee and full board handlers.
- * Each member gets their own memory + feed, but meeting summaries
- * are shared (fetched once, passed to all).
- *
- * Sprint 8: Each member also gets cognitive bridge processing.
- * preResponse() enriches the prompt with trust + energy + Oracle context.
- * postResponse() fires after each member's response (fire-and-forget).
- * If the bridge fails for one member, that member uses the original
- * 9-layer prompt. Other members are unaffected.
- */
 async function callMembersInParallel(
   members: BoardMember[],
   userId: string,
@@ -199,6 +173,7 @@ async function callMembersInParallel(
   recentDecisions: any[],
   meetingSummaries: any[],
   opts: { feedLimit: number },
+  mediaAttachments?: MediaAttachment[],   // v10.0
 ): Promise<MemberResponse[]> {
 
   return Promise.all(
@@ -209,6 +184,7 @@ async function callMembersInParallel(
           getCrossBoardFeed(supabaseAdmin, userId, bm.slug, 7, opts.feedLimit).catch(() => []),
         ]);
 
+        // v10.0: Each member gets media through their own domain lens
         const { systemPrompt, userPrompt } = buildBoardMemberPrompt({
           member: bm,
           userMessage: message,
@@ -220,11 +196,9 @@ async function callMembersInParallel(
           crossBoardFeed,
           recentDecisions,
           meetingSummaries,
+          mediaAttachments: mediaAttachments || [],
         });
 
-        // ── Sprint 8: Cognitive Bridge — preResponse ────
-        // Adds trust boundaries, room energy, Oracle context per member.
-        // If it fails, we use the original 9-layer systemPrompt.
         let finalSystemPrompt = systemPrompt;
         let cognitiveState: CognitiveState | null = null;
 
@@ -241,8 +215,7 @@ async function callMembersInParallel(
           });
           finalSystemPrompt = cognitiveState.enrichedPrompt;
         } catch (bridgeErr: any) {
-          console.warn(`[CognitiveBridge] preResponse failed for ${bm.slug} in meeting:`, bridgeErr.message);
-          // Falls back to 9-layer prompt — bridge is additive, not required
+          console.warn(`[CognitiveBridge] preResponse failed for ${bm.slug}:`, bridgeErr.message);
         }
 
         const result = await callWithFallback(
@@ -255,7 +228,6 @@ async function callMembersInParallel(
 
         const crossDomain = isCrossDomain(bm, topicCategory);
 
-        // Background tasks per member
         runBackgroundTasks({
           userId,
           memberSlug: bm.slug,
@@ -278,8 +250,6 @@ async function callMembersInParallel(
           messageCount: 0,
         });
 
-        // ── Sprint 8: Cognitive Bridge — postResponse ───
-        // Fire-and-forget: trust calibration + DNA evolution + energy persist.
         if (cognitiveState) {
           postResponse(supabaseAdmin, {
             memberSlug: bm.slug,
@@ -290,7 +260,7 @@ async function callMembersInParallel(
             modelUsed: result.model,
             topicCategory,
           }, cognitiveState.roomEnergy).catch((bridgeErr) => {
-            console.warn(`[CognitiveBridge] postResponse failed for ${bm.slug} in meeting:`, bridgeErr.message);
+            console.warn(`[CognitiveBridge] postResponse failed for ${bm.slug}:`, bridgeErr.message);
           });
         }
 
@@ -326,9 +296,6 @@ async function callMembersInParallel(
 // HELPERS
 // =============================================================================
 
-/**
- * Update meeting timestamp. Non-blocking.
- */
 async function persistMeetingTimestamp(meetingId: string): Promise<void> {
   try {
     await supabaseAdmin
@@ -336,6 +303,6 @@ async function persistMeetingTimestamp(meetingId: string): Promise<void> {
       .update({ updated_at: new Date().toISOString() })
       .eq('id', meetingId);
   } catch {
-    // Non-fatal: meeting table might not exist yet
+    // Non-fatal
   }
 }

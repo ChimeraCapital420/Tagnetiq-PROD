@@ -3,34 +3,10 @@
 // BOARDROOM CHAT — Thin Orchestrator
 // ═══════════════════════════════════════════════════════════════════════
 //
-// BEFORE: 1,008 lines — types, persistence, handlers, background tasks,
-//         helpers all tangled in one file. One typo breaks everything.
-//
-// AFTER:  ~180 lines — validates the request, detects energy/topic,
-//         routes to the correct handler. All logic lives in:
-//
-//   api/boardroom/lib/chat/
-//   ├── index.ts              # Barrel exports
-//   ├── types.ts              # All types + config constants
-//   ├── conversations.ts      # DB persistence (load/create/compress)
-//   ├── single-member.ts      # 1:1 chat handler
-//   ├── multi-member.ts       # Committee + full board handlers
-//   └── background-tasks.ts   # Post-response fire-and-forget work
-//
-// A bug in compression? Fix conversations.ts. Doesn't touch handlers.
-// New meeting type? Add a handler file. Doesn't touch persistence.
-// Energy detection change? This file + energy.ts. Nothing else.
-//
-// Sprint 9 (Gap #2): Server validation of clientContext.
-//   The boardroom frontend (useMeeting.ts → useBoardroomIntelligence.ts)
-//   sends clientContext with every message: energy, routing hints, room
-//   state, cached trust data, and device info. This was previously
-//   ignored — the server re-detected energy and topic from scratch.
-//
-//   Now: server VALIDATES client hints against known valid values.
-//   If valid, uses them (skips ~50ms of server-side detection).
-//   If invalid or missing, falls back to server-side detection.
-//   Zero risk — client hints are convenience, never trusted blindly.
+// v10.0: Added mediaAttachments field.
+//   CEO can now attach documents, URLs, and images to board messages.
+//   Each member receives media pre-filtered through their domain lens.
+//   Zero breaking changes — mediaAttachments is optional.
 //
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -38,13 +14,9 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyUser } from '../_lib/security.js';
 import { getSupaAdmin } from './lib/provider-caller.js';
 
-// ── Energy Detection (pure functions, zero API cost) ────
 import { detectEnergy, detectEnergyArc } from '../../src/lib/boardroom/energy.js';
-
-// ── Topic Detection ─────────────────────────────────────
 import { detectTopicCategory } from '../../src/lib/boardroom/evolution.js';
 
-// ── Modular Chat Handlers ───────────────────────────────
 import {
   handleSingleMemberChat,
   handleCommitteeMeeting,
@@ -52,33 +24,24 @@ import {
   VALID_MEETING_TYPES,
 } from './lib/chat/index.js';
 
-// ═══════════════════════════════════════════════════════════════════════
-// Sprint 9: Client Context Validation
-// ═══════════════════════════════════════════════════════════════════════
+import type { MediaAttachment } from './lib/prompt-builder/media-context.js';
 
-/** Valid energy types — must match EnergyLevel from boardroom/energy.ts */
+// ── Client Context Validation (Sprint 9) ────────────────
+
 const VALID_ENERGIES = new Set([
   'fired_up', 'focused', 'neutral', 'frustrated',
   'anxious', 'exhausted', 'curious', 'celebratory',
-  // Also accept Oracle-side energy names (client may use either)
   'excited', 'casual',
 ]);
 
-/** Valid topic categories — must match detectTopicCategory output */
 const VALID_TOPICS = new Set([
   'strategy', 'technical', 'marketing', 'legal', 'hr',
   'data', 'product', 'research', 'science', 'innovation',
   'operations', 'psychology', 'financial', 'general',
 ]);
 
-/** Valid device types */
 const VALID_DEVICES = new Set(['mobile', 'tablet', 'desktop']);
 
-/**
- * Validate and extract usable hints from clientContext.
- * Returns validated values or null for each field.
- * Server detection is used as fallback for any invalid/missing hint.
- */
 function validateClientContext(clientContext: any): {
   energy: string | null;
   topic: string | null;
@@ -89,37 +52,58 @@ function validateClientContext(clientContext: any): {
     return { energy: null, topic: null, routingSlug: null, deviceType: 'unknown' };
   }
 
-  // Validate energy
   const clientEnergy = clientContext.energy?.type;
   const energy = (typeof clientEnergy === 'string' && VALID_ENERGIES.has(clientEnergy))
-    ? clientEnergy
-    : null;
+    ? clientEnergy : null;
 
-  // Validate topic
   const clientTopic = clientContext.routing?.topic;
   const topic = (typeof clientTopic === 'string' && VALID_TOPICS.has(clientTopic))
-    ? clientTopic
-    : null;
+    ? clientTopic : null;
 
-  // Validate routing slug (basic string check — handler verifies member exists)
   const clientSlug = clientContext.routing?.predictedPrimarySlug;
   const routingSlug = (typeof clientSlug === 'string' && clientSlug.length > 0 && clientSlug.length < 50)
-    ? clientSlug
-    : null;
+    ? clientSlug : null;
 
-  // Validate device type
   const clientDevice = clientContext.device?.type;
   const deviceType = (typeof clientDevice === 'string' && VALID_DEVICES.has(clientDevice))
-    ? clientDevice
-    : 'unknown';
+    ? clientDevice : 'unknown';
 
   return { energy, topic, routingSlug, deviceType };
 }
 
-// ═══════════════════════════════════════════════════════════════════════
+// ── Media Attachment Validation (v10.0) ──────────────────
+
+function validateMediaAttachments(raw: any): MediaAttachment[] {
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .filter(a => a && typeof a === 'object')
+    .filter(a => ['document', 'url', 'image'].includes(a.type))
+    .filter(a => typeof a.content === 'string' && a.content.length > 0)
+    .slice(0, 5) // Cap at 5 attachments per message
+    .map(a => ({
+      type: a.type,
+      fileName:         a.fileName         || undefined,
+      mimeType:         a.mimeType         || undefined,
+      wordCount:        a.wordCount        || undefined,
+      pageCount:        a.pageCount        || undefined,
+      truncated:        a.truncated        || false,
+      url:              a.url              || undefined,
+      domain:           a.domain           || undefined,
+      title:            a.title            || undefined,
+      domainFiltered:   a.domainFiltered   || false,
+      imageDescription: a.imageDescription || undefined,
+      visionMode:       a.visionMode       || undefined,
+      content:          a.content.substring(0, 10000), // Cap per attachment
+      summary:          a.summary          || undefined,
+      citations:        Array.isArray(a.citations) ? a.citations : [],
+    }));
+}
+
+// ════════════════════════════════════════════════════════
 
 export const config = {
-  maxDuration: 60, // Vercel Pro — no more 504 timeouts
+  maxDuration: 60,
 };
 
 const supabaseAdmin = getSupaAdmin();
@@ -134,7 +118,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // ── 1. AUTHENTICATE ─────────────────────────────────
     const user = await verifyUser(req);
 
     const {
@@ -147,6 +130,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       meeting_type,
       committee_members,
       clientContext,
+      mediaAttachments: rawMediaAttachments, // v10.0
     } = req.body;
 
     if (!message || typeof message !== 'string') {
@@ -168,14 +152,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(403).json({ error: 'You do not have boardroom access.' });
     }
 
-    // ── 2. VALIDATE CLIENT CONTEXT (Sprint 9) ───────────
-    // Trust client hints when valid, fall back to server detection.
-    // Saves ~50ms server-side when client gets it right.
+    // ── Validate client context (Sprint 9) ──────────────
     const validated = validateClientContext(clientContext);
 
-    // ── 3. DETECT ENERGY + TOPIC ────────────────────────
-    // Use validated client hint → skip server detection.
-    // If client hint is null (missing or invalid) → server detects.
+    // ── Validate media attachments (v10.0) ──────────────
+    const mediaAttachments = validateMediaAttachments(rawMediaAttachments);
+
+    if (mediaAttachments.length > 0) {
+      console.log(`[Boardroom] ${mediaAttachments.length} media attachment(s) for ${member_slug || 'board'}`);
+    }
+
+    // ── Detect energy + topic ────────────────────────────
     const founderEnergy = validated.energy
       ? (validated.energy as any)
       : detectEnergy(message);
@@ -188,14 +175,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? validated.topic
       : detectTopicCategory(message);
 
-    // Resolve meeting type
     const effectiveMeetingType = meeting_type && VALID_MEETING_TYPES.includes(meeting_type)
       ? meeting_type
       : (mention_all ? 'full_board' : 'one_on_one');
 
-    // ── 4. ROUTE TO HANDLER ─────────────────────────────
+    // ── Route to handler ─────────────────────────────────
 
-    // 1:1 Chat
     if (member_slug && !mention_all) {
       return handleSingleMemberChat(req, res, {
         userId: user.id,
@@ -208,10 +193,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         founderEnergy,
         founderArc,
         topicCategory,
+        mediaAttachments,    // v10.0
       });
     }
 
-    // Committee (2-4 members)
     if (committee_members && Array.isArray(committee_members) && committee_members.length >= 2) {
       return handleCommitteeMeeting(req, res, {
         userId: user.id,
@@ -222,10 +207,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         founderEnergy,
         founderArc,
         topicCategory,
+        mediaAttachments,    // v10.0
       });
     }
 
-    // Full Board (@all)
     if (mention_all) {
       return handleFullBoardMeeting(req, res, {
         userId: user.id,
@@ -235,12 +220,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         founderEnergy,
         founderArc,
         topicCategory,
+        mediaAttachments,    // v10.0
       });
     }
 
-    // No valid route
     return res.status(400).json({
-      error: 'Provide "member_slug" for a direct chat, "committee_members" for a committee, or "mention_all: true" for a full board meeting.',
+      error: 'Provide "member_slug", "committee_members", or "mention_all: true".',
     });
 
   } catch (error: any) {

@@ -58,4 +58,54 @@ export {
   formatCompanyContext,
   formatLegacyMemories,
   formatConversationHistory,
+} from './formatters.js';// FILE: api/boardroom/lib/prompt-builder/index.ts
+// ═══════════════════════════════════════════════════════════════════════
+// BOARD PROMPT BUILDER — BARREL EXPORTS
+// ═══════════════════════════════════════════════════════════════════════
+//
+// v10.0: Added MediaAttachment export for consumers.
+//
+// LAYERS:
+//   1. Identity      6. Decisions
+//   2. Elevation     7. Meeting Type
+//   3. Memory        8. Voice + Inversion
+//   4. Energy        9. Board Meetings
+//   5. Cross-Board  10. Media Intelligence ← NEW
+// ═══════════════════════════════════════════════════════════════════════
+
+export { buildBoardMemberPrompt } from './builder.js';
+export { buildTaskPrompt } from './tasks.js';
+export { buildBriefingPrompt } from './briefing.js';
+
+export type { BoardMember, PromptContext } from './types.js';
+export type { MediaAttachment } from './media-context.js';   // v10.0
+
+export {
+  BILLIONAIRE_CORE,
+  MEETING_MODIFIERS,
+  ENERGY_ADAPTATIONS,
+  ARC_GUIDANCE,
+} from './constants.js';
+
+export {
+  getMemberProtocolPrompt,
+  getUniversalProtocolPrompt,
+  getActiveProtocolGuidance,
+} from './elevation.js';
+
+export {
+  formatPersonalityEvolution,
+  formatFounderMemory,
+  formatEnergyGuidance,
+  formatCrossBoardFeed,
+  formatRecentDecisions,
+  formatMeetingSummaries,
+  formatCompanyContext,
+  formatLegacyMemories,
+  formatConversationHistory,
 } from './formatters.js';
+
+export {
+  formatMediaAttachment,
+  formatMediaAttachments,
+} from './media-context.js';    // v10.0

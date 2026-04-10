@@ -1,27 +1,26 @@
 // FILE: api/boardroom/lib/prompt-builder/builder.ts
 // ═══════════════════════════════════════════════════════════════════════
-// 9-LAYER PROMPT ASSEMBLY
+// 10-LAYER PROMPT ASSEMBLY
 // ═══════════════════════════════════════════════════════════════════════
-//
-// The main builder. Takes PromptContext, assembles all 9 layers into
-// a system prompt + user prompt pair.
 //
 // LAYERS:
 //   1. Identity      — Name, title, expertise, personality, voice
-//                      + evolved personality (Sprint 4)
 //   2. Elevation     — Billionaire mental models + member protocols
 //   3. Memory        — Founder details from past conversations
 //   4. Energy        — CEO's current emotional state
 //   5. Cross-Board   — What other members recently discussed
 //   6. Decisions     — Recent board decisions
-//   7. Meeting Type  — Context modifier (1:1, committee, vote, etc.)
-//   8. Voice         — Communication style directives
+//   7. Meeting Type  — Context modifier
+//   8. Voice         — Communication style + Inversion Principle
 //   9. Meetings      — Shared memory from full board meetings
+//  10. Media         — Documents, URLs, images (domain-filtered) ← NEW
 //
-// v9.1: Added Inversion Principle to Layer 8 Response Guidelines.
-//       ALL board members now identify failure modes before finalizing
-//       strategic recommendations. Named mental models required.
-//
+// v9.1: Inversion Principle added to Layer 8.
+// v10.0: Layer 10 — Media Intelligence.
+//   When CEO attaches a document, URL, or image, each board member
+//   receives the content pre-filtered through their domain expertise.
+//   CFO sees cash flow. Legal sees liability. CSO sees strategy.
+//   Same intelligence, 15 domain-filtered perspectives.
 // ═══════════════════════════════════════════════════════════════════════
 
 import { BILLIONAIRE_CORE, MEETING_MODIFIERS } from './constants.js';
@@ -37,28 +36,35 @@ import {
   formatLegacyMemories,
   formatConversationHistory,
 } from './formatters.js';
+import { formatMediaAttachments, type MediaAttachment } from './media-context.js';
 import type { PromptContext } from './types.js';
 
 // ============================================================================
-// MAIN PROMPT BUILDER — 9-Layer Assembly
+// UPDATED PROMPT CONTEXT — adds mediaAttachments
 // ============================================================================
 
-export function buildBoardMemberPrompt(context: PromptContext): {
+export interface ExtendedPromptContext extends PromptContext {
+  mediaAttachments?: MediaAttachment[];
+}
+
+// ============================================================================
+// MAIN PROMPT BUILDER — 10-Layer Assembly
+// ============================================================================
+
+export function buildBoardMemberPrompt(context: ExtendedPromptContext): {
   systemPrompt: string;
   userPrompt: string;
 } {
   const {
     member, userMessage, meetingType, conversationHistory,
-    // Phase 0 fields
     founderMemory, founderEnergy, founderArc,
     crossBoardFeed, recentDecisions,
-    // Sprint 3 field
     meetingSummaries,
-    // Legacy fields
     companyContext, memories,
+    mediaAttachments,   // v10.0
   } = context;
 
-  // ── Layer 1: Identity + Evolved Personality (Sprint 4) ─
+  // ── Layer 1: Identity + Evolved Personality ─────────
   const evolvedBlock = formatPersonalityEvolution(
     member.personality_evolution,
     member.name,
@@ -83,7 +89,7 @@ ${evolvedBlock}
   // ── Layer 2: Elevation Protocols ──────────────────────
   const elevationBlock = `${BILLIONAIRE_CORE}\n${getMemberProtocolPrompt(member)}`;
 
-  // ── Layer 3: Memory (Phase 0 → legacy fallback) ──────
+  // ── Layer 3: Memory ───────────────────────────────────
   const memoryBlock = founderMemory
     ? formatFounderMemory(founderMemory)
     : formatLegacyMemories(memories);
@@ -108,7 +114,10 @@ ${evolvedBlock}
 - **Be Specific**: Give exact numbers, names, timelines.
 - **Be Transformational**: Leave them thinking differently.
 - **Challenge Assumptions**: Question what they didn't know to question.
-- **Apply Inversion**: Before finalizing any strategic recommendation, identify the top 3 ways this strategy commonly fails, then explain how your recommendation avoids each failure point. Name the mental model you're using (First Principles, Second-Order Thinking, Pareto Principle, etc.).
+- **Apply Inversion**: Before finalizing any strategic recommendation,
+  identify the top 3 ways this strategy commonly fails, then explain
+  how your recommendation avoids each failure point. Name the mental
+  model you're using (First Principles, Second-Order Thinking, etc.).
 - **End with Action**: Always provide a specific next step.
 
 ${formatCompanyContext(companyContext)}
@@ -118,8 +127,15 @@ Your goal is not just to advise, but to ELEVATE the CEO's thinking permanently.
 Every response should leave them at a higher level than before.
 `;
 
-  // ── Layer 9: Board Meeting Summaries (Sprint 3) ───────
+  // ── Layer 9: Board Meeting Summaries ──────────────────
   const meetingsBlock = formatMeetingSummaries(meetingSummaries, member.slug);
+
+  // ── Layer 10: Media Intelligence (v10.0) ──────────────
+  // Domain-filtered document/URL/image content.
+  // Each member sees the same content through their expertise lens.
+  const mediaBlock = (mediaAttachments && mediaAttachments.length > 0)
+    ? formatMediaAttachments(mediaAttachments, member)
+    : '';
 
   // ── Assemble system prompt ────────────────────────────
   const systemPrompt = [
@@ -132,6 +148,7 @@ Every response should leave them at a higher level than before.
     meetingBlock,
     voiceBlock,
     meetingsBlock,
+    mediaBlock,         // Layer 10 — last so it's freshest in context
   ]
     .filter(block => block.trim().length > 0)
     .join('\n')
@@ -149,6 +166,7 @@ ${userMessage}
 ${protocolGuidance}
 
 Respond as ${member.name}, bringing your unique expertise and elevation protocols to bear.
+${mediaBlock ? 'Reference the attached media in your response where relevant.' : ''}
 `.trim();
 
   return { systemPrompt, userPrompt };
