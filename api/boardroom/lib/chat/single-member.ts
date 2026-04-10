@@ -4,8 +4,11 @@
 // ═══════════════════════════════════════════════════════════════════════
 //
 // v10.0: mediaAttachments passed into buildBoardMemberPrompt as Layer 10.
-//        Each member receives documents/URLs/images domain-filtered
-//        through their expertise lens. Zero breaking changes.
+// v10.1: Buffett Feed injected — getBoardMemberBriefing() fetched in
+//   parallel with existing memory. Today's autonomous intelligence brief
+//   is appended to the system prompt so the member arrives to every
+//   conversation already read in on their domain.
+//   Zero impact when no briefing exists (cron hasn't run yet).
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -25,7 +28,10 @@ import {
   getCrossBoardFeed,
   getRecentDecisions,
 } from '../../../../src/lib/boardroom/memory/founder-memory.js';
-import { getRecentMeetingSummaries } from '../../../../src/lib/boardroom/memory/meeting-memory.js';
+import {
+  getRecentMeetingSummaries,
+  getBoardMemberBriefing,   // v10.1: Buffett Feed
+} from '../../../../src/lib/boardroom/memory/meeting-memory.js';
 import { loadOrCreateConversation, persistExchange } from './conversations.js';
 import { runBackgroundTasks } from './background-tasks.js';
 import { MAX_CONTEXT_MESSAGES } from './types.js';
@@ -82,8 +88,10 @@ export async function handleSingleMemberChat(
     ? detectEnergyArc(conversationHistory)
     : founderArc;
 
-  // ── Fetch memory + context (parallel) ─────────────────
-  const [founderMemory, crossBoardFeed, recentDecisions, meetingSummaries] = await Promise.all([
+  // ── Fetch memory + context + briefing (parallel) ──────
+  // v10.1: getBoardMemberBriefing added to parallel fetch.
+  // All 5 fetches run simultaneously — zero added latency.
+  const [founderMemory, crossBoardFeed, recentDecisions, meetingSummaries, dailyBriefing] = await Promise.all([
     getFounderMemory(supabaseAdmin, userId, memberSlug).catch((err) => {
       console.warn(`[Chat] Memory fetch failed for ${memberSlug}:`, err.message);
       return null;
@@ -91,10 +99,10 @@ export async function handleSingleMemberChat(
     getCrossBoardFeed(supabaseAdmin, userId, memberSlug).catch(() => []),
     getRecentDecisions(supabaseAdmin, userId).catch(() => []),
     getRecentMeetingSummaries(supabaseAdmin, userId, 3).catch(() => []),
+    getBoardMemberBriefing(supabaseAdmin, memberSlug).catch(() => null),  // v10.1
   ]);
 
   // ── Build rich prompt (10 layers) ─────────────────────
-  // v10.0: mediaAttachments injected as Layer 10
   const { systemPrompt, userPrompt } = buildBoardMemberPrompt({
     member: boardMember,
     userMessage: message,
@@ -106,11 +114,20 @@ export async function handleSingleMemberChat(
     crossBoardFeed,
     recentDecisions,
     meetingSummaries,
-    mediaAttachments: mediaAttachments || [],   // v10.0
+    mediaAttachments: mediaAttachments || [],
   });
 
+  // ── v10.1: Inject Buffett Feed briefing ───────────────
+  // Appended after the 10-layer prompt so it's freshest in context.
+  // The member references this naturally — they "already know" the day's news.
+  let enrichedSystemPrompt = systemPrompt;
+  if (dailyBriefing && dailyBriefing.length > 50) {
+    enrichedSystemPrompt = systemPrompt + '\n\n' + dailyBriefing;
+    console.log(`[Buffett Feed] ✅ ${memberSlug}: morning brief injected (${dailyBriefing.length} chars)`);
+  }
+
   // ── Sprint 8: Cognitive Bridge — preResponse ──────────
-  let finalSystemPrompt = systemPrompt;
+  let finalSystemPrompt = enrichedSystemPrompt;
   let cognitiveState: CognitiveState | null = null;
 
   try {
@@ -120,7 +137,7 @@ export async function handleSingleMemberChat(
       conversationHistory: conversationHistory as any[],
       participantSlugs: [memberSlug],
       targetMember: boardMember,
-      basePrompt: systemPrompt,
+      basePrompt: enrichedSystemPrompt,
       allMembers: [boardMember],
       forceMember: memberSlug,
     });
@@ -181,7 +198,8 @@ export async function handleSingleMemberChat(
       decisionsInPlay: recentDecisions.length,
       meetingSummariesLoaded: meetingSummaries.length,
       conversationMessageCount: newCount,
-      mediaAttachmentsProcessed: (mediaAttachments || []).length,  // v10.0
+      mediaAttachmentsProcessed: (mediaAttachments || []).length,
+      buffettFeedInjected: !!(dailyBriefing && dailyBriefing.length > 50),  // v10.1
       cognitiveBridge: cognitiveState ? {
         routedTopic: cognitiveState.routing.topic,
         roomEnergyState: cognitiveState.roomEnergy.overall,

@@ -4,9 +4,13 @@
 // ═══════════════════════════════════════════════════════════════════════
 //
 // v10.0: mediaAttachments threaded through to every member's prompt.
-//        Each member in a committee or full board meeting sees the same
-//        document/URL/image but filtered through their domain lens.
-//        CFO extracts cash flow. Legal extracts risk. CSO extracts moat.
+// v10.1: Buffett Feed injected per member — getBoardMemberBriefing()
+//   fetched inside callMembersInParallel alongside member-specific memory.
+//   Each member's morning intelligence brief is injected into their prompt.
+//   CFO arrives briefed on boring business deals and SBA rates.
+//   Legal arrives briefed on AI liability and privacy enforcement.
+//   CSO arrives briefed on marketplace shifts and competitor moves.
+//   Zero impact when no briefing exists — board works without it.
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -18,7 +22,10 @@ import {
   getCrossBoardFeed,
   getRecentDecisions,
 } from '../../../../src/lib/boardroom/memory/founder-memory.js';
-import { getRecentMeetingSummaries } from '../../../../src/lib/boardroom/memory/meeting-memory.js';
+import {
+  getRecentMeetingSummaries,
+  getBoardMemberBriefing,   // v10.1: Buffett Feed
+} from '../../../../src/lib/boardroom/memory/meeting-memory.js';
 import { runBackgroundTasks, runMeetingCompressionTask } from './background-tasks.js';
 import type {
   CommitteeParams,
@@ -47,7 +54,7 @@ export async function handleCommitteeMeeting(
   const {
     userId, meetingId, committeeSlugs, message,
     meetingType, founderEnergy, founderArc, topicCategory,
-    mediaAttachments,   // v10.0
+    mediaAttachments,
   } = params;
 
   const { data: members } = await supabaseAdmin
@@ -72,7 +79,7 @@ export async function handleCommitteeMeeting(
     founderEnergy, founderArc, topicCategory,
     recentDecisions, meetingSummaries,
     { feedLimit: 5 },
-    mediaAttachments,   // v10.0
+    mediaAttachments,
   );
 
   if (meetingId) persistMeetingTimestamp(meetingId);
@@ -89,7 +96,7 @@ export async function handleCommitteeMeeting(
       founderArc,
       memberCount: responses.length,
       errorCount: responses.filter(r => r.error).length,
-      mediaAttachmentsProcessed: (mediaAttachments || []).length,  // v10.0
+      mediaAttachmentsProcessed: (mediaAttachments || []).length,
     },
   });
 }
@@ -106,7 +113,7 @@ export async function handleFullBoardMeeting(
   const {
     userId, meetingId, message,
     meetingType, founderEnergy, founderArc, topicCategory,
-    mediaAttachments,   // v10.0
+    mediaAttachments,
   } = params;
 
   const { data: members } = await supabaseAdmin
@@ -131,7 +138,7 @@ export async function handleFullBoardMeeting(
     founderEnergy, founderArc, topicCategory,
     recentDecisions, meetingSummaries,
     { feedLimit: 3 },
-    mediaAttachments,   // v10.0
+    mediaAttachments,
   );
 
   if (meetingId) persistMeetingTimestamp(meetingId);
@@ -152,7 +159,7 @@ export async function handleFullBoardMeeting(
       errorCount: responses.filter(r => r.error).length,
       respondedMembers: responses.filter(r => !r.error).map(r => r.member),
       failedMembers: responses.filter(r => r.error).map(r => r.member),
-      mediaAttachmentsProcessed: (mediaAttachments || []).length,  // v10.0
+      mediaAttachmentsProcessed: (mediaAttachments || []).length,
     },
   });
 }
@@ -161,6 +168,14 @@ export async function handleFullBoardMeeting(
 // SHARED: PARALLEL MEMBER CALLS
 // =============================================================================
 
+/**
+ * Call multiple board members in parallel.
+ * v10.0: mediaAttachments passed — each member sees content through their lens.
+ * v10.1: getBoardMemberBriefing fetched per member alongside memory.
+ *   Each member's morning intelligence is injected individually —
+ *   CFO gets their financial brief, Legal gets their legal brief, etc.
+ *   Briefing fetch failure is non-fatal per member.
+ */
 async function callMembersInParallel(
   members: BoardMember[],
   userId: string,
@@ -173,18 +188,20 @@ async function callMembersInParallel(
   recentDecisions: any[],
   meetingSummaries: any[],
   opts: { feedLimit: number },
-  mediaAttachments?: MediaAttachment[],   // v10.0
+  mediaAttachments?: MediaAttachment[],
 ): Promise<MemberResponse[]> {
 
   return Promise.all(
     members.map(async (bm) => {
       try {
-        const [founderMemory, crossBoardFeed] = await Promise.all([
+        // v10.1: Fetch briefing per member alongside memory — parallel
+        const [founderMemory, crossBoardFeed, dailyBriefing] = await Promise.all([
           getFounderMemory(supabaseAdmin, userId, bm.slug).catch(() => null),
           getCrossBoardFeed(supabaseAdmin, userId, bm.slug, 7, opts.feedLimit).catch(() => []),
+          getBoardMemberBriefing(supabaseAdmin, bm.slug).catch(() => null),  // v10.1
         ]);
 
-        // v10.0: Each member gets media through their own domain lens
+        // Build 10-layer prompt
         const { systemPrompt, userPrompt } = buildBoardMemberPrompt({
           member: bm,
           userMessage: message,
@@ -199,7 +216,13 @@ async function callMembersInParallel(
           mediaAttachments: mediaAttachments || [],
         });
 
-        let finalSystemPrompt = systemPrompt;
+        // v10.1: Inject this member's Buffett Feed briefing
+        let enrichedSystemPrompt = systemPrompt;
+        if (dailyBriefing && dailyBriefing.length > 50) {
+          enrichedSystemPrompt = systemPrompt + '\n\n' + dailyBriefing;
+        }
+
+        let finalSystemPrompt = enrichedSystemPrompt;
         let cognitiveState: CognitiveState | null = null;
 
         try {
@@ -209,7 +232,7 @@ async function callMembersInParallel(
             conversationHistory: [],
             participantSlugs: members.map(m => m.slug),
             targetMember: bm,
-            basePrompt: systemPrompt,
+            basePrompt: enrichedSystemPrompt,
             allMembers: members,
             forceMember: bm.slug,
           });

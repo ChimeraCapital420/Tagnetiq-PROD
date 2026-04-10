@@ -24,10 +24,16 @@
 //     → Returns last N meeting summaries for a user
 //     → Formatted for natural injection into system prompts
 //
+//   getBoardMemberBriefing() — NEW: reads Buffett Feed for this member
+//     → Returns today's autonomous intelligence brief from board_member_briefings
+//     → Called in parallel with other memory fetches in single/multi-member.ts
+//     → Injected as morning intelligence context before the AI responds
+//
 // Pipeline:
 //   @all meeting completes → runMeetingCompressionTask (background-tasks.ts)
 //     → compressBoardMeeting (this file) → AI summarization → DB insert
 //   Next 1:1 chat → getRecentMeetingSummaries (this file) → prompt Layer 9
+//   Buffett Feed cron → board_member_briefings → getBoardMemberBriefing → prompt
 //
 // FOLLOWS: founder-memory.ts pattern
 //   → Direct OpenAI fetch (bypasses gateway — cheap background work)
@@ -339,9 +345,7 @@ Rules:
 
     const actionItems = (parsed.action_items || []).slice(0, 10).map(a => ({
       action: String(a.action || '').substring(0, 300),
-      owner: a.owner && membersPresent.includes(a.owner)
-        ? a.owner
-        : null,
+      owner: a.owner && membersPresent.includes(a.owner) ? a.owner : null,
       deadline: a.deadline ? String(a.deadline).substring(0, 50) : null,
     }));
 
@@ -419,6 +423,69 @@ export async function getRecentMeetingSummaries(
   }
 
   return data as MeetingSummary[];
+}
+
+// =============================================================================
+// GET BOARD MEMBER DAILY BRIEFING — Buffett Feed read path
+// =============================================================================
+
+/**
+ * Get today's autonomous intelligence briefing for a board member.
+ *
+ * Written every morning at 5am Mountain by api/cron/board-briefing.ts
+ * using Perplexity sonar-pro. Each member gets 2-3 domain-specific
+ * searches covering their area of expertise:
+ *   CFO: boring business deals, SBA rates, tax structures
+ *   Legal: AI liability, resale regulation, IP filings
+ *   CSO: marketplace shifts, competitor moves, strategic opportunities
+ *   etc.
+ *
+ * Called in parallel with other memory fetches in single-member.ts
+ * and per-member in multi-member.ts. Returns null gracefully if:
+ *   - No briefing exists for today (cron hasn't run yet)
+ *   - DB query fails (non-fatal)
+ *   - board_member_briefings table doesn't exist yet
+ *
+ * Injected into the prompt as "MORNING INTELLIGENCE BRIEF" between
+ * the Layer 9 meeting summaries and Layer 10 media content.
+ * Board members reference this naturally in their responses —
+ * they arrive to every conversation already read in on the world.
+ *
+ * @param supabase - Admin client
+ * @param memberSlug - The board member's slug (e.g. "athena", "griffin")
+ * @returns Briefing text string or null
+ */
+export async function getBoardMemberBriefing(
+  supabase: SupabaseClient,
+  memberSlug: string,
+): Promise<string | null> {
+  const today = new Date().toISOString().split('T')[0];
+
+  try {
+    const { data, error } = await supabase
+      .from('board_member_briefings')
+      .select('briefing_text, sections, generated_at')
+      .eq('member_slug', memberSlug)
+      .eq('briefing_date', today)
+      .single();
+
+    if (error || !data || !data.briefing_text) {
+      // Silently return null — briefing may not exist yet (cron runs at 5am)
+      return null;
+    }
+
+    console.log(
+      `[Buffett Feed] 📰 ${memberSlug}: briefing loaded (${data.briefing_text.length} chars, ` +
+      `generated ${data.generated_at ? new Date(data.generated_at).toLocaleTimeString() : 'unknown'})`
+    );
+
+    return data.briefing_text;
+
+  } catch (err: any) {
+    // Non-fatal — board works without briefing, just without morning intelligence
+    console.warn(`[Buffett Feed] Briefing fetch failed for ${memberSlug} (non-fatal):`, err.message);
+    return null;
+  }
 }
 
 // =============================================================================

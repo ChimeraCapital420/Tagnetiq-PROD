@@ -1,29 +1,61 @@
 // FILE: src/features/boardroom/components/ChatArea.tsx
 // Main chat area component
+//
+// v2.0: Replaced inline MessageInput with full ChatInput component.
+//
+//   WHY: The original inline MessageInput was a basic textarea + send button.
+//   ChatInput (v2.0) adds:
+//     - Document reading (PDF, DOCX, TXT) — client-side, zero server cost
+//     - Web research via Perplexity sonar-pro — domain-filtered per member
+//     - Voice input — existing useVoiceInput hook wired in
+//     - Media attachment preview strip before send
+//     - Attachment-only sends (document with no message text)
+//
+//   The old MessageInput component is removed entirely — ChatInput
+//   manages its own state internally. onSendMessage signature updated
+//   to accept optional mediaAttachments alongside message text.
+//
+//   BACKWARD COMPAT: newMessage and onNewMessageChange kept as optional
+//   props so any parent components not yet updated don't break.
 
 import React, { useRef, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Loader2, Users, Plus } from 'lucide-react';
+import { Users, Plus } from 'lucide-react';
 import { MessageBubble, LoadingBubble } from './MessageBubble';
 import { BoardroomErrorBoundary } from './BoardroomErrorBoundary';
+import { ChatInput } from './ChatInput';
 import type { Meeting, Message, BoardMember } from '../types';
 import { UI_CONFIG } from '../constants';
+import type { MediaAttachment } from '../../../../api/boardroom/lib/prompt-builder/media-context.js';
+
+// =============================================================================
+// TYPES
+// =============================================================================
 
 interface ChatAreaProps {
   activeMeeting: Meeting | null;
   messages: Message[];
   loadingResponses: string[];
   sending: boolean;
-  newMessage: string;
-  onNewMessageChange: (value: string) => void;
-  onSendMessage: () => void;
+  // v2.0: Updated signature — accepts message text + optional media attachments
+  onSendMessage: (message: string, mediaAttachments?: MediaAttachment[]) => void;
   onStartMeeting: () => void;
   getMemberBySlug: (slug: string) => BoardMember | undefined;
+  // v2.0: Active member for 1:1 chats — passed to ChatInput so URL research
+  // is domain-filtered (CFO gets cash flow, Legal gets liability, etc.)
+  activeMember?: BoardMember | null;
+  // Optional: kept for backward compat — ChatInput manages its own state
+  newMessage?: string;
+  onNewMessageChange?: (value: string) => void;
+  className?: string;
 }
+
+// =============================================================================
+// EMPTY STATE
+// =============================================================================
 
 const EmptyState: React.FC<{ onStartMeeting: () => void }> = ({ onStartMeeting }) => (
   <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -39,6 +71,10 @@ const EmptyState: React.FC<{ onStartMeeting: () => void }> = ({ onStartMeeting }
   </div>
 );
 
+// =============================================================================
+// MEETING HEADER
+// =============================================================================
+
 const MeetingHeader: React.FC<{ meeting: Meeting }> = ({ meeting }) => (
   <div className="p-4 border-b flex items-center justify-between">
     <div>
@@ -53,61 +89,20 @@ const MeetingHeader: React.FC<{ meeting: Meeting }> = ({ meeting }) => (
   </div>
 );
 
-const MessageInput: React.FC<{
-  value: string;
-  onChange: (value: string) => void;
-  onSend: () => void;
-  sending: boolean;
-  disabled: boolean;
-}> = ({ value, onChange, onSend, sending, disabled }) => {
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      onSend();
-    }
-  };
-
-  return (
-    <div className="p-4 border-t">
-      <form 
-        onSubmit={(e) => { e.preventDefault(); onSend(); }} 
-        className="flex gap-2"
-      >
-        <Textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Message the boardroom..."
-          disabled={sending}
-          className="flex-1 min-h-[44px] max-h-32 resize-none"
-          maxLength={UI_CONFIG.maxMessageLength}
-          onKeyDown={handleKeyDown}
-        />
-        <Button 
-          type="submit" 
-          disabled={disabled}
-          className="self-end"
-        >
-          {sending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Send className="h-4 w-4" />
-          )}
-        </Button>
-      </form>
-    </div>
-  );
-};
+// =============================================================================
+// CHAT AREA CONTENT
+// =============================================================================
 
 const ChatAreaContent: React.FC<ChatAreaProps> = ({
   activeMeeting,
   messages,
   loadingResponses,
   sending,
-  newMessage,
-  onNewMessageChange,
   onSendMessage,
   onStartMeeting,
   getMemberBySlug,
+  activeMember,
+  className,
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -116,8 +111,25 @@ const ChatAreaContent: React.FC<ChatAreaProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: UI_CONFIG.scrollBehavior });
   }, [messages, loadingResponses]);
 
+  // Derive a contextual placeholder based on meeting type
+  const inputPlaceholder = activeMeeting
+    ? activeMeeting.meeting_type === 'full_board'
+      ? 'Message the full board... (📎 attach docs or URLs)'
+      : activeMeeting.meeting_type === 'committee'
+      ? 'Message the committee... (📎 attach docs or URLs)'
+      : activeMeeting.meeting_type === 'vote'
+      ? 'Call a vote...'
+      : activeMeeting.meeting_type === 'devils_advocate'
+      ? 'Present your idea for challenge...'
+      : activeMeeting.meeting_type === 'executive_session'
+      ? 'Executive session — confidential...'
+      : activeMember
+      ? `Message ${activeMember.name}... (📎 attach docs or URLs)`
+      : 'Ask your board of advisors...'
+    : 'Ask your board of advisors...';
+
   return (
-    <div className="lg:col-span-3">
+    <div className={className}>
       <Card className="h-[60vh] flex flex-col">
         {activeMeeting ? (
           <>
@@ -129,10 +141,10 @@ const ChatAreaContent: React.FC<ChatAreaProps> = ({
                 {messages.map((msg) => {
                   const member = msg.member_slug ? getMemberBySlug(msg.member_slug) : undefined;
                   return (
-                    <MessageBubble 
-                      key={msg.id} 
-                      message={msg} 
-                      member={member} 
+                    <MessageBubble
+                      key={msg.id}
+                      message={msg}
+                      member={member}
                     />
                   );
                 })}
@@ -149,15 +161,24 @@ const ChatAreaContent: React.FC<ChatAreaProps> = ({
               </div>
             </ScrollArea>
 
-            {/* Message input (only for active meetings) */}
+            {/* v2.0: ChatInput replaces the old MessageInput.
+                Handles voice, document reading, URL research, and image capture.
+                Only shown for active meetings — concluded meetings are read-only. */}
             {activeMeeting.status === 'active' && (
-              <MessageInput
-                value={newMessage}
-                onChange={onNewMessageChange}
+              <ChatInput
                 onSend={onSendMessage}
-                sending={sending}
-                disabled={sending || !newMessage.trim()}
+                placeholder={inputPlaceholder}
+                disabled={sending}
+                isLoading={sending}
+                activeMember={activeMember || null}
               />
+            )}
+
+            {/* Concluded meeting notice */}
+            {activeMeeting.status === 'concluded' && (
+              <div className="p-3 border-t text-center text-xs text-muted-foreground">
+                This meeting has concluded. Start a new meeting to continue.
+              </div>
             )}
           </>
         ) : (
@@ -168,7 +189,10 @@ const ChatAreaContent: React.FC<ChatAreaProps> = ({
   );
 };
 
-// Wrap with error boundary
+// =============================================================================
+// WRAP WITH ERROR BOUNDARY
+// =============================================================================
+
 export const ChatArea: React.FC<ChatAreaProps> = (props) => (
   <BoardroomErrorBoundary
     fallbackTitle="Chat Unavailable"
@@ -179,4 +203,3 @@ export const ChatArea: React.FC<ChatAreaProps> = (props) => (
 );
 
 export default ChatArea;
-

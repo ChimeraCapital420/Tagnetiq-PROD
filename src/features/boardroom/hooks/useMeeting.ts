@@ -6,30 +6,40 @@
 //   - Offline queue: messages saved locally when network drops
 //   - Network restoration: queued messages replay automatically
 //   - Routing preview exposed for UI ("Athena is preparing..." before send)
+//
+// v10.0: Media attachment support
+//   - sendMessage accepts optional mediaAttachments (PDF, DOCX, URL research, images)
+//   - Attachments passed to board chat API as mediaAttachments in payload
+//   - Each board member receives content domain-filtered via Layer 10
+//   - Optimistic message shows attachment count while waiting for response
+//   - Offline queue includes attachments — they replay correctly on reconnect
 
 import { useState, useCallback, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
-import type { 
-  Meeting, 
-  Message, 
+import type {
+  Meeting,
+  Message,
   MeetingType,
   BoardMember,
   BoardResponse,
   ChatResponse,
-  UseMeetingReturn 
+  UseMeetingReturn
 } from '../types';
-import { 
-  API_ENDPOINTS, 
-  ERROR_MESSAGES, 
+import {
+  API_ENDPOINTS,
+  ERROR_MESSAGES,
   SUCCESS_MESSAGES,
-  PARTICIPANT_REQUIRED_TYPES 
+  PARTICIPANT_REQUIRED_TYPES
 } from '../constants';
 
 // Sprint 9: Intelligence
 import { useBoardroomIntelligence } from './useBoardroomIntelligence';
 import type { BoardroomClientContext } from './useBoardroomIntelligence';
 import { isOnline as checkOnline } from '../intelligence/offline-queue';
+
+// v10.0: Media attachments type
+import type { MediaAttachment } from '../../../../api/boardroom/lib/prompt-builder/media-context.js';
 
 // =============================================================================
 // TYPES
@@ -40,7 +50,7 @@ interface UseMeetingOptions {
   onMeetingCreated?: (meeting: Meeting) => void;
 }
 
-// Extend the return type with Sprint 9 intelligence
+// Extend the return type with Sprint 9 intelligence + v10.0 media
 export interface UseMeetingWithIntelligence extends UseMeetingReturn {
   /** Sprint 9: Whether the device is online */
   isOnline: boolean;
@@ -60,6 +70,8 @@ export interface UseMeetingWithIntelligence extends UseMeetingReturn {
     energy: string;
     confidence: number;
   };
+  /** v10.0: sendMessage accepts optional media attachments from ChatInput ingest hook */
+  sendMessage: (content: string, mediaAttachments?: MediaAttachment[]) => Promise<void>;
 }
 
 // =============================================================================
@@ -127,8 +139,8 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
   // Create a new meeting
   // ==========================================================================
   const createMeeting = useCallback(async (
-    title: string, 
-    type: MeetingType, 
+    title: string,
+    type: MeetingType,
     participantSlugs?: string[]
   ): Promise<Meeting | null> => {
     try {
@@ -160,12 +172,12 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
       }
 
       const meeting: Meeting = await response.json();
-      
+
       setActiveMeeting(meeting);
       setMessages([]);
       onMeetingCreated?.(meeting);
       toast.success(SUCCESS_MESSAGES.meetingCreated);
-      
+
       return meeting;
     } catch (err) {
       console.error('Create meeting error:', err);
@@ -201,22 +213,34 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
   // ==========================================================================
   // Send a message in the active meeting
   // Sprint 9: Enriched with client intelligence + offline queue fallback
+  // v10.0: Accepts optional mediaAttachments from ChatInput ingest hook.
+  //   Documents, researched URLs, and images are attached to the payload
+  //   and domain-filtered per board member via Layer 10 of the prompt builder.
+  //   Attachment-only messages (no text) are valid — a neutral prompt is
+  //   sent so the board knows to analyze the attachment.
   // ==========================================================================
-  const sendMessage = useCallback(async (content: string): Promise<void> => {
-    if (!content.trim() || !activeMeeting || sending) return;
+  const sendMessage = useCallback(async (
+    content: string,
+    mediaAttachments?: MediaAttachment[],  // v10.0
+  ): Promise<void> => {
+    const hasAttachments = mediaAttachments && mediaAttachments.length > 0;
+
+    // Allow send with content, attachments, or both — not neither
+    if (!content.trim() && !hasAttachments) return;
+    if (!activeMeeting || sending) return;
 
     setSending(true);
     const messageText = content.trim();
 
     // ── Sprint 9: Client-side intelligence (runs BEFORE network) ──
-    const clientContext: BoardroomClientContext = intelligence.enrich(messageText);
+    const clientContext: BoardroomClientContext = intelligence.enrich(messageText || 'attachment');
 
     // Determine which members should respond
     let respondingMembers: string[] = [];
     if (activeMeeting.meeting_type === 'full_board' || activeMeeting.meeting_type === 'vote') {
       respondingMembers = members.map(m => m.slug);
     } else if (activeMeeting.participants) {
-      const participantMembers = members.filter(m => 
+      const participantMembers = members.filter(m =>
         activeMeeting.participants?.includes(m.id)
       );
       respondingMembers = participantMembers.map(m => m.slug);
@@ -226,11 +250,16 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
 
     setLoadingResponses(respondingMembers);
 
-    // Add optimistic user message
+    // Optimistic user message — show attachment indicator when present
+    const attachmentLabel = hasAttachments
+      ? `\n📎 ${mediaAttachments!.length} attachment${mediaAttachments!.length > 1 ? 's' : ''}`
+      : '';
+    const optimisticContent = (messageText + attachmentLabel).trim() || '📎 Sending attachment...';
+
     const tempUserMsg: Message = {
       id: `temp-${Date.now()}`,
       sender_type: 'user',
-      content: messageText,
+      content: optimisticContent,
       created_at: new Date().toISOString(),
     };
     setMessages(prev => [...prev, tempUserMsg]);
@@ -238,10 +267,16 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
     // Build the full request payload
     const payload: Record<string, any> = {
       meeting_id: activeMeeting.id,
-      message: messageText,
+      // If text is empty but attachments exist, use a neutral prompt
+      message: messageText || 'Please analyze the attached content.',
       // Sprint 9: Attach client intelligence
       clientContext,
     };
+
+    // v10.0: Include media attachments in payload when present
+    if (hasAttachments) {
+      payload.mediaAttachments = mediaAttachments;
+    }
 
     // Route: tell chat.ts which handler to use
     if (activeMeeting.meeting_type === 'full_board' || activeMeeting.meeting_type === 'vote') {
@@ -261,9 +296,9 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
       intelligence.queueOffline(activeMeeting.id, messageText, payload);
       toast.info('Message queued — will send when back online');
       // Update the optimistic message to show queued state
-      setMessages(prev => prev.map(m => 
-        m.id === tempUserMsg.id 
-          ? { ...m, content: `${messageText}\n\n⏳ Queued — waiting for network` }
+      setMessages(prev => prev.map(m =>
+        m.id === tempUserMsg.id
+          ? { ...m, content: `${optimisticContent}\n\n⏳ Queued — waiting for network` }
           : m
       ));
       setSending(false);
@@ -294,40 +329,40 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
       // Replace temp message with actual messages
       setMessages(prev => {
         const filtered = prev.filter(m => m.id !== tempUserMsg.id);
-        
+
         const newMessages: Message[] = [];
-        
+
         // Add user message if it exists
         if (data.user_message) {
           newMessages.push({ ...data.user_message, sender_type: 'user' });
         }
-        
-        // Safely map responses  normalize both API shapes:
+
+        // Safely map responses — normalize both API shapes:
         //   Full board/committee: { member: "slug", response: "text", name, title }
         //   Single member:        { member: { slug, name }, content: "text" }
         const responseMessages = (data.responses || []).map((r: any) => {
-          const slug = typeof r.member === "string" ? r.member : r.member?.slug || "unknown";
-          const text = r.response || r.content || "[No response]";
+          const slug = typeof r.member === 'string' ? r.member : r.member?.slug || 'unknown';
+          const text = r.response || r.content || '[No response]';
           const provider = r.provider || r.member?.ai_provider;
           return {
             id: `response-${slug}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            sender_type: "board_member" as const,
+            sender_type: 'board_member' as const,
             member_slug: slug,
             content: text,
             created_at: new Date().toISOString(),
             ai_provider: provider,
           };
         });
-        
+
         newMessages.push(...responseMessages);
-        
+
         return [...filtered, ...newMessages];
       });
 
     } catch (err) {
       console.error('Send message error:', err);
 
-      // Sprint 9: If send fails, offer to queue
+      // Sprint 9: If send fails and we went offline, queue the message
       if (!checkOnline()) {
         intelligence.queueOffline(activeMeeting.id, messageText, payload);
         toast.info('Network dropped — message queued for retry');
@@ -417,7 +452,7 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
     messages,
     sending,
     loadingResponses,
-    
+
     // Actions
     createMeeting,
     loadMeeting,
@@ -435,5 +470,3 @@ export function useMeeting(options: UseMeetingOptions): UseMeetingWithIntelligen
 }
 
 export default useMeeting;
-
-

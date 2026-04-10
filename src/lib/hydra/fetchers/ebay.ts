@@ -2,10 +2,11 @@
 // HYDRA v7.1 - eBay Market Data Fetcher
 // FIXED v7.0: Full OAuth2 client credentials flow
 // ADDED v7.1: fetchEbayDataByImage() — visual search via Browse API search_by_image
-//   Sends the scan photo directly to eBay → returns active + sold-equivalent listings
-//   for the exact photographed item. Highest accuracy signal available.
-//   Same OAuth token, same Browse API v1, zero new credentials needed.
-//   Integration path: Oracle see.ts (immediate) → pipeline/fetch-evidence.ts (post-unfreeze)
+// FIXED v7.2: Price field fallback — Browse API returns price in multiple fields
+//   depending on listing type (FIXED_PRICE vs AUCTION vs BEST_OFFER).
+//   Now checks: price.value → currentBidPrice.value → marketPrice.value
+//   This fixes the $3.99 flat line bug where auction items had no price.value
+//   but did have currentBidPrice.value. sampleListings price uses same fallback.
 
 import type { MarketDataSource } from '../types.js';
 
@@ -328,6 +329,8 @@ export async function fetchEbayDataByImage(
  *
  * Visual matches include a relevance score from eBay — we use it
  * to filter low-confidence matches before price analysis.
+ *
+ * v7.2: Price field fallback applied — same fix as processEbayResults.
  */
 function processEbayImageResults(
   data: any,
@@ -346,10 +349,19 @@ function processEbayImageResults(
     };
   }
 
-  // Extract prices — same logic as keyword search
+  // Extract prices — v7.2: fallback through multiple price fields
   const prices = items
     .map((item: any) => {
-      const price        = parseFloat(item.price?.value || '0');
+      // v7.2: Browse API returns price in different fields by listing type:
+      //   FIXED_PRICE  → item.price.value
+      //   AUCTION      → item.currentBidPrice.value
+      //   BEST_OFFER   → item.marketPrice.value
+      const price = parseFloat(
+        item.price?.value ||
+        item.currentBidPrice?.value ||
+        item.marketPrice?.value ||
+        '0'
+      );
       const shipping     = item.shippingOptions?.[0]?.shippingCost?.value;
       const shippingCost = shipping ? parseFloat(shipping) : 0;
       return price + shippingCost;
@@ -383,9 +395,15 @@ function processEbayImageResults(
   const average = prices.reduce((a: number, b: number) => a + b, 0) / prices.length;
   const median  = prices[Math.floor(prices.length / 2)] || average;
 
+  // v7.2: sampleListings price uses same field fallback
   const sampleListings = items.slice(0, 5).map((item: any) => ({
     title:     item.title || 'Unknown',
-    price:     parseFloat(item.price?.value || '0'),
+    price:     parseFloat(
+      item.price?.value ||
+      item.currentBidPrice?.value ||
+      item.marketPrice?.value ||
+      '0'
+    ),
     condition: item.condition || 'Unknown',
     url:       item.itemWebUrl || `https://www.ebay.com/itm/${item.itemId}`,
   }));
@@ -412,7 +430,7 @@ function processEbayImageResults(
     metadata: {
       responseTime:  Date.now() - startTime,
       apiVersion:    'browse_v1_image_search',
-      imageSearch:   true,               // Flag so pipeline knows this is visual data
+      imageSearch:   true,
       totalResults:  data.total,
       pricesSampled: prices.length,
       environment:   process.env.EBAY_ENVIRONMENT || 'production',
@@ -440,9 +458,19 @@ function processEbayResults(
     };
   }
 
+  // v7.2: Fallback through multiple price fields by listing type
+  //   FIXED_PRICE  → item.price.value
+  //   AUCTION      → item.currentBidPrice.value
+  //   BEST_OFFER   → item.marketPrice.value
+  // This fixes the flat $3.99 bug where auction items had no price.value
   const prices = items
     .map((item: any) => {
-      const price        = parseFloat(item.price?.value || '0');
+      const price = parseFloat(
+        item.price?.value ||
+        item.currentBidPrice?.value ||
+        item.marketPrice?.value ||
+        '0'
+      );
       const shipping     = item.shippingOptions?.[0]?.shippingCost?.value;
       const shippingCost = shipping ? parseFloat(shipping) : 0;
       return price + shippingCost;
@@ -475,9 +503,15 @@ function processEbayResults(
   const average = prices.reduce((a: number, b: number) => a + b, 0) / prices.length;
   const median  = prices[Math.floor(prices.length / 2)] || average;
 
+  // v7.2: sampleListings price uses same field fallback
   const sampleListings = items.slice(0, 5).map((item: any) => ({
     title:     item.title || 'Unknown',
-    price:     parseFloat(item.price?.value || '0'),
+    price:     parseFloat(
+      item.price?.value ||
+      item.currentBidPrice?.value ||
+      item.marketPrice?.value ||
+      '0'
+    ),
     condition: item.condition || 'Unknown',
     url:       item.itemWebUrl || `https://www.ebay.com/itm/${item.itemId}`,
   }));
