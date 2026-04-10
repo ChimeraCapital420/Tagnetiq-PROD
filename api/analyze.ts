@@ -1,7 +1,7 @@
 // ============================================================
 // FILE:  api/analyze.ts
 // ============================================================
-// HYDRA v9.8.1 — Hardening Sprint
+// HYDRA v9.9 — RH-027 Low-consensus disagreement recording
 //
 // CHANGELOG:
 // v9.4: FIX — require() → ESM import
@@ -9,13 +9,11 @@
 // v9.6: SECURITY — Rate limiting (10 req/60s per IP)
 // v9.7: CI ENGINE PHASE 3 — Pattern lookup before AI pipeline
 // v9.8: CI ENGINE — High-consensus confirmation signal (bidirectional)
-//
-// v9.8.1 CHANGES — Hardening Sprint #2:
-//   - imageHash wired into recordConfirmation() when the pipeline exposes it.
-//     Allows the CI Engine to cluster visually similar confirmed items and
-//     detect duplicate scans of the same object. Zero impact if pipeline
-//     doesn't expose imageHash — safely reads via (pipelineResult as any).imageHash.
-//   - No other logic changes. All v9.8 code untouched.
+// v9.8.1: imageHash wired into recordConfirmation()
+// v9.9: RH-027 — Low-consensus disagreement recording wired.
+//   recordDisagreement() fires when confidence < 0.65.
+//   Fills the CI Engine gap: corrections + confirmations + disagreements.
+//   The three signals together give the aggregator a complete picture.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -40,7 +38,7 @@ import {
   detectInjectionAttempt,
 } from './_lib/sanitize.js';
 import { applyRateLimit, LIMITS } from './_lib/rateLimit.js';
-import { lookupPatterns, recordConfirmation } from '../src/lib/hydra/knowledge/index.js';
+import { lookupPatterns, recordConfirmation, recordDisagreement } from '../src/lib/hydra/knowledge/index.js';
 import type { CollectiveKnowledgeBlock } from '../src/lib/hydra/knowledge/types.js';
 
 // =============================================================================
@@ -256,7 +254,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Either an image or item name is required');
     }
 
-    console.log(`\n📥 === HYDRA v9.8.1 ANALYSIS START ===`);
+    console.log(`\n📥 === HYDRA v9.9 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
     console.log(`🖼️ Images: ${hasImage ? 1 + (request.additionalImages?.length || 0) : 0}`);
@@ -401,7 +399,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       thumbnailUrl: request.originalImageUrls?.[0] || null,
       ebayMarketData: pipelineResult.ebayData,
       marketSources: pipelineResult.marketSources,
-      pipelineVersion: '9.8.1',
+      pipelineVersion: '9.9',
       pipelineTiming: pipelineResult.timing,
       nexus: nexusDecision ? {
         nudge: nexusDecision.nudge,
@@ -435,7 +433,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           pipelineResult.analysisQuality === 'OPTIMAL' &&
           pipelineResult.confidence >= 0.85
         ),
-        // v9.8.1 #2: indicate whether imageHash was available from pipeline
+        lowConsensusDisagreement: pipelineResult.confidence < 0.65, // v9.9
         imageHashAvailable: !!(pipelineResult as any).imageHash,
       },
     };
@@ -479,10 +477,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ========================================================================
     // v9.8: CI ENGINE — High-consensus positive confirmation signal
-    // v9.8.1 #2: imageHash wired in from pipelineResult when available.
-    //   Allows the aggregator to cluster visually similar confirmed items
-    //   (same item photographed repeatedly) to avoid inflating pattern counts.
-    //   Safe read via (pipelineResult as any).imageHash — null if not present.
+    // v9.8.1: imageHash wired in from pipelineResult when available.
     // ========================================================================
     if (
       pipelineResult.analysisQuality === 'OPTIMAL' &&
@@ -497,7 +492,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         providerVotes: pipelineResult.allVotes ?? null,
         consensusAgreement: pipelineResult.confidence,
         confirmationSource: 'high_consensus',
-        imageHash: (pipelineResult as any).imageHash ?? null, // v9.8.1 #2
+        imageHash: (pipelineResult as any).imageHash ?? null,
       }).catch(err =>
         console.warn('[CI-Engine] High-consensus confirmation failed (non-fatal):', err)
       );
@@ -506,6 +501,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `[CI-Engine] ⭐ High-consensus confirmation queued: "${pipelineResult.itemName}"` +
         ` [${pipelineResult.category}] confidence=${(pipelineResult.confidence * 100).toFixed(0)}%` +
         ((pipelineResult as any).imageHash ? ' | imageHash: ✓' : '')
+      );
+    }
+
+    // ========================================================================
+    // v9.9: CI ENGINE — Low-consensus disagreement signal (RH-027)
+    // When HYDRA providers can't agree, that uncertainty is data.
+    // Fires when confidence < 0.65 — clearly uncertain territory.
+    // Zero impact on the response — fire-and-forget, non-blocking.
+    // ========================================================================
+    if (
+      pipelineResult.confidence < 0.65 &&
+      pipelineResult.itemName
+    ) {
+      recordDisagreement({
+        itemName: pipelineResult.itemName,
+        category: pipelineResult.category,
+        estimatedValue: pipelineResult.finalPrice,
+        confidence: pipelineResult.confidence,
+        analysisQuality: pipelineResult.analysisQuality,
+        providerVotes: pipelineResult.allVotes ?? null,
+        imageHash: (pipelineResult as any).imageHash ?? null,
+      }).catch(err =>
+        console.warn('[CI-Engine] Disagreement record failed (non-fatal):', err)
+      );
+
+      console.log(
+        `[CI-Engine] ⚡ Low-consensus disagreement queued: "${pipelineResult.itemName}"` +
+        ` [${pipelineResult.category}] confidence=${(pipelineResult.confidence * 100).toFixed(0)}%`
       );
     }
 

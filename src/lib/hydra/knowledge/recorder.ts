@@ -2,25 +2,25 @@
  * COLLECTIVE INTELLIGENCE ENGINE — Layer 1: Correction Recorder
  * Codename: The Hive Mind
  *
- * recordCorrection() — writes one anonymous row to hydra_corrections.
- * recordConfirmation() — writes one anonymous positive signal to hydra_corrections.
+ * recordCorrection()    — writes one anonymous correction row
+ * recordConfirmation()  — writes one positive signal
+ * recordDisagreement()  — writes one low-consensus signal (NEW)
  *
  * Design principles:
  * - Fire-and-forget: caller uses .catch() so failures are silent
  * - Non-blocking: never awaited in the hot path
  * - Zero PII: no user_id, no device_id, no IP address
- * - Graceful: if the DB is down, user's refinement still succeeds
+ * - Graceful: if the DB is down, user's scan still succeeds
  *
- * Mobile-first: this runs server-side only. Device sends the refined
- * analysis; the server records the delta. No extra round-trips.
- *
- * CONFIRMATION SIGNALS (added alongside corrections):
- * Two sources write confirmation rows:
- *   1. User rates analysis 4+ stars → recordConfirmation(source='user_rating')
- *   2. HYDRA providers reach high consensus → recordConfirmation(source='high_consensus')
- * The aggregator weighs both: corrections flag patterns, confirmations reinforce them.
- * A pattern confirmed 50 times with 0 corrections is far stronger than
- * one corrected 5 times with 0 confirmations.
+ * DISAGREEMENT SIGNALS (added alongside corrections and confirmations):
+ * When HYDRA providers reach LOW consensus on a scan, that uncertainty
+ * is valuable data. The aggregator uses disagreement rows to:
+ *   - Flag item categories where HYDRA consistently struggles
+ *   - Identify provider disagreement patterns by category
+ *   - Weight corrections more heavily in low-consensus zones
+ *   - Surface items that need more training data
+ * A category with 50 disagreements and 5 corrections needs attention.
+ * A provider that always disagrees with consensus needs investigation.
  */
 
 import { createClient } from '@supabase/supabase-js';
@@ -48,24 +48,18 @@ function getSupabaseClient() {
 
 // ─── Field Extraction ────────────────────────────────────────────────────────
 
-/**
- * Derives which fields changed between original and corrected analyses.
- * Returns an array of { field, from, to } deltas.
- */
 function extractCorrectionFields(
   original: CorrectionInput['original'],
   corrected: CorrectionInput['corrected']
 ): CorrectionField[] {
   const fields: CorrectionField[] = [];
 
-  // Identification / name
   const origName = original.identification || original.itemName || '';
   const corrName = corrected.identification || corrected.itemName || '';
   if (origName && corrName && origName.toLowerCase() !== corrName.toLowerCase()) {
     fields.push({ field: 'identity', from: origName, to: corrName });
   }
 
-  // Category
   if (
     original.category &&
     corrected.category &&
@@ -74,11 +68,7 @@ function extractCorrectionFields(
     fields.push({ field: 'category', from: original.category, to: corrected.category });
   }
 
-  // Value (significant change = >5%)
-  if (
-    original.estimatedValue != null &&
-    corrected.estimatedValue != null
-  ) {
+  if (original.estimatedValue != null && corrected.estimatedValue != null) {
     const diff = Math.abs(original.estimatedValue - corrected.estimatedValue);
     const pct = diff / (original.estimatedValue || 1);
     if (pct > 0.05) {
@@ -93,10 +83,6 @@ function extractCorrectionFields(
   return fields;
 }
 
-/**
- * Classifies the primary type of a correction from the changed fields.
- * Uses simple heuristics — good enough for pattern aggregation.
- */
 function classifyCorrectionType(
   fields: CorrectionField[],
   originalName: string,
@@ -108,18 +94,14 @@ function classifyCorrectionType(
 
   if (fieldNames.includes('category')) return 'category_misclass';
 
-  // Brand / model detection via name comparison
   if (fieldNames.includes('identity')) {
     const origLower = originalName.toLowerCase();
     const corrLower = correctedName.toLowerCase();
-
-    // Heuristic: if the first token differs, it's probably a brand confusion
     const origTokens = origLower.split(/\s+/);
     const corrTokens = corrLower.split(/\s+/);
 
     if (origTokens[0] !== corrTokens[0]) return 'brand_confusion';
 
-    // Size tokens (numbers / units)
     const sizePattern = /\b(\d+\s*(?:ft|in|inch|cm|mm|oz|lb|kg|g|gallon|gal|qt|l)\b)/i;
     const origSize = origLower.match(sizePattern)?.[0];
     const corrSize = corrLower.match(sizePattern)?.[0];
@@ -131,9 +113,6 @@ function classifyCorrectionType(
   return 'identity';
 }
 
-/**
- * Maps a correction_type string to a PatternType for the patterns table.
- */
 function toCorrectionPatternType(correctionType: string): PatternType {
   const map: Record<string, PatternType> = {
     brand_confusion: 'brand_confusion',
@@ -147,9 +126,6 @@ function toCorrectionPatternType(correctionType: string): PatternType {
   return map[correctionType] ?? 'identity_error';
 }
 
-/**
- * Heuristic confidence: higher if the user was specific, lower if vague.
- */
 function computeConfidence(
   fields: CorrectionField[],
   original: CorrectionInput['original'],
@@ -169,8 +145,6 @@ function computeConfidence(
   return 0.75;
 }
 
-// ─── Provider Error Rate Capture ─────────────────────────────────────────────
-
 function captureProviderVotes(
   providerVotes: Record<string, string> | undefined,
   _correctedName: string
@@ -181,12 +155,6 @@ function captureProviderVotes(
 
 // ─── Main Export: recordCorrection ───────────────────────────────────────────
 
-/**
- * recordCorrection(input)
- *
- * Writes one anonymous correction row to hydra_corrections.
- * Fire-and-forget — caller uses .catch() to swallow errors.
- */
 export async function recordCorrection(input: CorrectionInput): Promise<void> {
   const { original, corrected, corrections, providerVotes, imageHash, authoritySource } = input;
 
@@ -232,7 +200,6 @@ export async function recordCorrection(input: CorrectionInput): Promise<void> {
     ),
     authority_source: authoritySource ?? null,
     confidence,
-    // NO user_id — anonymous by design
   };
 
   const supabase = getSupabaseClient();
@@ -251,78 +218,18 @@ export async function recordCorrection(input: CorrectionInput): Promise<void> {
 // CONFIRMATION SIGNALS
 // =============================================================================
 
-/**
- * ConfirmationInput — what we need to record a positive signal.
- *
- * Two sources call this:
- *   1. api/nexus/feedback.ts  — user rates 4+ stars
- *   2. api/analyze.ts         — HYDRA providers reach high consensus (≥0.85)
- */
 export interface ConfirmationInput {
   itemName: string;
   category: string;
   estimatedValue?: number | null;
   confidence?: number | null;
-  // Which AI providers participated — from hydraConsensus.votes
   providerVotes?: Record<string, string> | null;
-  // Agreement score 0–1 from HYDRA consensus
   consensusAgreement?: number | null;
   imageHash?: string | null;
   confirmationSource: 'user_rating' | 'high_consensus' | 'authority_match';
-  // Star rating 1–5 — present when source = 'user_rating'
   rating?: number;
 }
 
-/**
- * recordConfirmation(input)
- *
- * Records a POSITIVE signal — "HYDRA got this right."
- *
- * Written to the same hydra_corrections table:
- *   correction_type  = 'confirmed_accurate'
- *   original_name    = corrected_name   ← same name, no change
- *   correction_fields = []              ← nothing changed
- *
- * The aggregator uses correction_type = 'confirmed_accurate' to distinguish
- * these from error corrections. Confirmations:
- *   - Increase pattern confidence when the same ID is repeatedly confirmed
- *   - Down-weight provider error rates for providers that got it right
- *   - Accelerate pattern promotion when confirmations > corrections
- *
- * Zero schema changes — uses existing hydra_corrections table.
- * Fire-and-forget — caller uses .catch() to swallow errors silently.
- *
- * Confidence scale:
- *   user_rating 5★      = 0.95  (explicit human verification)
- *   user_rating 4★      = 0.85  (human satisfied, implicit)
- *   high_consensus 0.9+ = 0.90  (3 AIs agreed strongly)
- *   authority_match     = 0.95  (authority DB confirmed)
- *
- * Usage in api/nexus/feedback.ts:
- *
- *   if (rating >= 4 && item_context) {
- *     recordConfirmation({
- *       itemName: item_context.itemName,
- *       category: item_context.category,
- *       estimatedValue: item_context.estimatedValue,
- *       confirmationSource: 'user_rating',
- *       rating,
- *     }).catch(err => console.warn('[CI-Engine] Confirmation failed (non-fatal):', err));
- *   }
- *
- * Usage in api/analyze.ts (high-consensus path):
- *
- *   if (consensus.agreementScore >= 0.85 && quality === 'OPTIMAL') {
- *     recordConfirmation({
- *       itemName: result.itemName,
- *       category: result.category,
- *       estimatedValue: result.estimatedValue,
- *       consensusAgreement: consensus.agreementScore,
- *       providerVotes: consensus.votes,
- *       confirmationSource: 'high_consensus',
- *     }).catch(err => console.warn('[CI-Engine] Confirmation failed (non-fatal):', err));
- *   }
- */
 export async function recordConfirmation(input: ConfirmationInput): Promise<void> {
   const {
     itemName, category, estimatedValue, confidence, providerVotes,
@@ -334,7 +241,6 @@ export async function recordConfirmation(input: ConfirmationInput): Promise<void
     return;
   }
 
-  // Confidence per source
   let confirmationConfidence: number;
   if (confirmationSource === 'user_rating') {
     confirmationConfidence = rating === 5 ? 0.95 : 0.85;
@@ -346,7 +252,6 @@ export async function recordConfirmation(input: ConfirmationInput): Promise<void
     confirmationConfidence = 0.80;
   }
 
-  // original_name === corrected_name is the signal — "nothing needed to change"
   const row: Partial<CorrectionRow> = {
     original_name: itemName,
     original_category: category,
@@ -363,7 +268,6 @@ export async function recordConfirmation(input: ConfirmationInput): Promise<void
     provider_votes: providerVotes ?? null,
     authority_source: confirmationSource,
     confidence: confirmationConfidence,
-    // NO user_id — anonymous by design
   };
 
   const supabase = getSupabaseClient();
@@ -379,5 +283,143 @@ export async function recordConfirmation(input: ConfirmationInput): Promise<void
     (rating ? ` rating=${rating}★` : '') +
     (consensusAgreement != null ? ` agreement=${(consensusAgreement * 100).toFixed(0)}%` : '') +
     ` confidence=${confirmationConfidence}`
+  );
+}
+
+// =============================================================================
+// DISAGREEMENT SIGNALS — RH-027
+// =============================================================================
+
+/**
+ * DisagreementInput — what we need to record a low-consensus signal.
+ *
+ * Called from api/analyze.ts when HYDRA providers fail to reach consensus:
+ *   - confidence < 0.65
+ *   - analysisQuality !== 'OPTIMAL'
+ *   - Multiple providers gave significantly different valuations
+ *
+ * These rows tell the CI Engine:
+ *   - Which categories HYDRA consistently struggles with
+ *   - Which provider combinations tend to disagree
+ *   - Where training data gaps exist
+ *   - Which scan types need more provider weighting attention
+ */
+export interface DisagreementInput {
+  itemName: string;
+  category: string;
+  estimatedValue?: number | null;
+  confidence: number;
+  analysisQuality: string;
+  // Provider votes that disagreed — key: providerId, value: their decision/value
+  providerVotes?: Record<string, string> | null;
+  // How spread apart the provider valuations were (max - min)
+  valueSpread?: number | null;
+  // How many providers participated
+  providerCount?: number | null;
+  imageHash?: string | null;
+}
+
+/**
+ * recordDisagreement(input)
+ *
+ * Records a LOW-CONSENSUS signal — "HYDRA providers disagreed on this."
+ *
+ * Written to the same hydra_corrections table:
+ *   correction_type  = 'low_consensus'
+ *   original_name    = corrected_name  ← same name (no correction yet)
+ *   correction_fields = []             ← nothing corrected yet
+ *   confidence       = inverse of agreement (lower agreement = higher signal weight)
+ *
+ * The aggregator uses correction_type = 'low_consensus' to:
+ *   - Build a map of categories where HYDRA is uncertain
+ *   - Identify provider pairs that consistently disagree
+ *   - Flag items for potential correction review
+ *   - Reduce pattern confidence in high-disagreement zones
+ *
+ * Zero schema changes — uses existing hydra_corrections table.
+ * Fire-and-forget — caller uses .catch() to swallow errors silently.
+ *
+ * Usage in api/analyze.ts (low-consensus path):
+ *
+ *   if (pipelineResult.confidence < 0.65) {
+ *     recordDisagreement({
+ *       itemName: pipelineResult.itemName,
+ *       category: pipelineResult.category,
+ *       estimatedValue: pipelineResult.finalPrice,
+ *       confidence: pipelineResult.confidence,
+ *       analysisQuality: pipelineResult.analysisQuality,
+ *       providerVotes: pipelineResult.allVotes ?? null,
+ *     }).catch(err =>
+ *       console.warn('[CI-Engine] Disagreement record failed (non-fatal):', err)
+ *     );
+ *   }
+ */
+export async function recordDisagreement(input: DisagreementInput): Promise<void> {
+  const {
+    itemName, category, estimatedValue, confidence,
+    analysisQuality, providerVotes, valueSpread,
+    providerCount, imageHash,
+  } = input;
+
+  if (!itemName || !category) {
+    console.warn('[CI-Engine] recordDisagreement: missing itemName or category, skipping');
+    return;
+  }
+
+  // Signal weight: lower confidence = higher disagreement signal
+  // A confidence of 0.4 gives disagreementWeight of 0.6 (strong signal)
+  // A confidence of 0.64 gives disagreementWeight of 0.36 (weak signal)
+  const disagreementWeight = Math.min(0.95, Math.max(0.1, 1 - confidence));
+
+  // Build a description of the disagreement for the correction_fields
+  const disagreementFields: CorrectionField[] = [];
+
+  if (valueSpread != null && valueSpread > 0) {
+    disagreementFields.push({
+      field: 'value_spread',
+      from: `$${estimatedValue?.toFixed(2) || '?'}`,
+      to: `±$${valueSpread.toFixed(2)}`,
+    });
+  }
+
+  if (providerCount != null) {
+    disagreementFields.push({
+      field: 'provider_count',
+      from: String(providerCount),
+      to: 'disagreed',
+    });
+  }
+
+  const row: Partial<CorrectionRow> = {
+    original_name: itemName,
+    original_category: category,
+    original_value: estimatedValue ?? null,
+    original_confidence: confidence,
+    corrected_name: itemName,          // same — no correction yet
+    corrected_category: category,
+    corrected_value: estimatedValue ?? null,
+    correction_type: 'low_consensus',
+    correction_fields: disagreementFields,
+    item_category: category,
+    item_subcategory: null,
+    image_hash: imageHash ?? null,
+    provider_votes: providerVotes ?? null,
+    authority_source: `quality:${analysisQuality}`,
+    confidence: disagreementWeight,    // weight of the disagreement signal
+  };
+
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('hydra_corrections').insert(row);
+
+  if (error) {
+    throw new Error(`[CI-Engine] Failed to record disagreement: ${error.message}`);
+  }
+
+  console.log(
+    `[CI-Engine] ⚡ Disagreement recorded: "${itemName}" [${category}]` +
+    ` confidence=${(confidence * 100).toFixed(0)}%` +
+    ` quality=${analysisQuality}` +
+    ` signal_weight=${disagreementWeight.toFixed(2)}` +
+    (valueSpread ? ` spread=$${valueSpread.toFixed(2)}` : '')
   );
 }

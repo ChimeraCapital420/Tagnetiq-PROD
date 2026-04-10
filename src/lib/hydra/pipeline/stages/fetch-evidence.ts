@@ -1,5 +1,5 @@
 // FILE: src/lib/hydra/pipeline/stages/fetch-evidence.ts
-// HYDRA v9.2 - Stage 2: FETCH EVIDENCE
+// HYDRA v9.3 - Stage 2: FETCH EVIDENCE
 // Parallel: Authority APIs + Perplexity search + xAI web verify
 // Builds evidence summary for Stage 3 reasoning
 //
@@ -8,6 +8,9 @@
 //   Perplexity was returning ~$120 for everything (MSRP default).
 //   Now: outlier detection, cross-source validation, confidence tagging.
 //   Bad prices are flagged (not removed) so Stage 3 can weigh them properly.
+// v9.3: ADDED — imageBase64 optional param wired to fetchMarketData
+//   When scan photo is available, eBay visual search runs in parallel.
+//   Zero impact when imageBase64 is absent — falls back to keyword only.
 
 import { fetchMarketData } from '../../fetchers/index.js';
 import { ProviderFactory } from '../../ai/provider-factory.js';
@@ -43,12 +46,14 @@ const SUSPICIOUS_DEFAULTS = new Set([100, 110, 120, 125, 130, 150, 200]);
  * 3. xAI Grok web verification
  * 
  * v9.2: Prices are sanity-checked before reaching Stage 3.
+ * v9.3: imageBase64 passed to fetchMarketData for eBay visual search.
  */
 export async function runFetchStage(
   itemName: string,
   category: ItemCategory,
   additionalContext?: string,
-  timeout: number = 10000
+  timeout: number = 10000,
+  imageBase64?: string,        // v9.3: scan photo for eBay visual search
 ): Promise<FetchResult> {
   const stageStart = Date.now();
   
@@ -58,7 +63,11 @@ export async function runFetchStage(
   // Run all three tracks in parallel
   const [marketData, perplexityData, xaiData] = await Promise.all([
     // Track 1: Authority APIs
-    fetchMarketData(itemName, category, additionalContext).catch(err => {
+    // v9.3: imageBase64 passed as option — eBay fetcher runs visual search
+    // in parallel with keyword search when image is available.
+    fetchMarketData(itemName, category, additionalContext, {
+      imageBase64: imageBase64 || undefined,
+    }).catch(err => {
       console.error(`    ❌ Market data fetch failed: ${err.message}`);
       return { sources: [], primaryAuthority: null, fetchTime: 0 } as any;
     }),
