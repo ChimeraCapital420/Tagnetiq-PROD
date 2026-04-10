@@ -91,11 +91,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [imageContext, setImageContext]     = useState('');
 
-  const textareaRef    = useRef<HTMLTextAreaElement>(null);
-  const docInputRef    = useRef<HTMLInputElement>(null);
+  const textareaRef     = useRef<HTMLTextAreaElement>(null);
+  const docInputRef     = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef  = useRef<HTMLInputElement>(null);
-  const urlInputRef    = useRef<HTMLInputElement>(null);
+  const urlInputRef     = useRef<HTMLInputElement>(null);
 
   const urlValid = isValidUrl(urlValue.trim());
 
@@ -387,7 +387,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               if (e.key === 'Enter') { e.preventDefault(); handleImageAnalyze(); }
               if (e.key === 'Escape') handleImageCancel();
             }}
-            placeholder='e.g. "This is the contract clause I\'m concerned about"'
+            placeholder={`e.g. "This is the contract clause I'm concerned about"`}
             className="w-full text-sm bg-accent/30 border border-border/40 rounded-xl px-3 py-2 outline-none focus:border-primary/40 placeholder:text-muted-foreground/50 mb-2"
           />
           <div className="flex gap-2">
