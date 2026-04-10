@@ -11,6 +11,15 @@
 //   callWithFallback()    — Primary → Groq speed → OpenAI reliable → DeepSeek.
 //                           The board never goes silent.
 //
+// v2.0: llama4 case added to callProviderDirect switch.
+//   Routes Sal, Janus, Scuba Steve, and Aegle to Groq's OpenAI-compatible
+//   endpoint using Llama 4 Maverick/Scout model strings.
+//   Uses getApiKey('groq') — same GROQ_API_KEY, different model tier.
+//
+//   Fallback note: llama4 members skip the Groq speed fallback since they
+//   already run on Groq infrastructure — if Llama 4 is down, Groq Llama 3
+//   is likely also affected. They fall through directly to OpenAI instead.
+//
 // ═══════════════════════════════════════════════════════════════════════
 
 import { getApiKey, getTimeout, estimateTokens, estimateCost } from './config.js';
@@ -84,6 +93,18 @@ export async function callProviderDirect(
         result = await callOpenAICompatible(
           'https://api.groq.com/openai/v1/chat/completions',
           getApiKey('groq')!, model || 'llama-3.3-70b-versatile',
+          systemPrompt, messages, maxTokens, temperature, timeoutMs,
+        );
+        break;
+
+      // ── v2.0: Llama 4 via Groq ──────────────────────────────────────
+      // Sal (COO), Janus (CIO), Scuba Steve (Research), Aegle (CSciO)
+      // Same Groq infrastructure as 'groq' case above, but frontier
+      // Llama 4 model tier. Both use GROQ_API_KEY independently.
+      case 'llama4':
+        result = await callOpenAICompatible(
+          'https://api.groq.com/openai/v1/chat/completions',
+          getApiKey('groq')!, model || 'meta-llama/llama-4-maverick-17b-128e-instruct',
           systemPrompt, messages, maxTokens, temperature, timeoutMs,
         );
         break;
@@ -172,6 +193,8 @@ export async function callProviderDirect(
  *
  *   Primary provider (member's assigned AI)
  *     → Groq speed fallback (8s timeout, fast but smaller model)
+ *       NOTE: skipped for llama4 members — same Groq infrastructure,
+ *       if Llama 4 is down Groq Llama 3 is likely also affected
  *     → OpenAI reliability fallback (12s timeout, always available)
  *     → DeepSeek emergency fallback (cheapest, last resort)
  *
@@ -223,7 +246,12 @@ export async function callWithFallback(
   // ── Speed fallback: Groq ──────────────────────────────
   // Groq runs Llama 3.3 70B at ~500 tok/s. Not as smart as Claude/GPT-4o
   // but FAST. Good enough to keep the board responsive.
-  if (provider.toLowerCase() !== 'groq' && getApiKey('groq')) {
+  //
+  // v2.0: Skip for llama4 members — they already run on Groq infrastructure.
+  // If Llama 4 via Groq failed, Groq Llama 3 is likely also unavailable.
+  // Fall through directly to OpenAI instead.
+  const isLlama4 = provider.toLowerCase() === 'llama4';
+  if (!isLlama4 && provider.toLowerCase() !== 'groq' && getApiKey('groq')) {
     const groqModel = 'llama-3.3-70b-versatile';
     try {
       const groqStart = Date.now();

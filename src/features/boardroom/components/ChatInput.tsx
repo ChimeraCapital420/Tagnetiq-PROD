@@ -5,16 +5,27 @@
 //   📎 "+" opens picker:
 //     📄 Document → PDF, DOCX, TXT extracted client-side
 //     🌐 Web Link → domain-filtered research via Perplexity sonar-pro
-//     📷 Image   → camera or gallery (future: Oracle see.ts)
+//     📷 Camera  → device camera → GPT-4o board vision analysis
+//     🖼️ Gallery → photo picker → GPT-4o board vision analysis
+//
 //   Each attachment shows a preview strip before sending.
-//   Board member context passed to ingest so URL research is
-//   domain-filtered (CFO gets cash flow, Legal gets liability).
+//   Board member context passed to ingest so URL research and image
+//   vision are domain-filtered (CFO gets financial lens, etc.).
+//
+// v2.1: Camera and Gallery enabled via processImage() Option B pipeline
+//   Image → GPT-4o vision → structured board analysis (financial signals,
+//   legal signals, technical signals, risk flags, questions for the board)
+//   → each member applies their domain lens via Layer 10
+//
+//   Context input: after selecting an image, user can optionally add a
+//   note before it's analyzed — "this is the contract clause I'm concerned
+//   about" helps GPT-4o focus the analysis correctly.
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Send, Mic, MicOff, Paperclip, Loader2, X,
   StopCircle, FileText, Globe, Camera,
-  AlertCircle, Check,
+  AlertCircle, Check, Image as ImageIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -56,6 +67,8 @@ const DOCUMENT_ACCEPT = [
   '.pdf', '.docx', '.txt', '.csv', '.md', '.json',
 ].join(',');
 
+const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp';
+
 // =============================================================================
 // COMPONENT
 // =============================================================================
@@ -69,21 +82,27 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onVoiceModeToggle,
   className,
 }) => {
-  const [message, setMessage]           = useState('');
-  const [showPicker, setShowPicker]     = useState(false);
-  const [showUrlEntry, setShowUrlEntry] = useState(false);
-  const [urlValue, setUrlValue]         = useState('');
+  const [message, setMessage]               = useState('');
+  const [showPicker, setShowPicker]         = useState(false);
+  const [showUrlEntry, setShowUrlEntry]     = useState(false);
+  const [urlValue, setUrlValue]             = useState('');
+  // v2.1: Context note for image — optional user annotation before analysis
+  const [showImageContext, setShowImageContext] = useState(false);
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
+  const [imageContext, setImageContext]     = useState('');
 
-  const textareaRef  = useRef<HTMLTextAreaElement>(null);
-  const docInputRef  = useRef<HTMLInputElement>(null);
-  const urlInputRef  = useRef<HTMLInputElement>(null);
+  const textareaRef    = useRef<HTMLTextAreaElement>(null);
+  const docInputRef    = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef  = useRef<HTMLInputElement>(null);
+  const urlInputRef    = useRef<HTMLInputElement>(null);
 
   const urlValid = isValidUrl(urlValue.trim());
 
-  // ── Ingest hook (domain-aware) ──────────────────────────
+  // ── Ingest hook (domain-aware) ──────────────────────────────────────
   const ingest = useBoardroomIngest(activeMember || null);
 
-  // ── Voice input ─────────────────────────────────────────
+  // ── Voice input ─────────────────────────────────────────────────────
   const {
     isListening, isSupported: voiceSupported,
     transcript, interimTranscript,
@@ -112,7 +131,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     if (showUrlEntry) setTimeout(() => urlInputRef.current?.focus(), 100);
   }, [showUrlEntry]);
 
-  // ── Send ─────────────────────────────────────────────────
+  // Auto-focus image context input
+  useEffect(() => {
+    if (showImageContext) setTimeout(() => {
+      document.getElementById('board-image-context')?.focus();
+    }, 100);
+  }, [showImageContext]);
+
+  // ── Send ─────────────────────────────────────────────────────────────
   const handleSend = useCallback(() => {
     const trimmed = message.trim();
     if (!trimmed && ingest.state.attachments.length === 0) return;
@@ -126,7 +152,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     ingest.clearAttachments();
     setShowPicker(false);
     setShowUrlEntry(false);
+    setShowImageContext(false);
     setUrlValue('');
+    setImageContext('');
+    setPendingImageFile(null);
     resetTranscript();
 
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
@@ -137,29 +166,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   const handleUrlKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && urlValid) {
-      e.preventDefault();
-      handleUrlSubmit();
-    }
+    if (e.key === 'Enter' && urlValid) { e.preventDefault(); handleUrlSubmit(); }
     if (e.key === 'Escape') { setShowUrlEntry(false); setUrlValue(''); }
   };
 
-  // ── Document handler ──────────────────────────────────────
+  // ── Document handler ──────────────────────────────────────────────────
   const handleDocChange = useCallback(async (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (e.target) e.target.value = '';
-
-    const category = getFileCategory(file);
-    if (category !== 'document') return;
-
     setShowPicker(false);
     await ingest.processDocument(file);
   }, [ingest]);
 
-  // ── URL handler ───────────────────────────────────────────
+  // ── URL handler ───────────────────────────────────────────────────────
   const handleUrlSubmit = useCallback(async () => {
     if (!urlValid) return;
     const url = urlValue.trim();
@@ -168,6 +190,52 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     setShowPicker(false);
     await ingest.processUrl(url);
   }, [urlValid, urlValue, ingest]);
+
+  // ── Image handler — v2.1 ──────────────────────────────────────────────
+  // After selecting an image (camera or gallery), show a context input
+  // so the user can annotate before analysis — "this is the contract
+  // clause I'm worried about" helps GPT-4o focus correctly.
+
+  const handleImageFile = useCallback((file: File) => {
+    if (!file || !file.type.startsWith('image/')) return;
+    setShowPicker(false);
+    setPendingImageFile(file);
+    setImageContext('');
+    setShowImageContext(true);
+  }, []);
+
+  const handleGalleryChange = useCallback((
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (e.target) e.target.value = '';
+    handleImageFile(file);
+  }, [handleImageFile]);
+
+  const handleCameraChange = useCallback((
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (e.target) e.target.value = '';
+    handleImageFile(file);
+  }, [handleImageFile]);
+
+  const handleImageAnalyze = useCallback(async () => {
+    if (!pendingImageFile) return;
+    const context = imageContext.trim() || undefined;
+    setShowImageContext(false);
+    setPendingImageFile(null);
+    setImageContext('');
+    await ingest.processImage(pendingImageFile, context);
+  }, [pendingImageFile, imageContext, ingest]);
+
+  const handleImageCancel = useCallback(() => {
+    setShowImageContext(false);
+    setPendingImageFile(null);
+    setImageContext('');
+  }, []);
 
   const displayMessage = isListening
     ? (transcript + (interimTranscript ? ` ${interimTranscript}` : '')).trim() || message
@@ -192,7 +260,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
       {/* Media Picker */}
       {showPicker && (
-        <div className="mb-3 grid grid-cols-3 gap-2 animate-in slide-in-from-bottom-2 duration-200">
+        <div className="mb-3 grid grid-cols-2 gap-2 animate-in slide-in-from-bottom-2 duration-200">
           {[
             {
               id: 'document',
@@ -200,6 +268,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               label: 'Document',
               desc: 'PDF, Word, text',
               action: () => { setShowPicker(false); setTimeout(() => docInputRef.current?.click(), 50); },
+              disabled: false,
             },
             {
               id: 'url',
@@ -207,14 +276,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               label: 'Web Research',
               desc: `${activeMember?.name || 'Board'} analyzes`,
               action: () => { setShowPicker(false); setShowUrlEntry(true); },
+              disabled: false,
             },
             {
-              id: 'image',
+              id: 'camera',
               icon: <Camera className="w-5 h-5" />,
-              label: 'Image',
-              desc: 'Coming soon',
-              action: () => {},
-              disabled: true,
+              label: 'Camera',
+              desc: 'Board vision analysis',
+              action: () => { setShowPicker(false); setTimeout(() => cameraInputRef.current?.click(), 50); },
+              disabled: false,
+            },
+            {
+              id: 'gallery',
+              icon: <ImageIcon className="w-5 h-5" />,
+              label: 'Gallery',
+              desc: 'Photo or screenshot',
+              action: () => { setShowPicker(false); setTimeout(() => galleryInputRef.current?.click(), 50); },
+              disabled: false,
             },
           ].map(({ id, icon, label, desc, action, disabled: dis }) => (
             <button
@@ -286,6 +364,55 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         </div>
       )}
 
+      {/* Image Context Entry — v2.1 */}
+      {/* Shows after camera/gallery selection. Optional annotation before GPT-4o analysis. */}
+      {showImageContext && pendingImageFile && (
+        <div className="mb-3 animate-in slide-in-from-bottom-2 duration-150">
+          <div className="flex items-center gap-2 mb-2">
+            <Camera className="w-4 h-4 text-primary flex-none" />
+            <span className="text-sm font-medium">{pendingImageFile.name}</span>
+            <Badge variant="outline" className="text-[10px]">
+              {Math.round(pendingImageFile.size / 1024)}KB
+            </Badge>
+          </div>
+          <p className="text-[11px] text-muted-foreground mb-2">
+            Optional: add context to focus the board's analysis
+          </p>
+          <input
+            id="board-image-context"
+            type="text"
+            value={imageContext}
+            onChange={e => setImageContext(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); handleImageAnalyze(); }
+              if (e.key === 'Escape') handleImageCancel();
+            }}
+            placeholder='e.g. "This is the contract clause I\'m concerned about"'
+            className="w-full text-sm bg-accent/30 border border-border/40 rounded-xl px-3 py-2 outline-none focus:border-primary/40 placeholder:text-muted-foreground/50 mb-2"
+          />
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              className="flex-1"
+              onClick={handleImageAnalyze}
+              disabled={ingest.state.isProcessing}
+            >
+              {ingest.state.isProcessing
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />Analyzing...</>
+                : <>Analyze with Board Vision</>
+              }
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleImageCancel}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Attachment Previews */}
       {hasAttachments && (
         <div className="mb-3 space-y-1.5">
@@ -295,15 +422,27 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               className="flex items-center gap-2 p-2 rounded-xl bg-accent/30 border border-border/30 animate-in slide-in-from-bottom-1 duration-150"
             >
               <div className="w-8 h-8 rounded-lg bg-accent/60 flex items-center justify-center text-lg flex-none">
-                {att.type === 'document' ? getFileEmoji({ name: att.fileName || '', type: att.mimeType || '' } as File) : '🌐'}
+                {att.type === 'url'
+                  ? '🌐'
+                  : att.type === 'image'
+                  ? '📸'
+                  : getFileEmoji({ name: att.fileName || '', type: att.mimeType || '' } as File)
+                }
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium truncate">
-                  {att.type === 'url' ? (att.title || att.domain || att.url) : att.fileName}
+                  {att.type === 'url'
+                    ? (att.title || att.domain || att.url)
+                    : att.type === 'image'
+                    ? (att.imageDescription || 'Visual analysis complete')
+                    : att.fileName
+                  }
                 </p>
                 <p className="text-[10px] text-muted-foreground">
                   {att.type === 'url'
                     ? `${att.domainFiltered ? 'Domain-filtered · ' : ''}${att.citations?.length || 0} sources`
+                    : att.type === 'image'
+                    ? 'Board vision analysis — each member reads through their lens'
                     : `${att.wordCount || 0} words${att.pageCount ? ` · ${att.pageCount} pages` : ''}`
                   }
                 </p>
@@ -320,10 +459,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       )}
 
       {/* Processing indicator */}
-      {ingest.state.isProcessing && (
+      {ingest.state.isProcessing && !showImageContext && (
         <div className="mb-3 flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="w-4 h-4 animate-spin" />
-          <span>Processing...</span>
+          <span>
+            {ingest.state.attachments.length === 0
+              ? 'Running board vision analysis...'
+              : 'Processing...'}
+          </span>
         </div>
       )}
 
@@ -373,6 +516,25 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         className="hidden"
         aria-hidden
       />
+      {/* Gallery — no capture attribute, opens photo library */}
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept={IMAGE_ACCEPT}
+        onChange={handleGalleryChange}
+        className="hidden"
+        aria-hidden
+      />
+      {/* Camera — capture="environment" opens back camera directly on mobile */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept={IMAGE_ACCEPT}
+        capture="environment"
+        onChange={handleCameraChange}
+        className="hidden"
+        aria-hidden
+      />
 
       {/* Main input row */}
       <div className="flex items-end gap-2">
@@ -387,6 +549,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             } else {
               setShowPicker(prev => !prev);
               setShowUrlEntry(false);
+              setShowImageContext(false);
             }
           }}
           disabled={disabled || isLoading || ingest.state.isProcessing}
@@ -411,7 +574,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             onKeyDown={handleKeyDown}
             placeholder={
               ingest.state.isProcessing
-                ? 'Processing...'
+                ? 'Analyzing...'
                 : isListening
                 ? 'Listening...'
                 : hasAttachments

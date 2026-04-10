@@ -1,8 +1,25 @@
 /**
- * HYDRA v6.0 - AI Provider Configuration
+ * HYDRA v7.0 - AI Provider Configuration
  *
  * Centralized configuration for all AI providers used in the consensus engine.
  * Extracted from hydra-engine.js as part of modular refactoring.
+ *
+ * v7.0: Added Llama 4 as a standalone provider via Groq inference.
+ *   Llama 4 Maverick: multimodal (vision + text), 128k context, 128 experts
+ *   Llama 4 Scout: multimodal, 10M context window, cost-efficient
+ *
+ *   IMPORTANT: Llama 4 and Groq are SEPARATE providers in HYDRA.
+ *   - groq: runs Llama 3 models (fast inference, text-only in HYDRA context)
+ *   - llama4: runs Llama 4 Maverick/Scout via Groq (multimodal, vision-capable)
+ *   Both use the same GROQ_API_KEY but vote independently in consensus.
+ *   This gives HYDRA 9 independent AI voices instead of 8.
+ *
+ *   Llama 4 Maverick is promoted to PRIMARY VISION (Stage 1) alongside
+ *   OpenAI, Anthropic, and Google. It earned this position:
+ *   - 17B active params × 128 experts = frontier reasoning
+ *   - True multimodal (image + text) out of the box
+ *   - Meta's most powerful open source model ever released
+ *   - Runs on Groq hardware = sub-second inference
  *
  * @module hydra/config/providers
  */
@@ -33,24 +50,26 @@ export interface ProviderConfig {
 /**
  * AI Provider Configurations
  *
- * Primary Vision Models (Stage 1):
+ * Primary Vision Models (Stage 1) — 4 providers:
  * - OpenAI GPT-4o: Best overall accuracy, excellent vision
  * - Anthropic Claude Sonnet: Strong reasoning, good vision
  * - Google Gemini 2.0 Flash: Fast, good vision, cost-effective
+ * - Llama 4 Maverick: Meta's frontier multimodal, 128 experts, Groq speed ← NEW v7.0
  *
- * Secondary Models (Stage 2):
+ * Secondary Models (Stage 2) — 4 providers:
  * - Mistral: Strong reasoning, cost-effective
- * - Groq: Ultra-fast inference with Llama models
+ * - Groq (Llama 3): Ultra-fast text inference — independent from Llama 4
  * - xAI Grok: Real-time knowledge, good reasoning
  * - Perplexity: Real-time market search, web knowledge
  *
- * Tiebreaker:
- * - DeepSeek: Text-only, used for tiebreaking when primary models disagree
+ * Tiebreaker — 1 provider:
+ * - DeepSeek: Text-only, used when primary models disagree
  */
 export const AI_PROVIDERS: Record<string, ProviderConfig> = {
   // ==========================================================================
-  // PRIMARY VISION MODELS (Stage 1)
+  // PRIMARY VISION MODELS (Stage 1) — ALL support image analysis
   // ==========================================================================
+
   openai: {
     name: 'OpenAI',
     envKeys: ['OPENAI_API_KEY', 'OPEN_AI_API_KEY'],
@@ -85,8 +104,43 @@ export const AI_PROVIDERS: Record<string, ProviderConfig> = {
   },
 
   // ==========================================================================
-  // SECONDARY MODELS (Stage 2 - Text/Reasoning)
+  // v7.0: LLAMA 4 — Standalone provider via Groq inference
   // ==========================================================================
+  //
+  // Llama 4 Maverick is Meta's most powerful open source multimodal model.
+  // It runs on Groq's inference hardware — same API key as groq provider,
+  // but completely SEPARATE in HYDRA. Both cast independent votes.
+  //
+  // Why separate from groq:
+  //   - Groq runs Llama 3 (text-only in HYDRA) — fast, lightweight reasoning
+  //   - Llama 4 is multimodal frontier — different capability tier entirely
+  //   - Separating them gives HYDRA 9 independent voices, not 8
+  //   - Groq's Llama 3 vote + Llama 4 Maverick vote = two different perspectives
+  //     from the same hardware but different model generations
+  //
+  // Uses GROQ_API_KEY — no new credentials needed.
+  // Model strings from Groq's Llama 4 API (verify at console.groq.com).
+  // ==========================================================================
+
+  llama4: {
+    name: 'Llama 4',
+    envKeys: ['GROQ_API_KEY'],              // Same key as groq — different model tier
+    models: [
+      'meta-llama/llama-4-maverick-17b-128e-instruct',   // Primary: most powerful, multimodal
+      'meta-llama/llama-4-scout-17b-16e-instruct',       // Fallback: 10M context, faster
+    ],
+    primaryModel: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+    supportsVision: true,                   // Llama 4 Maverick is multimodal
+    timeout: 20000,                         // Groq inference is fast
+    weight: 0.95,                           // High weight — frontier model
+    maxRetries: 2,
+    baseUrl: 'https://api.groq.com/openai/v1',
+  },
+
+  // ==========================================================================
+  // SECONDARY MODELS (Stage 2 — Text/Reasoning)
+  // ==========================================================================
+
   mistral: {
     name: 'Mistral',
     envKeys: ['MISTRAL_API_KEY'],
@@ -99,11 +153,18 @@ export const AI_PROVIDERS: Record<string, ProviderConfig> = {
     baseUrl: 'https://api.mistral.ai',
   },
 
+  // Groq: Llama 3 models — fast text reasoning, independent from Llama 4
+  // These vote separately from llama4 above. Same GROQ_API_KEY, different
+  // model generation and capability tier. Do not merge with llama4.
   groq: {
     name: 'Groq',
     envKeys: ['GROQ_API_KEY'],
-    models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
-    primaryModel: 'llama-3.1-8b-instant',
+    models: [
+      'llama-3.3-70b-versatile',    // Best Llama 3 for reasoning
+      'llama-3.1-8b-instant',       // Fast fallback
+      'mixtral-8x7b-32768',         // Mixtral for variety
+    ],
+    primaryModel: 'llama-3.3-70b-versatile',  // Upgraded: 70B for better reasoning
     supportsVision: false,
     timeout: 15000,
     weight: 0.75,
@@ -138,6 +199,7 @@ export const AI_PROVIDERS: Record<string, ProviderConfig> = {
   // ==========================================================================
   // TIEBREAKER
   // ==========================================================================
+
   deepseek: {
     name: 'DeepSeek',
     envKeys: ['DEEPSEEK_API_KEY', 'DEEPSEEK_TOKEN'],
@@ -154,35 +216,35 @@ export const AI_PROVIDERS: Record<string, ProviderConfig> = {
 
 /**
  * Provider groups for different analysis stages
+ *
+ * v7.0: llama4 added to primaryVision and visionCapable.
+ *       groq remains in secondary and textOnly — it runs Llama 3, not Llama 4.
+ *       Both llama4 and groq are in 'all' — they vote independently.
  */
 export const PROVIDER_GROUPS = {
   /** Primary vision-capable models for Stage 1 analysis */
-  primaryVision: ['openai', 'anthropic', 'google'],
+  primaryVision: ['openai', 'anthropic', 'google', 'llama4'],   // v7.0: llama4 added
   /** Secondary text-based models for additional analysis */
   secondary: ['mistral', 'groq', 'xai', 'perplexity'],
   /** Text-only models for Stage 2 context analysis */
   textOnly: ['deepseek', 'mistral', 'groq', 'xai'],
   /** All providers that support vision */
-  visionCapable: ['openai', 'anthropic', 'google'],
+  visionCapable: ['openai', 'anthropic', 'google', 'llama4'],   // v7.0: llama4 added
   /** Providers used for tiebreaking */
   tiebreakers: ['deepseek'],
   /** Providers with real-time market/web search */
   marketSearch: ['perplexity'],
   /** Fast inference providers */
-  fastInference: ['groq'],
-  /** All available providers */
-  all: ['openai', 'anthropic', 'google', 'mistral', 'groq', 'xai', 'perplexity', 'deepseek'],
+  fastInference: ['groq', 'llama4'],                            // v7.0: llama4 added
+  /** All available providers — 9 total */
+  all: ['openai', 'anthropic', 'google', 'llama4', 'mistral', 'groq', 'xai', 'perplexity', 'deepseek'],
 } as const;
 
 /**
  * Get API key for a provider
  * Checks multiple environment variable names in order
- *
- * @param provider - Provider identifier (e.g., 'openai', 'OpenAI', 'Anthropic')
- * @returns API key string or null if not configured
  */
 export function getApiKey(provider: string): string | null {
-  // Normalize provider name to lowercase for lookup
   const normalizedProvider = provider.toLowerCase();
   const config = AI_PROVIDERS[normalizedProvider];
 
@@ -203,9 +265,6 @@ export function getApiKey(provider: string): string | null {
 
 /**
  * Check if a provider is available (has API key configured)
- *
- * @param provider - Provider identifier (case-insensitive)
- * @returns true if provider has valid API key
  */
 export function isProviderAvailable(provider: string): boolean {
   return getApiKey(provider) !== null;
@@ -215,16 +274,12 @@ export function isProviderAvailable(provider: string): boolean {
  * Get list of available providers
  *
  * @param visionOnly - If true, only return vision-capable providers
- * @returns Array of available provider identifiers
  */
 export function getAvailableProviders(visionOnly: boolean = false): string[] {
   return Object.entries(AI_PROVIDERS)
     .filter(([name, config]) => {
-      // Check if API key exists
       if (!isProviderAvailable(name)) return false;
-      // Filter by vision capability if requested
       if (visionOnly && !config.supportsVision) return false;
-      // Exclude tiebreaker-only providers from primary list
       if (config.tiebreakerOnly) return false;
       return true;
     })
@@ -233,9 +288,6 @@ export function getAvailableProviders(visionOnly: boolean = false): string[] {
 
 /**
  * Get provider configuration with defaults applied
- *
- * @param provider - Provider identifier (case-insensitive)
- * @returns Provider config or null if not found
  */
 export function getProviderConfig(provider: string): ProviderConfig | null {
   const normalizedProvider = provider.toLowerCase();
@@ -244,9 +296,6 @@ export function getProviderConfig(provider: string): ProviderConfig | null {
 
 /**
  * Get the primary model for a provider
- *
- * @param provider - Provider identifier (case-insensitive)
- * @returns Model string or null if provider not found
  */
 export function getPrimaryModel(provider: string): string | null {
   const config = getProviderConfig(provider);
@@ -256,9 +305,6 @@ export function getPrimaryModel(provider: string): string | null {
 /**
  * Calculate total weight for a set of providers
  * Used for normalizing consensus scores
- *
- * @param providers - Array of provider identifiers
- * @returns Total weight
  */
 export function getTotalWeight(providers: string[]): number {
   return providers.reduce((total, provider) => {
@@ -285,7 +331,6 @@ export function validateProviderConfig(): {
       available.push(name);
     } else {
       missing.push(name);
-      // Only warn for primary providers
       if (!config.tiebreakerOnly) {
         warnings.push(`⚠️ ${config.name} not configured (missing: ${config.envKeys.join(' or ')})`);
       }
@@ -296,6 +341,11 @@ export function validateProviderConfig(): {
   const visionProviders = available.filter(p => AI_PROVIDERS[p]?.supportsVision);
   if (visionProviders.length < 2) {
     warnings.push(`⚠️ Less than 2 vision providers available. Consensus quality may be degraded.`);
+  }
+
+  // v7.0: Note when Llama 4 is available — it's a significant capability addition
+  if (available.includes('llama4')) {
+    console.log('🦙 Llama 4 Maverick active — HYDRA now has 9 independent AI voices');
   }
 
   return { available, missing, warnings };

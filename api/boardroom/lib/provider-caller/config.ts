@@ -6,6 +6,10 @@
 // API key registry, timeout management, cost estimation.
 // All the "knobs" in one place. Easy to tune, impossible to lose.
 //
+// v2.0: llama4 added to ENV_KEYS, PROVIDER_TIMEOUTS, COST_PER_1K_TOKENS.
+//   Uses GROQ_API_KEY — same key as groq, different model tier.
+//   Timeout: 12s — slightly more headroom than groq (8s) for MoE routing.
+//
 // ═══════════════════════════════════════════════════════════════════════
 
 // =============================================================================
@@ -21,6 +25,7 @@ const ENV_KEYS: Record<string, string[]> = {
   gemini:     ['GOOGLE_AI_API_KEY', 'GOOGLE_AI_TOKEN', 'GOOGLE_GENERATIVE_AI_API_KEY', 'GEMINI_API_KEY'],
   mistral:    ['MISTRAL_API_KEY'],
   groq:       ['GROQ_API_KEY'],
+  llama4:     ['GROQ_API_KEY'],   // v2.0: Llama 4 via Groq — same key, frontier model tier
   xai:        ['XAI_API_KEY', 'XAI_SECRET', 'GROK_API_KEY'],
   perplexity: ['PERPLEXITY_API_KEY', 'PPLX_API_KEY'],
   deepseek:   ['DEEPSEEK_API_KEY', 'DEEPSEEK_TOKEN'],
@@ -57,7 +62,8 @@ export function getAvailableProviders(): string[] {
 // for a reason.
 
 const PROVIDER_TIMEOUTS: Record<string, number> = {
-  groq:       8000,   // Groq is fast or it's down
+  groq:       8000,   // Groq Llama 3 is fast or it's down
+  llama4:     12000,  // v2.0: Llama 4 Maverick via Groq — MoE routing needs slight headroom
   openai:     15000,  // GPT-4o is reliable but can spike
   anthropic:  20000,  // Claude needs more time for long prompts
   google:     15000,  // Gemini is generally fast
@@ -88,21 +94,25 @@ export function getTimeout(provider: string, override?: number): number {
 // Used for budget tracking and reporting, not billing.
 
 const COST_PER_1K_TOKENS: Record<string, { input: number; output: number }> = {
-  'gpt-4o':                { input: 0.0025,  output: 0.01 },
-  'gpt-4o-mini':           { input: 0.00015, output: 0.0006 },
-  'claude-sonnet-4-20250514': { input: 0.003,   output: 0.015 },
-  'claude-haiku-3-5-20241022':   { input: 0.0008,  output: 0.004 },
-  'gemini-2.0-flash':      { input: 0.00035, output: 0.0015 },
-  'gemini-1.5-pro':        { input: 0.00125, output: 0.005 },
-  'deepseek-chat':         { input: 0.00014, output: 0.00028 },
-  'deepseek-reasoner':     { input: 0.00055, output: 0.0022 },
-  'llama-3.3-70b-versatile': { input: 0.00059, output: 0.00079 },
-  'grok-2-latest':         { input: 0.002,   output: 0.01 },
-  'sonar-pro':             { input: 0.003,   output: 0.015 },
-  'mistral-large-latest':  { input: 0.002,   output: 0.006 },
+  'gpt-4o':                    { input: 0.0025,  output: 0.01 },
+  'gpt-4o-mini':               { input: 0.00015, output: 0.0006 },
+  'claude-sonnet-4-20250514':  { input: 0.003,   output: 0.015 },
+  'claude-haiku-3-5-20241022': { input: 0.0008,  output: 0.004 },
+  'gemini-2.0-flash':          { input: 0.00035, output: 0.0015 },
+  'gemini-1.5-pro':            { input: 0.00125, output: 0.005 },
+  'deepseek-chat':             { input: 0.00014, output: 0.00028 },
+  'deepseek-reasoner':         { input: 0.00055, output: 0.0022 },
+  'llama-3.3-70b-versatile':   { input: 0.00059, output: 0.00079 },
+  'grok-3':                    { input: 0.003,   output: 0.015 },
+  'grok-2-latest':             { input: 0.002,   output: 0.01 },
+  'sonar-pro':                 { input: 0.003,   output: 0.015 },
+  'mistral-large-latest':      { input: 0.002,   output: 0.006 },
+  // v2.0: Llama 4 via Groq — verify current pricing at console.groq.com
+  'meta-llama/llama-4-maverick-17b-128e-instruct': { input: 0.0004, output: 0.0006 },
+  'meta-llama/llama-4-scout-17b-16e-instruct':     { input: 0.0002, output: 0.0003 },
   // Local models: $0 (electricity only)
-  'qwen2.5:14b':           { input: 0, output: 0 },
-  'mistral-nemo:12b':      { input: 0, output: 0 },
+  'qwen2.5:14b':               { input: 0, output: 0 },
+  'mistral-nemo:12b':          { input: 0, output: 0 },
 };
 
 export function estimateTokens(text: string): number {
