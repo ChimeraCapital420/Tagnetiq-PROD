@@ -8,6 +8,10 @@
 //
 // Sprint 8: Profile modal Voice Chat + Message buttons now create
 //   1:1 meetings and switch to chat tab automatically.
+//
+// v10.0: activeMember passed to ChatArea so ChatInput can domain-filter
+//   URL research — CFO browsing a business listing gets financial lens,
+//   Legal browsing a contract gets liability extraction, etc.
 
 import React from 'react';
 import { cn } from '@/lib/utils';
@@ -37,6 +41,7 @@ export const DesktopLayout: React.FC<BoardroomLayoutProps> = (props) => {
     onNewMessageChange, onSendMessage, onSelectMeeting,
     onCreateMeeting, onExecuteTask, onGenerateBriefing,
     onRefresh, getMemberBySlug,
+    activeMember,   // v10.0
   } = props;
 
   // ── Sprint 8: Profile modal → start 1:1 text chat ──
@@ -135,6 +140,7 @@ export const DesktopLayout: React.FC<BoardroomLayoutProps> = (props) => {
               onSendMessage={onSendMessage}
               onStartMeeting={() => setNewMeetingOpen(true)}
               getMemberBySlug={getMemberBySlug}
+              activeMember={activeMember}   // v10.0: domain-filtered URL research
             />
           )}
 

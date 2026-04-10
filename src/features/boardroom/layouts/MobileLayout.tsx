@@ -7,6 +7,10 @@
 //
 // Sprint 8: Member cards in "More" tab now create 1:1 meetings
 //   and switch to the chat tab automatically.
+//
+// v10.0: activeMember passed to ChatArea so ChatInput domain-filters
+//   URL research per member — CFO gets financial lens, Legal gets
+//   liability lens, CSO gets competitive intelligence lens.
 
 import React from 'react';
 import { cn } from '@/lib/utils';
@@ -34,6 +38,7 @@ export const MobileLayout: React.FC<BoardroomLayoutProps> = (props) => {
     onNewMessageChange, onSendMessage, onSelectMeeting,
     onCreateMeeting, onExecuteTask, onGenerateBriefing,
     onRefresh, getMemberBySlug,
+    activeMember,   // v10.0
   } = props;
 
   // ── Sprint 8: Tap member → create 1:1 meeting → switch to chat ──
@@ -108,6 +113,7 @@ export const MobileLayout: React.FC<BoardroomLayoutProps> = (props) => {
                 onSendMessage={onSendMessage}
                 onStartMeeting={() => setNewMeetingOpen(true)}
                 getMemberBySlug={getMemberBySlug}
+                activeMember={activeMember}   // v10.0: domain-filtered URL research
               />
             </div>
           </div>

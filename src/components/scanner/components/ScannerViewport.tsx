@@ -4,6 +4,11 @@
 //
 // v3.2 FIX: display:none → opacity:0 so mobile browsers autoplay the video
 //   when srcObject is assigned. display:none prevents autoplay on iOS/Android.
+//
+// v3.3 FIX: GridOverlay now receives only the props it needs (enabled, type,
+//   opacity, color). Previous call was missing width and height, causing
+//   GridOverlay to immediately return null (guard: width===0 || height===0).
+//   GridOverlay v2.0 uses a normalized viewBox — no pixel dimensions needed.
 
 import React from 'react';
 import { ScanLine, Video } from 'lucide-react';
@@ -36,6 +41,7 @@ export interface ScannerViewportProps {
     isEnabled: boolean;
     type: string;
     opacity: number;
+    color?: string;       // v3.3: added — forwarded to GridOverlay
   };
 }
 
@@ -56,8 +62,9 @@ export const ScannerViewport: React.FC<ScannerViewportProps> = ({
 }) => {
   return (
     <div className="dual-scanner-main relative flex-1 overflow-hidden bg-black">
+
       {/* Main camera feed
-          FIX: opacity instead of display:none.
+          FIX v3.2: opacity instead of display:none.
           Mobile browsers won't autoplay a display:none <video> when
           srcObject is set. opacity:0 keeps the element in DOM layout
           so the stream attaches and plays immediately. */}
@@ -87,11 +94,13 @@ export const ScannerViewport: React.FC<ScannerViewportProps> = ({
       {/* Hidden canvas for photo capture */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Grid overlay */}
+      {/* Grid overlay — v3.3: pass correct props (no width/height needed) */}
       {gridOverlay.isEnabled && (
         <GridOverlay
+          enabled={gridOverlay.isEnabled}
           type={gridOverlay.type as any}
           opacity={gridOverlay.opacity}
+          color={gridOverlay.color || '#ffffff'}
         />
       )}
 

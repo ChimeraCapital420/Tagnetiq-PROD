@@ -3,11 +3,16 @@
 //
 // Both layouts receive the same data from Boardroom.tsx.
 // They differ only in how they arrange the UI.
+//
+// v10.0: onSendMessage updated to accept (message, mediaAttachments?)
+//        activeMember added — passed to ChatArea for domain-filtered
+//        URL research (CFO gets financial lens, Legal gets liability lens)
 
 import type {
   BoardMember, Meeting, DashboardStats, Briefing,
   TaskResult, QuickTask, Message, ExecutionDashboard, MobileTab,
 } from '../types';
+import type { MediaAttachment } from '../../../../api/boardroom/lib/prompt-builder/media-context.js';
 
 export interface BoardroomLayoutProps {
   // ── Data ──────────────────────────────────────────
@@ -38,11 +43,15 @@ export interface BoardroomLayoutProps {
   onNewMessageChange: (value: string) => void;
 
   // ── Actions ───────────────────────────────────────
-  onSendMessage: () => void;
+  // v10.0: accepts message text + optional media attachments
+  onSendMessage: (message: string, mediaAttachments?: MediaAttachment[]) => void;
   onSelectMeeting: (meeting: Meeting) => void;
   onCreateMeeting: (title: string, type: any, participants?: string[]) => Promise<void>;
   onExecuteTask: (task: QuickTask) => Promise<void>;
   onGenerateBriefing: () => void;
   onRefresh: () => Promise<void>;
   getMemberBySlug: (slug: string) => BoardMember | undefined;
+
+  // v10.0: active member for domain-filtered URL research in ChatInput
+  activeMember?: BoardMember | null;
 }

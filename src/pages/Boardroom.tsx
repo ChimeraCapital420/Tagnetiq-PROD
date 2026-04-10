@@ -6,6 +6,13 @@
 // (3-column sidebar). All data loading happens here, layouts are pure UI.
 //
 // The CEO runs the company from their phone. Mobile is the primary experience.
+//
+// v10.0: Media attachment support
+//   - handleSendMessage updated to accept (message, mediaAttachments?)
+//   - activeMember derived from selectedMemberSlug and passed to layouts
+//     so ChatArea can pass it to ChatInput for domain-filtered URL research
+//   - newMessage state kept for backward compat with any layout that still
+//     reads it, but ChatInput manages its own state internally
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -25,6 +32,9 @@ import {
 import { UI_CONFIG } from '@/features/boardroom/constants';
 import { MobileLayout } from '@/features/boardroom/layouts/MobileLayout';
 import { DesktopLayout } from '@/features/boardroom/layouts/DesktopLayout';
+
+// v10.0: Media attachment type for onSendMessage signature
+import type { MediaAttachment } from '../../../api/boardroom/lib/prompt-builder/media-context.js';
 
 // ============================================================================
 // VIEWPORT HOOK
@@ -56,6 +66,7 @@ const BoardroomPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<MobileTab>('chat');
   const [selectedMemberSlug, setSelectedMemberSlug] = useState<string | null>(null);
   const [newMeetingOpen, setNewMeetingOpen] = useState(false);
+  // Kept for backward compat — ChatInput manages its own state in v10.0
   const [newMessage, setNewMessage] = useState('');
 
   // ── Data Hooks ────────────────────────────────────────
@@ -77,6 +88,14 @@ const BoardroomPage: React.FC = () => {
 
   const tasks = useTasks();
 
+  // ── v10.0: Derive active member from selectedMemberSlug ──
+  // Passed to ChatArea → ChatInput so URL research is domain-filtered.
+  // CFO browsing a business listing gets financial lens.
+  // Legal browsing a contract gets liability lens.
+  const activeMember = selectedMemberSlug
+    ? boardroom.getMemberBySlug(selectedMemberSlug) ?? null
+    : null;
+
   // ── Handlers ──────────────────────────────────────────
 
   const handleSelectMember = useCallback((slug: string) => {
@@ -96,11 +115,22 @@ const BoardroomPage: React.FC = () => {
     }
   }, [meeting]);
 
-  const handleSendMessage = useCallback(async () => {
-    if (!newMessage.trim()) return;
-    await meeting.sendMessage(newMessage);
+  // v10.0: Updated signature — accepts message text + optional media attachments.
+  // ChatInput calls onSend(message, attachments) — this threads both through
+  // to useMeeting.sendMessage which passes them to the board chat API.
+  // The old path (newMessage state → handleSendMessage()) still works for
+  // any layout component that hasn't been updated to use ChatInput directly.
+  const handleSendMessage = useCallback(async (
+    message: string,
+    mediaAttachments?: MediaAttachment[],
+  ) => {
+    const hasAttachments = mediaAttachments && mediaAttachments.length > 0;
+    if (!message.trim() && !hasAttachments) return;
+
+    await meeting.sendMessage(message, mediaAttachments);
+    // Clear newMessage state in case old path used it
     setNewMessage('');
-  }, [meeting, newMessage]);
+  }, [meeting]);
 
   const handleExecuteTask = useCallback(async (task: QuickTask) => {
     await tasks.executeTask(task);
@@ -142,6 +172,9 @@ const BoardroomPage: React.FC = () => {
     loadingResponses: meeting.loadingResponses,
     newMessage,
 
+    // v10.0: Active member for domain-filtered URL research in ChatInput
+    activeMember,
+
     // UI state
     activeTab,
     selectedMemberSlug,
@@ -152,7 +185,7 @@ const BoardroomPage: React.FC = () => {
     setSelectedMemberSlug: handleSelectMember,
     setNewMeetingOpen,
     onNewMessageChange: setNewMessage,
-    onSendMessage: handleSendMessage,
+    onSendMessage: handleSendMessage,   // v10.0: now (message, attachments?) => void
     onSelectMeeting: handleSelectMeeting,
     onCreateMeeting: handleCreateMeeting,
     onExecuteTask: handleExecuteTask,
