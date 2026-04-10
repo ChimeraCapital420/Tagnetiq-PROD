@@ -50,8 +50,8 @@ interface EbayMarketData {
     image?: string;
   }>;
   metadata?: {
-    imageSearch?: boolean;          // Pure visual match result
-    imageSearchBlended?: boolean;   // Visual + keyword blended
+    imageSearch?: boolean;
+    imageSearchBlended?: boolean;
     keywordListings?: number;
     imageListings?: number;
     responseTime?: number;
@@ -76,42 +76,35 @@ const EbayMarketDisplay: React.FC<EbayMarketDisplayProps> = ({
   const pa = ebayData.priceAnalysis;
   if (!pa || (!pa.median && !pa.average && !pa.low && !pa.lowest)) return null;
 
-  // Support both old (low/high) and new (lowest/highest) field names
   const median     = pa.median   || pa.average  || 0;
   const low        = pa.low      || pa.lowest   || median;
   const high       = pa.high     || pa.highest  || median;
   const sampleSize = pa.sampleSize || ebayData.totalListings || 0;
 
-  // ── Visual match detection ────────────────────────────────────────────
-  const isVisualMatch    = !!(ebayData.metadata?.imageSearch);
-  const isBlended        = !!(ebayData.metadata?.imageSearchBlended);
-  const hasVisualData    = isVisualMatch || isBlended;
+  const isVisualMatch = !!(ebayData.metadata?.imageSearch);
+  const isBlended     = !!(ebayData.metadata?.imageSearchBlended);
+  const hasVisualData = isVisualMatch || isBlended;
 
-  // Listing counts for blended display
   const imageListings   = ebayData.metadata?.imageListings   || 0;
   const keywordListings = ebayData.metadata?.keywordListings || 0;
 
-  // ── HYDRA vs eBay comparison ──────────────────────────────────────────
   const diff        = estimatedValue - median;
   const diffPercent = median > 0 ? ((diff / median) * 100) : 0;
   const isAbove     = diffPercent > 5;
   const isBelow     = diffPercent < -5;
 
-  // Listings from either field name
   const listingsToShow = ebayData.sampleListings || ebayData.listings || [];
 
-  // eBay search URL — if visual match, also link to image search page
   const ebaySearchUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(itemName)}&LH_Sold=1&LH_Complete=1`;
 
   return (
     <div className="w-full p-4 rounded-lg border bg-card">
 
-      {/* ── Header ───────────────────────────────────────────────────── */}
+      {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-medium">eBay Market Data</span>
 
-          {/* Visual match badge — most important signal */}
           {isVisualMatch && (
             <Badge
               className="text-xs gap-1 bg-primary/15 text-primary border-primary/30 font-medium"
@@ -148,7 +141,7 @@ const EbayMarketDisplay: React.FC<EbayMarketDisplayProps> = ({
         </Button>
       </div>
 
-      {/* ── Visual match explanation (only when relevant) ─────────────── */}
+      {/* Visual match explanation */}
       {hasVisualData && (
         <p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">
           {isVisualMatch
@@ -157,7 +150,7 @@ const EbayMarketDisplay: React.FC<EbayMarketDisplayProps> = ({
         </p>
       )}
 
-      {/* ── Price bar ─────────────────────────────────────────────────── */}
+      {/* Price bar */}
       <div className="grid grid-cols-3 gap-3 text-center mb-3">
         <div>
           <p className="text-xs text-muted-foreground">Low</p>
@@ -173,7 +166,7 @@ const EbayMarketDisplay: React.FC<EbayMarketDisplayProps> = ({
         </div>
       </div>
 
-      {/* ── Visual price range bar ─────────────────────────────────────── */}
+      {/* Visual price range bar */}
       <div className="relative h-2 rounded-full bg-muted mb-3">
         {high > low && (
           <>
@@ -181,7 +174,6 @@ const EbayMarketDisplay: React.FC<EbayMarketDisplayProps> = ({
               className="absolute h-full rounded-full bg-gradient-to-r from-red-400 via-yellow-400 to-green-400 opacity-40"
               style={{ left: '0%', width: '100%' }}
             />
-            {/* HYDRA estimate marker */}
             <div
               className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary border-2 border-background shadow-sm"
               style={{
@@ -195,7 +187,7 @@ const EbayMarketDisplay: React.FC<EbayMarketDisplayProps> = ({
         )}
       </div>
 
-      {/* ── HYDRA vs eBay comparison ───────────────────────────────────── */}
+      {/* HYDRA vs eBay comparison */}
       <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
         <span>
           HYDRA estimate:{' '}
@@ -220,7 +212,7 @@ const EbayMarketDisplay: React.FC<EbayMarketDisplayProps> = ({
         </span>
       </div>
 
-      {/* ── Expanded: listings preview + link ─────────────────────────── */}
+      {/* Expanded: listings preview + link */}
       {expanded && (
         <div className="mt-3 pt-3 border-t space-y-2">
 
@@ -229,4 +221,63 @@ const EbayMarketDisplay: React.FC<EbayMarketDisplayProps> = ({
               <p className="text-xs font-medium text-muted-foreground">
                 {isVisualMatch ? 'Visual Matches' : 'Sample Listings'}
               </p>
-              {listingsToShow.
+              {listingsToShow.slice(0, 5).map((listing, i) => (
+                <div key={i} className="flex justify-between items-center text-xs">
+                  <span className="text-muted-foreground truncate max-w-[70%]">
+                    {listing.url ? (
+                      <a
+                        href={listing.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hover:text-primary hover:underline transition-colors"
+                      >
+                        {listing.title || `Listing ${i + 1}`}
+                      </a>
+                    ) : (
+                      listing.title || `Listing ${i + 1}`
+                    )}
+                  </span>
+                  <div className="flex items-center gap-1.5 flex-none">
+                    {listing.condition && (
+                      <span className="text-muted-foreground/60">
+                        {listing.condition}
+                      </span>
+                    )}
+                    <span className="font-medium">
+                      ${(listing.price || 0).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Metadata row */}
+          <div className="flex justify-between text-xs text-muted-foreground">
+            {(ebayData.metadata?.responseTime || ebayData.responseTime) && (
+              <span>
+                Fetched in {ebayData.metadata?.responseTime || ebayData.responseTime}ms
+              </span>
+            )}
+            {pa.average && pa.average !== median && (
+              <span>Avg: ${pa.average.toFixed(2)}</span>
+            )}
+          </div>
+
+          {/* eBay link */}
+          <a
+            href={ebaySearchUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline mt-1"
+          >
+            <ExternalLink className="h-3 w-3" />
+            View sold listings on eBay
+          </a>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default EbayMarketDisplay;
