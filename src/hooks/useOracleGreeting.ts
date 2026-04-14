@@ -9,15 +9,20 @@
 //   4. A personalized greeting (Oracle-voiced)
 //   5. Contextual service suggestions
 //
-// ZERO server calls. Everything computed from cached profile + device.
-// The greeting shows once per session (sessionStorage guard).
+// ZERO server calls for greeting computation. Everything computed from
+// cached profile + device.
 //
-// USAGE:
-//   const { greeting, analysis, visible, dismiss } = useOracleGreeting();
+// v2.0: Permanent "don't show again" support.
+//   - Checks profile.has_seen_oracle_greeting (Supabase)
+//   - If true, greeting never shows again
+//   - dismissPermanently() calls /api/oracle/dismiss-greeting
+//     then sets the flag in the profile cache
+//   - Session guard still applies within a single session
 // ═══════════════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import {
   analyzeUser,
   buildGreeting,
@@ -37,8 +42,10 @@ export interface UseOracleGreetingReturn {
   analysis: PersonaAnalysis | null;
   /** Whether the greeting banner should be visible */
   visible: boolean;
-  /** Dismiss the greeting (auto-fades or user-tapped) */
+  /** Dismiss for this session only */
   dismiss: () => void;
+  /** Dismiss permanently — writes to DB, never shows again */
+  dismissPermanently: () => Promise<void>;
   /** User's display name used in greeting */
   displayName: string;
 }
@@ -101,7 +108,7 @@ export function useOracleGreeting(): UseOracleGreetingReturn {
     return buildGreeting(displayName, analysis);
   }, [analysis, displayName]);
 
-  // ── Dismiss handler ─────────────────────────────────────
+  // ── Dismiss for this session only ──────────────────────
   const dismiss = useCallback(() => {
     setVisible(false);
     if (dismissTimer.current) {
@@ -110,9 +117,39 @@ export function useOracleGreeting(): UseOracleGreetingReturn {
     }
   }, []);
 
+  // ── Dismiss permanently — v2.0 ─────────────────────────
+  // Calls API to persist has_seen_oracle_greeting = true.
+  // Fire-and-forget on error — still dismisses locally.
+  const dismissPermanently = useCallback(async () => {
+    dismiss(); // Hide immediately
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      await fetch('/api/oracle/dismiss-greeting', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      // Also mark in sessionStorage so it doesn't flicker back
+      sessionStorage.setItem(SESSION_KEY, 'permanent');
+    } catch (err) {
+      // Non-fatal — greeting dismissed visually even if API fails
+      console.warn('[OracleGreeting] Failed to persist dismiss:', err);
+    }
+  }, [dismiss]);
+
   // ── Show greeting once per session ──────────────────────
   useEffect(() => {
     if (!greeting || !profile?.onboarding_complete) return;
+
+    // v2.0: Check permanent dismiss from profile
+    // has_seen_oracle_greeting = true means never show again
+    if (profile?.has_seen_oracle_greeting) return;
 
     // Check session guard — don't re-show on route changes
     const alreadyShown = sessionStorage.getItem(SESSION_KEY);
@@ -135,13 +172,14 @@ export function useOracleGreeting(): UseOracleGreetingReturn {
       clearTimeout(showDelay);
       if (dismissTimer.current) clearTimeout(dismissTimer.current);
     };
-  }, [greeting, profile?.onboarding_complete]);
+  }, [greeting, profile?.onboarding_complete, profile?.has_seen_oracle_greeting]);
 
   return {
     greeting,
     analysis,
     visible,
     dismiss,
+    dismissPermanently,
     displayName,
   };
 }

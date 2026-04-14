@@ -18,12 +18,18 @@
 //   - Service suggestion chips are scrollable horizontal row
 //   - Streak badge pulses gently if active
 //
+// v2.0: "Don't show again" checkbox
+//   - Renders at the bottom of the greeting
+//   - When checked + dismissed, calls dismissPermanently()
+//   - Writes has_seen_oracle_greeting = true to profiles table
+//   - Greeting never shows again for that user
+//
 // PHILOSOPHY:
 //   "The best greeting is one you look forward to."
 //   Not a modal. Not a blocker. A warm welcome that helps.
 // ═══════════════════════════════════════════════════════════════════════
 
-import React, { useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X } from 'lucide-react';
 import { useOracleGreeting } from '@/hooks/useOracleGreeting';
@@ -105,20 +111,30 @@ const ServiceChip: React.FC<ServiceChipProps> = ({ service, theme, onAction }) =
 
 const OracleGreeting: React.FC = () => {
   const navigate = useNavigate();
-  const { greeting, analysis, visible, dismiss } = useOracleGreeting();
+  const { greeting, analysis, visible, dismiss, dismissPermanently } = useOracleGreeting();
+
+  // v2.0: "Don't show again" checkbox state
+  const [dontShowAgain, setDontShowAgain] = useState(false);
+
+  // ── Handle dismiss — respects checkbox ──────────────────
+  const handleDismiss = useCallback(() => {
+    if (dontShowAgain) {
+      dismissPermanently();
+    } else {
+      dismiss();
+    }
+  }, [dontShowAgain, dismiss, dismissPermanently]);
 
   // ── Handle service chip actions ─────────────────────────
   const handleServiceAction = useCallback((service: ServiceSuggestion) => {
-    dismiss(); // Close greeting first
+    handleDismiss(); // Close greeting first
 
     switch (service.action) {
       case 'navigate':
         if (service.navigateTo) navigate(service.navigateTo);
         break;
       case 'oracle_chat':
-        // Navigate to oracle with a pre-loaded prompt
         if (service.oraclePrompt) {
-          // Store prompt for Oracle page to pick up
           sessionStorage.setItem('oracle_preload_prompt', service.oraclePrompt);
         }
         navigate('/oracle');
@@ -129,7 +145,7 @@ const OracleGreeting: React.FC = () => {
         }
         break;
     }
-  }, [dismiss, navigate]);
+  }, [handleDismiss, navigate]);
 
   // ── Don't render if not visible or no greeting ──────────
   if (!visible || !greeting || !analysis) return null;
@@ -139,7 +155,7 @@ const OracleGreeting: React.FC = () => {
 
   return (
     <div
-      onClick={dismiss}
+      onClick={handleDismiss}
       className={`
         fixed bottom-16 left-0 right-0 z-40
         mx-2 sm:mx-4 md:mx-auto md:max-w-lg
@@ -193,13 +209,33 @@ const OracleGreeting: React.FC = () => {
             ))}
           </div>
         )}
+
+        {/* v2.0: Don't show again checkbox */}
+        <div
+          className="mt-3 flex items-center gap-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            id="oracle-dont-show"
+            type="checkbox"
+            checked={dontShowAgain}
+            onChange={(e) => setDontShowAgain(e.target.checked)}
+            className="w-3.5 h-3.5 rounded accent-white cursor-pointer"
+          />
+          <label
+            htmlFor="oracle-dont-show"
+            className={`text-xs ${theme.text} opacity-50 cursor-pointer select-none`}
+          >
+            Don't show again
+          </label>
+        </div>
       </div>
 
       {/* Dismiss X */}
       <button
         onClick={(e) => {
           e.stopPropagation();
-          dismiss();
+          handleDismiss();
         }}
         className={`
           absolute top-3 right-3
