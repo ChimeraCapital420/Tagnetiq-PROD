@@ -2,36 +2,21 @@
 // Oracle Greeting Banner — The "Hello Billy" Moment
 //
 // ═══════════════════════════════════════════════════════════════════════
-// This is the AOL "You've Got Mail" moment for TagnetIQ.
-// Except it's better — because it's personal, contextual, and smart.
+// v2.1: Prominent "Turn off daily greeting" control
+//   - Full divider separates content from control row
+//   - Checkbox is w-4 h-4, label is text-sm font-medium full opacity
+//   - Text: "Turn off daily greeting" (clearer than "Don't show again")
+//   - Settings shortcut on right side → navigates to /settings
+//   - checkboxBg gives control row visual weight
 //
-// MOBILE-FIRST DESIGN:
-//   - Slides up from bottom on mobile (thumb-friendly dismiss)
-//   - Compact: 2-3 lines max, no scrolling needed
-//   - Service chips are tappable, swipeable on overflow
-//   - Auto-dismisses after 12s (respects power users)
-//   - Tap anywhere to dismiss (natural gesture)
-//
-// RENDERING:
-//   - Background gradient shifts by time of day
-//   - Morning: warm amber → Afternoon: sky blue → Evening: purple → Night: deep navy
-//   - Service suggestion chips are scrollable horizontal row
-//   - Streak badge pulses gently if active
-//
-// v2.0: "Don't show again" checkbox
-//   - Renders at the bottom of the greeting
-//   - When checked + dismissed, calls dismissPermanently()
-//   - Writes has_seen_oracle_greeting = true to profiles table
-//   - Greeting never shows again for that user
-//
-// PHILOSOPHY:
-//   "The best greeting is one you look forward to."
-//   Not a modal. Not a blocker. A warm welcome that helps.
+// PHILOSOPHY: "The best greeting is one you look forward to."
+// Not a modal. Not a blocker. A warm welcome that helps.
+// But never something that gets in the way of a power user.
 // ═══════════════════════════════════════════════════════════════════════
 
 import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X } from 'lucide-react';
+import { X, Settings } from 'lucide-react';
 import { useOracleGreeting } from '@/hooks/useOracleGreeting';
 import type { ServiceSuggestion, TimeOfDay } from '@/lib/oracle/greeting';
 
@@ -45,6 +30,8 @@ const TIME_THEMES: Record<TimeOfDay, {
   chipBg: string;
   chipText: string;
   border: string;
+  divider: string;
+  checkboxBg: string;
 }> = {
   morning: {
     gradient: 'from-amber-950/90 via-orange-950/80 to-yellow-950/70',
@@ -52,6 +39,8 @@ const TIME_THEMES: Record<TimeOfDay, {
     chipBg: 'bg-amber-900/60',
     chipText: 'text-amber-200',
     border: 'border-amber-800/40',
+    divider: 'border-amber-800/30',
+    checkboxBg: 'bg-amber-900/30',
   },
   afternoon: {
     gradient: 'from-sky-950/90 via-blue-950/80 to-cyan-950/70',
@@ -59,6 +48,8 @@ const TIME_THEMES: Record<TimeOfDay, {
     chipBg: 'bg-sky-900/60',
     chipText: 'text-sky-200',
     border: 'border-sky-800/40',
+    divider: 'border-sky-800/30',
+    checkboxBg: 'bg-sky-900/30',
   },
   evening: {
     gradient: 'from-purple-950/90 via-violet-950/80 to-indigo-950/70',
@@ -66,6 +57,8 @@ const TIME_THEMES: Record<TimeOfDay, {
     chipBg: 'bg-purple-900/60',
     chipText: 'text-purple-200',
     border: 'border-purple-800/40',
+    divider: 'border-purple-800/30',
+    checkboxBg: 'bg-purple-900/30',
   },
   night: {
     gradient: 'from-slate-950/95 via-zinc-950/90 to-gray-950/85',
@@ -73,6 +66,8 @@ const TIME_THEMES: Record<TimeOfDay, {
     chipBg: 'bg-slate-800/60',
     chipText: 'text-slate-300',
     border: 'border-slate-700/40',
+    divider: 'border-slate-700/30',
+    checkboxBg: 'bg-slate-800/30',
   },
 };
 
@@ -88,10 +83,7 @@ interface ServiceChipProps {
 
 const ServiceChip: React.FC<ServiceChipProps> = ({ service, theme, onAction }) => (
   <button
-    onClick={(e) => {
-      e.stopPropagation();
-      onAction(service);
-    }}
+    onClick={(e) => { e.stopPropagation(); onAction(service); }}
     className={`
       flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5
       ${theme.chipBg} ${theme.chipText}
@@ -112,11 +104,8 @@ const ServiceChip: React.FC<ServiceChipProps> = ({ service, theme, onAction }) =
 const OracleGreeting: React.FC = () => {
   const navigate = useNavigate();
   const { greeting, analysis, visible, dismiss, dismissPermanently } = useOracleGreeting();
-
-  // v2.0: "Don't show again" checkbox state
   const [dontShowAgain, setDontShowAgain] = useState(false);
 
-  // ── Handle dismiss — respects checkbox ──────────────────
   const handleDismiss = useCallback(() => {
     if (dontShowAgain) {
       dismissPermanently();
@@ -125,10 +114,8 @@ const OracleGreeting: React.FC = () => {
     }
   }, [dontShowAgain, dismiss, dismissPermanently]);
 
-  // ── Handle service chip actions ─────────────────────────
   const handleServiceAction = useCallback((service: ServiceSuggestion) => {
-    handleDismiss(); // Close greeting first
-
+    handleDismiss();
     switch (service.action) {
       case 'navigate':
         if (service.navigateTo) navigate(service.navigateTo);
@@ -147,7 +134,6 @@ const OracleGreeting: React.FC = () => {
     }
   }, [handleDismiss, navigate]);
 
-  // ── Don't render if not visible or no greeting ──────────
   if (!visible || !greeting || !analysis) return null;
 
   const theme = TIME_THEMES[greeting.timeOfDay];
@@ -171,8 +157,9 @@ const OracleGreeting: React.FC = () => {
       aria-live="polite"
       aria-label="Oracle greeting"
     >
-      {/* Content */}
+      {/* ── Main greeting content ─────────────────────────── */}
       <div className="p-4 pr-10">
+
         {/* Salutation */}
         <div className={`flex items-center gap-2 ${theme.text}`}>
           <span className="text-lg">{greeting.icon}</span>
@@ -193,7 +180,7 @@ const OracleGreeting: React.FC = () => {
           </p>
         )}
 
-        {/* Service Suggestions — horizontal scroll on mobile */}
+        {/* Service Suggestions */}
         {suggestions.length > 0 && (
           <div
             className="mt-3 -mx-1 flex gap-2 overflow-x-auto pb-1 scrollbar-none"
@@ -209,34 +196,54 @@ const OracleGreeting: React.FC = () => {
             ))}
           </div>
         )}
+      </div>
 
-        {/* v2.0: Don't show again checkbox */}
-        <div
-          className="mt-3 flex items-center gap-2"
-          onClick={(e) => e.stopPropagation()}
+      {/* ── Divider — visual break before control row ──────── */}
+      <div className={`border-t ${theme.divider} mx-4`} />
+
+      {/* ── Control row — v2.1: prominent, full opacity ─────── */}
+      <div
+        className={`px-4 py-2.5 flex items-center justify-between ${theme.checkboxBg}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Checkbox — large, clearly labeled, full opacity */}
+        <label
+          htmlFor="oracle-dont-show"
+          className="flex items-center gap-2.5 cursor-pointer select-none"
         >
           <input
             id="oracle-dont-show"
             type="checkbox"
             checked={dontShowAgain}
             onChange={(e) => setDontShowAgain(e.target.checked)}
-            className="w-3.5 h-3.5 rounded accent-white cursor-pointer"
+            className="w-4 h-4 rounded accent-white cursor-pointer flex-shrink-0"
           />
-          <label
-            htmlFor="oracle-dont-show"
-            className={`text-xs ${theme.text} opacity-50 cursor-pointer select-none`}
-          >
-            Don't show again
-          </label>
-        </div>
+          <span className={`text-sm font-medium ${theme.text}`}>
+            Turn off daily greeting
+          </span>
+        </label>
+
+        {/* Settings shortcut */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            dismiss();
+            navigate('/settings');
+          }}
+          className={`
+            flex items-center gap-1 text-xs ${theme.text}
+            opacity-50 hover:opacity-90 transition-opacity active:scale-95
+          `}
+          aria-label="Open settings"
+        >
+          <Settings className="w-3.5 h-3.5" />
+          <span>Settings</span>
+        </button>
       </div>
 
-      {/* Dismiss X */}
+      {/* ── Dismiss X ──────────────────────────────────────── */}
       <button
-        onClick={(e) => {
-          e.stopPropagation();
-          handleDismiss();
-        }}
+        onClick={(e) => { e.stopPropagation(); handleDismiss(); }}
         className={`
           absolute top-3 right-3
           ${theme.text} opacity-40 hover:opacity-80
