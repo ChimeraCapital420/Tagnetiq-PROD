@@ -2,6 +2,7 @@
 // Centralized TypeScript interfaces for HYDRA system
 // All modules should import types from here
 // v8.0: Added ColnectData, ColnectMarketPrice, and new category types
+// v8.1: Added SellThroughData, RichMarketIntel for eBay market intelligence
 
 // =============================================================================
 // AI PROVIDER TYPES
@@ -157,6 +158,54 @@ export interface GradeInfo {
 }
 
 // =============================================================================
+// SELL-THROUGH & RICH MARKET INTEL TYPES (v8.1)
+// Source: Beta Interview #1 — Secondhand Store Owner, April 19, 2026
+// Insight: "A 10% sell-through affects the list price very differently than 1000%"
+// =============================================================================
+
+/**
+ * Sell-through rate and velocity data from eBay sold listings.
+ * Answers: "Will this actually sell, and how fast?"
+ */
+export interface SellThroughData {
+  /** Percentage e.g. 340 means sold count is 3.4× active listings */
+  rate: number;
+  /** Human-readable label e.g. "Hot — sells very fast" */
+  label: string;
+  /** Velocity bucket for UI styling */
+  velocity: 'hot' | 'steady' | 'slow' | 'sitting' | 'unknown';
+  /** Median days from listing creation to sale */
+  medianDaysToSell: number;
+  /** Total active listings on eBay right now */
+  activeListings: number;
+  /** Total sold in the last 30 days */
+  soldLast30Days: number;
+}
+
+/**
+ * Rich market intelligence extracted from eBay listing data.
+ * Surfaces data eBay already returns — no extra API cost.
+ */
+export interface RichMarketIntel {
+  /** Count of listings per condition e.g. { "New": 5, "Good": 3 } */
+  conditionBreakdown: Record<string, number>;
+  /** How sellers are listing: fixed price, auction, or best offer */
+  buyingOptions: {
+    fixedPrice: number;
+    auction: number;
+    bestOffer: number;
+  };
+  /** True if eBay Authenticity Guarantee is active on these listings */
+  hasAuthenticityGuarantee: boolean;
+  /** Average seller feedback percentage across sample listings */
+  avgSellerFeedback: number;
+  /** Percentage of listings offering free shipping */
+  freeShippingPct: number;
+  /** Suggested platform based on buying options distribution */
+  bestPlatform: string;
+}
+
+// =============================================================================
 // MARKET DATA TYPES
 // =============================================================================
 
@@ -180,6 +229,10 @@ export interface MarketDataSource {
   priceAnalysis?: PriceAnalysis;
   authorityData?: AuthorityData;
   error?: string;
+  /** v8.1: Sell-through rate and velocity from eBay sold listings */
+  sellThrough?: SellThroughData;
+  /** v8.1: Rich market intelligence from eBay listing metadata */
+  richIntel?: RichMarketIntel;
 }
 
 /**

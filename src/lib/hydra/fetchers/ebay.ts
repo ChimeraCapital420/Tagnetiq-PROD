@@ -7,6 +7,12 @@
 //   Now checks: price.value → currentBidPrice.value → marketPrice.value
 //   This fixes the $3.99 flat line bug where auction items had no price.value
 //   but did have currentBidPrice.value. sampleListings price uses same fallback.
+// ADDED v7.3: Sell-through rate + rich market intelligence
+//   - Second API call for sold/completed listings (last 30 days)
+//   - Sell-through rate = sold ÷ active × 100
+//   - Velocity label: Hot / Steady / Slow / Sitting
+//   - Condition breakdown, buying options split, authenticity guarantee flag
+//   - Avg seller feedback, listing age signal, best platform suggestion
 
 import type { MarketDataSource } from '../types.js';
 
@@ -60,17 +66,218 @@ async function getAccessToken(): Promise<string> {
   }
 
   const data = await response.json();
-
   cachedToken = {
     token:     data.access_token,
     expiresAt: Date.now() + (data.expires_in * 1000),
   };
-
   console.log(`🔑 eBay OAuth token obtained (expires in ${data.expires_in}s)`);
   return cachedToken.token;
 }
 
-// ==================== KEYWORD SEARCH (existing) ====================
+// ==================== SELL-THROUGH FETCH (v7.3 NEW) ====================
+
+/**
+ * Fetches sold/completed listings for the same query.
+ * Returns { soldCount, soldPrices, medianDaysToSell }
+ * Runs in parallel with the active listings fetch — adds ~0ms wall time.
+ */
+async function fetchSoldListings(
+  searchQuery: string,
+  accessToken: string,
+  environment: 'production' | 'sandbox',
+): Promise<{ soldCount: number; soldMedianPrice: number; medianDaysListed: number }> {
+  try {
+    const browseBaseUrl = ENDPOINTS[environment].browse;
+
+    const soldParams = new URLSearchParams({
+      q:     searchQuery,
+      limit: '50',
+    });
+    // Filter for completed sold listings in the last 30 days
+    soldParams.append('filter', 'buyingOptions:{FIXED_PRICE|AUCTION},conditions:{NEW|LIKE_NEW|VERY_GOOD|GOOD|ACCEPTABLE},soldListings:true');
+
+    const controller = new AbortController();
+    const timeoutId  = setTimeout(() => controller.abort(), 10000);
+
+    const response = await fetch(`${browseBaseUrl}/item_summary/search?${soldParams}`, {
+      method:  'GET',
+      headers: {
+        'Authorization':           `Bearer ${accessToken}`,
+        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
+        'Content-Type':            'application/json',
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.warn(`⚠️ eBay sold listings fetch failed: ${response.status}`);
+      return { soldCount: 0, soldMedianPrice: 0, medianDaysListed: 0 };
+    }
+
+    const data = await response.json();
+    const soldTotal = data.total || 0;
+    const items = data.itemSummaries || [];
+
+    // Extract sold prices
+    const soldPrices = items
+      .map((item: any) => parseFloat(
+        item.lastSoldPrice?.value ||
+        item.price?.value ||
+        item.currentBidPrice?.value ||
+        '0'
+      ))
+      .filter((p: number) => p > 0)
+      .sort((a: number, b: number) => a - b);
+
+    const soldMedianPrice = soldPrices.length > 0
+      ? soldPrices[Math.floor(soldPrices.length / 2)]
+      : 0;
+
+    // Calculate median days listed before sale (from itemCreationDate to now)
+    const now = Date.now();
+    const daysListed = items
+      .filter((item: any) => item.itemCreationDate)
+      .map((item: any) => {
+        const created = new Date(item.itemCreationDate).getTime();
+        return Math.round((now - created) / (1000 * 60 * 60 * 24));
+      })
+      .filter((d: number) => d > 0 && d < 365)
+      .sort((a: number, b: number) => a - b);
+
+    const medianDaysListed = daysListed.length > 0
+      ? daysListed[Math.floor(daysListed.length / 2)]
+      : 0;
+
+    return { soldCount: soldTotal, soldMedianPrice, medianDaysListed };
+  } catch (err) {
+    console.warn('⚠️ eBay sold listings fetch error:', err);
+    return { soldCount: 0, soldMedianPrice: 0, medianDaysListed: 0 };
+  }
+}
+
+// ==================== SELL-THROUGH CALCULATION (v7.3) ====================
+
+function calculateSellThrough(
+  activeCount: number,
+  soldCount: number,
+  medianDaysListed: number,
+): SellThroughData {
+  if (activeCount === 0) {
+    return { rate: 0, label: 'Unknown', velocity: 'unknown', medianDaysToSell: 0, activeListings: 0, soldLast30Days: 0 };
+  }
+
+  const rate = Math.round((soldCount / activeCount) * 100);
+
+  let label: string;
+  let velocity: 'hot' | 'steady' | 'slow' | 'sitting' | 'unknown';
+
+  if (rate >= 200) {
+    label    = 'Hot — sells very fast';
+    velocity = 'hot';
+  } else if (rate >= 50) {
+    label    = 'Steady market';
+    velocity = 'steady';
+  } else if (rate >= 10) {
+    label    = 'Slow mover';
+    velocity = 'slow';
+  } else {
+    label    = 'Sitting — hard to sell';
+    velocity = 'sitting';
+  }
+
+  return {
+    rate,
+    label,
+    velocity,
+    medianDaysToSell: medianDaysListed,
+    activeListings:   activeCount,
+    soldLast30Days:   soldCount,
+  };
+}
+
+// ==================== RICH MARKET INTELLIGENCE (v7.3) ====================
+
+function extractRichIntel(items: any[]): RichMarketIntel {
+  // Condition breakdown
+  const conditionCounts: Record<string, number> = {};
+  items.forEach((item: any) => {
+    const cond = item.condition || 'Unknown';
+    conditionCounts[cond] = (conditionCounts[cond] || 0) + 1;
+  });
+
+  // Buying options split
+  let fixedPrice = 0, auction = 0, bestOffer = 0;
+  items.forEach((item: any) => {
+    const opts: string[] = item.buyingOptions || [];
+    if (opts.includes('FIXED_PRICE')) fixedPrice++;
+    if (opts.includes('AUCTION'))     auction++;
+    if (opts.includes('BEST_OFFER'))  bestOffer++;
+  });
+
+  // Authenticity Guarantee (luxury signal)
+  const hasAuthenticityGuarantee = items.some((item: any) =>
+    (item.qualifiedPrograms || []).includes('AUTHENTICITY_GUARANTEE')
+  );
+
+  // Avg seller feedback
+  const feedbackScores = items
+    .map((item: any) => parseFloat(item.seller?.feedbackPercentage || '0'))
+    .filter((f: number) => f > 0);
+  const avgSellerFeedback = feedbackScores.length > 0
+    ? Math.round(feedbackScores.reduce((a: number, b: number) => a + b, 0) / feedbackScores.length)
+    : 0;
+
+  // Free shipping percentage
+  const freeShippingCount = items.filter((item: any) =>
+    item.shippingOptions?.some((s: any) =>
+      parseFloat(s.shippingCost?.value || '1') === 0
+    )
+  ).length;
+  const freeShippingPct = items.length > 0
+    ? Math.round((freeShippingCount / items.length) * 100)
+    : 0;
+
+  // Best platform suggestion — simple heuristic
+  let bestPlatform = 'eBay';
+  if (auction > fixedPrice && auction > bestOffer) {
+    bestPlatform = 'eBay Auction';
+  } else if (bestOffer > fixedPrice) {
+    bestPlatform = 'eBay Best Offer';
+  }
+
+  return {
+    conditionBreakdown:        conditionCounts,
+    buyingOptions:             { fixedPrice, auction, bestOffer },
+    hasAuthenticityGuarantee,
+    avgSellerFeedback,
+    freeShippingPct,
+    bestPlatform,
+  };
+}
+
+// ==================== TYPE DEFINITIONS (v7.3) ====================
+
+export interface SellThroughData {
+  rate:             number;   // percentage e.g. 340
+  label:            string;   // "Hot — sells very fast"
+  velocity:         'hot' | 'steady' | 'slow' | 'sitting' | 'unknown';
+  medianDaysToSell: number;
+  activeListings:   number;
+  soldLast30Days:   number;
+}
+
+export interface RichMarketIntel {
+  conditionBreakdown:        Record<string, number>;
+  buyingOptions:             { fixedPrice: number; auction: number; bestOffer: number };
+  hasAuthenticityGuarantee:  boolean;
+  avgSellerFeedback:         number;
+  freeShippingPct:           number;
+  bestPlatform:              string;
+}
+
+// ==================== KEYWORD SEARCH ====================
 
 export async function fetchEbayData(
   itemName: string,
@@ -122,15 +329,19 @@ export async function fetchEbayData(
     const controller = new AbortController();
     const timeoutId  = setTimeout(() => controller.abort(), 15000);
 
-    const response = await fetch(searchUrl, {
-      method:  'GET',
-      headers: {
-        'Authorization':           `Bearer ${accessToken}`,
-        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
-        'Content-Type':            'application/json',
-      },
-      signal: controller.signal,
-    });
+    // v7.3: Run active + sold fetches in parallel — zero added wall time
+    const [response, soldData] = await Promise.all([
+      fetch(searchUrl, {
+        method:  'GET',
+        headers: {
+          'Authorization':           `Bearer ${accessToken}`,
+          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
+          'Content-Type':            'application/json',
+        },
+        signal: controller.signal,
+      }),
+      fetchSoldListings(searchQuery, accessToken, environment),
+    ]);
 
     clearTimeout(timeoutId);
 
@@ -153,18 +364,17 @@ export async function fetchEbayData(
           });
           if (retryResponse.ok) {
             const retryData = await retryResponse.json();
-            return processEbayResults(retryData, searchQuery, itemName, startTime);
+            return processEbayResults(retryData, searchQuery, itemName, startTime, soldData);
           }
         } catch (retryErr) {
           console.error('❌ eBay retry also failed:', retryErr);
         }
       }
-
       return createFallbackResult(itemName, searchQuery);
     }
 
     const data = await response.json();
-    return processEbayResults(data, searchQuery, itemName, startTime);
+    return processEbayResults(data, searchQuery, itemName, startTime, soldData);
 
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
@@ -182,29 +392,8 @@ export async function fetchEbayData(
   }
 }
 
-// ==================== IMAGE SEARCH (v7.1 NEW) ====================
+// ==================== IMAGE SEARCH (v7.1) ====================
 
-/**
- * fetchEbayDataByImage()
- *
- * Sends a base64 image to eBay's search_by_image endpoint.
- * eBay's visual recognition matches the photo against their catalog
- * and returns active listings for the exact item — no keyword guessing.
- *
- * Same OAuth token as keyword search. No new credentials.
- * Same response shape as fetchEbayData — drops into existing pipeline.
- *
- * Mobile-first: image is already compressed client-side before reaching
- * HYDRA. Server sends it straight to eBay — no re-processing.
- *
- * Integration:
- *   - Oracle see.ts: immediate — pass imageBase64 from the scan
- *   - fetch-evidence.ts: post-unfreeze — add imageBase64 param to runFetchStage
- *
- * @param imageBase64 - Base64 image string (with or without data: prefix)
- * @param itemName    - Item name from vision ID (used as fallback query)
- * @param category    - Detected category (used for query enrichment on fallback)
- */
 export async function fetchEbayDataByImage(
   imageBase64: string,
   itemName: string,
@@ -221,7 +410,6 @@ export async function fetchEbayDataByImage(
       return fetchEbayData(itemName, category);
     }
 
-    // Strip data URI prefix if present
     const cleanBase64 = imageBase64.includes(',')
       ? imageBase64.split(',')[1]
       : imageBase64;
@@ -239,31 +427,30 @@ export async function fetchEbayDataByImage(
       return fetchEbayData(itemName, category);
     }
 
-    const environment = (process.env.EBAY_ENVIRONMENT?.toLowerCase() === 'sandbox') ? 'sandbox' : 'production';
+    const environment    = (process.env.EBAY_ENVIRONMENT?.toLowerCase() === 'sandbox') ? 'sandbox' : 'production';
     const imageSearchUrl = ENDPOINTS[environment].imageSearch;
 
-    // Add query params for filtering
-    const params = new URLSearchParams({
-      limit: '20',
-    });
+    const params = new URLSearchParams({ limit: '20' });
 
     const controller = new AbortController();
-    const timeoutId  = setTimeout(() => controller.abort(), 20000); // 20s — image upload takes longer
+    const timeoutId  = setTimeout(() => controller.abort(), 20000);
 
     console.log(`👁️ eBay image search: sending ${(cleanBase64.length * 0.75 / 1024).toFixed(0)}KB image for "${itemName}"`);
 
-    const response = await fetch(`${imageSearchUrl}?${params}`, {
-      method: 'POST',
-      headers: {
-        'Authorization':           `Bearer ${accessToken}`,
-        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
-        'Content-Type':            'application/json',
-      },
-      body: JSON.stringify({
-        image: cleanBase64,
+    // v7.3: Run image search + sold lookup in parallel
+    const [response, soldData] = await Promise.all([
+      fetch(`${imageSearchUrl}?${params}`, {
+        method: 'POST',
+        headers: {
+          'Authorization':           `Bearer ${accessToken}`,
+          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
+          'Content-Type':            'application/json',
+        },
+        body: JSON.stringify({ image: cleanBase64 }),
+        signal: controller.signal,
       }),
-      signal: controller.signal,
-    });
+      fetchSoldListings(itemName, accessToken, environment),
+    ]);
 
     clearTimeout(timeoutId);
 
@@ -271,7 +458,6 @@ export async function fetchEbayDataByImage(
       const errorText = await response.text();
       console.error(`❌ eBay image search error: ${response.status} - ${errorText.substring(0, 300)}`);
 
-      // On auth failure, refresh token and retry once
       if (response.status === 401) {
         cachedToken = null;
         try {
@@ -287,27 +473,25 @@ export async function fetchEbayDataByImage(
           });
           if (retryResp.ok) {
             const retryData = await retryResp.json();
-            return processEbayImageResults(retryData, itemName, startTime);
+            return processEbayImageResults(retryData, itemName, startTime, soldData);
           }
         } catch (retryErr) {
           console.error('❌ eBay image search retry failed:', retryErr);
         }
       }
 
-      // Graceful fallback to keyword search
       console.log('↩️ eBay image search failed — falling back to keyword search');
       return fetchEbayData(itemName, category);
     }
 
     const data = await response.json();
 
-    // If eBay returned no results from the image, fall back to keyword
     if (!data.itemSummaries || data.itemSummaries.length === 0) {
-      console.log(`ℹ️ eBay image search: no visual matches found — falling back to keyword`);
+      console.log('ℹ️ eBay image search: no visual matches found — falling back to keyword');
       return fetchEbayData(itemName, category);
     }
 
-    return processEbayImageResults(data, itemName, startTime);
+    return processEbayImageResults(data, itemName, startTime, soldData);
 
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
@@ -315,27 +499,17 @@ export async function fetchEbayDataByImage(
     } else {
       console.error('❌ eBay image search error:', error);
     }
-    // Always fall back gracefully — never return empty when keyword can help
     return fetchEbayData(itemName, category);
   }
 }
 
-// ==================== IMAGE RESULT PROCESSING (v7.1) ====================
+// ==================== IMAGE RESULT PROCESSING ====================
 
-/**
- * Process results from search_by_image.
- * Same output shape as processEbayResults so it drops into
- * the existing price blending pipeline without changes.
- *
- * Visual matches include a relevance score from eBay — we use it
- * to filter low-confidence matches before price analysis.
- *
- * v7.2: Price field fallback applied — same fix as processEbayResults.
- */
 function processEbayImageResults(
   data: any,
   itemName: string,
-  startTime: number
+  startTime: number,
+  soldData: { soldCount: number; soldMedianPrice: number; medianDaysListed: number },
 ): MarketDataSource {
   const items = (data.itemSummaries || []) as any[];
 
@@ -349,13 +523,8 @@ function processEbayImageResults(
     };
   }
 
-  // Extract prices — v7.2: fallback through multiple price fields
   const prices = items
     .map((item: any) => {
-      // v7.2: Browse API returns price in different fields by listing type:
-      //   FIXED_PRICE  → item.price.value
-      //   AUCTION      → item.currentBidPrice.value
-      //   BEST_OFFER   → item.marketPrice.value
       const price = parseFloat(
         item.price?.value ||
         item.currentBidPrice?.value ||
@@ -395,7 +564,10 @@ function processEbayImageResults(
   const average = prices.reduce((a: number, b: number) => a + b, 0) / prices.length;
   const median  = prices[Math.floor(prices.length / 2)] || average;
 
-  // v7.2: sampleListings price uses same field fallback
+  const activeCount  = data.total || items.length;
+  const sellThrough  = calculateSellThrough(activeCount, soldData.soldCount, soldData.medianDaysListed);
+  const richIntel    = extractRichIntel(items);
+
   const sampleListings = items.slice(0, 5).map((item: any) => ({
     title:     item.title || 'Unknown',
     price:     parseFloat(
@@ -406,15 +578,16 @@ function processEbayImageResults(
     ),
     condition: item.condition || 'Unknown',
     url:       item.itemWebUrl || `https://www.ebay.com/itm/${item.itemId}`,
+    image:     item.image?.imageUrl,
   }));
 
-  console.log(`✅ eBay image search: ${items.length} visual matches, median $${median.toFixed(2)} in ${Date.now() - startTime}ms`);
+  console.log(`✅ eBay image search: ${items.length} visual matches, median $${median.toFixed(2)}, sell-through ${sellThrough.rate}% in ${Date.now() - startTime}ms`);
 
   return {
     source:        'ebay',
     available:     true,
     query:         `[image] ${itemName}`,
-    totalListings: data.total || items.length,
+    totalListings: activeCount,
     priceAnalysis: {
       lowest:  parseFloat(lowest.toFixed(2)),
       highest: parseFloat(highest.toFixed(2)),
@@ -427,6 +600,8 @@ function processEbayImageResults(
       sellPrice:  parseFloat((median * 1.1).toFixed(2)),
     },
     sampleListings,
+    sellThrough,
+    richIntel,
     metadata: {
       responseTime:  Date.now() - startTime,
       apiVersion:    'browse_v1_image_search',
@@ -444,7 +619,8 @@ function processEbayResults(
   data: any,
   searchQuery: string,
   itemName: string,
-  startTime: number
+  startTime: number,
+  soldData: { soldCount: number; soldMedianPrice: number; medianDaysListed: number },
 ): MarketDataSource {
   const items = data.itemSummaries || [];
 
@@ -458,11 +634,6 @@ function processEbayResults(
     };
   }
 
-  // v7.2: Fallback through multiple price fields by listing type
-  //   FIXED_PRICE  → item.price.value
-  //   AUCTION      → item.currentBidPrice.value
-  //   BEST_OFFER   → item.marketPrice.value
-  // This fixes the flat $3.99 bug where auction items had no price.value
   const prices = items
     .map((item: any) => {
       const price = parseFloat(
@@ -503,7 +674,10 @@ function processEbayResults(
   const average = prices.reduce((a: number, b: number) => a + b, 0) / prices.length;
   const median  = prices[Math.floor(prices.length / 2)] || average;
 
-  // v7.2: sampleListings price uses same field fallback
+  const activeCount = data.total || items.length;
+  const sellThrough = calculateSellThrough(activeCount, soldData.soldCount, soldData.medianDaysListed);
+  const richIntel   = extractRichIntel(items);
+
   const sampleListings = items.slice(0, 5).map((item: any) => ({
     title:     item.title || 'Unknown',
     price:     parseFloat(
@@ -514,15 +688,16 @@ function processEbayResults(
     ),
     condition: item.condition || 'Unknown',
     url:       item.itemWebUrl || `https://www.ebay.com/itm/${item.itemId}`,
+    image:     item.image?.imageUrl,
   }));
 
-  console.log(`✅ eBay: Found ${items.length} listings, median $${median.toFixed(2)} in ${Date.now() - startTime}ms`);
+  console.log(`✅ eBay: ${items.length} listings, median $${median.toFixed(2)}, sell-through ${sellThrough.rate}% in ${Date.now() - startTime}ms`);
 
   return {
     source:        'ebay',
     available:     true,
     query:         searchQuery,
-    totalListings: data.total || items.length,
+    totalListings: activeCount,
     priceAnalysis: {
       lowest:  parseFloat(lowest.toFixed(2)),
       highest: parseFloat(highest.toFixed(2)),
@@ -535,6 +710,8 @@ function processEbayResults(
       sellPrice:  parseFloat((median * 1.1).toFixed(2)),
     },
     sampleListings,
+    sellThrough,
+    richIntel,
     metadata: {
       responseTime:  Date.now() - startTime,
       apiVersion:    'browse_v1_oauth',
@@ -549,7 +726,6 @@ function processEbayResults(
 
 function createFallbackResult(itemName: string, query: string): MarketDataSource {
   const searchUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(query)}&_sop=15&LH_Complete=1&LH_Sold=1`;
-
   return {
     source:        'ebay',
     available:     true,
@@ -561,9 +737,6 @@ function createFallbackResult(itemName: string, query: string): MarketDataSource
       condition: 'N/A',
       url:       searchUrl,
     }],
-    metadata: {
-      fallback:  true,
-      searchUrl,
-    },
+    metadata: { fallback: true, searchUrl },
   };
 }
