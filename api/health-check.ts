@@ -79,11 +79,11 @@ async function testKimiSupplemental(): Promise<any> {
   }
   const start = Date.now();
   try {
-    const r = await fetch('https://ai-gateway.vercel.sh/v1/chat/completions', {
+    const r = await fetch('https://api.moonshot.cn/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'moonshotai/kimi-k2.6',
+        model: 'kimi-k2.6',
         messages: [{ role: 'user', content: SUPPLEMENTAL_PROMPT }],
         max_tokens: 80,
       }),

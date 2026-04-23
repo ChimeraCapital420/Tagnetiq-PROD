@@ -163,15 +163,15 @@ export const AI_PROVIDERS: Record<string, ProviderConfig> = {
     name: 'Kimi',
     envKeys: ['MOONSHOT_API_KEY', 'KIMI_API_KEY'],
     models: [
-      'moonshotai/kimi-k2.6',   // Latest — via Vercel AI Gateway
-      'moonshotai/kimi-k2.5',   // Fallback — via Vercel AI Gateway
+      'kimi-k2.6',   // Latest — improved long-context coding stability
+      'kimi-k2.5',   // Fallback — multimodal, thinking + instant modes
     ],
-    primaryModel: 'moonshotai/kimi-k2.6',
+    primaryModel: 'kimi-k2.6',
     supportsVision: true,     // Native multimodal — vision pretrained alongside text
     timeout: 30000,
     weight: 0.90,             // Strong weight — frontier model, validated on SWE-bench
     maxRetries: 2,
-    baseUrl: 'https://ai-gateway.vercel.sh/v1',  // Vercel AI Gateway — avoids geo-restriction
+    baseUrl: 'https://api.moonshot.cn/v1',  // OpenAI-compatible
   },
 
   // ==========================================================================
