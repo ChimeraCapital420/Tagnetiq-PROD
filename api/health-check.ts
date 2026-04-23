@@ -53,7 +53,7 @@ async function testLlama4Supplemental(): Promise<any> {
       }),
     });
     const d = await r.json();
-    const content = d?.choices?.[0]?.message?.content;
+    const content = d?.choices?.[0]?.message?.content || d?.choices?.[0]?.message?.reasoning_content;
     if (r.ok && content) {
       console.log(`  ✅ Llama 4 (GPT-OSS-120B): healthy ${Date.now() - start}ms`);
       return { provider: 'Llama 4 (Maverick)', status: 'healthy', responseTime: Date.now() - start, confidence: 0.9, note: 'Supplemental — via Groq inference (openai/gpt-oss-120b)' };
