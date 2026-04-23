@@ -240,22 +240,25 @@ export class HydraEngine {
     
     console.log(`🚀 Active AI Providers: ${this.providers.map(p => p.getProvider().name).join(', ')}`);
     
-    // v2.0: All 5 vision-capable providers receive the actual image
-    // Llama 4 and Kimi added to Stage 1 — they vote on the real item
+    // v2.1: All 5 vision-capable providers receive the actual image
+    // Llama 4 and Kimi in Stage 1 — full vision pipeline
     const primaryImageProviders = this.providers.filter(p => 
       ['OpenAI', 'Anthropic', 'Google', 'Llama 4', 'Kimi'].includes(p.getProvider().name)
     );
-    
+
+    // v2.1: DeepSeek promoted from conditional tiebreaker to always-on Stage 2 participant
+    // DeepSeek v3 is significantly smarter than when it was initially assigned tiebreaker-only
+    // It still serves as tiebreaker on close votes AND votes on every scan
+    const textOnlyProviders = this.providers.filter(p => 
+      ['Mistral', 'Groq', 'DeepSeek'].includes(p.getProvider().name)
+    );
+
+    // Tiebreaker: use DeepSeek (already voting) — its tiebreaker vote gets reduced weight
     const tiebreakerImageProvider = this.providers.filter(p => 
       ['DeepSeek'].includes(p.getProvider().name)
     );
-    
-    const textOnlyProviders = this.providers.filter(p => 
-      ['Mistral', 'Groq'].includes(p.getProvider().name)
-    );
 
-    // v2.0: xAI Grok has real-time web search — treat it like Perplexity
-    // Separated from textOnly so it gets a market search prompt
+    // v2.0: xAI Grok and Perplexity — real-time market search with SOLD price emphasis
     const realTimeProviders = this.providers.filter(p =>
       ['xAI', 'Perplexity'].includes(p.getProvider().name)
     );
@@ -418,10 +421,12 @@ export class HydraEngine {
     if (realTimeProviders.length > 0 && itemName) {
       console.log(`🔍 Stage 3: Running ${realTimeProviders.length} real-time market search providers...`);
       
-      const perplexityPrompt = `${prompt}\n\nIMPORTANT: Search for recent eBay sold listings, Amazon prices, and current market values for: "${itemName}". Include specific sold prices from the last 30 days with dates and conditions.`;
+      // CRITICAL: Search SOLD listings only — not asking/listing prices
+      // Asking prices are 2-10x higher than actual sold prices on collectibles
+      const perplexityPrompt = `${prompt}\n\nCRITICAL MARKET RESEARCH: Search for COMPLETED/SOLD eBay listings only (not active listings) for: "${itemName}". Include: (1) specific sold prices from last 30 days, (2) the condition/grade of each sold item, (3) the date sold. If this is a coin, note that condition dramatically affects price — a circulated example vs uncirculated can differ 10x. Return only verified sold transaction data, not asking prices.`;
 
-      // v2.0: xAI Grok prompt — leverages its real-time web search capability
-      const xaiMarketPrompt = `${prompt}\n\nIMPORTANT: Use your real-time web search to find current market prices for: "${itemName}". Search eBay sold listings, StockX, Poshmark, Mercari, and Amazon for recent sales in the last 30 days. Report specific prices, dates, and conditions found.`;
+      // v2.0: xAI Grok — real-time web search for sold market data
+      const xaiMarketPrompt = `${prompt}\n\nCRITICAL MARKET RESEARCH: Use your real-time web search to find SOLD/COMPLETED transaction prices for: "${itemName}". Search eBay completed listings, PCGS price guide, NGC price guide, and dealer sold inventory. Focus on: (1) actual sold prices NOT asking prices, (2) condition grades at time of sale, (3) sales from the last 60 days. Asking prices are not market value — only report what items actually sold for.`;
       
       const searchPromises = realTimeProviders.map(async (provider) => {
         try {
@@ -554,7 +559,15 @@ export class HydraEngine {
       return await this.emergencyFallback(images, prompt);
     }
     
-    const consensus = this.calculateConsensus(allVotes, allAnalyses);
+    // Outlier detection — remove statistically anomalous price votes before consensus
+    // Prevents a single hallucinating provider from skewing the final value
+    const { cleanedVotes, outlierVotes } = this.detectOutliers(allVotes);
+    if (outlierVotes.length > 0) {
+      console.warn(`⚠️ Outlier detection: removed ${outlierVotes.length} outlier vote(s):`);
+      outlierVotes.forEach(v => console.warn(`   └── ${v.providerName}: $${v.estimatedValue} (too far from median)`));
+    }
+
+    const consensus = this.calculateConsensus(cleanedVotes, allAnalyses);
     
     await this.saveConsensus(consensus);
     
@@ -723,6 +736,135 @@ export class HydraEngine {
     return baseWeight;
   }
   
+  // ============================================================
+  // OUTLIER DETECTION — Median Absolute Deviation (MAD) method
+  // Removes votes whose estimated value is statistically anomalous
+  // Prevents a single hallucinating provider from skewing results
+  // ============================================================
+  private detectOutliers(votes: ModelVote[]): { cleanedVotes: ModelVote[], outlierVotes: ModelVote[] } {
+    const priceVotes = votes.filter(v => v.estimatedValue > 0);
+    
+    // Need at least 4 price votes to detect outliers safely
+    if (priceVotes.length < 4) {
+      return { cleanedVotes: votes, outlierVotes: [] };
+    }
+
+    // Calculate median
+    const values = priceVotes.map(v => v.estimatedValue).sort((a, b) => a - b);
+    const mid = Math.floor(values.length / 2);
+    const median = values.length % 2 === 0
+      ? (values[mid - 1] + values[mid]) / 2
+      : values[mid];
+
+    // Calculate MAD (Median Absolute Deviation)
+    const deviations = values.map(v => Math.abs(v - median)).sort((a, b) => a - b);
+    const mad = deviations.length % 2 === 0
+      ? (deviations[mid - 1] + deviations[mid]) / 2
+      : deviations[mid];
+
+    // Modified Z-score threshold — 3.5 is standard for financial outlier detection
+    // 1.4826 is the consistency constant for MAD → standard deviation equivalence
+    const consistencyConstant = 1.4826;
+    const threshold = 3.5;
+
+    const cleanedVotes: ModelVote[] = [];
+    const outlierVotes: ModelVote[] = [];
+
+    for (const vote of votes) {
+      if (vote.estimatedValue === 0) {
+        // Zero-value votes (SELL-only decisions) are kept — not price outliers
+        cleanedVotes.push(vote);
+        continue;
+      }
+
+      const modifiedZScore = (consistencyConstant * Math.abs(vote.estimatedValue - median)) / (mad || 1);
+
+      if (modifiedZScore > threshold) {
+        outlierVotes.push(vote);
+        console.warn(`🎯 Outlier: ${vote.providerName} $${vote.estimatedValue} (z-score: ${modifiedZScore.toFixed(2)}, median: $${median.toFixed(2)})`);
+      } else {
+        cleanedVotes.push(vote);
+      }
+    }
+
+    // Safety: never remove more than half the votes
+    if (cleanedVotes.filter(v => v.estimatedValue > 0).length < priceVotes.length / 2) {
+      console.warn('⚠️ Outlier detection would remove too many votes — keeping all');
+      return { cleanedVotes: votes, outlierVotes: [] };
+    }
+
+    return { cleanedVotes, outlierVotes };
+  }
+
+  // ============================================================
+  // PREFERRED MODELS — source of truth for auto-updates
+  // When a provider deprecates a model, update this map.
+  // The syncProviderModels() method reads this and updates Supabase.
+  // ============================================================
+  static readonly PREFERRED_MODELS: Record<string, string> = {
+    'OpenAI':     'gpt-4o',
+    'Anthropic':  'claude-sonnet-4-20250514',
+    'Google':     'gemini-2.0-flash',
+    'Llama 4':    'openai/gpt-oss-120b',
+    'Kimi':       'moonshotai/kimi-k2.6',
+    'Mistral':    'mistral-large-latest',
+    'DeepSeek':   'deepseek-chat',
+    'xAI':        'grok-3',
+    'Groq':       'llama-3.3-70b-versatile',
+    'Perplexity': 'sonar',
+  };
+
+  // ============================================================
+  // AUTO MODEL SYNC — call from a Vercel cron job weekly
+  // Checks DB model strings against PREFERRED_MODELS
+  // Updates any that are stale
+  // ============================================================
+  async syncProviderModels(): Promise<{ updated: string[], current: string[], errors: string[] }> {
+    const updated: string[] = [];
+    const current: string[] = [];
+    const errors: string[] = [];
+
+    console.log('🔄 Syncing provider model versions...');
+
+    const { data: providers, error } = await supabase
+      .from('ai_providers')
+      .select('id, name, model');
+
+    if (error) {
+      errors.push(`Failed to load providers: ${error.message}`);
+      return { updated, current, errors };
+    }
+
+    for (const provider of providers || []) {
+      const preferredModel = HydraEngine.PREFERRED_MODELS[provider.name];
+      if (!preferredModel) {
+        current.push(`${provider.name}: no preferred model defined`);
+        continue;
+      }
+
+      if (provider.model === preferredModel) {
+        current.push(`${provider.name}: ${provider.model} ✅`);
+        continue;
+      }
+
+      // Model is stale — update it
+      const { error: updateError } = await supabase
+        .from('ai_providers')
+        .update({ model: preferredModel })
+        .eq('id', provider.id);
+
+      if (updateError) {
+        errors.push(`${provider.name}: failed to update — ${updateError.message}`);
+      } else {
+        updated.push(`${provider.name}: ${provider.model} → ${preferredModel}`);
+        console.log(`✅ Updated ${provider.name}: ${provider.model} → ${preferredModel}`);
+      }
+    }
+
+    console.log(`🔄 Model sync complete: ${updated.length} updated, ${current.length} current, ${errors.length} errors`);
+    return { updated, current, errors };
+  }
+
   private calculateConsensus(votes: ModelVote[], analyses: ParsedAnalysis[]) {
     if (votes.length === 0) {
       return {
