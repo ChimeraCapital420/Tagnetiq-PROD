@@ -8,3 +8,5 @@ export * from './groq-provider.js';
 export * from './deepseek-provider.js';
 export * from './xai-provider.js';
 export * from './perplexity-provider.js';
+export * from './llama4-provider.js';
+export * from './kimi-provider.js';

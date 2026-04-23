@@ -1,6 +1,13 @@
 // FILE: src/lib/hydra-engine.ts
 // Hydra Engine - Multi-AI Consensus System for Item Valuation
 // 
+// v2.0: Added Llama 4 + Kimi K2.6 to full pipeline
+//   - Both added to ai_providers DB (run SQL in Supabase)
+//   - Both receive actual image data in Stage 1 (vision-capable)
+//   - xAI Grok now gets real-time market search prompt (has live web access)
+//   - getKeyMap() updated for all 10 providers
+//   - primaryImageProviders now includes all 5 vision providers
+//
 // This file runs SERVER-SIDE (in API routes) so uses process.env directly
 
 import { createClient } from '@supabase/supabase-js';
@@ -9,8 +16,6 @@ import { ProviderFactory } from './ai-providers/provider-factory.js';
 import { BaseAIProvider } from './ai-providers/base-provider.js';
 import { AuthorityManager } from './authorities/authority-manager.js';
 
-// Server-side Supabase client with service role for database operations
-// Supports multiple env var naming conventions for compatibility
 const supabaseUrl = 
   process.env.SUPABASE_URL || 
   process.env.VITE_SUPABASE_URL || 
@@ -44,7 +49,7 @@ export class HydraEngine {
   private analysisId: string;
   private userId?: string;
   private userTier: string = 'FREE';
-  private maxProviders: number = 8;
+  private maxProviders: number = 10; // v2.0: updated from 8 to 10
   private authorityData?: any;
   private providerStatuses: ProviderStatus[] = [];
   
@@ -58,7 +63,6 @@ export class HydraEngine {
     console.log('🔧 Initializing Hydra Engine...');
     console.log(`👤 User tier: ${this.userTier} (max ${this.maxProviders} AI providers)`);
     
-    // Load active providers from database
     const { data: providerConfigs, error } = await supabase
       .from('ai_providers')
       .select('*')
@@ -72,7 +76,6 @@ export class HydraEngine {
     
     console.log(`📋 Found ${providerConfigs?.length || 0} active providers in database`);
     
-    // Initialize providers with API keys from environment
     this.providers = [];
     this.providerStatuses = [];
     
@@ -188,7 +191,18 @@ export class HydraEngine {
         'PERPLEXITY_SECRET',
         'PPLX_API_KEY',
         'PPLX_TOKEN'
-      ]
+      ],
+      // v2.0: Added Llama 4 + Kimi
+      'Llama 4': [
+        'GROQ_API_KEY',       // Llama 4 runs on Groq infrastructure
+        'GROQ_TOKEN',
+        'GROQ_SECRET'
+      ],
+      'Kimi': [
+        'AI_GATEWAY_API_KEY', // Routes through Vercel AI Gateway — no geo-restriction
+        'MOONSHOT_API_KEY',
+        'KIMI_API_KEY'
+      ],
     };
   }
   
@@ -196,7 +210,6 @@ export class HydraEngine {
     const keyMap = this.getKeyMap();
     const keys = keyMap[providerName] || [];
     
-    // Check each possible key name
     for (const keyName of keys) {
       const value = process.env[keyName];
       if (value && value.trim() !== '') {
@@ -207,7 +220,6 @@ export class HydraEngine {
     return undefined;
   }
   
-  // New method for health check
   getProviderStatuses(): ProviderStatus[] {
     return this.providerStatuses;
   }
@@ -219,21 +231,19 @@ export class HydraEngine {
       await this.initialize();
     }
     
-    // Track provider failures for debugging
     const providerFailures: Record<string, string> = {};
     
-    // If we have very few providers, use fallback mode immediately
     if (this.providers.length < 2) {
       console.warn('⚠️  Less than 2 providers available - using fallback mode');
       return await this.emergencyFallback(images, prompt);
     }
     
-    // Log which providers were successfully initialized
     console.log(`🚀 Active AI Providers: ${this.providers.map(p => p.getProvider().name).join(', ')}`);
     
-    // UPDATED: Separate providers by capability (DeepSeek as tiebreaker)
+    // v2.0: All 5 vision-capable providers receive the actual image
+    // Llama 4 and Kimi added to Stage 1 — they vote on the real item
     const primaryImageProviders = this.providers.filter(p => 
-      ['OpenAI', 'Anthropic', 'Google'].includes(p.getProvider().name)
+      ['OpenAI', 'Anthropic', 'Google', 'Llama 4', 'Kimi'].includes(p.getProvider().name)
     );
     
     const tiebreakerImageProvider = this.providers.filter(p => 
@@ -241,14 +251,16 @@ export class HydraEngine {
     );
     
     const textOnlyProviders = this.providers.filter(p => 
-      ['Mistral', 'Groq', 'xAI'].includes(p.getProvider().name)
+      ['Mistral', 'Groq'].includes(p.getProvider().name)
+    );
+
+    // v2.0: xAI Grok has real-time web search — treat it like Perplexity
+    // Separated from textOnly so it gets a market search prompt
+    const realTimeProviders = this.providers.filter(p =>
+      ['xAI', 'Perplexity'].includes(p.getProvider().name)
     );
     
-    const searchProviders = this.providers.filter(p => 
-      ['Perplexity'].includes(p.getProvider().name)
-    );
-    
-    console.log(`🔍 Stage 1: Running ${primaryImageProviders.length} PRIMARY image AIs...`);
+    console.log(`🔍 Stage 1: Running ${primaryImageProviders.length} PRIMARY vision AIs (with image)...`);
     
     // CRITICAL DEBUG LOGGING FOR IMAGE PIPELINE
     console.log('🔍 Image data debug info:', {
@@ -261,34 +273,32 @@ export class HydraEngine {
       imageType: images[0]?.substring(0, 30) || 'No image data'
     });
     
-    // STAGE 1: Primary image providers with retry logic
+    // STAGE 1: All vision providers receive the image in parallel
     let bestDescription = '';
     let itemName = '';
     const primaryImageAnalysisPromises = primaryImageProviders.map(async (provider) => {
       try {
         console.log(`📸 PRIMARY ${provider.getProvider().name}: Processing image data (${images[0]?.length || 0} chars)`);
         
-        // Add retry logic for Google rate limiting
+        // Google gets retry with backoff — others call directly
+        let result;
         if (provider.getProvider().name === 'Google') {
-          const result = await this.retryWithBackoff(provider, images, prompt, 3);
-          console.log(`✅ PRIMARY ${provider.getProvider().name} responded in ${result.responseTime}ms`);
-          return { provider: provider.getProvider(), result };
+          result = await this.retryWithBackoff(provider, images, prompt, 3);
         } else {
-          const result = await provider.analyze(images, prompt);
-          console.log(`✅ PRIMARY ${provider.getProvider().name} responded in ${result.responseTime}ms`);
-          return { provider: provider.getProvider(), result };
+          result = await provider.analyze(images, prompt);
         }
+        
+        console.log(`✅ PRIMARY ${provider.getProvider().name} responded in ${result.responseTime}ms`);
+        return { provider: provider.getProvider(), result };
       } catch (error: any) {
         const errorMsg = error.message || 'Unknown error';
         providerFailures[provider.getProvider().name] = errorMsg;
-        
         console.error(`❌ PRIMARY ${provider.getProvider().name} failed:`, error);
         
-        // Log specific error types for debugging
         if (errorMsg.includes('401') || errorMsg.includes('authentication')) {
           console.error(`❌ ${provider.getProvider().name}: Authentication failed - check API key`);
         } else if (errorMsg.includes('429') || errorMsg.includes('rate limit')) {
-          console.error(`⚠️ ${provider.getProvider().name}: Rate limit hit - will retry with backoff`);
+          console.error(`⚠️ ${provider.getProvider().name}: Rate limit hit`);
         } else if (errorMsg.includes('404')) {
           console.error(`❌ ${provider.getProvider().name}: Endpoint not found - check API URL`);
         } else if (errorMsg.includes('400')) {
@@ -301,7 +311,6 @@ export class HydraEngine {
     
     const primaryResults = await Promise.allSettled(primaryImageAnalysisPromises);
     
-    // Extract results from primary image AI results
     const primaryImageVotes: ModelVote[] = [];
     const primaryImageAnalyses: ParsedAnalysis[] = [];
     
@@ -310,16 +319,13 @@ export class HydraEngine {
         const { provider, result: aiResult } = result.value;
         const analysis = aiResult.response as ParsedAnalysis;
         
-        // LOG WHAT EACH PRIMARY AI ACTUALLY SAW
         console.log(`🎯 PRIMARY ${provider.name} identified: "${analysis.itemName}" (confidence: ${aiResult.confidence})`);
         
-        // Capture the best description for other AIs
         if (!bestDescription && analysis.itemName && analysis.summary_reasoning) {
           bestDescription = `${analysis.itemName}: ${analysis.summary_reasoning}`;
           itemName = analysis.itemName;
         }
         
-        // Safely parse estimatedValue with null checking
         const safeEstimatedValue = analysis.estimatedValue != null 
           ? parseFloat(analysis.estimatedValue.toString()) 
           : 0;
@@ -340,24 +346,21 @@ export class HydraEngine {
         primaryImageVotes.push(vote);
         primaryImageAnalyses.push(analysis);
         
-        // Save vote to database
         await this.saveVote(vote);
       }
     }
     
-    console.log(`✅ Stage 1 complete: ${primaryImageVotes.length} PRIMARY image AIs voted`);
+    console.log(`✅ Stage 1 complete: ${primaryImageVotes.length} PRIMARY vision AIs voted`);
     
-    // STAGE 2: Enhanced prompt for text-only AIs with description
+    // STAGE 2: Text-only providers with enhanced context
     const enhancedPrompt = bestDescription 
       ? `${prompt}\n\nBased on expert visual analysis by multiple AI systems, this item has been identified as: "${bestDescription}"\n\nPlease provide your valuation analysis for this ${itemName}.`
       : prompt;
     
     console.log(`🔍 Stage 2: Running ${textOnlyProviders.length} text analysis AIs with context...`);
     
-    // Run text-only providers with enhanced context
     const textAnalysisPromises = textOnlyProviders.map(async (provider) => {
       try {
-        // Text-only providers get empty image array but enhanced prompt
         const result = await provider.analyze([], enhancedPrompt);
         console.log(`✅ ${provider.getProvider().name} responded in ${result.responseTime}ms`);
         return { provider: provider.getProvider(), result };
@@ -371,7 +374,6 @@ export class HydraEngine {
     
     const textResults = await Promise.allSettled(textAnalysisPromises);
     
-    // Process text-only results
     const textVotes: ModelVote[] = [];
     const textAnalyses: ParsedAnalysis[] = [];
     
@@ -382,7 +384,6 @@ export class HydraEngine {
         
         console.log(`🎯 ${provider.name} analyzed: "${analysis.itemName}" (confidence: ${aiResult.confidence})`);
         
-        // Safely parse estimatedValue with null checking
         const safeEstimatedValue = analysis.estimatedValue != null 
           ? parseFloat(analysis.estimatedValue.toString()) 
           : 0;
@@ -390,7 +391,7 @@ export class HydraEngine {
         const vote: ModelVote = {
           providerId: provider.id,
           providerName: provider.name,
-          itemName: analysis.itemName || itemName || 'Unknown Item', // Use identified name if text AI doesn't provide one
+          itemName: analysis.itemName || itemName || 'Unknown Item',
           estimatedValue: isNaN(safeEstimatedValue) ? 0 : safeEstimatedValue,
           decision: analysis.decision || 'SELL',
           confidence: aiResult.confidence,
@@ -403,25 +404,34 @@ export class HydraEngine {
         textVotes.push(vote);
         textAnalyses.push(analysis);
         
-        // Save vote to database
         await this.saveVote(vote);
       }
     }
     
     console.log(`✅ Stage 2 complete: ${textVotes.length} text AIs voted`);
     
-    // STAGE 3: Real-time market search (if Perplexity is available)
+    // STAGE 3: Real-time market search — Perplexity AND xAI Grok
+    // v2.0: xAI Grok has live web access — explicitly ask for current market prices
     const searchVotes: ModelVote[] = [];
     const searchAnalyses: ParsedAnalysis[] = [];
     
-    if (searchProviders.length > 0 && itemName) {
-      console.log(`🔍 Stage 3: Running ${searchProviders.length} real-time market search...`);
+    if (realTimeProviders.length > 0 && itemName) {
+      console.log(`🔍 Stage 3: Running ${realTimeProviders.length} real-time market search providers...`);
       
-      const marketPrompt = `${prompt}\n\nIMPORTANT: Search for recent eBay sold listings, Amazon prices, and current market values for: "${itemName}". Include specific sold prices from the last 30 days with dates and conditions.`;
+      const perplexityPrompt = `${prompt}\n\nIMPORTANT: Search for recent eBay sold listings, Amazon prices, and current market values for: "${itemName}". Include specific sold prices from the last 30 days with dates and conditions.`;
+
+      // v2.0: xAI Grok prompt — leverages its real-time web search capability
+      const xaiMarketPrompt = `${prompt}\n\nIMPORTANT: Use your real-time web search to find current market prices for: "${itemName}". Search eBay sold listings, StockX, Poshmark, Mercari, and Amazon for recent sales in the last 30 days. Report specific prices, dates, and conditions found.`;
       
-      const searchPromises = searchProviders.map(async (provider) => {
+      const searchPromises = realTimeProviders.map(async (provider) => {
         try {
-          const result = await provider.analyze([], marketPrompt);
+          // Give each real-time provider its optimal prompt
+          const searchPrompt = provider.getProvider().name === 'xAI' 
+            ? xaiMarketPrompt 
+            : perplexityPrompt;
+          
+          const result = await provider.analyze([], searchPrompt);
+          console.log(`✅ ${provider.getProvider().name} market search responded in ${result.responseTime}ms`);
           return { provider: provider.getProvider(), result };
         } catch (error: any) {
           const errorMsg = error.message || 'Unknown error';
@@ -438,7 +448,6 @@ export class HydraEngine {
           const { provider, result: aiResult } = result.value;
           const analysis = aiResult.response as ParsedAnalysis;
           
-          // Safely parse estimatedValue with null checking
           const safeEstimatedValue = analysis.estimatedValue != null 
             ? parseFloat(analysis.estimatedValue.toString()) 
             : 0;
@@ -459,25 +468,22 @@ export class HydraEngine {
           searchVotes.push(vote);
           searchAnalyses.push(analysis);
           
-          // Save vote to database
           await this.saveVote(vote);
         }
       }
       
-      console.log(`✅ Stage 3 complete: ${searchVotes.length} market search results`);
+      console.log(`✅ Stage 3 complete: ${searchVotes.length} real-time market search results`);
     }
     
-    // Combine primary consensus votes (before checking for tiebreaker)
     const primaryVotes = [...primaryImageVotes, ...textVotes, ...searchVotes];
     
     console.log(`🎯 Primary consensus: ${primaryVotes.length} votes collected`);
     
-    // STAGE 4: TIEBREAKER LOGIC - Check if DeepSeek is needed
+    // STAGE 4: TIEBREAKER LOGIC
     let tiebreakerVotes: ModelVote[] = [];
     let tiebreakerAnalyses: ParsedAnalysis[] = [];
     
-    if (primaryVotes.length >= 4 && tiebreakerImageProvider.length > 0) { // Need minimum votes to assess ties
-      // Calculate vote weights
+    if (primaryVotes.length >= 4 && tiebreakerImageProvider.length > 0) {
       const buyWeight = primaryVotes.filter(v => v.decision === 'BUY').reduce((sum, v) => sum + v.weight, 0);
       const sellWeight = primaryVotes.filter(v => v.decision === 'SELL').reduce((sum, v) => sum + v.weight, 0);
       const totalWeight = buyWeight + sellWeight;
@@ -486,7 +492,7 @@ export class HydraEngine {
       
       console.log(`🤔 Consensus check: BUY(${buyWeight.toFixed(2)}) vs SELL(${sellWeight.toFixed(2)}) - difference: ${(weightDifference * 100).toFixed(1)}%`);
       
-      if (weightDifference < 0.15) { // Close vote - within 15%
+      if (weightDifference < 0.15) {
         console.log('🔄 CLOSE VOTE DETECTED! Running DeepSeek tiebreaker...');
         
         const tiebreakerProvider = tiebreakerImageProvider[0];
@@ -499,7 +505,6 @@ export class HydraEngine {
             const analysis = result.response as ParsedAnalysis;
             console.log(`🎯 TIEBREAKER ${tiebreakerProvider.getProvider().name} decided: "${analysis.decision}" (confidence: ${result.confidence})`);
             
-            // Safely parse estimatedValue with null checking
             const safeEstimatedValue = analysis.estimatedValue != null 
               ? parseFloat(analysis.estimatedValue.toString()) 
               : 0;
@@ -510,9 +515,9 @@ export class HydraEngine {
               itemName: analysis.itemName || itemName || 'Unknown Item',
               estimatedValue: isNaN(safeEstimatedValue) ? 0 : safeEstimatedValue,
               decision: analysis.decision || 'SELL',
-              confidence: result.confidence * 0.8, // Reduced confidence for tiebreaker
+              confidence: result.confidence * 0.8,
               responseTime: result.responseTime,
-              weight: this.calculateWeight(tiebreakerProvider.getProvider(), result.confidence) * 0.6, // Reduced weight for tiebreaker
+              weight: this.calculateWeight(tiebreakerProvider.getProvider(), result.confidence) * 0.6,
               rawResponse: analysis,
               success: true
             };
@@ -525,38 +530,32 @@ export class HydraEngine {
           }
         } catch (error: any) {
           console.error(`❌ TIEBREAKER failed:`, error);
-          // Tiebreaker failure doesn't kill the analysis
         }
       } else {
         console.log('✅ Clear consensus achieved, tiebreaker not needed');
       }
     }
     
-    // Combine all votes
     const allVotes = [...primaryVotes, ...tiebreakerVotes];
     const allAnalyses = [...primaryImageAnalyses, ...textAnalyses, ...searchAnalyses, ...tiebreakerAnalyses];
     
     console.log(`🎯 Total votes collected: ${allVotes.length} AIs (${primaryVotes.length} primary + ${tiebreakerVotes.length} tiebreaker)`);
-    console.log(`   └── Primary vision: ${primaryImageVotes.length}`);
+    console.log(`   └── Primary vision (with image): ${primaryImageVotes.length}`);
     console.log(`   └── Text analysis: ${textVotes.length}`);
-    console.log(`   └── Market search: ${searchVotes.length}`);
+    console.log(`   └── Real-time market search: ${searchVotes.length}`);
     console.log(`   └── Tiebreaker: ${tiebreakerVotes.length}`);
     
-    // Add failure report to logs
     if (Object.keys(providerFailures).length > 0) {
       console.warn('⚠️ Provider Failure Report:', providerFailures);
     }
     
-    // If no votes were collected, use emergency fallback
     if (allVotes.length === 0) {
       console.error('❌ No AI providers successfully responded. Using emergency fallback...');
       return await this.emergencyFallback(images, prompt);
     }
     
-    // Calculate consensus
     const consensus = this.calculateConsensus(allVotes, allAnalyses);
     
-    // Save consensus to database
     await this.saveConsensus(consensus);
     
     return {
@@ -565,51 +564,46 @@ export class HydraEngine {
       consensus,
       processingTime: Date.now() - startTime,
       authorityData: this.authorityData,
-      providerFailures // Include failures in response for debugging
+      providerFailures
     };
   }
   
-  // NEW: Retry with exponential backoff for Google rate limiting
   private async retryWithBackoff(provider: BaseAIProvider, images: string[], prompt: string, maxRetries: number): Promise<any> {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         return await provider.analyze(images, prompt);
       } catch (error: any) {
         if (error.message?.includes('429') && attempt < maxRetries) {
-          const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s delays
+          const delay = Math.pow(2, attempt) * 1000;
           console.log(`⏳ ${provider.getProvider().name} rate limited, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
           await new Promise(resolve => setTimeout(resolve, delay));
           continue;
         }
-        throw error; // Re-throw if not rate limit or max retries reached
+        throw error;
       }
     }
   }
   
-  // NEW: Emergency fallback method
   private async emergencyFallback(images: string[], prompt: string): Promise<HydraConsensus> {
     console.warn('⚠️ EMERGENCY FALLBACK MODE - Attempting single-provider analysis');
     
-    // Try each provider one by one until one succeeds
     for (const provider of this.providers) {
       try {
         console.log(`🔄 Trying fallback with ${provider.getProvider().name}...`);
         const result = await provider.analyze(images, prompt);
         
         if (result.response) {
-          // Safely parse estimatedValue with null checking
           const safeEstimatedValue = result.response.estimatedValue != null 
             ? parseFloat(result.response.estimatedValue.toString()) 
             : 0;
           
-          // Create minimal consensus from single provider
           const vote: ModelVote = {
             providerId: provider.getProvider().id,
             providerName: provider.getProvider().name + ' (EMERGENCY)',
             itemName: result.response.itemName || 'Unknown Item',
             estimatedValue: isNaN(safeEstimatedValue) ? 0 : safeEstimatedValue,
             decision: result.response.decision || 'SELL',
-            confidence: result.confidence * 0.5, // Reduce confidence for single-provider
+            confidence: result.confidence * 0.5,
             responseTime: result.responseTime,
             weight: 1,
             rawResponse: result.response,
@@ -622,7 +616,7 @@ export class HydraEngine {
             itemName: vote.itemName,
             estimatedValue: vote.estimatedValue,
             decision: vote.decision,
-            confidence: Math.min(50, Math.round(vote.confidence * 100)), // Cap at 50% for fallback
+            confidence: Math.min(50, Math.round(vote.confidence * 100)),
             totalVotes: 1,
             analysisQuality: 'FALLBACK' as const,
             consensusMetrics: {
@@ -652,15 +646,12 @@ export class HydraEngine {
       }
     }
     
-    // If all providers fail, return error result
     throw new Error('All AI providers failed - cannot perform analysis. Please check API keys and provider status.');
   }
   
   async analyzeWithAuthority(images: string[], prompt: string, category?: string): Promise<HydraConsensus> {
-    // Run standard multi-AI analysis first
     const consensus = await this.analyze(images, prompt);
     
-    // Check if it's a book category or if the item name suggests it's a book
     const isBook = category === 'books' || 
                    category === 'media' || 
                    consensus.consensus.itemName.toLowerCase().includes('book') ||
@@ -671,7 +662,6 @@ export class HydraEngine {
       
       const authorityManager = new AuthorityManager();
       
-      // Extract text from the best AI description for ISBN detection
       let combinedText = consensus.consensus.itemName;
       if (consensus.votes.length > 0) {
         const bestVote = consensus.votes.reduce((best, vote) => 
@@ -688,25 +678,18 @@ export class HydraEngine {
       );
       
       if (bookData && bookData.verified) {
-        // Store authority data for consensus calculation
         this.authorityData = bookData;
-        
-        // Enhance consensus with authority data
         consensus.authorityData = bookData;
         
-        // Recalculate consensus with authority boost
         const enhancedConsensus = this.calculateConsensus(consensus.votes, 
           consensus.votes.map(v => v.rawResponse).filter(Boolean));
         
-        // Update consensus values
         consensus.consensus = enhancedConsensus;
         
-        // Use authority price data if available and reasonable
         if (bookData.marketValue) {
           const aiValue = consensus.consensus.estimatedValue;
           const authorityValue = bookData.marketValue.good;
           
-          // If authority value is within reasonable range of AI estimate, use weighted average
           if (authorityValue > 0 && authorityValue < aiValue * 3 && authorityValue > aiValue * 0.3) {
             consensus.consensus.estimatedValue = parseFloat(
               ((aiValue * 0.6) + (authorityValue * 0.4)).toFixed(2)
@@ -726,12 +709,15 @@ export class HydraEngine {
   }
   
   private calculateWeight(provider: AIProvider, confidence: number): number {
-    // Dynamic weight calculation based on base weight and confidence
     const baseWeight = provider.baseWeight * confidence;
     
-    // Apply specialty bonuses
     if (provider.specialty === 'pricing' && provider.name === 'Perplexity') {
-      return baseWeight * 1.3; // 30% bonus for real-time pricing
+      return baseWeight * 1.3;
+    }
+    
+    // v2.0: Boost xAI for real-time market search
+    if (provider.name === 'xAI') {
+      return baseWeight * 1.2;
     }
     
     return baseWeight;
@@ -756,56 +742,44 @@ export class HydraEngine {
       };
     }
     
-    // Check for critically low participation
     const criticallyLowVotes = votes.length < 3;
     
-    // Weighted average for value
     const totalWeight = votes.reduce((sum, v) => sum + v.weight, 0);
     const weightedValue = votes.reduce((sum, v) => sum + (v.estimatedValue * v.weight), 0) / totalWeight;
     
-    // Weighted decision
     const buyWeight = votes.filter(v => v.decision === 'BUY').reduce((sum, v) => sum + v.weight, 0);
     const sellWeight = votes.filter(v => v.decision === 'SELL').reduce((sum, v) => sum + v.weight, 0);
     const decision = buyWeight > sellWeight ? 'BUY' : 'SELL';
     
-    // ENHANCED CONFIDENCE CALCULATION FOR 97%+ TARGET
     const avgConfidence = votes.reduce((sum, v) => sum + v.confidence, 0) / votes.length;
     
-    // Agreement ratio: How strongly AIs agree (0-1 scale)
     const decisionAgreement = Math.max(buyWeight, sellWeight) / totalWeight;
     
-    // Value consensus: How closely values align (using coefficient of variation)
     const values = votes.map(v => v.estimatedValue);
     const mean = values.reduce((a, b) => a + b) / values.length;
     const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
     const coefficientOfVariation = mean > 0 ? Math.sqrt(variance) / mean : 1;
     const valueAgreement = Math.max(0, 1 - coefficientOfVariation);
     
-    // Vote participation bonus (more AIs = higher confidence)
-    const targetAICount = 10; // Updated target for 8 core AIs + authority sources
+    const targetAICount = 10; // All 10 providers
     const participationRate = Math.min(1, votes.length / targetAICount);
     
-    // Authority boost (if authority data exists)
     const authorityBoost = this.authorityData ? 0.05 : 0;
     
-    // Calculate base confidence
     const baseConfidence = (
-      avgConfidence * 0.35 +           // 35% weight on average AI confidence
-      decisionAgreement * 0.25 +       // 25% weight on decision consensus
-      valueAgreement * 0.25 +          // 25% weight on value consensus
-      participationRate * 0.15         // 15% weight on AI participation
+      avgConfidence * 0.35 +
+      decisionAgreement * 0.25 +
+      valueAgreement * 0.25 +
+      participationRate * 0.15
     );
     
-    // Apply authority boost
     const boostedConfidence = baseConfidence + authorityBoost;
     
-    // Cap confidence if critically low votes
     let confidence = Math.min(99, Math.round(boostedConfidence * 100));
     if (criticallyLowVotes) {
       confidence = Math.min(confidence, 75);
     }
     
-    // Analysis quality based on confidence achieved and vote count
     let analysisQuality: 'OPTIMAL' | 'DEGRADED' | 'FALLBACK';
     if (criticallyLowVotes) {
       analysisQuality = 'FALLBACK';
@@ -817,7 +791,6 @@ export class HydraEngine {
       analysisQuality = 'FALLBACK';
     }
     
-    // Detailed logging for 97%+ tracking
     console.log(`📊 Consensus Metrics:`);
     console.log(`   Average AI Confidence: ${(avgConfidence * 100).toFixed(1)}%`);
     console.log(`   Decision Agreement: ${(decisionAgreement * 100).toFixed(1)}%`);
@@ -828,7 +801,6 @@ export class HydraEngine {
     }
     console.log(`   Final Confidence: ${confidence}% (Target: 97%+)`);
     
-    // Most common item name (weighted by confidence)
     const nameVotes = votes.reduce((acc, v) => {
       const name = v.itemName || 'Unknown Item';
       acc[name] = (acc[name] || 0) + (v.weight * v.confidence);
@@ -901,7 +873,6 @@ export class HydraEngine {
       return null;
     }
     
-    // Calculate average confidence and response time per provider
     const stats = data.reduce((acc, vote) => {
       if (!acc[vote.provider_id]) {
         acc[vote.provider_id] = {
@@ -918,7 +889,6 @@ export class HydraEngine {
       return acc;
     }, {} as Record<string, any>);
     
-    // Calculate averages
     Object.keys(stats).forEach(providerId => {
       const s = stats[providerId];
       stats[providerId] = {
