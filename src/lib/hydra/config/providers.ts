@@ -1,8 +1,7 @@
 /**
- * HYDRA v7.0 - AI Provider Configuration
+ * HYDRA v8.0 - AI Provider Configuration
  *
  * Centralized configuration for all AI providers used in the consensus engine.
- * Extracted from hydra-engine.js as part of modular refactoring.
  *
  * v7.0: Added Llama 4 as a standalone provider via Groq inference.
  *   Llama 4 Maverick: multimodal (vision + text), 128k context, 128 experts
@@ -12,14 +11,28 @@
  *   - groq: runs Llama 3 models (fast inference, text-only in HYDRA context)
  *   - llama4: runs Llama 4 Maverick/Scout via Groq (multimodal, vision-capable)
  *   Both use the same GROQ_API_KEY but vote independently in consensus.
- *   This gives HYDRA 9 independent AI voices instead of 8.
  *
- *   Llama 4 Maverick is promoted to PRIMARY VISION (Stage 1) alongside
- *   OpenAI, Anthropic, and Google. It earned this position:
- *   - 17B active params × 128 experts = frontier reasoning
- *   - True multimodal (image + text) out of the box
- *   - Meta's most powerful open source model ever released
- *   - Runs on Groq hardware = sub-second inference
+ * v8.0: Added Kimi K2.6 as provider #10 (Moonshot AI).
+ *   Kimi K2.6: Native multimodal MoE, 1T total / 32B active params.
+ *   262K context window. Agent Swarm (100 parallel sub-agents).
+ *   Scored 80.2 on SWE-Bench Verified — competitive with Claude Opus 4.6.
+ *   OpenAI-compatible API — drops into HYDRA pipeline with zero changes to analyze.ts.
+ *
+ *   Why Kimi earns a PRIMARY VISION seat:
+ *   - Native multimodal (vision + text pretrained together, not bolted on)
+ *   - 262K context holds full scan history, all HYDRA votes, and authority data simultaneously
+ *   - Agent Swarm architecture maps directly to RH-035 hierarchical intelligence
+ *   - $0.60/M input tokens — among the cheapest frontier vision models
+ *   - Modified MIT license — open weights, no IP concerns for integration
+ *   - Janus (CIO) board seat: monitors Chinese AI development — Kimi IS that intelligence
+ *
+ *   Uses MOONSHOT_API_KEY or KIMI_API_KEY.
+ *   OpenAI-compatible endpoint: https://api.moonshot.cn/v1
+ *
+ * HYDRA now has 10 independent AI voices:
+ *   Primary Vision (5): OpenAI, Anthropic, Google, Llama 4, Kimi
+ *   Secondary (4):      Mistral, Groq, xAI, Perplexity
+ *   Tiebreaker (1):     DeepSeek
  *
  * @module hydra/config/providers
  */
@@ -50,22 +63,24 @@ export interface ProviderConfig {
 /**
  * AI Provider Configurations
  *
- * Primary Vision Models (Stage 1) — 4 providers:
- * - OpenAI GPT-4o: Best overall accuracy, excellent vision
+ * Primary Vision Models (Stage 1) — 5 providers:
+ * - OpenAI GPT-4o:           Best overall accuracy, excellent vision
  * - Anthropic Claude Sonnet: Strong reasoning, good vision
  * - Google Gemini 2.0 Flash: Fast, good vision, cost-effective
- * - Llama 4 Maverick: Meta's frontier multimodal, 128 experts, Groq speed ← NEW v7.0
+ * - Llama 4 Maverick:        Meta's frontier multimodal, 128 experts, Groq speed
+ * - Kimi K2.6:               Moonshot MoE, 262K context, Agent Swarm, 80.2 SWE-bench ← NEW v8.0
  *
  * Secondary Models (Stage 2) — 4 providers:
- * - Mistral: Strong reasoning, cost-effective
- * - Groq (Llama 3): Ultra-fast text inference — independent from Llama 4
- * - xAI Grok: Real-time knowledge, good reasoning
+ * - Mistral:    Strong reasoning, cost-effective
+ * - Groq:       Ultra-fast Llama 3 text inference — independent from Llama 4
+ * - xAI Grok:   Real-time knowledge, good reasoning
  * - Perplexity: Real-time market search, web knowledge
  *
  * Tiebreaker — 1 provider:
  * - DeepSeek: Text-only, used when primary models disagree
  */
 export const AI_PROVIDERS: Record<string, ProviderConfig> = {
+
   // ==========================================================================
   // PRIMARY VISION MODELS (Stage 1) — ALL support image analysis
   // ==========================================================================
@@ -103,38 +118,57 @@ export const AI_PROVIDERS: Record<string, ProviderConfig> = {
     maxRetries: 2,
   },
 
-  // ==========================================================================
+  // --------------------------------------------------------------------------
   // v7.0: LLAMA 4 — Standalone provider via Groq inference
-  // ==========================================================================
-  //
+  // --------------------------------------------------------------------------
   // Llama 4 Maverick is Meta's most powerful open source multimodal model.
-  // It runs on Groq's inference hardware — same API key as groq provider,
-  // but completely SEPARATE in HYDRA. Both cast independent votes.
-  //
-  // Why separate from groq:
-  //   - Groq runs Llama 3 (text-only in HYDRA) — fast, lightweight reasoning
-  //   - Llama 4 is multimodal frontier — different capability tier entirely
-  //   - Separating them gives HYDRA 9 independent voices, not 8
-  //   - Groq's Llama 3 vote + Llama 4 Maverick vote = two different perspectives
-  //     from the same hardware but different model generations
-  //
-  // Uses GROQ_API_KEY — no new credentials needed.
-  // Model strings from Groq's Llama 4 API (verify at console.groq.com).
-  // ==========================================================================
-
+  // Runs on Groq hardware. SEPARATE from the groq provider below.
+  // Both use GROQ_API_KEY but vote independently. Do not merge.
+  // --------------------------------------------------------------------------
   llama4: {
     name: 'Llama 4',
-    envKeys: ['GROQ_API_KEY'],              // Same key as groq — different model tier
+    envKeys: ['GROQ_API_KEY'],
     models: [
-      'meta-llama/llama-4-maverick-17b-128e-instruct',   // Primary: most powerful, multimodal
-      'meta-llama/llama-4-scout-17b-16e-instruct',       // Fallback: 10M context, faster
+      'meta-llama/llama-4-maverick-17b-128e-instruct',
+      'meta-llama/llama-4-scout-17b-16e-instruct',
     ],
     primaryModel: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-    supportsVision: true,                   // Llama 4 Maverick is multimodal
-    timeout: 20000,                         // Groq inference is fast
-    weight: 0.95,                           // High weight — frontier model
+    supportsVision: true,
+    timeout: 20000,
+    weight: 0.95,
     maxRetries: 2,
     baseUrl: 'https://api.groq.com/openai/v1',
+  },
+
+  // --------------------------------------------------------------------------
+  // v8.0: KIMI K2.6 — Moonshot AI, provider #10
+  // --------------------------------------------------------------------------
+  // 1T total / 32B active MoE. Native multimodal. 262K context window.
+  // Agent Swarm: 100 parallel sub-agents for complex tasks.
+  // OpenAI-compatible API — zero changes needed downstream.
+  //
+  // Board assignment: Janus (CIO) — Chinese AI intelligence monitoring.
+  // Kimi is the board's direct window into Moonshot's architecture.
+  //
+  // RH-035 connection: Agent Swarm IS the hierarchical intelligence
+  // architecture described in RH-035. Kimi has already built what we
+  // are building. Study their implementation.
+  //
+  // env vars: MOONSHOT_API_KEY (primary) or KIMI_API_KEY (alias)
+  // --------------------------------------------------------------------------
+  kimi: {
+    name: 'Kimi',
+    envKeys: ['MOONSHOT_API_KEY', 'KIMI_API_KEY'],
+    models: [
+      'kimi-k2.6',   // Latest — improved long-context coding stability
+      'kimi-k2.5',   // Fallback — multimodal, thinking + instant modes
+    ],
+    primaryModel: 'kimi-k2.6',
+    supportsVision: true,     // Native multimodal — vision pretrained alongside text
+    timeout: 30000,
+    weight: 0.90,             // Strong weight — frontier model, validated on SWE-bench
+    maxRetries: 2,
+    baseUrl: 'https://api.moonshot.cn/v1',  // OpenAI-compatible
   },
 
   // ==========================================================================
@@ -154,17 +188,15 @@ export const AI_PROVIDERS: Record<string, ProviderConfig> = {
   },
 
   // Groq: Llama 3 models — fast text reasoning, independent from Llama 4
-  // These vote separately from llama4 above. Same GROQ_API_KEY, different
-  // model generation and capability tier. Do not merge with llama4.
   groq: {
     name: 'Groq',
     envKeys: ['GROQ_API_KEY'],
     models: [
-      'llama-3.3-70b-versatile',    // Best Llama 3 for reasoning
-      'llama-3.1-8b-instant',       // Fast fallback
-      'mixtral-8x7b-32768',         // Mixtral for variety
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'mixtral-8x7b-32768',
     ],
-    primaryModel: 'llama-3.3-70b-versatile',  // Upgraded: 70B for better reasoning
+    primaryModel: 'llama-3.3-70b-versatile',
     supportsVision: false,
     timeout: 15000,
     weight: 0.75,
@@ -217,32 +249,32 @@ export const AI_PROVIDERS: Record<string, ProviderConfig> = {
 /**
  * Provider groups for different analysis stages
  *
- * v7.0: llama4 added to primaryVision and visionCapable.
- *       groq remains in secondary and textOnly — it runs Llama 3, not Llama 4.
- *       Both llama4 and groq are in 'all' — they vote independently.
+ * v8.0: kimi added to primaryVision, visionCapable, all.
+ *       Total providers: 10 independent AI voices.
  */
 export const PROVIDER_GROUPS = {
   /** Primary vision-capable models for Stage 1 analysis */
-  primaryVision: ['openai', 'anthropic', 'google', 'llama4'],   // v7.0: llama4 added
+  primaryVision: ['openai', 'anthropic', 'google', 'llama4', 'kimi'],
   /** Secondary text-based models for additional analysis */
   secondary: ['mistral', 'groq', 'xai', 'perplexity'],
   /** Text-only models for Stage 2 context analysis */
   textOnly: ['deepseek', 'mistral', 'groq', 'xai'],
   /** All providers that support vision */
-  visionCapable: ['openai', 'anthropic', 'google', 'llama4'],   // v7.0: llama4 added
+  visionCapable: ['openai', 'anthropic', 'google', 'llama4', 'kimi'],
   /** Providers used for tiebreaking */
   tiebreakers: ['deepseek'],
   /** Providers with real-time market/web search */
   marketSearch: ['perplexity'],
   /** Fast inference providers */
-  fastInference: ['groq', 'llama4'],                            // v7.0: llama4 added
-  /** All available providers — 9 total */
-  all: ['openai', 'anthropic', 'google', 'llama4', 'mistral', 'groq', 'xai', 'perplexity', 'deepseek'],
+  fastInference: ['groq', 'llama4'],
+  /** Extended context providers (100K+ tokens) */
+  longContext: ['kimi', 'llama4'],
+  /** All available providers — 10 total */
+  all: ['openai', 'anthropic', 'google', 'llama4', 'kimi', 'mistral', 'groq', 'xai', 'perplexity', 'deepseek'],
 } as const;
 
 /**
  * Get API key for a provider
- * Checks multiple environment variable names in order
  */
 export function getApiKey(provider: string): string | null {
   const normalizedProvider = provider.toLowerCase();
@@ -272,8 +304,6 @@ export function isProviderAvailable(provider: string): boolean {
 
 /**
  * Get list of available providers
- *
- * @param visionOnly - If true, only return vision-capable providers
  */
 export function getAvailableProviders(visionOnly: boolean = false): string[] {
   return Object.entries(AI_PROVIDERS)
@@ -304,7 +334,6 @@ export function getPrimaryModel(provider: string): string | null {
 
 /**
  * Calculate total weight for a set of providers
- * Used for normalizing consensus scores
  */
 export function getTotalWeight(providers: string[]): number {
   return providers.reduce((total, provider) => {
@@ -315,7 +344,6 @@ export function getTotalWeight(providers: string[]): number {
 
 /**
  * Validate provider configuration at startup
- * Logs warnings for missing providers
  */
 export function validateProviderConfig(): {
   available: string[];
@@ -337,16 +365,20 @@ export function validateProviderConfig(): {
     }
   }
 
-  // Minimum requirement check
   const visionProviders = available.filter(p => AI_PROVIDERS[p]?.supportsVision);
   if (visionProviders.length < 2) {
     warnings.push(`⚠️ Less than 2 vision providers available. Consensus quality may be degraded.`);
   }
 
-  // v7.0: Note when Llama 4 is available — it's a significant capability addition
   if (available.includes('llama4')) {
-    console.log('🦙 Llama 4 Maverick active — HYDRA now has 9 independent AI voices');
+    console.log('🦙 Llama 4 Maverick active');
   }
+
+  if (available.includes('kimi')) {
+    console.log('🌙 Kimi K2.6 active — HYDRA now has 10 independent AI voices');
+  }
+
+  console.log(`🧠 HYDRA voices online: ${available.length}/10 — [${available.join(', ')}]`);
 
   return { available, missing, warnings };
 }
