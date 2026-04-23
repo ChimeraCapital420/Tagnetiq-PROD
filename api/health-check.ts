@@ -53,16 +53,18 @@ async function testLlama4Supplemental(): Promise<any> {
       }),
     });
     const d = await r.json();
-    const content = d?.choices?.[0]?.message?.content || d?.choices?.[0]?.message?.reasoning_content;
+    const msg = d?.choices?.[0]?.message;
+    const content = msg?.content || msg?.reasoning_content || msg?.text;
+    console.log(`  🔍 Llama 4 raw message fields: ${JSON.stringify(Object.keys(msg || {}))}`);
     if (r.ok && content) {
       console.log(`  ✅ Llama 4 (GPT-OSS-120B): healthy ${Date.now() - start}ms`);
       return { provider: 'Llama 4 (Maverick)', status: 'healthy', responseTime: Date.now() - start, confidence: 0.9, note: 'Supplemental — via Groq inference (openai/gpt-oss-120b)' };
     }
-    console.log(`  ❌ Llama 4: ${d?.error?.message || `HTTP ${r.status}`}`);
+    console.log(`  ❌ Llama 4: ${d?.error?.message || `HTTP ${r.status}`} — message keys: ${JSON.stringify(Object.keys(msg || {}))}`);
     return {
       provider: 'Llama 4 (Maverick)',
       status: 'unhealthy',
-      error: d?.error?.message || `HTTP ${r.status}`,
+      error: d?.error?.message || `HTTP ${r.status} — check Vercel logs for message fields`,
       errorType: r.status === 429 ? 'rate_limit' : r.status === 401 ? 'auth' : 'unknown',
     };
   } catch (e: any) {
@@ -72,18 +74,18 @@ async function testLlama4Supplemental(): Promise<any> {
 }
 
 async function testKimiSupplemental(): Promise<any> {
-  const key = process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY;
+  const key = process.env.AI_GATEWAY_API_KEY;
   if (!key) {
-    console.log('  ⚠️  Kimi K2.6: MOONSHOT_API_KEY not configured');
-    return { provider: 'Kimi K2.6', status: 'not_configured', error: 'MOONSHOT_API_KEY or KIMI_API_KEY not set' };
+    console.log('  ⚠️  Kimi K2.6: AI_GATEWAY_API_KEY not configured');
+    return { provider: 'Kimi K2.6', status: 'not_configured', error: 'AI_GATEWAY_API_KEY not set' };
   }
   const start = Date.now();
   try {
-    const r = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+    const r = await fetch('https://ai-gateway.vercel.sh/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'kimi-k2.6',
+        model: 'moonshotai/kimi-k2.6',
         messages: [{ role: 'user', content: SUPPLEMENTAL_PROMPT }],
         max_tokens: 80,
       }),
@@ -92,7 +94,7 @@ async function testKimiSupplemental(): Promise<any> {
     const content = d?.choices?.[0]?.message?.content;
     if (r.ok && content) {
       console.log(`  ✅ Kimi K2.6: healthy ${Date.now() - start}ms`);
-      return { provider: 'Kimi K2.6', status: 'healthy', responseTime: Date.now() - start, confidence: 0.9, note: 'Supplemental — Moonshot AI' };
+      return { provider: 'Kimi K2.6', status: 'healthy', responseTime: Date.now() - start, confidence: 0.9, note: 'Supplemental — Moonshot AI via Vercel AI Gateway' };
     }
     console.log(`  ❌ Kimi K2.6: ${d?.error?.message || `HTTP ${r.status}`}`);
     return {
@@ -158,6 +160,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // v6.4: PART 1b — Supplemental tests for Llama 4 + Kimi (run in parallel)
     // ==========================================================================
     console.log('\n🦙🌙 Testing supplemental providers (Llama 4 + Kimi K2.6)...\n');
+    // Kimi now routes through Vercel AI Gateway — no geo-restriction
     const [llama4Result, kimiResult] = await Promise.all([
       testLlama4Supplemental(),
       testKimiSupplemental(),
@@ -239,7 +242,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ANTHROPIC:   !!process.env.ANTHROPIC_SECRET || !!process.env.ANTHROPIC_API_KEY,
           GOOGLE:      !!process.env.GOOGLE_AI_TOKEN || !!process.env.GOOGLE_AI_API_KEY,
           LLAMA4:      !!process.env.GROQ_API_KEY,
-          KIMI:        !!process.env.MOONSHOT_API_KEY || !!process.env.KIMI_API_KEY,
+          KIMI:        !!process.env.AI_GATEWAY_API_KEY || !!process.env.MOONSHOT_API_KEY,
           MISTRAL:     !!process.env.MISTRAL_API_KEY,
           GROQ:        !!process.env.GROQ_API_KEY,
           DEEPSEEK:    !!process.env.DEEPSEEK_TOKEN,
