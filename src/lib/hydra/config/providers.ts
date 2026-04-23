@@ -29,6 +29,10 @@
  *   Uses MOONSHOT_API_KEY or KIMI_API_KEY.
  *   OpenAI-compatible endpoint: https://api.moonshot.cn/v1
  *
+ * v8.1: Updated Llama 4 model string.
+ *   Groq deprecated meta-llama/llama-4-maverick-17b-128e-instruct on Feb 20, 2026.
+ *   Replacement: openai/gpt-oss-120b — Groq's recommended successor.
+ *
  * HYDRA now has 10 independent AI voices:
  *   Primary Vision (5): OpenAI, Anthropic, Google, Llama 4, Kimi
  *   Secondary (4):      Mistral, Groq, xAI, Perplexity
@@ -67,8 +71,8 @@ export interface ProviderConfig {
  * - OpenAI GPT-4o:           Best overall accuracy, excellent vision
  * - Anthropic Claude Sonnet: Strong reasoning, good vision
  * - Google Gemini 2.0 Flash: Fast, good vision, cost-effective
- * - Llama 4 Maverick:        Meta's frontier multimodal, 128 experts, Groq speed
- * - Kimi K2.6:               Moonshot MoE, 262K context, Agent Swarm, 80.2 SWE-bench ← NEW v8.0
+ * - Llama 4 / GPT-OSS-120B:  Groq-hosted, frontier multimodal
+ * - Kimi K2.6:               Moonshot MoE, 262K context, Agent Swarm, 80.2 SWE-bench
  *
  * Secondary Models (Stage 2) — 4 providers:
  * - Mistral:    Strong reasoning, cost-effective
@@ -120,19 +124,18 @@ export const AI_PROVIDERS: Record<string, ProviderConfig> = {
 
   // --------------------------------------------------------------------------
   // v7.0: LLAMA 4 — Standalone provider via Groq inference
-  // --------------------------------------------------------------------------
-  // Llama 4 Maverick is Meta's most powerful open source multimodal model.
-  // Runs on Groq hardware. SEPARATE from the groq provider below.
-  // Both use GROQ_API_KEY but vote independently. Do not merge.
+  // v8.1: Model updated — Groq deprecated llama-4-maverick on Feb 20, 2026.
+  //        New model: openai/gpt-oss-120b (Groq's recommended replacement).
+  //        Scout remains available as fallback.
   // --------------------------------------------------------------------------
   llama4: {
     name: 'Llama 4',
     envKeys: ['GROQ_API_KEY'],
     models: [
-      'meta-llama/llama-4-maverick-17b-128e-instruct',
-      'meta-llama/llama-4-scout-17b-16e-instruct',
+      'openai/gpt-oss-120b',                      // v8.1: replaces deprecated Maverick
+      'meta-llama/llama-4-scout-17b-16e-instruct', // Scout still available
     ],
-    primaryModel: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+    primaryModel: 'openai/gpt-oss-120b',
     supportsVision: true,
     timeout: 20000,
     weight: 0.95,
@@ -371,7 +374,7 @@ export function validateProviderConfig(): {
   }
 
   if (available.includes('llama4')) {
-    console.log('🦙 Llama 4 Maverick active');
+    console.log('🦙 Llama 4 / GPT-OSS-120B active (via Groq)');
   }
 
   if (available.includes('kimi')) {
