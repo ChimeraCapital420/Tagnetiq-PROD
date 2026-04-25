@@ -7,8 +7,12 @@
 //
 // v1.1 CHANGES — Hardening Sprint #8:
 //   - Wrapped default export with ErrorBoundary (fallback: null).
-//     A render error in GuidedOverlay silently removes the overlay
-//     rather than crashing the page the user is on.
+//
+// v1.2 CHANGES — One-and-done:
+//   - User can now permanently dismiss the overlay with "Got it".
+//   - Dismissal stored in localStorage (survives browser restarts).
+//   - Once dismissed, NEVER shows again — no more re-appearing every session.
+//   - Individual step dismissals (markStepShown) still work as before.
 //   - Zero changes to spotlight, voice, or guidance logic.
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -24,6 +28,26 @@ import {
 } from '@/lib/oracle/trust/guidance-config';
 import { cn } from '@/lib/utils';
 import ErrorBoundary from '@/components/ErrorBoundary';
+
+// =============================================================================
+// PERSISTENCE HELPERS — v1.2
+// =============================================================================
+
+const DISMISSED_KEY = 'tagnetiq_guided_overlay_dismissed';
+
+function hasUserDismissedOverlay(): boolean {
+  try {
+    return localStorage.getItem(DISMISSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function permanentlyDismissOverlay(): void {
+  try {
+    localStorage.setItem(DISMISSED_KEY, '1');
+  } catch { /* silent */ }
+}
 
 // =============================================================================
 // SPOTLIGHT POSITION
@@ -60,10 +84,15 @@ const GuidedOverlayInner: React.FC = () => {
   const [activeStep, setActiveStep] = useState<GuidanceStep | null>(null);
   const [spotlightRect, setSpotlightRect] = useState<SpotlightRect | null>(null);
   const [visible, setVisible] = useState(false);
+  // v1.2: track permanent dismissal in component state too
+  const [permanentlyDismissed, setPermanentlyDismissed] = useState(
+    () => hasUserDismissedOverlay()
+  );
   const autoAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Only show for Trust Level 1
+  // Only show for Trust Level 1, and only if not permanently dismissed
   if (trustLevel > 1) return null;
+  if (permanentlyDismissed) return null;
 
   const showStep = useCallback((step: GuidanceStep, isEstate: boolean) => {
     markStepShown(step.id);
@@ -94,26 +123,33 @@ const GuidedOverlayInner: React.FC = () => {
     setTimeout(() => setActiveStep(null), 300);
   }, [voice]);
 
+  // v1.2: Permanent dismiss — stores in localStorage, never shows again
+  const handleGotIt = useCallback(() => {
+    permanentlyDismissOverlay();
+    setPermanentlyDismissed(true);
+    dismissStep();
+  }, [dismissStep]);
+
   useEffect(() => {
-    if (trustLevel > 1) return;
+    if (trustLevel > 1 || permanentlyDismissed) return;
 
     const step = getNextGuidanceStep(location.pathname, 'route_enter');
     if (step) {
       const timer = setTimeout(() => showStep(step, isEstateTrust ?? false), 800);
       return () => clearTimeout(timer);
     }
-  }, [location.pathname, trustLevel]);
+  }, [location.pathname, trustLevel, permanentlyDismissed]);
 
   useEffect(() => {
     const handleScanComplete = () => {
-      if (trustLevel > 1) return;
+      if (trustLevel > 1 || permanentlyDismissed) return;
       const step = getNextGuidanceStep(location.pathname, 'scan_complete');
       if (step) setTimeout(() => showStep(step, isEstateTrust ?? false), 600);
     };
 
     window.addEventListener('tagnetiq:scan-complete', handleScanComplete);
     return () => window.removeEventListener('tagnetiq:scan-complete', handleScanComplete);
-  }, [location.pathname, trustLevel, showStep, isEstateTrust]);
+  }, [location.pathname, trustLevel, showStep, isEstateTrust, permanentlyDismissed]);
 
   useEffect(() => {
     if (!activeStep || activeStep.completedBy !== 'tap_target') return;
@@ -184,8 +220,17 @@ const GuidedOverlayInner: React.FC = () => {
               <p className="text-sm font-medium text-foreground leading-relaxed">
                 {message}
               </p>
+
+              {/* v1.2: "Got it" button — permanently hides the overlay */}
+              <button
+                onClick={handleGotIt}
+                className="mt-2.5 text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+              >
+                Got it — don't show again
+              </button>
             </div>
 
+            {/* X dismisses just this step, not permanently */}
             <button
               onClick={dismissStep}
               className="w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:bg-muted shrink-0"
@@ -209,7 +254,6 @@ const GuidedOverlayInner: React.FC = () => {
 
 // =============================================================================
 // EXPORTED COMPONENT — wrapped with ErrorBoundary (#8)
-// A crash in GuidedOverlay disappears silently instead of crashing the page.
 // =============================================================================
 
 const GuidedOverlay: React.FC = () => (

@@ -19,8 +19,17 @@
 //   ActionFork disabled — all users see full ActionHub with export/list/vault.
 //   Trust level controls what Oracle does automatically, not what the user
 //   can manually choose to do.
+//
+// v10.7: RH-032 + RH-028 + RH-020 wired:
+//   - LuxuryAuthBadge: auto-surfaces in CardContent when luxury brand detected.
+//     Reads from raw?.luxuryAuthentication — zero impact on non-luxury scans.
+//   - StyleScanLanes: 3-lane purchase display (official/resale/substitute) for
+//     luxury and fashion brands. Shown below eBay data when luxury detected.
+//   - incrementScanCount(): called once per result mount for OracleGreeting
+//     suppression logic. New users see intro only; returning users see daily
+//     greeting from scan #2 onward.
 
-import React, { useState, Component, ErrorInfo, ReactNode } from 'react';
+import React, { useState, useEffect, Component, ErrorInfo, ReactNode } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -45,7 +54,13 @@ import {
   RefineDialog,
   EbayMarketDisplay,
 } from './components/index.js';
-import ActionFork from './ActionFork.js'; // v10.4
+import ActionFork from './ActionFork.js';
+
+// v10.7: RH-032 luxury auth badge + RH-028 StyleScan lanes
+import LuxuryAuthBadge from './LuxuryAuthBadge.js';
+import StyleScanLanes from './StyleScanLanes.js';
+// v10.7: OracleGreeting scan counter — call once per successful scan result mount
+import { incrementScanCount } from '@/components/oracle/OracleGreeting.js';
 
 // =============================================================================
 // ERROR BOUNDARY
@@ -95,6 +110,25 @@ class AnalysisErrorBoundary extends Component<
 }
 
 // =============================================================================
+// HELPERS
+// =============================================================================
+
+/**
+ * Map luxury brand category to StyleScanLanes category prop.
+ * Affiliate engine uses its own category strings — normalize here.
+ */
+function toLaneCategory(
+  brandCategory: string
+): 'fashion' | 'sneakers' | 'handbags' | 'jewelry' | 'watches' | 'general' {
+  if (brandCategory.includes('handbag')) return 'handbags';
+  if (brandCategory === 'sneakers')      return 'sneakers';
+  if (brandCategory === 'watches')       return 'watches';
+  if (brandCategory === 'jewelry')       return 'jewelry';
+  if (brandCategory.includes('fashion')) return 'fashion';
+  return 'general';
+}
+
+// =============================================================================
 // MAIN CONTENT
 // =============================================================================
 
@@ -106,6 +140,16 @@ const AnalysisResultContent: React.FC = () => {
   const [nexusDismissed, setNexusDismissed] = useState(false);
 
   const feedback = useFeedback(data?.id || '', history.isViewingHistory);
+
+  // v10.7: Increment scan count for OracleGreeting suppression.
+  // Only fires once per new result (not when viewing history).
+  // This is what tells OracleGreeting "user has scanned before" →
+  // daily greeting appears from scan #2 onward, not on first visit.
+  useEffect(() => {
+    if (data && !history.isViewingHistory) {
+      incrementScanCount();
+    }
+  }, [data?.id]); // Only fires when analysis ID changes (new scan)
 
   if (!data) return null;
 
@@ -148,17 +192,19 @@ const AnalysisResultContent: React.FC = () => {
     }
   };
 
-  // v10.6: Trust gates Oracle autonomy, NOT user manual actions.
-  // All users see full ActionHub with export/list/vault buttons.
   const showActionFork = false;
 
-  // v10.5 #1: Refinement consensus badge data
-  // Cast through any — refinementConsensus is added to AnalysisResult in v2.6
+  // v10.5: Refinement consensus badge data
   const refinementConsensus = (raw as any)?.refinementConsensus as {
     validProviders: number;
     totalProviders: number;
     agreementRate: number;
   } | undefined;
+
+  // v10.7: Luxury authentication data from analyze.ts v9.9.1
+  // null for non-luxury items — zero render cost
+  const luxuryAuth = (raw as any)?.luxuryAuthentication ?? null;
+  const isLuxury = !!luxuryAuth?.isLuxury;
 
   return (
     <>
@@ -193,7 +239,7 @@ const AnalysisResultContent: React.FC = () => {
                 Confidence: {data.confidenceScore.toFixed(0)}%
               </Badge>
 
-              {/* v10.5 #1: Refinement consensus — only shown post-refinement */}
+              {/* v10.5: Refinement consensus — only shown post-refinement */}
               {refinementConsensus && (
                 <Badge
                   variant="outline"
@@ -222,7 +268,7 @@ const AnalysisResultContent: React.FC = () => {
           )}
         </CardHeader>
 
-        {/* — Content: Images + Valuation — */}
+        {/* — Content: Images + Valuation + Luxury Auth + StyleScan — */}
         <CardContent className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <ImageCarousel imageUrls={data.allImageUrls} itemName={data.itemName} />
@@ -241,6 +287,43 @@ const AnalysisResultContent: React.FC = () => {
               ebayData={ebayData}
               estimatedValue={data.estimatedValue}
               itemName={data.itemName}
+            />
+          )}
+
+          {/* ─────────────────────────────────────────────────────────
+              v10.7: RH-032 — Luxury Authentication Badge
+              Auto-surfaces when HYDRA identifies a luxury brand.
+              Null for non-luxury items — zero layout shift.
+              ───────────────────────────────────────────────────────── */}
+          {isLuxury && (
+            <LuxuryAuthBadge
+              auth={luxuryAuth}
+              onAuthenticateTap={() => {
+                // Wire to full authentication flow when RH-041 Phase 2 ships.
+                // For now: scroll to NFC guidance in the expanded badge.
+                toast.info(
+                  luxuryAuth.nfcCapable
+                    ? `Hold your phone to the ${luxuryAuth.brandName} interior lining to scan the NFC chip.`
+                    : `Check stitching, hardware stamps, and date code format to authenticate this ${luxuryAuth.brandName}.`,
+                  { duration: 6000 }
+                );
+              }}
+            />
+          )}
+
+          {/* ─────────────────────────────────────────────────────────
+              v10.7: RH-028 — StyleScan Three-Lane Purchase Display
+              Shows official retail, resale market, and budget substitute
+              lanes for luxury and fashion brands.
+              Only renders when luxury brand is detected.
+              ───────────────────────────────────────────────────────── */}
+          {isLuxury && luxuryAuth.brandName && (
+            <StyleScanLanes
+              itemName={data.itemName}
+              brandName={luxuryAuth.brandName}
+              category={toLaneCategory(luxuryAuth.category)}
+              scanId={data.id}
+              userId={user?.id}
             />
           )}
         </CardContent>
@@ -293,7 +376,7 @@ const AnalysisResultContent: React.FC = () => {
         </CardFooter>
       </Card>
 
-      {/* Refine Dialog — v10.3: images props wired */}
+      {/* Refine Dialog */}
       <RefineDialog
         isOpen={feedback.isRefineOpen}
         onOpenChange={feedback.setIsRefineOpen}

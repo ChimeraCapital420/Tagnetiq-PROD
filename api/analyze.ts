@@ -2,6 +2,7 @@
 // FILE:  api/analyze.ts
 // ============================================================
 // HYDRA v9.9 — RH-027 Low-consensus disagreement recording
+// RH-032 — Luxury brand detection + authentication prompt
 //
 // CHANGELOG:
 // v9.4: FIX — require() → ESM import
@@ -14,6 +15,10 @@
 //   recordDisagreement() fires when confidence < 0.65.
 //   Fills the CI Engine gap: corrections + confirmations + disagreements.
 //   The three signals together give the aggregator a complete picture.
+// v9.9.1: RH-032 — Luxury brand detection wired.
+//   detectLuxuryBrand() checks itemName against 50+ brand router entries.
+//   Returns luxuryAuthentication block in response when luxury brand detected.
+//   Frontend checks luxuryAuthentication.isLuxury → shows Authenticate button.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
@@ -40,6 +45,8 @@ import {
 import { applyRateLimit, LIMITS } from './_lib/rateLimit.js';
 import { lookupPatterns, recordConfirmation, recordDisagreement } from '../src/lib/hydra/knowledge/index.js';
 import type { CollectiveKnowledgeBlock } from '../src/lib/hydra/knowledge/types.js';
+// RH-032: Luxury brand detection from affiliate engine brand router
+import { detectLuxuryBrand } from '../src/lib/affiliate/affiliate-engine.js';
 
 // =============================================================================
 // CONFIG
@@ -48,6 +55,55 @@ import type { CollectiveKnowledgeBlock } from '../src/lib/hydra/knowledge/types.
 export const config = {
   maxDuration: 60,
 };
+
+// =============================================================================
+// RH-032: LUXURY AUTHENTICATION BLOCK BUILDER
+// Returns null for non-luxury items — zero impact on non-luxury scans
+// =============================================================================
+
+function buildLuxuryAuthBlock(itemName: string) {
+  if (!itemName) return null;
+  const brandConfig = detectLuxuryBrand(itemName);
+  if (!brandConfig) return null;
+
+  const nfcInstructions: Record<string, string> = {
+    'Louis Vuitton':       'Hold phone flat against interior lining near the serial tab. Move slowly until vibration.',
+    'Christian Dior':      'Hold phone against interior near the label or lining.',
+    'Gucci':               'Look for a small black fabric loop inside the bag. Hold phone directly to that loop.',
+    'Prada':               'Check the interior brand label area — NFC integrated into label.',
+    'Moncler':             'Check the logo patch on chest or arm, and the interior label.',
+    'Salvatore Ferragamo': 'Remove insole if possible — chip is embedded in the heel area.',
+    'Fendi':               'Hold phone against interior lining, scanning slowly across the full interior.',
+    'Saint Laurent':       'Check interior of bags near side seam or interior label.',
+    'Balenciaga':          'Scan near interior label and seam areas.',
+    'Burberry':            'Check interior label and near the main seams.',
+    'Bottega Veneta':      'Hold phone flat against interior lining and move slowly.',
+    'Miu Miu':             'Check interior label area — NFC integrated into label.',
+  };
+
+  return {
+    isLuxury:               true,
+    brandName:              brandConfig.displayName,
+    category:               brandConfig.category,
+    priceRange:             brandConfig.priceRange,
+    authenticationRequired: true,
+    nfcCapable:             brandConfig.hasNFC,
+    nfcSince:               brandConfig.nfcSince || null,
+    authPrompt:             `This appears to be ${brandConfig.displayName}. Tap "Authenticate" to verify authenticity before buying.`,
+    authUrgency:            brandConfig.priceRange === 'ultra_luxury' ? 'high' : 'medium',
+    resalePlatforms:        brandConfig.resalePlatforms,
+    nfcGuidance: brandConfig.hasNFC ? {
+      hasChip:          true,
+      chipSince:        brandConfig.nfcSince,
+      scanInstruction:  nfcInstructions[brandConfig.displayName] || 'Hold phone flat against interior lining and move slowly.',
+      doubleTestApplies: true,
+      doubleTestExplain: 'Scan twice — if chip ID is identical both times, it is likely a counterfeit clone chip.',
+    } : {
+      hasChip:        false,
+      alternateCheck: 'Use visual authentication — check stitching, hardware stamps, and date code format.',
+    },
+  };
+}
 
 // =============================================================================
 // REQUEST VALIDATION
@@ -254,7 +310,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('Either an image or item name is required');
     }
 
-    console.log(`\n📥 === HYDRA v9.9 ANALYSIS START ===`);
+    console.log(`\n📥 === HYDRA v9.9.1 ANALYSIS START ===`);
     console.log(`📦 Item: "${request.itemName || '(will identify from image)'}"`);
     console.log(`🆔 ID: ${analysisId}`);
     console.log(`🖼️ Images: ${hasImage ? 1 + (request.additionalImages?.length || 0) : 0}`);
@@ -399,7 +455,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       thumbnailUrl: request.originalImageUrls?.[0] || null,
       ebayMarketData: pipelineResult.ebayData,
       marketSources: pipelineResult.marketSources,
-      pipelineVersion: '9.9',
+      pipelineVersion: '9.9.1',
       pipelineTiming: pipelineResult.timing,
       nexus: nexusDecision ? {
         nudge: nexusDecision.nudge,
@@ -410,6 +466,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         listingDraft: nexusDecision.listingDraft || null,
         followUp: nexusDecision.followUp || null,
       } : null,
+      // RH-032: Luxury authentication block — null for non-luxury items
+      luxuryAuthentication: buildLuxuryAuthBlock(pipelineResult.itemName),
       _debug: {
         ebayListings: pipelineResult.ebayData?.totalListings || 0,
         ebayMedian: pipelineResult.ebayData?.priceAnalysis?.median || null,
@@ -433,8 +491,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           pipelineResult.analysisQuality === 'OPTIMAL' &&
           pipelineResult.confidence >= 0.85
         ),
-        lowConsensusDisagreement: pipelineResult.confidence < 0.65, // v9.9
+        lowConsensusDisagreement: pipelineResult.confidence < 0.65,
         imageHashAvailable: !!(pipelineResult as any).imageHash,
+        // RH-032
+        luxuryBrandDetected: !!(buildLuxuryAuthBlock(pipelineResult.itemName)),
       },
     };
 
@@ -477,7 +537,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ========================================================================
     // v9.8: CI ENGINE — High-consensus positive confirmation signal
-    // v9.8.1: imageHash wired in from pipelineResult when available.
     // ========================================================================
     if (
       pipelineResult.analysisQuality === 'OPTIMAL' &&
@@ -506,9 +565,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ========================================================================
     // v9.9: CI ENGINE — Low-consensus disagreement signal (RH-027)
-    // When HYDRA providers can't agree, that uncertainty is data.
-    // Fires when confidence < 0.65 — clearly uncertain territory.
-    // Zero impact on the response — fire-and-forget, non-blocking.
     // ========================================================================
     if (
       pipelineResult.confidence < 0.65 &&
@@ -532,7 +588,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
     }
 
-    console.log(`\n  ✅ Complete in ${processingTime}ms${nexusDecision ? ` | Nexus: ${nexusDecision.nudge}` : ''}${collectiveKnowledge ? ` | CI: ${collectiveKnowledge.items.length} patterns` : ''}\n`);
+    console.log(`\n  ✅ Complete in ${processingTime}ms${nexusDecision ? ` | Nexus: ${nexusDecision.nudge}` : ''}${collectiveKnowledge ? ` | CI: ${collectiveKnowledge.items.length} patterns` : ''}${responseWithExtras.luxuryAuthentication ? ` | 💎 Luxury: ${responseWithExtras.luxuryAuthentication.brandName}` : ''}\n`);
 
     return res.status(200).json(formatAPIResponse(responseWithExtras));
 

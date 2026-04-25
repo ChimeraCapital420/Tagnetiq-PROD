@@ -2,6 +2,15 @@
 // Oracle Greeting Banner — The "Hello Billy" Moment
 //
 // ═══════════════════════════════════════════════════════════════════════
+// v2.2: Suppress greeting until user has scanned at least once
+//   The intro onboarding already teaches users how to scan.
+//   The daily greeting should only appear from scan #2 onward.
+//   This eliminates the "two greetings" redundancy William noticed.
+//
+//   Implementation: reads scan_count from localStorage (set by analyze.ts
+//   response handler). Falls back gracefully if not available.
+//   Zero backend calls — purely client-side check.
+//
 // v2.1: Prominent "Turn off daily greeting" control
 //   - Full divider separates content from control row
 //   - Checkbox is w-4 h-4, label is text-sm font-medium full opacity
@@ -14,11 +23,42 @@
 // But never something that gets in the way of a power user.
 // ═══════════════════════════════════════════════════════════════════════
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, Settings } from 'lucide-react';
 import { useOracleGreeting } from '@/hooks/useOracleGreeting';
 import type { ServiceSuggestion, TimeOfDay } from '@/lib/oracle/greeting';
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+
+/**
+ * Get user's completed scan count from localStorage.
+ * The scan result handler should call incrementScanCount() after
+ * each successful scan so this stays current client-side.
+ * Returns 0 if never scanned (new user).
+ */
+function getLocalScanCount(): number {
+  try {
+    return parseInt(localStorage.getItem('tagnetiq_scan_count') || '0', 10) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Call this in your scan result handler after a successful scan.
+ * Import and call: incrementScanCount() whenever analyze.ts returns success.
+ */
+export function incrementScanCount(): void {
+  try {
+    const current = getLocalScanCount();
+    localStorage.setItem('tagnetiq_scan_count', String(current + 1));
+  } catch {
+    // silent fail — localStorage may be blocked
+  }
+}
 
 // =============================================================================
 // THEME BY TIME OF DAY
@@ -105,6 +145,14 @@ const OracleGreeting: React.FC = () => {
   const navigate = useNavigate();
   const { greeting, analysis, visible, dismiss, dismissPermanently } = useOracleGreeting();
   const [dontShowAgain, setDontShowAgain] = useState(false);
+  // v2.2: suppress until user has scanned at least once
+  const [hasScanHistory, setHasScanHistory] = useState(false);
+
+  useEffect(() => {
+    // Check on mount — if user has scanned before, allow greeting to show
+    const count = getLocalScanCount();
+    setHasScanHistory(count > 0);
+  }, []);
 
   const handleDismiss = useCallback(() => {
     if (dontShowAgain) {
@@ -134,7 +182,9 @@ const OracleGreeting: React.FC = () => {
     }
   }, [handleDismiss, navigate]);
 
-  if (!visible || !greeting || !analysis) return null;
+  // v2.2: Don't show on first visit — intro onboarding already covers that.
+  // Show daily greeting only from scan #2 onward.
+  if (!visible || !greeting || !analysis || !hasScanHistory) return null;
 
   const theme = TIME_THEMES[greeting.timeOfDay];
   const suggestions = analysis.suggestedServices;
