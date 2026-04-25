@@ -1,5 +1,5 @@
 // FILE: src/components/analysis/AnalysisResult.tsx
-// STATUS: HYDRA v10.5 — Hardening Sprint
+// STATUS: HYDRA v10.8 — Photo Hotspots wired
 // Thin orchestrator that composes hooks + components.
 //
 // v10.1: eBay market display + HYDRA estimate marker
@@ -21,6 +21,12 @@
 //   can manually choose to do.
 //
 // v10.7: RH-032 + RH-028 + RH-020 wired:
+// v10.8: RH-022 Photo Hotspots wired:
+//   - PhotoHotspotViewer added below ImageCarousel.
+//     User taps any region of the scan photo to analyze it.
+//     Intent modes: identify, authenticate (luxury), damage, value.
+//     Passes imageBase64 from scan result if available, else fetches from URL.
+//     Shows only when at least one image URL is present.
 //   - LuxuryAuthBadge: auto-surfaces in CardContent when luxury brand detected.
 //     Reads from raw?.luxuryAuthentication — zero impact on non-luxury scans.
 //   - StyleScanLanes: 3-lane purchase display (official/resale/substitute) for
@@ -61,6 +67,8 @@ import LuxuryAuthBadge from './LuxuryAuthBadge.js';
 import StyleScanLanes from './StyleScanLanes.js';
 // v10.7: OracleGreeting scan counter — call once per successful scan result mount
 import { incrementScanCount } from '@/components/oracle/OracleGreeting.js';
+// v10.8: RH-022 Photo Hotspots — tap any image region for targeted AI analysis
+import PhotoHotspotViewer from './PhotoHotspotViewer.js';
 
 // =============================================================================
 // ERROR BOUNDARY
@@ -280,6 +288,23 @@ const AnalysisResultContent: React.FC = () => {
               onRefine={() => feedback.setIsRefineOpen(true)}
             />
           </div>
+
+          {/* ─────────────────────────────────────────────────────────
+              v10.8: RH-022 — Photo Hotspot Viewer
+              Tap any area of the scan photo to analyze it with AI vision.
+              Intent auto-set to 'authenticate' for luxury items.
+              Null-safe: only renders when image URLs are available.
+              ───────────────────────────────────────────────────────── */}
+          {data.allImageUrls?.length > 0 && (
+            <PhotoHotspotViewer
+              imageUrl={data.allImageUrls[0]}
+              itemName={data.itemName}
+              category={data.category}
+              analysisId={data.id}
+              userId={user?.id}
+              isLuxury={isLuxury}
+            />
+          )}
 
           {/* eBay Market Data */}
           {ebayData && typeof ebayData === 'object' && (

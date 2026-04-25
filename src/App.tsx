@@ -7,6 +7,9 @@
 //   - Added /voices route for Oracle voice picker page
 // v2.3 CHANGES:
 //   - Added /hunt route for Smart Glasses Hunt Mode (SmartGlassesControl)
+// v2.4 CHANGES:
+//   - Added /wellness route for Kirtan Kriya + Solfeggio + Healing Haptics
+//     RH-001, RH-002, RH-042 all accessible from /wellness
 
 import React, { useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
@@ -64,6 +67,10 @@ import OracleThinkingOverlay from '@/components/analysis/OracleThinkingOverlay';
 
 // v2.0: Tour overlay — event-driven, choice steps, chained tours
 import TourOverlay from '@/components/onboarding/TourOverlay';
+
+// v2.4: Wellness page — Kirtan Kriya, Solfeggio Tones, Healing Haptics
+// RH-001 + RH-002 + RH-042 all live at /wellness
+import WellnessPage from '@/pages/WellnessPage';
 
 // Sprint E+: Analytics
 import { useAnalytics } from '@/hooks/useAnalytics';
@@ -136,6 +143,13 @@ const AppRoutes: React.FC = () => {
             <Route path="/hunt" element={
                 <ProtectedRoute isAllowed={!!user} to="/login">
                     <OnboardingGuard><HuntPage /></OnboardingGuard>
+                </ProtectedRoute>
+            } />
+
+            {/* v2.4: Wellness — Kirtan Kriya, Solfeggio, Healing Haptics */}
+            <Route path="/wellness" element={
+                <ProtectedRoute isAllowed={!!user} to="/login">
+                    <OnboardingGuard><WellnessPage /></OnboardingGuard>
                 </ProtectedRoute>
             } />
 
@@ -239,15 +253,12 @@ const AppContent: React.FC = () => {
   } = useAppContext();
   const { trackEvent } = useAnalytics();
 
-  // Track whether scanner has been opened this session (for tour event)
   const scannerOpenedRef = useRef(false);
 
-  // ── Track session start ───────────────────────────────
   useEffect(() => {
     if (user) trackEvent('session_start', 'engagement');
   }, [user, trackEvent]);
 
-  // ── Auth token for tour API calls ─────────────────────
   const [authToken, setAuthToken] = React.useState<string | undefined>();
   useEffect(() => {
     if (user) {
@@ -257,7 +268,6 @@ const AppContent: React.FC = () => {
     }
   }, [user]);
 
-  // ── Dispatch scanner-opened event ─────────────────────
   useEffect(() => {
     if (isScannerOpen && !scannerOpenedRef.current) {
       scannerOpenedRef.current = true;
@@ -267,7 +277,6 @@ const AppContent: React.FC = () => {
     }
   }, [isScannerOpen]);
 
-  // ── Tour action handler ───────────────────────────────
   const handleTourAction = useCallback((
     action: string,
     payload?: { navigateTo?: string; triggersTour?: string }
@@ -323,18 +332,11 @@ const AppContent: React.FC = () => {
     <AppLayout>
       <AppRoutes />
 
-      {/* Existing modals */}
       <FeedbackModal isOpen={isFeedbackModalOpen} onClose={() => setIsFeedbackModalOpen(false)} />
       <ArenaWelcomeAlert isOpen={isArenaWelcomeOpen} onDismiss={handleDismissWelcome} />
       <DualScanner isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} />
-
-      {/* NEW: Oracle Thinking Overlay — replaces the dead screen during analysis
-          Renders when isAnalyzing is true (set by DualScanner on submit).
-          Reads real-time SSE progress from AppContext.scanProgress.
-          Auto-hides when isAnalyzing flips to false (analysis complete or error). */}
       <OracleThinkingOverlay />
 
-      {/* v2.0: Tour overlay */}
       {user && profile?.onboarding_complete && (
         <TourOverlay
           screenName={screenName}
