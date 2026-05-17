@@ -1,3 +1,7 @@
+# robots.txt for tagnetiq.com
+# Last updated: May 16, 2026
+
+# Search engine crawlers (preserved from previous version)
 User-agent: Googlebot
 Allow: /
 
@@ -10,5 +14,49 @@ Allow: /
 User-agent: facebookexternalhit
 Allow: /
 
+# AI assistant crawlers — explicit permissions for discoverability
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: cohere-ai
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+# Default — allow all other well-behaved crawlers
 User-agent: *
 Allow: /
+
+# Sitemap (optional but recommended — add when sitemap.xml exists)
+# Sitemap: https://tagnetiq.com/sitemap.xml
