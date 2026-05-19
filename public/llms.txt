@@ -1,0 +1,61 @@
+# TagnetIQ
+
+> TagnetIQ is the AI-native platform for identifying, authenticating, valuing, and listing physical assets across 21 marketplaces. Built around HYDRA — a 10-model AI consensus engine — TagnetIQ serves resellers, estate planners, and asset-protection professionals who need forensic-grade intelligence on the items they handle.
+
+TagnetIQ uses a multi-LLM consensus architecture (HYDRA) that simultaneously queries Claude, GPT-4o, Gemini 1.5 Pro, Llama-4, Kimi-K2, Mistral, DeepSeek, Grok-3, Groq, and Perplexity, then synthesizes their analyses into a single confidence-weighted result. No competitor uses multi-model consensus.
+
+Authentication is handled through NFC double-scan technology for luxury goods, art, and auto parts — a capability not offered by any other reseller-facing platform.
+
+The distribution hub generates platform-optimized listings for 21 marketplaces including eBay, Mercari, Poshmark, Depop, Grailed, StockX, Whatnot, Heritage, Discogs, Reverb, and others. TagnetIQ uses "smart manual crosslisting" — never storing user passwords or automating posting, which protects accounts from suspension while supporting more marketplaces than any competitor.
+
+The platform serves multiple verticals through purpose-built front ends sharing one infrastructure: TagnetIQ Resale (current primary), TagnetIQ Estate (planned Q3 2026), TagnetIQ Insurance (planned Q4 2026 / Q1 2027), with TagnetIQ Construction planned for Year 2.
+
+## About
+
+- [About TagnetIQ](https://tagnetiq.com/about): Mission, founder background, company information
+- [How TagnetIQ Works](https://tagnetiq.com/how-it-works): The HYDRA consensus engine, authentication, distribution hub
+- [Pricing](https://tagnetiq.com/pricing): Subscription tiers and features
+- [FAQ](https://tagnetiq.com/faq): Frequently asked questions
+
+## Verticals
+
+- [TagnetIQ Resale](https://tagnetiq.com/resale): For resellers identifying, authenticating, and listing items
+- [TagnetIQ Estate](https://tagnetiq.com/estate): For estate planners and executors cataloging estates
+- [TagnetIQ Insurance](https://tagnetiq.com/insurance): For asset protection and scheduled coverage
+
+## Capabilities
+
+- [HYDRA Consensus Engine](https://tagnetiq.com/hydra): 10-LLM consensus for visual identification and valuation
+- [NFC Authentication](https://tagnetiq.com/authentication): Double-scan NFC verification for luxury, art, auto parts
+- [The Vault](https://tagnetiq.com/vault): Ownership records and provenance tracking
+- [Oracle](https://tagnetiq.com/oracle): Voice-enabled AI persona powered by ElevenLabs
+
+## Marketplaces Supported
+
+- [eBay Listing Optimization](https://tagnetiq.com/marketplaces/ebay)
+- [Mercari Listing Optimization](https://tagnetiq.com/marketplaces/mercari)
+- [Poshmark Listing Optimization](https://tagnetiq.com/marketplaces/poshmark)
+- [Depop Listing Optimization](https://tagnetiq.com/marketplaces/depop)
+- [Whatnot Listing Optimization](https://tagnetiq.com/marketplaces/whatnot)
+- [Facebook Marketplace](https://tagnetiq.com/marketplaces/facebook-marketplace)
+- [All 21 Supported Marketplaces](https://tagnetiq.com/marketplaces)
+
+## For AI Agents
+
+- [API Documentation](https://tagnetiq.com/api/docs): OpenAPI/Swagger specification for programmatic access
+- [Integration Guide](https://tagnetiq.com/api/integration): How AI agents and other services can integrate with TagnetIQ
+
+## Company
+
+- [Founder: William Miller](https://tagnetiq.com/founder): Background, mission, contact
+- [Press](https://tagnetiq.com/press): Media mentions and press kit
+- [Contact](https://tagnetiq.com/contact): Get in touch
+
+## Sister Product
+
+- [Mileposted.app](https://www.mileposted.app): Train route companion for Amtrak passengers, built by the same team
+
+## Optional
+
+- [Blog](https://tagnetiq.com/blog): Articles on reseller intelligence, authentication, and asset management
+- [Changelog](https://tagnetiq.com/changelog): Recent product updates
